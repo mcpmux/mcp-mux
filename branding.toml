@@ -1,0 +1,41 @@
+# Branding Configuration
+# Single source of truth for all product naming
+# 
+# To change the product name:
+# 1. Update values below
+# 2. Run: cargo build (triggers build.rs)
+# 3. Frontend constants auto-generated
+#
+# Current: Using OLD values (mcmux) during Phase 1
+# Phase 3: Update to new values (mcpmux)
+
+[branding]
+# User-facing display name
+display_name = "MCP Mux"
+
+# Reverse-domain app identifier (used for data directories, bundle ID)
+identifier = "com.mcpmux.app"
+
+# Custom URL scheme for deep links (mcpmux://...)
+deep_link_scheme = "mcpmux"
+
+# Primary domain
+domain = "mcpmux.com"
+
+# API subdomain  
+api_domain = "api.mcpmux.com"
+
+# Keychain/credential manager service name
+keychain_service = "com.mcpmux.app"
+
+# Log file prefix
+log_prefix = "mcpmux"
+
+# MCP server config key (for clients like VS Code, Claude Desktop)
+mcp_config_key = "mcpmux"
+
+# GitHub organization
+github_org = "mcpmux"
+
+# NPM scope
+npm_scope = "@mcpmux"

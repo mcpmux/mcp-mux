@@ -1,0 +1,296 @@
+{
+  "$schema": "./mcp-registry-schema.json",
+  "version": "1.0",
+  "metadata": {
+    "name": "MCMux Default Registry",
+    "description": "Default MCP server registry for MCMux",
+    "updated_at": "2024-12-14T00:00:00Z",
+    "maintainer": "MCMux Team"
+  },
+  "servers": {
+    "com.cloudflare/docs-mcp": {
+      "id": "com.cloudflare/docs-mcp",
+      "name": "Cloudflare Documentation",
+      "description": "Search and query Cloudflare documentation",
+      "icon": "https://www.cloudflare.com/favicon.ico",
+      "category": "cloud",
+      "tags": ["cloudflare", "documentation", "search"],
+      "publisher": {
+        "name": "Cloudflare",
+        "url": "https://cloudflare.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true,
+        "featured": true
+      },
+      "links": {
+        "homepage": "https://developers.cloudflare.com",
+        "documentation": "https://developers.cloudflare.com/mcp"
+      },
+      "inputs": [],
+      "connection": {
+        "type": "http",
+        "url": "https://docs.mcp.cloudflare.com/mcp"
+      },
+      "auth_type": "none"
+    },
+
+    "com.cloudflare/bindings-mcp": {
+      "id": "com.cloudflare/bindings-mcp",
+      "name": "Cloudflare Bindings",
+      "description": "Interact with Cloudflare Workers bindings like KV, R2, D1",
+      "icon": "https://www.cloudflare.com/favicon.ico",
+      "category": "cloud",
+      "tags": ["cloudflare", "workers", "kv", "r2", "d1"],
+      "publisher": {
+        "name": "Cloudflare",
+        "url": "https://cloudflare.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true
+      },
+      "inputs": [],
+      "connection": {
+        "type": "http",
+        "url": "https://bindings.mcp.cloudflare.com/mcp"
+      },
+      "auth_type": "oauth"
+    },
+
+    "io.github.github/github-mcp-server": {
+      "id": "io.github.github/github-mcp-server",
+      "name": "GitHub",
+      "description": "Interact with GitHub repositories, issues, pull requests, and more",
+      "icon": "https://github.githubassets.com/favicons/favicon.svg",
+      "category": "developer-tools",
+      "tags": ["github", "git", "repositories", "issues", "pull-requests"],
+      "publisher": {
+        "name": "GitHub",
+        "url": "https://github.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true,
+        "featured": true
+      },
+      "links": {
+        "repository": "https://github.com/github/github-mcp-server"
+      },
+      "inputs": [
+        {
+          "id": "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "label": "GitHub Personal Access Token",
+          "description": "A GitHub PAT with appropriate repository access",
+          "input_type": "password",
+          "required": true,
+          "secret": true,
+          "obtain_url": "https://github.com/settings/tokens",
+          "obtain_instructions": "Create a fine-grained personal access token with the permissions you need"
+        }
+      ],
+      "connection": {
+        "type": "stdio",
+        "command": "docker",
+        "args": [
+          "run", "-i", "--rm",
+          "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "ghcr.io/github/github-mcp-server"
+        ],
+        "env": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "${input:GITHUB_PERSONAL_ACCESS_TOKEN}"
+        }
+      },
+      "auth_type": "api_key"
+    },
+
+    "com.atlassian/mcp-server": {
+      "id": "com.atlassian/mcp-server",
+      "name": "Atlassian",
+      "description": "Interact with Jira, Confluence, and other Atlassian products",
+      "icon": "https://wac-cdn.atlassian.com/assets/img/favicons/atlassian/favicon.png",
+      "category": "productivity",
+      "tags": ["atlassian", "jira", "confluence", "project-management"],
+      "publisher": {
+        "name": "Atlassian",
+        "url": "https://atlassian.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true
+      },
+      "links": {
+        "homepage": "https://developer.atlassian.com/cloud/mcp"
+      },
+      "inputs": [],
+      "connection": {
+        "type": "http",
+        "url": "https://mcp.atlassian.com/v1/mcp"
+      },
+      "auth_type": "oauth"
+    },
+
+    "com.instantdomainsearch/domain-search": {
+      "id": "com.instantdomainsearch/domain-search",
+      "name": "Instant Domain Search",
+      "description": "Search for available domain names instantly",
+      "icon": "🔍",
+      "category": "search",
+      "tags": ["domains", "search", "dns"],
+      "publisher": {
+        "name": "Instant Domain Search",
+        "url": "https://instantdomainsearch.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true
+      },
+      "inputs": [],
+      "connection": {
+        "type": "http",
+        "url": "https://instantdomainsearch.com/mcp/streamable-http"
+      },
+      "auth_type": "none"
+    },
+
+    "io.modelcontextprotocol/server-filesystem": {
+      "id": "io.modelcontextprotocol/server-filesystem",
+      "name": "Filesystem",
+      "description": "Read and write files on the local filesystem",
+      "icon": "📁",
+      "category": "file-system",
+      "tags": ["filesystem", "files", "local"],
+      "publisher": {
+        "name": "Anthropic",
+        "url": "https://anthropic.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true
+      },
+      "links": {
+        "repository": "https://github.com/modelcontextprotocol/servers"
+      },
+      "inputs": [
+        {
+          "id": "ALLOWED_DIRECTORIES",
+          "label": "Allowed Directories",
+          "description": "Comma-separated list of directories the server can access",
+          "input_type": "text",
+          "required": true,
+          "placeholder": "/home/user/projects,/tmp"
+        }
+      ],
+      "connection": {
+        "type": "stdio",
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "${input:ALLOWED_DIRECTORIES}"
+        ]
+      },
+      "auth_type": "none"
+    },
+
+    "io.modelcontextprotocol/server-brave-search": {
+      "id": "io.modelcontextprotocol/server-brave-search",
+      "name": "Brave Search",
+      "description": "Search the web using Brave Search API",
+      "icon": "🦁",
+      "category": "search",
+      "tags": ["search", "web", "brave"],
+      "publisher": {
+        "name": "Anthropic",
+        "url": "https://anthropic.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true,
+        "featured": true
+      },
+      "links": {
+        "repository": "https://github.com/modelcontextprotocol/servers"
+      },
+      "inputs": [
+        {
+          "id": "BRAVE_API_KEY",
+          "label": "Brave API Key",
+          "description": "Your Brave Search API key",
+          "input_type": "password",
+          "required": true,
+          "secret": true,
+          "obtain_url": "https://brave.com/search/api/",
+          "obtain_instructions": "Sign up for Brave Search API and get your API key"
+        }
+      ],
+      "connection": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+        "env": {
+          "BRAVE_API_KEY": "${input:BRAVE_API_KEY}"
+        }
+      },
+      "auth_type": "api_key"
+    },
+
+    "io.modelcontextprotocol/server-slack": {
+      "id": "io.modelcontextprotocol/server-slack",
+      "name": "Slack",
+      "description": "Interact with Slack workspaces, channels, and messages",
+      "icon": "💬",
+      "category": "communication",
+      "tags": ["slack", "messaging", "communication", "chat"],
+      "publisher": {
+        "name": "Anthropic",
+        "url": "https://anthropic.com",
+        "verified": true
+      },
+      "quality": {
+        "official": true,
+        "verified": true
+      },
+      "links": {
+        "repository": "https://github.com/modelcontextprotocol/servers"
+      },
+      "inputs": [
+        {
+          "id": "SLACK_BOT_TOKEN",
+          "label": "Slack Bot Token",
+          "description": "Your Slack bot token (xoxb-...)",
+          "input_type": "password",
+          "required": true,
+          "secret": true,
+          "obtain_url": "https://api.slack.com/apps",
+          "obtain_instructions": "Create a Slack app, add bot scopes, and install to your workspace"
+        },
+        {
+          "id": "SLACK_TEAM_ID",
+          "label": "Slack Team ID",
+          "description": "Your Slack workspace team ID",
+          "input_type": "text",
+          "required": true
+        }
+      ],
+      "connection": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-slack"],
+        "env": {
+          "SLACK_BOT_TOKEN": "${input:SLACK_BOT_TOKEN}",
+          "SLACK_TEAM_ID": "${input:SLACK_TEAM_ID}"
+        }
+      },
+      "auth_type": "api_key"
+    }
+  }
+}

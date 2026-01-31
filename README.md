@@ -1,0 +1,92 @@
+# MCP Mux - Centralized MCP Server Management
+
+[![License: Elastic-2.0](https://img.shields.io/badge/License-Elastic%202.0-blue.svg)](LICENSE)
+
+> A desktop application for managing Model Context Protocol (MCP) servers with spaces, credentials, and cloud sync.
+
+## Features
+
+- 🔐 **Secure Credentials** - OS keychain + encrypted database storage
+- 🌐 **Spaces** - Isolated environments for different projects
+- ⚡ **Local Gateway** - All MCP traffic stays on your machine
+- ☁️ **Cloud Sync** - Configuration sync across devices (optional)
+- 🔌 **Multi-Transport** - Supports stdio, HTTP, and SSE MCP servers
+
+## Quick Start
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) 1.75+
+- [Node.js](https://nodejs.org/) 18+
+- [pnpm](https://pnpm.io/) 9+
+
+### Development
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start development
+pnpm dev
+```
+
+### Build
+
+```bash
+# Build for production
+pnpm build
+```
+
+## Project Structure
+
+```
+mcpmux/
+├── apps/
+│   └── desktop/          # Tauri desktop application
+│       ├── src/          # React frontend
+│       └── src-tauri/    # Rust backend
+├── crates/
+│   ├── mcpmux-core/       # Domain logic and entities
+│   ├── mcpmux-mcp/        # MCP protocol handling
+│   └── mcpmux-storage/    # Persistence layer
+└── packages/
+    └── ui/               # Shared React components
+```
+
+## Architecture
+
+MCP Mux acts as a local gateway that:
+
+1. **Aggregates** multiple MCP servers into a single endpoint
+2. **Manages** credentials securely per space
+3. **Routes** tool calls to the appropriate backend
+4. **Syncs** configuration (not MCP traffic) to the cloud
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    AI Clients                           │
+│              (Cursor, Claude, etc.)                     │
+└─────────────────────┬───────────────────────────────────┘
+                      │ OAuth 2.1 + PKCE
+                      ▼
+┌─────────────────────────────────────────────────────────┐
+│                  MCP Mux Gateway                          │
+│                 localhost:9315                          │
+├─────────────────────────────────────────────────────────┤
+│  ┌─────────┐  ┌─────────┐  ┌─────────────┐            │
+│  │ Space A │  │ Space B │  │ FeatureSets │            │
+│  └─────────┘  └─────────┘  └─────────────┘            │
+└─────────────────────┬───────────────────────────────────┘
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+   ┌─────────┐   ┌─────────┐   ┌─────────┐
+   │ Backend │   │ Backend │   │ Backend │
+   │ (stdio) │   │  (HTTP) │   │  (SSE)  │
+   └─────────┘   └─────────┘   └─────────┘
+```
+
+## License
+
+[Elastic License 2.0](LICENSE) - Free to use, modify, and distribute. Cannot be offered as a managed service.
+

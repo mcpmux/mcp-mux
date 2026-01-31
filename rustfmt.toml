@@ -1,0 +1,8 @@
+edition = "2021"
+max_width = 100
+tab_spaces = 4
+use_small_heuristics = "Default"
+# Note: imports_granularity and group_imports are nightly-only features
+# Uncomment if using nightly: imports_granularity = "Module"
+# Uncomment if using nightly: group_imports = "StdExternalCrate"
+

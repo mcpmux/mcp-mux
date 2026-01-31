@@ -1,0 +1,141 @@
+# Third-Party Licenses
+
+This file lists the licenses of third-party dependencies used in MCPMux Desktop.
+
+## Summary
+
+| License | Count | Notes |
+|---------|-------|-------|
+| MIT | ~400+ | Permissive |
+| Apache-2.0 | ~50+ | Permissive |
+| Apache-2.0 OR MIT | ~350+ | Dual-licensed, permissive |
+| BSD-2-Clause / BSD-3-Clause | ~15 | Permissive |
+| ISC | ~20 | Permissive |
+| MPL-2.0 | ~5 | File-level copyleft (cssparser, dompurify) |
+| Unicode-3.0 | ~18 | Permissive (ICU libraries) |
+| CC0-1.0 | 2 | Public domain (notify) |
+
+All dependencies use permissive licenses compatible with Elastic License 2.0.
+
+---
+
+## Rust Dependencies
+
+Generated via `cargo license`
+
+### Apache-2.0
+- rmcp, rmcp-macros (Model Context Protocol SDK)
+- openssl
+- sync_wrapper
+- tao
+- mcpmux-core, mcpmux-gateway, mcpmux-mcp, mcpmux-storage (internal)
+
+### Apache-2.0 OR MIT (Dual Licensed)
+- tokio, tokio-macros, tokio-util (async runtime)
+- serde, serde_json, serde_derive (serialization)
+- axum, axum-core (HTTP framework)
+- reqwest (HTTP client)
+- tauri, tauri-build, tauri-runtime, tauri-utils (desktop framework)
+- tracing, tracing-subscriber, tracing-appender (logging)
+- thiserror, anyhow (error handling)
+- chrono (datetime)
+- uuid (identifiers)
+- rand (random)
+- ring (cryptography) [Apache-2.0 AND ISC]
+- rustls, rustls-pki-types (TLS)
+- dirs (directories)
+- glob (file patterns)
+- url (URL parsing)
+- keyring (OS keychain)
+- zeroize (secure memory)
+- And 300+ more transitive dependencies
+
+### MIT
+- rusqlite (SQLite bindings)
+- h2, hyper, hyper-util (HTTP/2)
+- tower, tower-http (middleware)
+- bytes, mio (I/O)
+- dashmap (concurrent hashmap)
+- wry, webkit2gtk (webview)
+- And 150+ more transitive dependencies
+
+### BSD-3-Clause
+- brotli, brotli-decompressor (compression)
+- subtle (crypto)
+- instant (time)
+
+### ISC
+- rustls-webpki (certificate validation)
+- libloading (dynamic loading)
+- untrusted (input validation)
+
+### MPL-2.0
+- cssparser, cssparser-macros, selectors (CSS parsing)
+- option-ext
+
+### Unicode-3.0
+- icu_* (Unicode/i18n libraries)
+
+### CC0-1.0 (Public Domain)
+- notify (file watching)
+- tiny-keccak (hashing)
+
+---
+
+## JavaScript/TypeScript Dependencies
+
+Generated via `pnpm licenses list`
+
+### MIT
+- react, react-dom (UI framework)
+- zustand (state management)
+- immer (immutable state)
+- monaco-editor, @monaco-editor/react (code editor)
+- @tauri-apps/api (Tauri bindings)
+- vite (build tool)
+- typescript (language)
+- tailwindcss, postcss, autoprefixer (styling)
+- eslint and plugins (linting)
+- And 200+ more dependencies
+
+### Apache-2.0
+- typescript
+- @eslint/* packages
+- @humanwhocodes/* packages
+
+### ISC
+- lucide-react (icons)
+- semver, minimatch, glob-parent
+
+### BSD-2-Clause / BSD-3-Clause
+- eslint-scope, espree, esquery
+- source-map-js
+
+### MPL-2.0 OR Apache-2.0
+- dompurify (HTML sanitization)
+
+---
+
+## License Texts
+
+The full license texts for MIT, Apache-2.0, BSD, ISC, and MPL-2.0 can be found at:
+- MIT: https://opensource.org/licenses/MIT
+- Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
+- BSD-2-Clause: https://opensource.org/licenses/BSD-2-Clause
+- BSD-3-Clause: https://opensource.org/licenses/BSD-3-Clause
+- ISC: https://opensource.org/licenses/ISC
+- MPL-2.0: https://www.mozilla.org/en-US/MPL/2.0/
+- Unicode-3.0: https://www.unicode.org/license.txt
+- CC0-1.0: https://creativecommons.org/publicdomain/zero/1.0/
+
+---
+
+## Regenerating This File
+
+```bash
+# Rust dependencies
+cargo license --manifest-path Cargo.toml
+
+# JavaScript dependencies
+pnpm licenses list
+```

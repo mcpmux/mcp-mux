@@ -1,0 +1,28 @@
+{
+  "name": "mcpmux",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @mcpmux/desktop dev",
+    "build": "pnpm --filter @mcpmux/desktop build",
+    "test": "pnpm -r test",
+    "test:rust": "cargo test --workspace",
+    "lint": "pnpm -r lint && cargo clippy --workspace -- -D warnings",
+    "lint:fix": "pnpm -r lint:fix && cargo clippy --workspace --fix --allow-dirty",
+    "format": "prettier --write . && cargo fmt --all",
+    "format:check": "prettier --check . && cargo fmt --all --check",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean && cargo clean"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "prettier-plugin-tailwindcss": "^0.6.9",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@9.15.1"
+}

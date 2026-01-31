@@ -1,0 +1,80 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+target/
+out/
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+
+# IDE
+.idea/
+.cursor/
+*.swp
+*.swo
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Generated
+gen/
+*.d.ts.map
+
+# Cache
+.cache/
+.turbo/
+.eslintcache
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Tauri
+apps/desktop/src-tauri/target/
+
+# Rust
+**/*.rs.bk
+*.rlib
+
+# Database (local dev)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Tauri bundle outputs
+apps/desktop/src-tauri/target/release/bundle/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
+# Debug
+debug/
+*.dSYM/
+

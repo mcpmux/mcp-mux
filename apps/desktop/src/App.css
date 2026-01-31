@@ -1,0 +1,82 @@
+/* App-specific animations */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-from-top {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-in-from-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Animation utilities */
+.animate-in {
+  animation-duration: 150ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation-name: fade-in;
+}
+
+.slide-in-from-top-1 {
+  animation-name: slide-in-from-top;
+}
+
+.slide-in-from-bottom-1 {
+  animation-name: slide-in-from-bottom;
+}
+
+.scale-in {
+  animation-name: scale-in;
+}
+
+/* Logo hover effects */
+.logo {
+  transition: filter 0.3s ease;
+}
+
+.logo.tauri:hover {
+  filter: drop-shadow(0 0 1.5em rgb(var(--primary)));
+}
+
+.logo.vite:hover {
+  filter: drop-shadow(0 0 1.5em #747bff);
+}
+
+.logo.react:hover {
+  filter: drop-shadow(0 0 1.5em #61dafb);
+}

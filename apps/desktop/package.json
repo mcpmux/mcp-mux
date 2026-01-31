@@ -1,0 +1,47 @@
+{
+  "name": "@mcpmux/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "dev:web": "vite",
+    "build:web": "tsc && vite build",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"No tests yet\""
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "immer": "^11.0.1",
+    "lucide-react": "^0.561.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.9"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^25.0.1",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "autoprefixer": "^10.4.22",
+    "eslint": "^9.39.2",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "monaco-editor": "^0.55.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "3",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.49.0",
+    "vite": "^7.0.4"
+  }
+}

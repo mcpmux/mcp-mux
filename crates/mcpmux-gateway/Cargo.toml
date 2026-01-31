@@ -1,0 +1,66 @@
+[package]
+name = "mcpmux-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCMux Gateway - MCP proxy server with OAuth and aggregation"
+
+[dependencies]
+# Async runtime
+tokio.workspace = true
+tokio-util = "0.7"
+async-trait.workspace = true
+futures.workspace = true
+async-stream = "0.3"
+
+# Web framework
+axum.workspace = true
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+http = "1.1"
+http-body-util.workspace = true
+
+# HTTP client
+reqwest.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Utilities
+uuid.workspace = true
+chrono.workspace = true
+dashmap = "6.1"
+parking_lot = "0.12"
+
+# Crypto for OAuth PKCE
+base64 = "0.22"
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
+url = "2.5"
+urlencoding = "2.1"
+zeroize = "1.8"
+which = "7.0"
+open = "5.3"
+dirs = "5.0"
+
+# MCP SDK
+rmcp.workspace = true
+
+# OAuth
+oauth2 = "5"
+
+# Internal crates
+mcpmux-core.workspace = true
+mcpmux-storage.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

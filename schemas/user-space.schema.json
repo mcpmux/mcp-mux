@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcpmux.com/schemas/user-space.json",
+  "title": "MCP Space Configuration",
+  "description": "Configuration file for MCP servers in a space. Uses standard MCP format (command/args/env at top level).",
+  "type": "object",
+  "required": ["mcpServers"],
+  "properties": {
+    "mcpServers": {
+      "type": "object",
+      "description": "Map of server ID to server configuration",
+      "additionalProperties": {
+        "$ref": "#/$defs/serverConfig"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "serverConfig": {
+      "type": "object",
+      "description": "MCP Server configuration. Use command/args/env for stdio, or url/headers for HTTP.",
+      "not": {
+        "required": ["transport"]
+      },
+      "anyOf": [
+        { "$ref": "#/$defs/stdioServer" },
+        { "$ref": "#/$defs/httpServer" }
+      ]
+    },
+    "stdioServer": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Command to run the server (e.g., \"node\", \"docker\", \"npx\")"
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Command arguments"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Environment variables. Use ${input:NAME} for secrets."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name for the server"
+        },
+        "description": {
+          "type": "string",
+          "description": "Server description"
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icon URL or emoji"
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        }
+      }
+    },
+    "httpServer": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "HTTP URL for the MCP server"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "HTTP headers"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name for the server"
+        },
+        "description": {
+          "type": "string",
+          "description": "Server description"
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icon URL or emoji"
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "inputs": {
+          "type": "array",
+          "description": "Input definitions for credentials/config",
+          "items": {
+            "$ref": "#/$defs/inputDef"
+          }
+        }
+      }
+    },
+    "inputDef": {
+      "type": "object",
+      "required": ["id", "label"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Input identifier used in ${input:ID} placeholders"
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable label for the input field"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["text", "password"],
+          "default": "text",
+          "description": "Input field type"
+        },
+        "required": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this input is required"
+        },
+        "secret": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this input contains sensitive data"
+        },
+        "description": {
+          "type": "string",
+          "description": "Help text describing what this input is for"
+        }
+      }
+    }
+  }
+}

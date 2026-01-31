@@ -1,0 +1,28 @@
+[package]
+name = "mcpmux-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCMux core domain logic, entities, and business rules"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+glob.workspace = true
+dirs.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
+flate2 = "1.0"
+reqwest = { workspace = true, features = ["json"] }
+regex = "1.11"
+lazy_static = "1.5"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = "3.14"
+

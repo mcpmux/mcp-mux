@@ -1,0 +1,83 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop/src-tauri",
+    "crates/mcpmux-core",
+    "crates/mcpmux-gateway",
+    "crates/mcpmux-mcp",
+    "crates/mcpmux-storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/mcpmux/mcpmux"
+authors = ["MCP Mux Team"]
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "ansi", "fmt"] }
+tracing-appender = "0.2"
+
+# Database - SQLite with bundled library
+# Note: Application-level encryption is used for sensitive data
+rusqlite = { version = "0.32", features = ["bundled"] }
+hex = "0.4"
+ring = "0.17"  # Cryptography for field-level encryption
+# Cross-platform OS keychain access - must enable platform-specific features!
+# Without features, keyring v3 uses mock store that doesn't persist
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+zeroize = { version = "1.8", features = ["derive"] }  # Secure memory clearing
+
+# Utilities
+uuid = { version = "1.11", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+glob = "0.3"
+url = "2.5"
+urlencoding = "2.1"
+dotenvy = "0.15"
+
+# MCP Protocol
+rmcp = { version = "0.13.0", features = [
+    "client",
+    "server",
+    "transport-io",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+    "transport-streamable-http-server",
+    "auth",
+] }
+
+# HTTP
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+axum = { version = "0.7", features = ["macros"] }
+http-body-util = "0.1"
+
+# Internal crates
+mcpmux-core = { path = "crates/mcpmux-core" }
+mcpmux-gateway = { path = "crates/mcpmux-gateway" }
+mcpmux-mcp = { path = "crates/mcpmux-mcp" }
+mcpmux-storage = { path = "crates/mcpmux-storage" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+

@@ -1,0 +1,46 @@
+[package]
+name = "mcmux-desktop"
+version.workspace = true
+edition.workspace = true
+description = "MCMux Desktop - Centralized MCP Server Management"
+authors = ["MCMux Team"]
+
+[lib]
+name = "mcmux_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json.workspace = true
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-deep-link = "2"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
+dirs.workspace = true
+keyring.workspace = true
+zeroize.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+url.workspace = true
+urlencoding = "2.1"
+open = "5.3"
+dotenvy.workspace = true
+notify = { version = "7", default-features = false, features = ["macos_fsevent"] }
+notify-debouncer-mini = "0.5"
+
+# Internal crates
+mcpmux-core.workspace = true
+mcpmux-gateway.workspace = true
+mcpmux-storage.workspace = true
+

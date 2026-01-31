@@ -1,0 +1,31 @@
+[package]
+name = "mcpmux-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQLite storage with encryption for MCMux"
+
+[dependencies]
+mcpmux-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+rusqlite.workspace = true
+dirs.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+hex.workspace = true
+ring.workspace = true
+keyring.workspace = true
+zeroize.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = "3.14"
+

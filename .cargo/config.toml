@@ -1,0 +1,12 @@
+[alias]
+lint = "clippy --all-targets --all-features -- -D warnings"
+
+# Use lld linker for faster builds (if available)
+# Uncomment if lld is installed on your system
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Windows uses MSVC linker by default, which is fine
+# [target.x86_64-pc-windows-msvc]
+# No special config needed
+

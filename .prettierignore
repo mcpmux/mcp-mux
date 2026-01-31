@@ -1,0 +1,9 @@
+dist
+build
+target
+node_modules
+*.lock
+pnpm-lock.yaml
+Cargo.lock
+gen
+

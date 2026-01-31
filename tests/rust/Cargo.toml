@@ -43,10 +43,11 @@ path = "tests/database/mod.rs"
 name = "security"
 path = "tests/security/mod.rs"
 
-[[test]]
-name = "gateway"
-path = "tests/gateway/mod.rs"
-
-[[test]]
-name = "oauth"
-path = "tests/oauth/mod.rs"
+# Gateway and OAuth tests will be added later when infrastructure is ready
+# [[test]]
+# name = "gateway"
+# path = "tests/gateway/mod.rs"
+#
+# [[test]]
+# name = "oauth"
+# path = "tests/oauth/mod.rs"

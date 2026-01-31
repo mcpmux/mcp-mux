@@ -5,9 +5,10 @@
 export interface Space {
   id: string;
   name: string;
-  icon: string;
+  icon: string | null;
   description: string | null;
   is_default: boolean;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -32,6 +33,7 @@ export function createTestSpace(overrides: Partial<Space> = {}): Space {
     icon: '🧪',
     description: 'A test space',
     is_default: false,
+    sort_order: 0,
     created_at: now,
     updated_at: now,
     ...overrides,

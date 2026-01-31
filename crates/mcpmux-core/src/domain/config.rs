@@ -464,5 +464,141 @@ mod tests {
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].id, "API_KEY");
     }
+
+    #[test]
+    fn test_normalize_server_id() {
+        // Basic lowercase
+        assert_eq!(UserServerEntry::normalize_server_id("GitHub"), "github");
+        
+        // Hyphens and dots preserved
+        assert_eq!(UserServerEntry::normalize_server_id("my-server.v2"), "my-server.v2");
+        
+        // Spaces and underscores removed
+        assert_eq!(UserServerEntry::normalize_server_id("My Server"), "myserver");
+        assert_eq!(UserServerEntry::normalize_server_id("my_server"), "myserver");
+        
+        // Mixed special chars
+        assert_eq!(
+            UserServerEntry::normalize_server_id("GitHub Copilot v2"),
+            "githubcopilotv2"
+        );
+    }
+
+    #[test]
+    fn test_normalize_alias() {
+        // Underscores become hyphens
+        assert_eq!(UserServerEntry::normalize_alias("my_alias"), "my-alias");
+        
+        // Lowercase
+        assert_eq!(UserServerEntry::normalize_alias("MyAlias"), "myalias");
+        
+        // Multiple underscores
+        assert_eq!(UserServerEntry::normalize_alias("a_b_c"), "a-b-c");
+    }
+
+    #[test]
+    fn test_http_transport_detection() {
+        let entry = UserServerEntry {
+            command: None,
+            args: None,
+            env: None,
+            url: Some("https://api.example.com/mcp".to_string()),
+            headers: Some(HashMap::from([
+                ("Authorization".to_string(), "Bearer token".to_string()),
+            ])),
+            name: None,
+            description: None,
+            icon: None,
+            alias: None,
+            auth: None,
+            metadata: None,
+        };
+
+        let (transport, _) = entry.resolve_transport_and_inputs();
+        
+        match transport {
+            TransportConfig::Http { url, headers, .. } => {
+                assert_eq!(url, "https://api.example.com/mcp");
+                assert_eq!(headers.get("Authorization"), Some(&"Bearer token".to_string()));
+            }
+            _ => panic!("Expected HTTP transport"),
+        }
+    }
+
+    #[test]
+    fn test_stdio_transport_detection() {
+        let entry = UserServerEntry {
+            command: Some("npx".to_string()),
+            args: Some(vec!["mcp-server".to_string()]),
+            env: Some(HashMap::from([("NODE_ENV".to_string(), "production".to_string())])),
+            url: None,
+            headers: None,
+            name: None,
+            description: None,
+            icon: None,
+            alias: None,
+            auth: None,
+            metadata: None,
+        };
+
+        let (transport, _) = entry.resolve_transport_and_inputs();
+        
+        match transport {
+            TransportConfig::Stdio { command, args, env, .. } => {
+                assert_eq!(command, "npx");
+                assert_eq!(args, vec!["mcp-server"]);
+                assert_eq!(env.get("NODE_ENV"), Some(&"production".to_string()));
+            }
+            _ => panic!("Expected Stdio transport"),
+        }
+    }
+
+    #[test]
+    fn test_auto_auth_config_required_secret() {
+        let entry = UserServerEntry {
+            command: Some("node".to_string()),
+            args: None,
+            env: Some(HashMap::from([
+                ("API_KEY".to_string(), "${input:API_KEY}".to_string()),
+            ])),
+            url: None,
+            headers: None,
+            name: None,
+            description: None,
+            icon: None,
+            alias: None,
+            auth: None, // No explicit auth
+            metadata: None,
+        };
+
+        let def = entry.to_server_definition("test", "space", PathBuf::from("/test"));
+        
+        // Should auto-detect ApiKey auth from required secret input
+        assert!(matches!(def.auth, Some(AuthConfig::ApiKey { .. })));
+    }
+
+    #[test]
+    fn test_explicit_auth_not_overridden() {
+        let entry = UserServerEntry {
+            command: Some("node".to_string()),
+            args: None,
+            env: Some(HashMap::from([
+                ("TOKEN".to_string(), "${input:TOKEN}".to_string()),
+            ])),
+            url: None,
+            headers: None,
+            name: None,
+            description: None,
+            icon: None,
+            alias: None,
+            auth: Some(AuthConfig::Oauth),
+            metadata: None,
+        };
+
+        let def = entry.to_server_definition("test", "space", PathBuf::from("/test"));
+        
+        // Explicit OAuth should not be overridden
+        assert!(matches!(def.auth, Some(AuthConfig::Oauth)));
+    }
 }
 

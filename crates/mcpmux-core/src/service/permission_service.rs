@@ -262,3 +262,74 @@ impl PermissionService {
         Ok(permissions.allows_tool(tool_name, server_id))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolved_permissions_default() {
+        let perms = ResolvedPermissions::default();
+        
+        assert!(!perms.grants_all);
+        assert!(perms.allowed_feature_ids.is_empty());
+        assert!(perms.all_from_servers.is_empty());
+    }
+
+    #[test]
+    fn test_resolved_permissions_grants_all() {
+        let perms = ResolvedPermissions {
+            grants_all: true,
+            ..Default::default()
+        };
+        
+        // grants_all should allow any feature
+        assert!(perms.allows_feature("any-feature", None));
+        assert!(perms.allows_feature("any-feature", Some("any-server")));
+        assert!(perms.allows_tool("any-tool", "any-server"));
+    }
+
+    #[test]
+    fn test_resolved_permissions_explicit_features() {
+        let mut perms = ResolvedPermissions::default();
+        perms.allowed_feature_ids.insert("feature-1".to_string());
+        perms.allowed_feature_ids.insert("server-a/tool-x".to_string());
+        
+        assert!(perms.allows_feature("feature-1", None));
+        assert!(!perms.allows_feature("feature-2", None));
+        
+        // Tool check uses qualified name
+        assert!(perms.allows_tool("tool-x", "server-a"));
+        assert!(!perms.allows_tool("tool-y", "server-a"));
+    }
+
+    #[test]
+    fn test_resolved_permissions_server_all() {
+        let mut perms = ResolvedPermissions::default();
+        perms.all_from_servers.insert("github-mcp".to_string());
+        
+        // Any tool from that server should be allowed
+        assert!(perms.allows_tool("any-tool", "github-mcp"));
+        assert!(perms.allows_feature("any-feature", Some("github-mcp")));
+        
+        // Other servers not allowed
+        assert!(!perms.allows_tool("tool", "other-server"));
+        assert!(!perms.allows_feature("feature", Some("other-server")));
+    }
+
+    #[test]
+    fn test_resolved_permissions_combined() {
+        let mut perms = ResolvedPermissions::default();
+        perms.allowed_feature_ids.insert("explicit/tool".to_string());
+        perms.all_from_servers.insert("trusted-server".to_string());
+        
+        // Explicit feature
+        assert!(perms.allows_tool("tool", "explicit"));
+        
+        // Server-all grant
+        assert!(perms.allows_tool("any-tool", "trusted-server"));
+        
+        // Neither
+        assert!(!perms.allows_tool("tool", "untrusted"));
+    }
+}

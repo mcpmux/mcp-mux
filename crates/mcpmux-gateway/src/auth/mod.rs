@@ -179,6 +179,45 @@ mod tests {
         assert!(!AccessKey::is_valid_format("invalid_key"));
         assert!(!AccessKey::is_valid_format("mcp_short"));
     }
+
+    #[test]
+    fn test_access_key_uniqueness() {
+        let client_id = Uuid::new_v4();
+        let key1 = AccessKey::generate(client_id);
+        let key2 = AccessKey::generate(client_id);
+        
+        // Each generation should produce unique key
+        assert_ne!(key1.key, key2.key);
+    }
+
+    #[test]
+    fn test_access_key_with_expiry() {
+        let client_id = Uuid::new_v4();
+        let key = AccessKey::generate_with_expiry(client_id, chrono::Duration::hours(1));
+        
+        assert!(key.expires_at.is_some());
+        assert!(!key.is_expired());
+    }
+
+    #[test]
+    fn test_access_key_expired() {
+        let client_id = Uuid::new_v4();
+        // Create key that expired 1 hour ago
+        let mut key = AccessKey::generate(client_id);
+        key.expires_at = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+        
+        assert!(key.is_expired());
+    }
+
+    #[test]
+    fn test_access_key_no_expiry_never_expires() {
+        let client_id = Uuid::new_v4();
+        let key = AccessKey::generate(client_id);
+        
+        // Key without expiry should never be expired
+        assert!(key.expires_at.is_none());
+        assert!(!key.is_expired());
+    }
 }
 
 // ============================================================================

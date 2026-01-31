@@ -363,4 +363,111 @@ mod tests {
         assert_eq!(member.member_type, MemberType::Feature);
         assert_eq!(member.mode, MemberMode::Include);
     }
+
+    // FeatureSetType parse tests
+    #[test]
+    fn test_feature_set_type_parse() {
+        assert_eq!(FeatureSetType::parse("all"), Some(FeatureSetType::All));
+        assert_eq!(FeatureSetType::parse("default"), Some(FeatureSetType::Default));
+        assert_eq!(FeatureSetType::parse("server-all"), Some(FeatureSetType::ServerAll));
+        assert_eq!(FeatureSetType::parse("custom"), Some(FeatureSetType::Custom));
+        assert_eq!(FeatureSetType::parse("invalid"), None);
+        assert_eq!(FeatureSetType::parse(""), None);
+    }
+
+    #[test]
+    fn test_feature_set_type_as_str() {
+        assert_eq!(FeatureSetType::All.as_str(), "all");
+        assert_eq!(FeatureSetType::Default.as_str(), "default");
+        assert_eq!(FeatureSetType::ServerAll.as_str(), "server-all");
+        assert_eq!(FeatureSetType::Custom.as_str(), "custom");
+    }
+
+    #[test]
+    fn test_feature_set_type_roundtrip() {
+        for fs_type in [
+            FeatureSetType::All,
+            FeatureSetType::Default,
+            FeatureSetType::ServerAll,
+            FeatureSetType::Custom,
+        ] {
+            let s = fs_type.as_str();
+            let parsed = FeatureSetType::parse(s).expect("should parse");
+            assert_eq!(parsed, fs_type);
+        }
+    }
+
+    // MemberMode parse tests
+    #[test]
+    fn test_member_mode_parse() {
+        assert_eq!(MemberMode::parse("include"), Some(MemberMode::Include));
+        assert_eq!(MemberMode::parse("exclude"), Some(MemberMode::Exclude));
+        assert_eq!(MemberMode::parse("invalid"), None);
+    }
+
+    #[test]
+    fn test_member_mode_as_str() {
+        assert_eq!(MemberMode::Include.as_str(), "include");
+        assert_eq!(MemberMode::Exclude.as_str(), "exclude");
+    }
+
+    // MemberType parse tests
+    #[test]
+    fn test_member_type_parse() {
+        assert_eq!(MemberType::parse("feature_set"), Some(MemberType::FeatureSet));
+        assert_eq!(MemberType::parse("feature"), Some(MemberType::Feature));
+        assert_eq!(MemberType::parse("invalid"), None);
+    }
+
+    #[test]
+    fn test_member_type_as_str() {
+        assert_eq!(MemberType::FeatureSet.as_str(), "feature_set");
+        assert_eq!(MemberType::Feature.as_str(), "feature");
+    }
+
+    // Member construction tests
+    #[test]
+    fn test_exclude_feature_member() {
+        let member = FeatureSetMember::exclude_feature("fs_123", "feature_xyz");
+        assert_eq!(member.feature_set_id, "fs_123");
+        assert_eq!(member.member_id, "feature_xyz");
+        assert_eq!(member.member_type, MemberType::Feature);
+        assert_eq!(member.mode, MemberMode::Exclude);
+    }
+
+    #[test]
+    fn test_include_featureset_member() {
+        let member = FeatureSetMember::include_featureset("fs_parent", "fs_child");
+        assert_eq!(member.feature_set_id, "fs_parent");
+        assert_eq!(member.member_id, "fs_child");
+        assert_eq!(member.member_type, MemberType::FeatureSet);
+        assert_eq!(member.mode, MemberMode::Include);
+    }
+
+    // Builder pattern tests
+    #[test]
+    fn test_featureset_with_description() {
+        let fs = FeatureSet::new_custom("Test", "space")
+            .with_description("A test description");
+        assert_eq!(fs.description, Some("A test description".to_string()));
+    }
+
+    #[test]
+    fn test_featureset_with_icon() {
+        let fs = FeatureSet::new_custom("Test", "space")
+            .with_icon("🔧");
+        assert_eq!(fs.icon, Some("🔧".to_string()));
+    }
+
+    #[test]
+    fn test_featureset_chained_builders() {
+        let fs = FeatureSet::new_custom("Test", "space")
+            .with_icon("🔧")
+            .with_description("Tools for testing");
+        
+        assert_eq!(fs.name, "Test");
+        assert_eq!(fs.icon, Some("🔧".to_string()));
+        assert_eq!(fs.description, Some("Tools for testing".to_string()));
+        assert_eq!(fs.space_id, Some("space".to_string()));
+    }
 }

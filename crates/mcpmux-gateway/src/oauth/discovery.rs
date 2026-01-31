@@ -137,9 +137,8 @@ impl OAuthDiscovery {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_metadata_pkce_support() {
-        let metadata = OAuthMetadata {
+    fn create_test_metadata() -> OAuthMetadata {
+        OAuthMetadata {
             issuer: "https://example.com".to_string(),
             authorization_endpoint: "https://example.com/authorize".to_string(),
             token_endpoint: "https://example.com/token".to_string(),
@@ -152,10 +151,112 @@ mod tests {
             scopes_supported: vec!["openid".to_string(), "profile".to_string()],
             code_challenge_methods_supported: vec!["S256".to_string()],
             token_endpoint_auth_methods_supported: vec!["client_secret_post".to_string()],
-        };
+        }
+    }
+
+    #[test]
+    fn test_metadata_pkce_support() {
+        let metadata = create_test_metadata();
 
         assert!(metadata.supports_pkce());
         assert!(metadata.supports_scope("openid"));
         assert!(metadata.supports_scope("profile"));
+    }
+
+    #[test]
+    fn test_metadata_no_pkce_support() {
+        let mut metadata = create_test_metadata();
+        metadata.code_challenge_methods_supported = vec!["plain".to_string()];
+
+        assert!(!metadata.supports_pkce());
+    }
+
+    #[test]
+    fn test_metadata_empty_pkce_methods() {
+        let mut metadata = create_test_metadata();
+        metadata.code_challenge_methods_supported = vec![];
+
+        assert!(!metadata.supports_pkce());
+    }
+
+    #[test]
+    fn test_metadata_scope_not_supported() {
+        let metadata = create_test_metadata();
+
+        assert!(!metadata.supports_scope("email"));
+        assert!(!metadata.supports_scope("admin"));
+    }
+
+    #[test]
+    fn test_metadata_empty_scopes_allows_all() {
+        let mut metadata = create_test_metadata();
+        metadata.scopes_supported = vec![];
+
+        // Empty scopes list means all scopes are allowed
+        assert!(metadata.supports_scope("anything"));
+        assert!(metadata.supports_scope("custom_scope"));
+    }
+
+    #[test]
+    fn test_metadata_json_deserialization() {
+        let json = r#"{
+            "issuer": "https://auth.example.com",
+            "authorization_endpoint": "https://auth.example.com/authorize",
+            "token_endpoint": "https://auth.example.com/token",
+            "response_types_supported": ["code", "token"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "scopes_supported": ["openid", "profile", "email"],
+            "code_challenge_methods_supported": ["S256", "plain"]
+        }"#;
+
+        let metadata: OAuthMetadata = serde_json::from_str(json).unwrap();
+
+        assert_eq!(metadata.issuer, "https://auth.example.com");
+        assert_eq!(metadata.authorization_endpoint, "https://auth.example.com/authorize");
+        assert_eq!(metadata.token_endpoint, "https://auth.example.com/token");
+        assert!(metadata.supports_pkce());
+        assert!(metadata.supports_scope("email"));
+        assert_eq!(metadata.grant_types_supported.len(), 2);
+    }
+
+    #[test]
+    fn test_metadata_json_with_optional_fields() {
+        let json = r#"{
+            "issuer": "https://auth.example.com",
+            "authorization_endpoint": "https://auth.example.com/authorize",
+            "token_endpoint": "https://auth.example.com/token",
+            "userinfo_endpoint": "https://auth.example.com/userinfo",
+            "revocation_endpoint": "https://auth.example.com/revoke",
+            "registration_endpoint": "https://auth.example.com/register",
+            "jwks_uri": "https://auth.example.com/.well-known/jwks.json"
+        }"#;
+
+        let metadata: OAuthMetadata = serde_json::from_str(json).unwrap();
+
+        assert_eq!(metadata.userinfo_endpoint, Some("https://auth.example.com/userinfo".to_string()));
+        assert_eq!(metadata.revocation_endpoint, Some("https://auth.example.com/revoke".to_string()));
+        assert_eq!(metadata.registration_endpoint, Some("https://auth.example.com/register".to_string()));
+        assert_eq!(metadata.jwks_uri, Some("https://auth.example.com/.well-known/jwks.json".to_string()));
+    }
+
+    #[test]
+    fn test_metadata_json_minimal() {
+        // Only required fields
+        let json = r#"{
+            "issuer": "https://minimal.example.com",
+            "authorization_endpoint": "https://minimal.example.com/auth",
+            "token_endpoint": "https://minimal.example.com/token"
+        }"#;
+
+        let metadata: OAuthMetadata = serde_json::from_str(json).unwrap();
+
+        assert_eq!(metadata.issuer, "https://minimal.example.com");
+        assert!(metadata.userinfo_endpoint.is_none());
+        assert!(metadata.scopes_supported.is_empty());
+        assert!(metadata.code_challenge_methods_supported.is_empty());
+        // Empty scopes = all allowed
+        assert!(metadata.supports_scope("any"));
+        // No S256 = no PKCE
+        assert!(!metadata.supports_pkce());
     }
 }

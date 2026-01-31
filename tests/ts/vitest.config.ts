@@ -7,9 +7,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: ['./setup.ts'],
+    setupFiles: [path.resolve(__dirname, 'setup.ts')],
     include: ['**/*.test.{ts,tsx}'],
     exclude: ['**/node_modules/**'],
+    root: __dirname,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],

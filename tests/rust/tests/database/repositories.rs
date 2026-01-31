@@ -145,3 +145,62 @@ async fn test_space_repository_set_default() {
     let space1_reloaded = SpaceRepository::get(&repo, &space1_id).await.unwrap().unwrap();
     assert!(!space1_reloaded.is_default);
 }
+
+#[tokio::test]
+async fn test_space_repository_concurrent_reads() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let repo = Arc::new(SqliteSpaceRepository::new(db));
+    
+    // Create a space
+    let space = fixtures::test_space("Concurrent Test");
+    let space_id = space.id.clone();
+    SpaceRepository::create(repo.as_ref(), &space).await.unwrap();
+    
+    // Spawn multiple concurrent reads
+    let mut handles = vec![];
+    for _ in 0..5 {
+        let repo_clone = Arc::clone(&repo);
+        let id = space_id.clone();
+        handles.push(tokio::spawn(async move {
+            SpaceRepository::get(repo_clone.as_ref(), &id).await
+        }));
+    }
+    
+    // All reads should succeed
+    for handle in handles {
+        let result = handle.await.expect("Task panicked");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+}
+
+#[tokio::test]
+async fn test_space_repository_concurrent_writes() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let repo = Arc::new(SqliteSpaceRepository::new(db));
+    
+    // Spawn multiple concurrent creates
+    let mut handles = vec![];
+    for i in 0..5 {
+        let repo_clone = Arc::clone(&repo);
+        handles.push(tokio::spawn(async move {
+            let space = fixtures::test_space(&format!("Concurrent Space {}", i));
+            SpaceRepository::create(repo_clone.as_ref(), &space).await
+        }));
+    }
+    
+    // All writes should succeed
+    for handle in handles {
+        let result = handle.await.expect("Task panicked");
+        assert!(result.is_ok());
+    }
+    
+    // Verify all spaces were created
+    let all_spaces = SpaceRepository::list(repo.as_ref()).await.unwrap();
+    let concurrent_count = all_spaces.iter()
+        .filter(|s| s.name.starts_with("Concurrent Space"))
+        .count();
+    assert_eq!(concurrent_count, 5);
+}

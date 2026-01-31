@@ -646,7 +646,7 @@ fn verify_pkce(code_verifier: &str, code_challenge: &str, method: Option<&str>) 
 }
 
 // ============================================================================
-// OAuth Consent Approval (called by MCMux app after user approval)
+// OAuth Consent Approval (called by McpMux app after user approval)
 // ============================================================================
 
 /// Request body for consent approval
@@ -679,7 +679,7 @@ pub struct ConsentApprovalResponse {
 
 /// Approve or deny an OAuth consent request
 /// 
-/// This endpoint is called by the MCMux desktop app after the user has reviewed
+/// This endpoint is called by the McpMux desktop app after the user has reviewed
 /// and approved (or denied) an OAuth authorization request.
 /// Future feature - not yet routed
 #[allow(dead_code)]
@@ -791,7 +791,7 @@ pub async fn oauth_consent_approve(
 }
 
 // ============================================================================
-// OAuth Clients List (for MCMux app to display connected clients)
+// OAuth Clients List (for McpMux app to display connected clients)
 // ============================================================================
 
 /// Response for OAuth client info

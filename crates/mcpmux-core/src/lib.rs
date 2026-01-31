@@ -1,6 +1,6 @@
-//! # MCMux Core Library
+//! # McpMux Core Library
 //!
-//! Domain logic, entities, and business rules for MCMux.
+//! Domain logic, entities, and business rules for McpMux.
 //!
 //! ## Modules
 //!

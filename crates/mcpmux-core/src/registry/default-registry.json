@@ -2,10 +2,10 @@
   "$schema": "./mcp-registry-schema.json",
   "version": "1.0",
   "metadata": {
-    "name": "MCMux Default Registry",
-    "description": "Default MCP server registry for MCMux",
+    "name": "McpMux Default Registry",
+    "description": "Default MCP server registry for McpMux",
     "updated_at": "2024-12-14T00:00:00Z",
-    "maintainer": "MCMux Team"
+    "maintainer": "McpMux Team"
   },
   "servers": {
     "com.cloudflare/docs-mcp": {

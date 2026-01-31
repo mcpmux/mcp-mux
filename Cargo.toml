@@ -13,7 +13,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/mcpmux/mcpmux"
-authors = ["MCP Mux Team"]
+authors = ["McpMux Team"]
 rust-version = "1.75"
 
 [workspace.dependencies]
@@ -55,7 +55,8 @@ urlencoding = "2.1"
 dotenvy = "0.15"
 
 # MCP Protocol
-rmcp = { version = "0.13.0", features = [
+# NOTE: Never use local path dependency - E:\one-mcp\rust-sdk is for source lookup only
+rmcp = { version = "0.14.0", features = [
     "client",
     "server",
     "transport-io",
@@ -67,7 +68,7 @@ rmcp = { version = "0.13.0", features = [
 
 # HTTP
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 
 # Internal crates

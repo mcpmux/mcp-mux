@@ -311,13 +311,13 @@ function matchesFilter(server: ServerViewModel, match: FilterMatch): boolean {
 }
 
 /** Get a nested value from an object using dot notation */
-function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
+function getNestedValue<T extends object>(obj: T, path: string): unknown {
   return path.split('.').reduce((o: unknown, k) => {
     if (o && typeof o === 'object' && k in o) {
       return (o as Record<string, unknown>)[k];
     }
     return undefined;
-  }, obj);
+  }, obj as unknown);
 }
 
 /** Apply sorting rules to servers */

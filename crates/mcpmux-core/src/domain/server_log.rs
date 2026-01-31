@@ -85,7 +85,7 @@ impl LogLevel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum LogSource {
-    /// MCMux application logs
+    /// McpMux application logs
     App,
     /// STDIO stdout
     Stdout,

@@ -1,4 +1,4 @@
-//! MCP Mux Desktop Application
+//! McpMux Desktop Application
 //!
 //! Centralized MCP Server Management Desktop Application
 
@@ -49,8 +49,8 @@ fn get_logs_dir() -> std::path::PathBuf {
 /// Initialize tracing for the application with console and file logging
 /// 
 /// - Console: colored, compact format
-/// - File: daily rotation in ~/.local/share/mcmux/logs/ (Linux)
-///   or %LOCALAPPDATA%/mcmux/logs/ (Windows)
+/// - File: daily rotation in ~/.local/share/mcpmux/logs/ (Linux)
+///   or %LOCALAPPDATA%/mcpmux/logs/ (Windows)
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -88,7 +88,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
                 .add_directive("mcpmux_gateway=debug".parse().unwrap())
                 .add_directive("mcpmux_storage=debug".parse().unwrap())
                 .add_directive("mcpmux_mcp=debug".parse().unwrap())
-                .add_directive("mcmux_desktop_lib=debug".parse().unwrap())
+                .add_directive("mcpmux_desktop_lib=debug".parse().unwrap())
                 .add_directive("tauri=info".parse().unwrap())
                 .add_directive("tao=warn".parse().unwrap())
                 .add_directive("wry=warn".parse().unwrap())
@@ -643,5 +643,5 @@ pub fn run() {
             open_logs_folder,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running MCMux application");
+        .expect("error while running McpMux application");
 }

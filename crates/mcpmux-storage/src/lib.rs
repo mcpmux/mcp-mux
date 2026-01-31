@@ -1,4 +1,4 @@
-//! MCMux Storage Layer
+//! McpMux Storage Layer
 //!
 //! SQLite database with field-level encryption for sensitive data.
 //!
@@ -65,9 +65,9 @@ pub use keychain::{
 pub use repositories::*;
 
 /// Default database file name.
-pub const DATABASE_FILE: &str = "mcmux.db";
+pub const DATABASE_FILE: &str = "mcpmux.db";
 
 /// Get the default database path for the current platform.
 pub fn default_database_path() -> Option<std::path::PathBuf> {
-    dirs::data_local_dir().map(|p| p.join("mcmux").join(DATABASE_FILE))
+    dirs::data_local_dir().map(|p| p.join("mcpmux").join(DATABASE_FILE))
 }

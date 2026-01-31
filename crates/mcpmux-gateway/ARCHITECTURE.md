@@ -1,8 +1,8 @@
-# MCP Mux Gateway Architecture
+# McpMux Gateway Architecture
 
 ## Overview
 
-MCP Mux Gateway is a local MCP (Model Context Protocol) proxy server that:
+McpMux Gateway is a local MCP (Model Context Protocol) proxy server that:
 - Aggregates multiple MCP servers into a single endpoint
 - Manages OAuth 2.1 authentication for remote servers
 - Handles automatic token refresh

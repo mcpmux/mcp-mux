@@ -1,6 +1,6 @@
 //! SQLite implementation of InboundMcpClientRepository.
 //!
-//! Manages MCP client entities (apps connecting TO MCMux).
+//! Manages MCP client entities (apps connecting TO McpMux).
 //! Works with the unified `inbound_clients` table.
 
 use std::collections::HashMap;

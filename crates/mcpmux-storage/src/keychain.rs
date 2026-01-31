@@ -396,7 +396,7 @@ mod tests {
     #[test]
     #[ignore] // Run with: cargo test -- --ignored
     fn test_keychain_provider() {
-        let provider = KeychainKeyProvider::with_names("com.mcmux.test", "test-key").unwrap();
+        let provider = KeychainKeyProvider::with_names("com.mcpmux.test", "test-key").unwrap();
 
         // Clean up any previous test runs
         let _ = provider.delete_key();

@@ -1,6 +1,6 @@
 //! Domain entities, value objects, and events
 //!
-//! This module contains all domain-level types for MCMux:
+//! This module contains all domain-level types for McpMux:
 //! - Entities (Space, InstalledServer, FeatureSet, Client, etc.)
 //! - Value Objects (ConnectionStatus, FeatureType, etc.)
 //! - Domain Events (DomainEvent enum for event-driven architecture)

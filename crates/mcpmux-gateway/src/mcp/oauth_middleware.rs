@@ -102,11 +102,11 @@ pub async fn mcp_oauth_middleware(
 
     // Inject OAuth context via custom headers (rmcp will preserve these)
     request.headers_mut().insert(
-        "x-mcmux-client-id",
+        "x-mcpmux-client-id",
         claims.client_id.parse().expect("valid header value"),
     );
     request.headers_mut().insert(
-        "x-mcmux-space-id",
+        "x-mcpmux-space-id",
         space_id.to_string().parse().expect("valid header value"),
     );
 
@@ -170,7 +170,7 @@ fn unauthorized_response(message: &str) -> Response<Body> {
         StatusCode::UNAUTHORIZED,
         [(
             "WWW-Authenticate",
-            r#"Bearer realm="MCMux Gateway", error="invalid_token""#,
+            r#"Bearer realm="McpMux Gateway", error="invalid_token""#,
         )],
         message.to_string(),
     )

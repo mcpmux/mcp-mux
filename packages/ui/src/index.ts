@@ -1,7 +1,7 @@
 /**
- * MCMux Shared UI Components
+ * McpMux Shared UI Components
  *
- * This package contains reusable React components for the MCMux desktop application.
+ * This package contains reusable React components for the McpMux desktop application.
  */
 
 // Layout components

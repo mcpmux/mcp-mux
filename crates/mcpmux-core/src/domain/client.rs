@@ -1,4 +1,4 @@
-//! Client entity - AI clients that connect to MCMux
+//! Client entity - AI clients that connect to McpMux
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

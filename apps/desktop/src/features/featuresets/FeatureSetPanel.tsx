@@ -20,7 +20,7 @@ import {
   Shield,
   Save,
 } from 'lucide-react';
-import { Button } from '@mcmux/ui';
+import { Button } from '@mcpmux/ui';
 import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
 import { setFeatureSetMembers, updateFeatureSet } from '@/lib/api/featureSets';
 import type { ServerFeature } from '@/lib/api/serverFeatures';

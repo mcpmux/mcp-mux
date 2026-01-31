@@ -14,7 +14,7 @@ import {
   CardTitle,
   CardContent,
   Button,
-} from '@mcmux/ui';
+} from '@mcpmux/ui';
 import {
   useAppStore,
   useActiveSpace,

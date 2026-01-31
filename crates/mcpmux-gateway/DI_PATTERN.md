@@ -2,7 +2,7 @@
 
 ## Overview
 
-MCP Mux Gateway uses **Constructor Injection** with a **Builder Pattern** for clean, testable, and flexible dependency management.
+McpMux Gateway uses **Constructor Injection** with a **Builder Pattern** for clean, testable, and flexible dependency management.
 
 ## Pattern Implementation
 

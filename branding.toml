@@ -1,17 +1,10 @@
 # Branding Configuration
 # Single source of truth for all product naming
 # 
-# To change the product name:
-# 1. Update values below
-# 2. Run: cargo build (triggers build.rs)
-# 3. Frontend constants auto-generated
-#
-# Current: Using OLD values (mcmux) during Phase 1
-# Phase 3: Update to new values (mcpmux)
 
 [branding]
 # User-facing display name
-display_name = "MCP Mux"
+display_name = "McpMux"
 
 # Reverse-domain app identifier (used for data directories, bundle ID)
 identifier = "com.mcpmux.app"

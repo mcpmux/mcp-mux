@@ -9,7 +9,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand colors - using cyan/teal for MCMux identity
+        // Brand colors - using cyan/teal for McpMux identity
         primary: {
           50: '#ecfeff',
           100: '#cffafe',

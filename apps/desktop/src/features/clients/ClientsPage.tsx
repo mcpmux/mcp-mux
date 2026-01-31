@@ -26,7 +26,7 @@ import {
   Card,
   CardContent,
   Button,
-} from '@mcmux/ui';
+} from '@mcpmux/ui';
 import type { OAuthClient, UpdateClientRequest } from '@/lib/api/gateway';
 import { listOAuthClients, updateOAuthClient, deleteOAuthClient } from '@/lib/api/gateway';
 import type { Space } from '@/lib/api/spaces';

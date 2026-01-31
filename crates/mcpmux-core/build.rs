@@ -25,7 +25,7 @@ fn main() {
     let content = fs::read_to_string(&branding_path).expect("Failed to read branding.toml");
 
     // Simple TOML parsing without external dependency
-    let display_name = extract_toml_string(&content, "display_name").unwrap_or("MCP Mux");
+    let display_name = extract_toml_string(&content, "display_name").unwrap_or("McpMux");
     let identifier = extract_toml_string(&content, "identifier").unwrap_or("com.mcpmux.app");
     let deep_link_scheme = extract_toml_string(&content, "deep_link_scheme").unwrap_or("mcpmux");
     let domain = extract_toml_string(&content, "domain").unwrap_or("mcpmux.com");
@@ -98,7 +98,7 @@ fn generate_defaults() {
     let rust_code = r#"// Auto-generated branding constants (defaults - no branding.toml found)
 // Create branding.toml in workspace root to customize
 
-pub const DISPLAY_NAME: &str = "MCP Mux";
+pub const DISPLAY_NAME: &str = "McpMux";
 pub const IDENTIFIER: &str = "com.mcpmux.app";
 pub const DEEP_LINK_SCHEME: &str = "mcpmux";
 pub const DOMAIN: &str = "mcpmux.com";

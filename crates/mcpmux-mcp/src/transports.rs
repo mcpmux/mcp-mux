@@ -14,7 +14,7 @@ use rmcp::{
     ClientHandler,
     RoleClient,
     ServiceExt,
-    model::{CallToolRequestParam, CallToolResult, ClientCapabilities, ClientInfo, Implementation, ListToolsResult, Tool},
+    model::{CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo, Implementation, ListToolsResult, Tool},
     service::RunningService,
     transport::{ConfigureCommandExt, TokioChildProcess},
 };
@@ -72,7 +72,7 @@ pub struct ServerInfo {
 /// Type alias for a connected MCP client
 pub type McpClient = RunningService<RoleClient, McpClientHandler>;
 
-/// Custom client handler for MCMux
+/// Custom client handler for McpMux
 #[derive(Clone)]
 pub struct McpClientHandler {
     info: ClientInfo,
@@ -85,12 +85,13 @@ impl McpClientHandler {
                 protocol_version: Default::default(),
                 capabilities: ClientCapabilities::default(),
                 client_info: Implementation {
-                    name: format!("mcmux-{}", server_id),
+                    name: format!("mcpmux-{}", server_id),
                     version: env!("CARGO_PKG_VERSION").to_string(),
-                    title: Some("MCMux Gateway".to_string()),
+                    title: Some("McpMux Gateway".to_string()),
                     icons: None,
                     website_url: None,
                 },
+                meta: None,
             },
         }
     }
@@ -191,10 +192,11 @@ impl McpSession {
 
         let result = self.client
             .peer()
-            .call_tool(CallToolRequestParam {
+            .call_tool(CallToolRequestParams {
                 name: name.to_string().into(),
                 arguments: args,
                 task: None,
+                meta: None,
             })
             .await
             .context("Tool call failed")?;
@@ -415,6 +417,6 @@ mod tests {
     fn test_client_handler() {
         let handler = McpClientHandler::new("test-server");
         let info = handler.get_info();
-        assert!(info.client_info.name.contains("mcmux"));
+        assert!(info.client_info.name.contains("mcpmux"));
     }
 }

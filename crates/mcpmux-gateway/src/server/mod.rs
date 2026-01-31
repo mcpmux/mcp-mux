@@ -31,7 +31,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
 
-use crate::mcp::{McmuxGatewayHandler, mcp_oauth_middleware};
+use crate::mcp::{McpMuxGatewayHandler, mcp_oauth_middleware};
 use crate::consumers::MCPNotifier;
 use rmcp::transport::streamable_http_server::{StreamableHttpService, StreamableHttpServerConfig, session::local::LocalSessionManager};
 use tokio_util::sync::CancellationToken;
@@ -231,7 +231,7 @@ impl GatewayServer {
         }
         
         // Create MCP handler
-        let handler = McmuxGatewayHandler::new(
+        let handler = McpMuxGatewayHandler::new(
             Arc::new(self.services.clone()),
             notification_bridge.clone(),
         );
@@ -270,7 +270,7 @@ impl GatewayServer {
         // Supports both DCR (simple IDs) and CIMD (URL-encoded IDs)
         // Clients should URL-encode client_ids that contain special characters
         let client_features_routes = Router::new()
-            .route("/oauth/clients/:client_id/features", get(handlers::oauth_get_client_features))
+            .route("/oauth/clients/{client_id}/features", get(handlers::oauth_get_client_features))
             .with_state(app_state.clone());
 
         let mut router = Router::new()
@@ -302,8 +302,8 @@ impl GatewayServer {
             // Client management (for desktop app)
             .route("/oauth/clients", get(handlers::oauth_list_clients))
             // Client CRUD - expects URL-encoded client_id for CIMD clients
-            .route("/oauth/clients/:client_id", put(handlers::oauth_update_client))
-            .route("/oauth/clients/:client_id", delete(handlers::oauth_delete_client))
+            .route("/oauth/clients/{client_id}", put(handlers::oauth_update_client))
+            .route("/oauth/clients/{client_id}", delete(handlers::oauth_delete_client))
             // Protected MCP routes (using rmcp's StreamableHttpService)
             .merge(mcp_routes)
             // Client features (needs services)

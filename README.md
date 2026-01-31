@@ -1,4 +1,4 @@
-# MCP Mux - Centralized MCP Server Management
+# McpMux - Centralized MCP Server Management
 
 [![License: Elastic-2.0](https://img.shields.io/badge/License-Elastic%202.0-blue.svg)](LICENSE)
 
@@ -55,7 +55,7 @@ mcpmux/
 
 ## Architecture
 
-MCP Mux acts as a local gateway that:
+McpMux acts as a local gateway that:
 
 1. **Aggregates** multiple MCP servers into a single endpoint
 2. **Manages** credentials securely per space
@@ -70,7 +70,7 @@ MCP Mux acts as a local gateway that:
                       │ OAuth 2.1 + PKCE
                       ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  MCP Mux Gateway                          │
+│                  McpMux Gateway                          │
 │                 localhost:9315                          │
 ├─────────────────────────────────────────────────────────┤
 │  ┌─────────┐  ┌─────────┐  ┌─────────────┐            │

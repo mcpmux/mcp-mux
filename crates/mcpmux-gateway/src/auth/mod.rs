@@ -4,7 +4,6 @@
 //! Also provides JWT token creation/validation for OAuth 2.0 flow.
 
 use axum::{
-    async_trait,
     body::Body,
     extract::FromRequestParts,
     http::{header, request::Parts, Request, StatusCode},
@@ -34,7 +33,6 @@ pub struct AuthenticatedClient {
 /// Access key authentication extractor
 pub struct AccessKeyAuth(pub AuthenticatedClient);
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AccessKeyAuth
 where
     S: Send + Sync,
@@ -200,7 +198,6 @@ pub struct TokenClaims {
 /// 
 /// Usage in handlers: `claims: TokenClaims`
 /// Handlers only receive claims, not entire auth context
-#[async_trait]
 impl<S> FromRequestParts<S> for TokenClaims
 where
     S: Send + Sync,
@@ -399,7 +396,7 @@ fn unauthorized_response_with_url(base_url: &str, error: &str, description: &str
     
     // WWW-Authenticate header per RFC 9728
     let www_authenticate = format!(
-        r#"Bearer realm="MCMux Gateway", error="{}", error_description="{}", resource_metadata="{}""#,
+        r#"Bearer realm="McpMux Gateway", error="{}", error_description="{}", resource_metadata="{}""#,
         error, description, resource_metadata_url
     );
 

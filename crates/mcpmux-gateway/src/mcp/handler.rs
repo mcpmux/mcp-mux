@@ -1,4 +1,4 @@
-//! MCMux Gateway MCP Handler
+//! McpMux Gateway MCP Handler
 //!
 //! Implements the MCP ServerHandler trait to expose aggregated tools, prompts,
 //! and resources from multiple backend MCP servers.
@@ -18,19 +18,19 @@ use crate::server::ServiceContainer;
 use super::context::{extract_oauth_context, OAuthContext};
 use crate::consumers::MCPNotifier;
 
-/// MCMux Gateway Handler
+/// McpMux Gateway Handler
 ///
 /// Routes MCP requests to appropriate backend services:
 /// - Authorization via FeatureService (grants, spaces)
 /// - Tool/prompt/resource routing via PoolService
 /// - Server management via ServerManager
 #[derive(Clone)]
-pub struct McmuxGatewayHandler {
+pub struct McpMuxGatewayHandler {
     pub services: Arc<ServiceContainer>,
     pub notification_bridge: Arc<MCPNotifier>,
 }
 
-impl McmuxGatewayHandler {
+impl McpMuxGatewayHandler {
     pub fn new(
         services: Arc<ServiceContainer>,
         notification_bridge: Arc<MCPNotifier>,
@@ -97,7 +97,7 @@ impl McmuxGatewayHandler {
     }
 }
 
-impl ServerHandler for McmuxGatewayHandler {
+impl ServerHandler for McpMuxGatewayHandler {
     fn get_info(&self) -> ServerInfo {
         use rmcp::model::{PromptsCapability, ResourcesCapability, ToolsCapability};
         
@@ -123,7 +123,7 @@ impl ServerHandler for McmuxGatewayHandler {
                 ..Default::default()
             },
             instructions: Some(
-                "MCMux aggregates multiple MCP servers. Use tools/prompts/resources \
+                "McpMux aggregates multiple MCP servers. Use tools/prompts/resources \
                  from your authorized backend servers.".to_string()
             ),
         }
@@ -131,7 +131,7 @@ impl ServerHandler for McmuxGatewayHandler {
 
     async fn initialize(
         &self,
-        params: InitializeRequestParam,
+        params: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         let oauth_ctx = self.get_oauth_context(&context.extensions)
@@ -173,7 +173,7 @@ impl ServerHandler for McmuxGatewayHandler {
 
     async fn list_tools(
         &self,
-        _params: Option<PaginatedRequestParam>,
+        _params: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let oauth_ctx = self.get_oauth_context(&context.extensions)
@@ -217,7 +217,7 @@ impl ServerHandler for McmuxGatewayHandler {
 
     async fn call_tool(
         &self,
-        params: CallToolRequestParam,
+        params: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let oauth_ctx = self.get_oauth_context(&context.extensions)
@@ -290,7 +290,7 @@ impl ServerHandler for McmuxGatewayHandler {
 
     async fn list_prompts(
         &self,
-        _params: Option<PaginatedRequestParam>,
+        _params: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
         let oauth_ctx = self.get_oauth_context(&context.extensions)
@@ -332,7 +332,7 @@ impl ServerHandler for McmuxGatewayHandler {
 
     async fn get_prompt(
         &self,
-        params: GetPromptRequestParam,
+        params: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResult, McpError> {
         let oauth_ctx = self.get_oauth_context(&context.extensions)
@@ -376,7 +376,7 @@ impl ServerHandler for McmuxGatewayHandler {
 
     async fn list_resources(
         &self,
-        _params: Option<PaginatedRequestParam>,
+        _params: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         let oauth_ctx = self.get_oauth_context(&context.extensions)
@@ -414,7 +414,7 @@ impl ServerHandler for McmuxGatewayHandler {
 
     async fn read_resource(
         &self,
-        params: ReadResourceRequestParam,
+        params: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
         let oauth_ctx = self.get_oauth_context(&context.extensions)

@@ -1,6 +1,6 @@
 //! Event Bus - Central event distribution system
 //!
-//! The event bus is the backbone of MCMux's event-driven architecture.
+//! The event bus is the backbone of McpMux's event-driven architecture.
 //! All domain events flow through this bus, enabling decoupled communication
 //! between producers (application services) and consumers (UI, MCP notifier, audit log).
 //!

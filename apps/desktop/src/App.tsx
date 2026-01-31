@@ -27,7 +27,7 @@ import {
   CardDescription,
   CardContent,
   Button,
-} from '@mcmux/ui';
+} from '@mcpmux/ui';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { OAuthConsentModal } from '@/components/OAuthConsentModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
@@ -66,7 +66,7 @@ function AppContent() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Zap className="h-6 w-6 text-primary-500" />
-              <span className="font-bold text-lg">MCP Mux</span>
+              <span className="font-bold text-lg">McpMux</span>
             </div>
             <button
               onClick={toggleDarkMode}
@@ -82,7 +82,7 @@ function AppContent() {
       }
       footer={
         <div className="text-xs text-[rgb(var(--muted))]">
-          <div>MCP Mux v0.1.0</div>
+          <div>McpMux v0.1.0</div>
           <div>Gateway: localhost:9315</div>
         </div>
       }
@@ -270,7 +270,7 @@ function DashboardView() {
       <div>
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <p className="text-[rgb(var(--muted))]">
-          Welcome to MCP Mux - your centralized MCP server manager.
+          Welcome to McpMux - your centralized MCP server manager.
         </p>
       </div>
 
@@ -454,13 +454,13 @@ function SettingsView() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-[rgb(var(--muted))]">Configure MCP Mux preferences.</p>
+        <p className="text-[rgb(var(--muted))]">Configure McpMux preferences.</p>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Appearance</CardTitle>
-          <CardDescription>Customize the look and feel of MCP Mux.</CardDescription>
+          <CardDescription>Customize the look and feel of McpMux.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">

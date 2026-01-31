@@ -5,7 +5,7 @@ import {
   Plus,
   Loader2,
 } from 'lucide-react';
-import { Button } from '@mcmux/ui';
+import { Button } from '@mcpmux/ui';
 import {
   useAppStore,
   useActiveSpace,

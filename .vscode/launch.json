@@ -4,8 +4,8 @@
         {
             "type": "lldb",
             "request": "attach",
-            "name": "Attach to MCMux Desktop",
-            "program": "${workspaceFolder}/mcmux/target/debug/mcmux-desktop.exe",
+            "name": "Attach to McpMux Desktop",
+            "program": "${workspaceFolder}/mcpmux/target/debug/mcpmux-desktop.exe",
             "pid": "${command:pickProcess}",
             "waitFor": true
         }

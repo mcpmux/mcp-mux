@@ -32,9 +32,9 @@ fn default_ui_config() -> UiConfig {
 pub struct ServerDiscoveryService {
     /// In-memory cache of all discovered servers, keyed by ID.
     servers: Arc<RwLock<HashMap<String, ServerDefinition>>>,
-    /// Path to user spaces directory (e.g. %LOCALAPPDATA%/mcmux/spaces)
+    /// Path to user spaces directory (e.g. %LOCALAPPDATA%/mcpmux/spaces)
     spaces_dir: PathBuf,
-    /// Path to app data directory (e.g. %LOCALAPPDATA%/mcmux)
+    /// Path to app data directory (e.g. %LOCALAPPDATA%/mcpmux)
     data_dir: PathBuf,
     /// HTTP client for fetching from Registry API
     registry_client: Option<RegistryApiClient>,
@@ -55,8 +55,8 @@ pub struct ServerDiscoveryService {
 impl ServerDiscoveryService {
     /// Create a new server discovery service.
     /// 
-    /// - `data_dir`: App data directory (e.g. %LOCALAPPDATA%/mcmux)
-    /// - `spaces_dir`: User spaces directory (e.g. %LOCALAPPDATA%/mcmux/spaces)
+    /// - `data_dir`: App data directory (e.g. %LOCALAPPDATA%/mcpmux)
+    /// - `spaces_dir`: User spaces directory (e.g. %LOCALAPPDATA%/mcpmux/spaces)
     pub fn new(data_dir: PathBuf, spaces_dir: PathBuf) -> Self {
         Self {
             servers: Arc::new(RwLock::new(HashMap::new())),
@@ -318,7 +318,7 @@ impl ServerDiscoveryService {
             bundle.servers.into_iter().map(|mut s| {
                 s.source = ServerSource::Registry {
                     url: registry_url.clone(),
-                    name: "MCMux Registry".to_string(),
+                    name: "McpMux Registry".to_string(),
                 };
                 s
             }).collect::<Vec<_>>()

@@ -3,7 +3,7 @@ name = "mcpmux-storage"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "SQLite storage with encryption for MCMux"
+description = "SQLite storage with encryption for McpMux"
 
 [dependencies]
 mcpmux-core.workspace = true

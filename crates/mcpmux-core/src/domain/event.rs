@@ -1,4 +1,4 @@
-//! Domain Events - Unified event system for MCMux
+//! Domain Events - Unified event system for McpMux
 //!
 //! All domain changes are represented as events in this module.
 //! Events are emitted by Application Services and consumed by:
@@ -141,7 +141,7 @@ impl ConnectionStatus {
 // DOMAIN EVENT ENUM
 // ============================================================================
 
-/// Unified domain events for the entire MCMux system
+/// Unified domain events for the entire McpMux system
 ///
 /// ALL domain state changes are represented in this enum.
 /// Application services emit these events after successful operations.

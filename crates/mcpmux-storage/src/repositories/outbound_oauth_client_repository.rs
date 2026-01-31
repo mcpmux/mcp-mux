@@ -1,6 +1,6 @@
 //! SQLite implementation of OutboundOAuthRepository.
 //! 
-//! Manages OUTBOUND OAuth registrations where MCMux acts as OAuth client
+//! Manages OUTBOUND OAuth registrations where McpMux acts as OAuth client
 //! connecting TO backend MCP servers (e.g., Cloudflare, Atlassian).
 
 use std::sync::Arc;

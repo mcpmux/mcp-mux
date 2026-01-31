@@ -1,5 +1,5 @@
 /**
- * Hooks - React hooks for the MCP Mux desktop application
+ * Hooks - React hooks for the McpMux desktop application
  */
 
 // Data synchronization

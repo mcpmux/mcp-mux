@@ -176,7 +176,7 @@ impl OutboundOAuthManager {
         self
     }
     
-    /// Get the DCR client name for a space (e.g., "MCP Mux (Work)")
+    /// Get the DCR client name for a space (e.g., "McpMux (Work)")
     async fn get_client_name_for_space(&self, space_id: Uuid) -> String {
         let space_name = if let Some(repo) = &self.space_repo {
             repo.get(&space_id)
@@ -513,7 +513,7 @@ impl OutboundOAuthManager {
 <body>
     <div class="container">
         <h1>✓ Authorization Complete</h1>
-        <p>You can close this window and return to MCP Mux.</p>
+        <p>You can close this window and return to McpMux.</p>
         <script>setTimeout(() => window.close(), 2000);</script>
     </div>
 </body>
@@ -854,7 +854,7 @@ impl OutboundOAuthManager {
         }
 
         // Use app name + space name for DCR to help users identify registrations
-        // e.g., "MCP Mux (Work)" vs "MCP Mux (Personal)"
+        // e.g., "McpMux (Work)" vs "McpMux (Personal)"
         let client_name = self.get_client_name_for_space(space_id).await;
 
         // Check if we can reuse existing DCR (redirect_uri must match)

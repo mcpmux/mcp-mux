@@ -188,7 +188,7 @@ pub trait FeatureSetRepository: Send + Sync {
 
 /// Inbound MCP Client repository trait
 /// 
-/// Manages MCP client entities (apps connecting TO MCMux).
+/// Manages MCP client entities (apps connecting TO McpMux).
 /// Works with the unified `inbound_clients` table.
 #[async_trait]
 pub trait InboundMcpClientRepository: Send + Sync {
@@ -273,8 +273,8 @@ pub trait CredentialRepository: Send + Sync {
 }
 
 /// Outbound OAuth Client repository (OUTBOUND)
-/// Stores MCMux's OAuth client registrations WITH backend MCP servers
-/// (MCMux acting as OAuth client connecting TO backends)
+/// Stores McpMux's OAuth client registrations WITH backend MCP servers
+/// (McpMux acting as OAuth client connecting TO backends)
 #[async_trait]
 pub trait OutboundOAuthRepository: Send + Sync {
     /// Get registration for a (space, server) combination

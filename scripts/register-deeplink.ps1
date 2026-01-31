@@ -1,4 +1,4 @@
-# MCP Mux Deep Link Registration Script
+# McpMux Deep Link Registration Script
 # 
 # Registers the mcpmux:// URL scheme handler for development.
 # Run this script once after cloning the repo (no admin required).
@@ -19,7 +19,7 @@ param(
 
 $scheme = "mcpmux"
 $regPath = "HKCU:\Software\Classes\$scheme"
-$displayName = "MCP Mux"
+$displayName = "McpMux"
 
 # Handle unregister
 if ($Unregister) {
@@ -46,16 +46,16 @@ if (-not $ExePath) {
     $repoRoot = Split-Path -Parent $scriptDir
     
     # Check for debug build first, then release
-    $debugExe = Join-Path $repoRoot "target\debug\mcmux-desktop.exe"
-    $releaseExe = Join-Path $repoRoot "target\release\mcmux-desktop.exe"
+    $debugExe = Join-Path $repoRoot "target\debug\mcpmux-desktop.exe"
+    $releaseExe = Join-Path $repoRoot "target\release\mcpmux-desktop.exe"
     
     if (Test-Path $debugExe) {
         $ExePath = $debugExe
     } elseif (Test-Path $releaseExe) {
         $ExePath = $releaseExe
     } else {
-        Write-Host "✗ Could not find mcmux-desktop.exe" -ForegroundColor Red
-        Write-Host "  Run 'cargo build -p mcmux-desktop' first, or specify -ExePath" -ForegroundColor Yellow
+        Write-Host "✗ Could not find mcpmux-desktop.exe" -ForegroundColor Red
+        Write-Host "  Run 'cargo build -p mcpmux-desktop' first, or specify -ExePath" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  Usage:" -ForegroundColor Gray
         Write-Host "    .\register-deeplink.ps1              # Auto-find and register" -ForegroundColor White

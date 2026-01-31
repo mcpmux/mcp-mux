@@ -3,7 +3,7 @@ name = "mcpmux-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "MCMux core domain logic, entities, and business rules"
+description = "McpMux core domain logic, entities, and business rules"
 
 [dependencies]
 serde.workspace = true

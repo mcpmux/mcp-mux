@@ -24,7 +24,7 @@ use mcpmux_core::DomainEvent;
 pub struct ClientSession {
     /// Session ID
     pub id: Uuid,
-    /// Client ID (from MCMux)
+    /// Client ID (from McpMux)
     pub client_id: Uuid,
     /// Access key used
     pub access_key: String,

@@ -1,4 +1,4 @@
-//! # MCMux MCP Library
+//! # McpMux MCP Library
 //!
 //! MCP protocol implementation, client pool, and gateway functionality.
 //!

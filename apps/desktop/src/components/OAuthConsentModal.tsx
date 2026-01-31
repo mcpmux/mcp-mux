@@ -21,7 +21,7 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
-} from '@mcmux/ui';
+} from '@mcpmux/ui';
 import { listSpaces, type Space } from '@/lib/api/spaces';
 
 /** Minimal deep link payload - only request_id */

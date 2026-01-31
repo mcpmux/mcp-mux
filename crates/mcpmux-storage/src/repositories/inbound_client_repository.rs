@@ -1,6 +1,6 @@
 //! Inbound Client Repository for persistent storage of OAuth clients, codes, and tokens.
 //!
-//! This module provides database-backed storage for INBOUND clients (apps connecting TO MCMux):
+//! This module provides database-backed storage for INBOUND clients (apps connecting TO McpMux):
 //! - Registered clients (via CIMD, DCR, or pre-registration)
 //! - Authorization codes (temporary, for PKCE flow)
 //! - Access and refresh tokens

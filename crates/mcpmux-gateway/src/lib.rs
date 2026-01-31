@@ -1,4 +1,4 @@
-//! MCMux Gateway
+//! McpMux Gateway
 //!
 //! MCP proxy server that provides:
 //! - OAuth 2.1 authentication for remote MCP servers
@@ -50,7 +50,7 @@ pub use pool::{
 pub use services::{EventEmitter, GrantService, PrefixCacheService};
 
 // MCP module (rmcp-based implementation)
-pub use mcp::McmuxGatewayHandler;
+pub use mcp::McpMuxGatewayHandler;
 
 // Event-driven architecture consumers
 pub use consumers::MCPNotifier;

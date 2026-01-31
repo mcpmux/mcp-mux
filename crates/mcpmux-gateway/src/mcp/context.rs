@@ -26,23 +26,23 @@ pub fn extract_oauth_context(extensions: &Extensions) -> Result<OAuthContext> {
         .ok_or_else(|| anyhow!("HTTP request parts not found in extensions"))?;
     
     // Extract client_id from header
-    let client_id = parts.headers.get("x-mcmux-client-id")
+    let client_id = parts.headers.get("x-mcpmux-client-id")
         .ok_or_else(|| {
             let has_auth = parts.headers.get("authorization").is_some();
             anyhow!(
-                "x-mcmux-client-id header missing (Authorization header present: {}). Middleware may not have run or client reconnected without auth.",
+                "x-mcpmux-client-id header missing (Authorization header present: {}). Middleware may not have run or client reconnected without auth.",
                 has_auth
             )
         })?
         .to_str()
-        .map_err(|_| anyhow!("Invalid x-mcmux-client-id header value"))?
+        .map_err(|_| anyhow!("Invalid x-mcpmux-client-id header value"))?
         .to_string();
     
     // Extract space_id from header
-    let space_id_str = parts.headers.get("x-mcmux-space-id")
-        .ok_or_else(|| anyhow!("x-mcmux-space-id header missing"))?
+    let space_id_str = parts.headers.get("x-mcpmux-space-id")
+        .ok_or_else(|| anyhow!("x-mcpmux-space-id header missing"))?
         .to_str()
-        .map_err(|_| anyhow!("Invalid x-mcmux-space-id header value"))?;
+        .map_err(|_| anyhow!("Invalid x-mcpmux-space-id header value"))?;
     
     let space_id = Uuid::parse_str(space_id_str)
         .map_err(|e| anyhow!("Failed to parse space_id: {}", e))?;

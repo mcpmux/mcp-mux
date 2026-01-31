@@ -116,10 +116,11 @@ impl PoolService {
 
         match client_handle {
             Some(client) => {
-                use rmcp::model::ReadResourceRequestParam;
+                use rmcp::model::ReadResourceRequestParams;
                 
-                let params = ReadResourceRequestParam {
+                let params = ReadResourceRequestParams {
                     uri: uri.into(),
+                    meta: None,
                 };
                 
                 let res = client.read_resource(params).await
@@ -152,11 +153,12 @@ impl PoolService {
 
         match client_handle {
             Some(client) => {
-                use rmcp::model::GetPromptRequestParam;
+                use rmcp::model::GetPromptRequestParams;
                 
-                let params = GetPromptRequestParam {
+                let params = GetPromptRequestParams {
                     name: prompt_name.into(),
                     arguments,
+                    meta: None,
                 };
                 
                 let res = client.get_prompt(params).await

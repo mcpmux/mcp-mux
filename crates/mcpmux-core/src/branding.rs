@@ -60,7 +60,7 @@ pub fn schema_url(schema_name: &str) -> String {
 /// # Example
 /// ```ignore
 /// let title = branding::window_title("Settings");
-/// // Returns: "MCP Mux — Settings"
+/// // Returns: "McpMux — Settings"
 /// ```
 pub fn window_title(suffix: &str) -> String {
     format!("{} — {}", DISPLAY_NAME, suffix)
@@ -101,7 +101,7 @@ pub fn oauth_callback_path() -> &'static str {
 /// # Example
 /// ```ignore
 /// let name = branding::outbound_oauth_client_name();
-/// // Returns: "MCP Mux"
+/// // Returns: "McpMux"
 /// ```
 pub fn outbound_oauth_client_name() -> &'static str {
     DISPLAY_NAME
@@ -109,16 +109,16 @@ pub fn outbound_oauth_client_name() -> &'static str {
 
 /// Build the OAuth client name for DCR with optional space name
 ///
-/// When a space name is provided, returns "MCP Mux (Space Name)" to help users
+/// When a space name is provided, returns "McpMux (Space Name)" to help users
 /// identify which space a registration belongs to when viewing authorized apps.
 ///
 /// # Example
 /// ```ignore
 /// let name = branding::outbound_oauth_client_name_for_space(Some("Work"));
-/// // Returns: "MCP Mux (Work)"
+/// // Returns: "McpMux (Work)"
 ///
 /// let name = branding::outbound_oauth_client_name_for_space(None);
-/// // Returns: "MCP Mux"
+/// // Returns: "McpMux"
 /// ```
 pub fn outbound_oauth_client_name_for_space(space_name: Option<&str>) -> String {
     match space_name {

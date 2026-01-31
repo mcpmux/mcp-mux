@@ -119,7 +119,7 @@ pub enum FetchBundleResult {
 // Client Implementation
 // ============================================
 
-/// Client for fetching data from MCMux Registry API
+/// Client for fetching data from McpMux Registry API
 ///
 /// This client only uses the bundle endpoint. Individual endpoints
 /// (servers, categories) are not used per ADR-001.
@@ -133,7 +133,7 @@ impl RegistryApiClient {
     pub fn new(base_url: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent("MCMux/1.0")
+            .user_agent("McpMux/1.0")
             .build()
             .expect("Failed to build HTTP client");
 

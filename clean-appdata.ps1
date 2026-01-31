@@ -1,10 +1,10 @@
-# Clean MCP Mux AppData for fresh start and migrations
+# Clean McpMux AppData for fresh start and migrations
 # This removes the database and any cached data
 
-$AppName = "com.mcpmux.app"
+$AppName = "com.mcpmux.desktop"
 $AppDataPath = Join-Path $env:LOCALAPPDATA $AppName
 
-Write-Host "MCP Mux AppData Cleaner" -ForegroundColor Cyan
+Write-Host "McpMux AppData Cleaner" -ForegroundColor Cyan
 Write-Host "=======================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -23,11 +23,11 @@ if (Test-Path $AppDataPath) {
     $confirm = Read-Host "Delete all contents? (Y/n)"
 
     if ($confirm -eq '' -or $confirm -eq 'y' -or $confirm -eq 'Y') {
-        # Check for running MCP Mux processes
-        $mcpmuxProcesses = Get-Process -Name "MCP Mux*", "mcpmux*" -ErrorAction SilentlyContinue
+        # Check for running McpMux processes
+        $mcpmuxProcesses = Get-Process -Name "McpMux*", "mcpmux*" -ErrorAction SilentlyContinue
         if ($mcpmuxProcesses) {
             Write-Host ""
-            Write-Host "⚠ MCP Mux is running! Processes found:" -ForegroundColor Yellow
+            Write-Host "⚠ McpMux is running! Processes found:" -ForegroundColor Yellow
             $mcpmuxProcesses | ForEach-Object { Write-Host "  - $($_.ProcessName) (PID: $($_.Id))" -ForegroundColor Yellow }
             Write-Host ""
             $killConfirm = Read-Host "Kill these processes? (Y/n)"
@@ -38,7 +38,7 @@ if (Test-Path $AppDataPath) {
             }
             else {
                 Write-Host ""
-                Write-Host "Cancelled. Please close MCP Mux first." -ForegroundColor Yellow
+                Write-Host "Cancelled. Please close McpMux first." -ForegroundColor Yellow
                 return
             }
         }
@@ -52,7 +52,7 @@ if (Test-Path $AppDataPath) {
         catch {
             Write-Host ""
             Write-Host "✗ Failed to clean AppData: $_" -ForegroundColor Red
-            Write-Host "  Make sure MCP Mux is not running." -ForegroundColor Yellow
+            Write-Host "  Make sure McpMux is not running." -ForegroundColor Yellow
         }
     }
     else {

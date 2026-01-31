@@ -13,5 +13,5 @@ pub mod handler;
 pub mod context;
 pub mod oauth_middleware;
 
-pub use handler::McmuxGatewayHandler;
+pub use handler::McpMuxGatewayHandler;
 pub use oauth_middleware::mcp_oauth_middleware;

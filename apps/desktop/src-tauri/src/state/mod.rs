@@ -76,7 +76,7 @@ impl AppState {
         let encryptor = Arc::new(FieldEncryptor::new(&master_key)?);
 
         // Open database
-        let db_path = data_dir.join("mcmux.db");
+        let db_path = data_dir.join("mcpmux.db");
         info!("Opening database at {:?}", db_path);
 
         let db = Database::open(&db_path)?;
@@ -126,7 +126,7 @@ impl AppState {
         std::fs::create_dir_all(&spaces_dir)?;
         info!("Using spaces directory: {:?}", spaces_dir);
         
-        let registry_url = std::env::var("MCMUX_REGISTRY_URL")
+        let registry_url = std::env::var("MCPMUX_REGISTRY_URL")
             .unwrap_or_else(|_| "http://localhost:8787".to_string());
         info!("Using Registry API URL: {}", registry_url);
         

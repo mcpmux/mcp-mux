@@ -1,4 +1,4 @@
-//! System tray implementation for MCMux
+//! System tray implementation for McpMux
 //!
 //! Provides a system tray icon with quick access to:
 //! - Space switching
@@ -35,8 +35,8 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     let menu = build_tray_menu(app)?;
 
-    let _tray = TrayIconBuilder::with_id("mcmux-tray")
-        .tooltip("MCMux - MCP Server Manager")
+    let _tray = TrayIconBuilder::with_id("mcpmux-tray")
+        .tooltip("McpMux - MCP Server Manager")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| {
@@ -81,14 +81,14 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     // Build main menu
     let menu = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id("status", "MCMux 🟢").enabled(false).build(app)?)
+        .item(&MenuItemBuilder::with_id("status", "McpMux 🟢").enabled(false).build(app)?)
         .separator()
         .item(&space_submenu)
         .separator()
         .text("refresh", "🔄 Refresh All Servers")
         .item(&export_submenu)
         .separator()
-        .text("open", "⚙️ Open MCMux")
+        .text("open", "⚙️ Open McpMux")
         .item(&PredefinedMenuItem::separator(app)?)
         .text("quit", "❌ Quit")
         .build()?;
@@ -185,7 +185,7 @@ pub async fn update_tray_spaces<R: Runtime>(
     let active_space = state.space_service.get_active().await.ok().flatten();
 
     // Get tray handle
-    if let Some(tray) = app.tray_by_id("mcmux-tray") {
+    if let Some(tray) = app.tray_by_id("mcpmux-tray") {
         // Rebuild space submenu
         let mut space_menu = SubmenuBuilder::new(app, "Active Space");
 
@@ -211,7 +211,7 @@ pub async fn update_tray_spaces<R: Runtime>(
 
         let menu = MenuBuilder::new(app)
             .item(
-                &MenuItemBuilder::with_id("status", "MCMux 🟢")
+                &MenuItemBuilder::with_id("status", "McpMux 🟢")
                     .enabled(false)
                     .build(app)?,
             )
@@ -221,7 +221,7 @@ pub async fn update_tray_spaces<R: Runtime>(
             .text("refresh", "🔄 Refresh All Servers")
             .item(&export_submenu)
             .separator()
-            .text("open", "⚙️ Open MCMux")
+            .text("open", "⚙️ Open McpMux")
             .item(&PredefinedMenuItem::separator(app)?)
             .text("quit", "❌ Quit")
             .build()?;
@@ -235,12 +235,12 @@ pub async fn update_tray_spaces<R: Runtime>(
 /// Update tray icon based on status
 #[allow(dead_code)]
 pub fn update_tray_status<R: Runtime>(app: &AppHandle<R>, status: TrayStatus) -> tauri::Result<()> {
-    if let Some(tray) = app.tray_by_id("mcmux-tray") {
+    if let Some(tray) = app.tray_by_id("mcpmux-tray") {
         let tooltip = match status {
-            TrayStatus::Healthy => "MCMux - All systems healthy",
-            TrayStatus::Warning => "MCMux - Some warnings",
-            TrayStatus::Error => "MCMux - Errors present",
-            TrayStatus::Offline => "MCMux - Offline",
+            TrayStatus::Healthy => "McpMux - All systems healthy",
+            TrayStatus::Warning => "McpMux - Some warnings",
+            TrayStatus::Error => "McpMux - Errors present",
+            TrayStatus::Offline => "McpMux - Offline",
         };
         tray.set_tooltip(Some(tooltip))?;
     }

@@ -99,7 +99,7 @@ export const useAppStore = create<AppStore>()(
         }),
     })),
     {
-      name: 'mcmux-storage',
+      name: 'mcpmux-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         // Only persist these fields

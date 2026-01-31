@@ -95,7 +95,7 @@ export type RegistrationType = 'cimd' | 'dcr' | 'preregistered';
 /**
  * Inbound client (unified OAuth + MCP model)
  * 
- * Represents apps connecting TO MCP Mux (e.g., Cursor, VS Code, Claude Desktop).
+ * Represents apps connecting TO McpMux (e.g., Cursor, VS Code, Claude Desktop).
  * Supports three MCP registration approaches:
  * - CIMD: Client ID Metadata Documents (client_id is a URL)
  * - DCR: Dynamic Client Registration (server generates client_id)

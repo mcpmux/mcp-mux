@@ -1,6 +1,6 @@
-//! Outbound OAuth Registration - MCMux's OAuth credentials with backend servers
+//! Outbound OAuth Registration - McpMux's OAuth credentials with backend servers
 //!
-//! OUTBOUND: MCMux acting as OAuth CLIENT connecting TO backend MCP servers
+//! OUTBOUND: McpMux acting as OAuth CLIENT connecting TO backend MCP servers
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -38,13 +38,13 @@ pub struct StoredOAuthMetadata {
     pub additional_fields: HashMap<String, serde_json::Value>,
 }
 
-/// MCMux's OUTBOUND OAuth client registration WITH a backend MCP server.
+/// McpMux's OUTBOUND OAuth client registration WITH a backend MCP server.
 /// 
 /// When connecting to OAuth-protected servers (e.g., Cloudflare, Atlassian),
-/// MCMux registers as an OAuth client with them via DCR.
+/// McpMux registers as an OAuth client with them via DCR.
 /// 
 /// This stores:
-/// - The client_id MCMux received from their DCR
+/// - The client_id McpMux received from their DCR
 /// - The redirect_uri used during DCR (includes port)
 /// - The server_url for AuthorizationManager creation
 /// 

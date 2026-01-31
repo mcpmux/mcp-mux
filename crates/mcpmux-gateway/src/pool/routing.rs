@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use mcpmux_core::{FeatureType, ServerLogManager, LogLevel, ServerLog, LogSource};
-use rmcp::model::CallToolRequestParam;
+use rmcp::model::CallToolRequestParams;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -277,12 +277,13 @@ impl RoutingService {
                 client.peer().clone()
             });
 
-            match client_handle {
+                match client_handle {
                 Some(client) => {
-                    let params = CallToolRequestParam {
+                    let params = CallToolRequestParams {
                         name: tool_name.into(),
                         arguments: args.as_object().cloned(),
                         task: None,
+                        meta: None,
                     };
                     
                     // Wrap call_tool with timeout to prevent hanging

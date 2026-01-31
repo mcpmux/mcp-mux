@@ -1,4 +1,4 @@
--- MCMux Database Schema v4 (Unified Client Model)
+-- McpMux Database Schema v4 (Unified Client Model)
 -- 
 -- Architecture:
 -- - Server definitions come from REGISTRY (JSON/API), NOT database
@@ -6,7 +6,7 @@
 -- 
 -- OAuth Model (Unified):
 -- - clients: Unified table for OAuth registration (DCR) + user preferences + grants
--- - backend_oauth_registrations: MCMux's OAuth client credentials with remote MCP servers
+-- - backend_oauth_registrations: McpMux's OAuth client credentials with remote MCP servers
 -- - oauth_authorization_codes: Pending auth codes during PKCE flow
 -- - oauth_tokens: Access/refresh tokens we issue to clients
 --
@@ -108,13 +108,13 @@ CREATE INDEX IF NOT EXISTS idx_credentials_space_server ON credentials(space_id,
 
 -- ============================================================================
 -- OUTBOUND OAUTH CLIENTS
--- MCMux acting as OAuth CLIENT when connecting TO backend MCP servers
--- (e.g., MCMux → Cloudflare, Atlassian, GitHub servers that require OAuth)
+-- McpMux acting as OAuth CLIENT when connecting TO backend MCP servers
+-- (e.g., McpMux → Cloudflare, Atlassian, GitHub servers that require OAuth)
 -- 
--- This is for OUTBOUND connections where MCMux authenticates TO backend servers.
--- (For INBOUND: external apps → MCMux, see inbound_oauth_clients & inbound_mcp_clients)
+-- This is for OUTBOUND connections where McpMux authenticates TO backend servers.
+-- (For INBOUND: external apps → McpMux, see inbound_oauth_clients & inbound_mcp_clients)
 --
--- Stores MCMux's client_id on each backend server (from DCR with that server).
+-- Stores McpMux's client_id on each backend server (from DCR with that server).
 -- Also caches OAuth metadata to avoid RMCP discovery failures on non-spec-compliant servers.
 -- ============================================================================
 
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS outbound_oauth_clients (
     space_id TEXT NOT NULL,
     server_id TEXT NOT NULL,   -- Registry server ID (e.g., "cloudflare-mcp")
     server_url TEXT NOT NULL,  -- Base URL for backend MCP server
-    client_id TEXT NOT NULL,   -- MCMux's client_id on that backend server (from DCR)
+    client_id TEXT NOT NULL,   -- McpMux's client_id on that backend server (from DCR)
     redirect_uri TEXT,         -- Callback URI used during DCR (for port change detection)
     metadata_json TEXT,        -- Cached OAuth metadata as JSON (for RMCP's set_metadata)
 
@@ -236,7 +236,7 @@ CREATE INDEX IF NOT EXISTS idx_fsm_feature_set ON feature_set_members(feature_se
 
 -- ============================================================================
 -- INBOUND CLIENTS (Unified OAuth + MCP Model)
--- Applications connecting TO MCMux (e.g., Cursor, VS Code, Claude Desktop)
+-- Applications connecting TO McpMux (e.g., Cursor, VS Code, Claude Desktop)
 --
 -- Supports three MCP registration approaches (per MCP spec 2025-11-25):
 -- 1. Client ID Metadata Documents (CIMD) - client_id is a URL

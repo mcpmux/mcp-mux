@@ -23,7 +23,7 @@ import {
   CardDescription,
   CardContent,
   Button,
-} from '@mcmux/ui';
+} from '@mcpmux/ui';
 import type { FeatureSet, CreateFeatureSetInput } from '@/lib/api/featureSets';
 import {
   listFeatureSetsBySpace,

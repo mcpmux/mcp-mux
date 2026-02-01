@@ -2,10 +2,10 @@
 //!
 //! Centralized MCP Server Management Desktop Application
 
+use mcpmux_core::branding;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
-use mcpmux_core::branding;
 use tracing::{error, info, warn};
 
 mod commands;
@@ -25,12 +25,12 @@ use state::AppState;
 const APP_IDENTIFIER: &str = env!("TAURI_APP_IDENTIFIER");
 
 /// Get the app local data directory (same as Tauri's app_local_data_dir)
-/// 
+///
 /// Uses Local (not Roaming) because our data is machine-specific:
 /// - Database contains machine-specific server paths
 /// - Logs are machine-specific
 /// - Large files shouldn't roam in enterprise environments
-/// 
+///
 /// Uses APP_IDENTIFIER from tauri.conf.json (via build.rs) for consistency.
 /// - Windows: %LOCALAPPDATA%/<identifier>/
 /// - macOS: ~/Library/Application Support/<identifier>/
@@ -47,26 +47,26 @@ fn get_logs_dir() -> std::path::PathBuf {
 }
 
 /// Initialize tracing for the application with console and file logging
-/// 
+///
 /// - Console: colored, compact format
 /// - File: daily rotation in ~/.local/share/mcpmux/logs/ (Linux)
 ///   or %LOCALAPPDATA%/mcpmux/logs/ (Windows)
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
-    
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
     // Load .env file if present (for development)
     // Try multiple locations: current dir, parent dir (for tauri dev), src-tauri parent
     dotenvy::dotenv().ok();
     dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
-    
+
     let logs_dir = get_logs_dir();
-    
+
     // Create logs directory if it doesn't exist
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
         eprintln!("Warning: Failed to create logs directory: {}", e);
     }
-    
+
     // File appender with daily rotation
     // Creates files like: mcpmux.2026-01-22.log
     let file_appender = RollingFileAppender::builder()
@@ -76,24 +76,23 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         .build(&logs_dir)
         .expect("Failed to create log file appender");
     let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
-    
+
     // Environment filter for log levels
     // RUST_LOG takes precedence, with sensible defaults for our crates
     // Note: Rust crate names use underscores in tracing (e.g., mcpmux-core → mcpmux_core)
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            // Default filter when RUST_LOG is not set
-            EnvFilter::new("info")
-                .add_directive("mcpmux_core=debug".parse().unwrap())
-                .add_directive("mcpmux_gateway=debug".parse().unwrap())
-                .add_directive("mcpmux_storage=debug".parse().unwrap())
-                .add_directive("mcpmux_mcp=debug".parse().unwrap())
-                .add_directive("mcpmux_lib=debug".parse().unwrap())
-                .add_directive("tauri=info".parse().unwrap())
-                .add_directive("tao=warn".parse().unwrap())
-                .add_directive("wry=warn".parse().unwrap())
-        });
-    
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        // Default filter when RUST_LOG is not set
+        EnvFilter::new("info")
+            .add_directive("mcpmux_core=debug".parse().unwrap())
+            .add_directive("mcpmux_gateway=debug".parse().unwrap())
+            .add_directive("mcpmux_storage=debug".parse().unwrap())
+            .add_directive("mcpmux_mcp=debug".parse().unwrap())
+            .add_directive("mcpmux_lib=debug".parse().unwrap())
+            .add_directive("tauri=info".parse().unwrap())
+            .add_directive("tao=warn".parse().unwrap())
+            .add_directive("wry=warn".parse().unwrap())
+    });
+
     // Console layer: colored, compact
     let console_layer = fmt::layer()
         .with_ansi(true)
@@ -102,7 +101,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         .with_line_number(false)
         .with_file(false)
         .with_target(true);
-    
+
     // File layer: no colors, include more detail
     let file_layer = fmt::layer()
         .with_writer(non_blocking_file)
@@ -111,14 +110,14 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         .with_line_number(true)
         .with_file(true)
         .with_target(true);
-    
+
     // Combine layers
     tracing_subscriber::registry()
         .with(env_filter)
         .with(console_layer)
         .with(file_layer)
         .init();
-    
+
     // Return guard - must be kept alive for the duration of the program
     guard
 }
@@ -139,13 +138,13 @@ fn get_logs_path() -> String {
 #[tauri::command]
 async fn open_logs_folder() -> Result<(), String> {
     let logs_dir = get_logs_dir();
-    
+
     // Create directory if it doesn't exist
     if !logs_dir.exists() {
         std::fs::create_dir_all(&logs_dir)
             .map_err(|e| format!("Failed to create logs directory: {}", e))?;
     }
-    
+
     // Open in system file explorer
     #[cfg(target_os = "windows")]
     {
@@ -154,7 +153,7 @@ async fn open_logs_folder() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
@@ -162,7 +161,7 @@ async fn open_logs_folder() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
@@ -170,7 +169,7 @@ async fn open_logs_folder() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
-    
+
     Ok(())
 }
 
@@ -178,9 +177,13 @@ async fn open_logs_folder() -> Result<(), String> {
 pub fn run() {
     // Keep the guard alive for the entire program - dropping it stops file logging
     let _log_guard = init_tracing();
-    
+
     let logs_dir = get_logs_dir();
-    info!("Starting {} Desktop v{}", branding::DISPLAY_NAME, env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting {} Desktop v{}",
+        branding::DISPLAY_NAME,
+        env!("CARGO_PKG_VERSION")
+    );
     info!("Logs directory: {}", logs_dir.display());
 
     tauri::Builder::default()
@@ -190,7 +193,7 @@ pub fn run() {
             // This callback is called when a second instance is launched
             info!("Second instance detected, focusing existing window");
             info!("Args: {:?}, CWD: {:?}", args, cwd);
-            
+
             // Check if any arg is a deep link URL
             for arg in &args {
                 if branding::is_deep_link(arg) {
@@ -232,14 +235,14 @@ pub fn run() {
                 error!("Failed to initialize application state: {}", e);
                 e.to_string()
             })?;
-            
+
             app.manage(state);
 
             // Create event bus and ServerAppService
             let app_state: tauri::State<'_, AppState> = app.state();
             let event_bus = mcpmux_core::create_shared_event_bus();
             let event_sender = event_bus.sender();
-            
+
             let server_app_service = mcpmux_core::ServerAppService::new(
                 app_state.installed_server_repository.clone(),
                 Some(app_state.feature_set_repository.clone()),
@@ -247,16 +250,16 @@ pub fn run() {
                 Some(app_state.credential_repository.clone()),
                 event_sender,
             );
-            
+
             let managed_app_service = Arc::new(RwLock::new(Some(server_app_service)));
             app.manage(managed_app_service);
 
             // Create gateway state and auto-start gateway
             let gateway_state = Arc::new(RwLock::new(GatewayAppState::default()));
-            
+
             // Create server manager state (will be initialized when gateway starts)
             let server_manager_state = Arc::new(RwLock::new(ServerManagerState::default()));
-            
+
             // Get repositories for pool services (clone before moving into spawn)
             let db_for_gateway = app_state.database();
             let installed_server_repo = app_state.installed_server_repository.clone();
@@ -268,7 +271,7 @@ pub fn run() {
             let server_log_manager = app_state.server_log_manager.clone();
             let port_service = app_state.gateway_port_service.clone();
             let settings_repo = app_state.settings_repository.clone();
-            
+
             // Auto-start gateway on app launch
             let gw_state_clone = gateway_state.clone();
             let sm_state_clone = server_manager_state.clone();
@@ -279,7 +282,7 @@ pub fn run() {
                     info!("[Gateway] Auto-start disabled, skipping");
                     return;
                 }
-                
+
                 // Resolve port using the service (Single Responsibility)
                 let final_port = match port_service.resolve_and_allocate().await {
                     Ok(port) => port,
@@ -288,10 +291,10 @@ pub fn run() {
                         return;
                     }
                 };
-                
+
                 let url = format!("http://localhost:{}", final_port);
                 info!("Auto-starting gateway on {}", url);
-                
+
                 // Load JWT signing secret from keychain (or create if first run)
                 use mcpmux_storage::{JwtSecretProvider, KeychainJwtSecretProvider};
                 let jwt_secret = match KeychainJwtSecretProvider::new() {
@@ -323,11 +326,11 @@ pub fn run() {
                     .with_database(db_for_gateway)
                     .with_state_dir(app_data_dir.clone())
                     .with_settings_repo(settings_repo);
-                
+
                 if let Some(secret) = jwt_secret {
                     deps_builder = deps_builder.with_jwt_secret(secret);
                 }
-                
+
                 let dependencies = match deps_builder.build() {
                     Ok(deps) => deps,
                     Err(e) => {
@@ -335,34 +338,34 @@ pub fn run() {
                         return;
                     }
                 };
-                
+
                 // Create gateway config
                 let config = mcpmux_gateway::GatewayConfig {
                     host: "127.0.0.1".to_string(),  // Bind address must be IP
                     port: final_port,
                     enable_cors: true,
                 };
-                
+
                 // Create self-contained gateway server with DI
                 // Gateway auto-initializes all services and auto-connects enabled servers
                 let server = mcpmux_gateway::GatewayServer::new(config, dependencies);
                 let gw_inner_state = server.state();
-                
+
                 // Get services from gateway
                 let pool_service = server.pool_service();
                 let feature_service = server.feature_service();
                 let server_manager_arc = server.server_manager();
                 let event_emitter = server.event_emitter();
                 let grant_service = server.grant_service();
-                
+
                 // Start domain event bridge
                 crate::commands::gateway::start_domain_event_bridge(&app_handle_for_sm, gw_inner_state.clone());
-                
+
                 // Subscribe to OAuth completion events
                 let oauth_completion_rx = pool_service.oauth_manager().subscribe();
-                
+
                 info!("[Gateway] Services initialized via DI");
-                
+
                 // Store ServerManager and PoolService in state
                 {
                     let mut sm_state = sm_state_clone.write().await;
@@ -370,7 +373,7 @@ pub fn run() {
                     sm_state.pool_service = Some(pool_service.clone());
                 }
                 info!("[Gateway] ServerManager initialized with event bridge");
-                
+
                 // Start OAuth completion handler - reconnects servers after OAuth completes
                 // IMPORTANT: Each reconnection is spawned as a separate task to allow parallel connections
                 let sm_for_oauth = server_manager_arc.clone();
@@ -378,9 +381,9 @@ pub fn run() {
                 tokio::spawn(async move {
                     use mcpmux_gateway::{ServerKey, ConnectionResult};
                     let mut rx = oauth_completion_rx;
-                    
+
                     info!("[OAuth Handler] Started listening for OAuth completions");
-                    
+
                     loop {
                         match rx.recv().await {
                             Ok(event) => {
@@ -388,20 +391,20 @@ pub fn run() {
                                     "[OAuth Handler] Received completion for {}: success={}",
                                     event.server_id, event.success
                                 );
-                                
+
                                 if event.success {
                                     // OAuth succeeded - spawn reconnection in separate task for parallelism
                                     let sm = sm_for_oauth.clone();
                                     let pool = pool_for_oauth.clone();
                                     let server_id = event.server_id.clone();
                                     let space_id = event.space_id;
-                                    
+
                                     tokio::spawn(async move {
                                         let key = ServerKey::new(space_id, &server_id);
-                                        
+
                                         info!("[OAuth Handler] Attempting reconnection for {}", server_id);
                                         sm.set_connecting(&key).await;
-                                        
+
                                         match pool.reconnect_instance(space_id, &server_id).await {
                                             ConnectionResult::Connected { features, .. } => {
                                                 info!("[OAuth Handler] Reconnection successful for {}", server_id);
@@ -436,16 +439,16 @@ pub fn run() {
                     }
                 });
                 info!("[Gateway] OAuth completion handler started");
-                
+
                 // Start periodic refresh loop (every 60s for connected servers)
                 let _refresh_handle = server_manager_arc.clone().start_periodic_refresh();
                 info!("[Gateway] Periodic refresh service started");
-                
+
                 // Note: Auto-connect happens in the frontend via useEffect calling connect_all_enabled_servers
                 // This keeps the backend service clean and follows React best practices
-                
+
                 let handle = server.spawn();
-                
+
                 let mut state = gw_state_clone.write().await;
                 state.running = true;
                 state.url = Some(url.clone());
@@ -455,14 +458,14 @@ pub fn run() {
                 state.feature_service = Some(feature_service);
                 state.event_emitter = Some(event_emitter);
                 state.grant_service = Some(grant_service);
-                
+
                 info!(
                     "Gateway auto-started successfully on {} - GrantService initialized: {}",
                     url,
                     state.grant_service.is_some()
                 );
             });
-            
+
             app.manage(gateway_state);
             app.manage(server_manager_state);
 
@@ -476,7 +479,7 @@ pub fn run() {
                 // Use the well-known default space UUID
                 // This is created by the initial migration (001_initial.sql)
                 let default_space_id = "00000000-0000-0000-0000-000000000001".to_string();
-                
+
                 tauri::async_runtime::spawn(async move {
 
                     // Create file watcher with UI event emitter
@@ -519,7 +522,7 @@ pub fn run() {
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 let app_handle = app.handle().clone();
-                
+
                 // Register the deep link handler
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {

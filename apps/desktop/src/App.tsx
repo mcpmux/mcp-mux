@@ -9,8 +9,6 @@ import {
   Sun,
   Moon,
   Zap,
-  Plus,
-  Trash2,
   Check,
   Loader2,
   FolderOpen,
@@ -32,8 +30,7 @@ import { ThemeProvider } from '@/components/ThemeProvider';
 import { OAuthConsentModal } from '@/components/OAuthConsentModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
 import { useDataSync } from '@/hooks/useDataSync';
-import { useAppStore, useActiveSpace, useViewSpace, useSpaces, useIsLoading, useTheme } from '@/stores';
-import { createSpace, deleteSpace, setActiveSpace as setActiveSpaceAPI } from '@/lib/api/spaces';
+import { useAppStore, useActiveSpace, useViewSpace, useTheme } from '@/stores';
 import { RegistryPage } from '@/features/registry';
 import { FeatureSetsPage } from '@/features/featuresets';
 import { ClientsPage } from '@/features/clients';

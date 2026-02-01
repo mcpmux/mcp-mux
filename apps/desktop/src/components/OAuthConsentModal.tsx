@@ -13,7 +13,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Shield, Check, X, AlertCircle, ExternalLink, Loader2, Globe, Lock } from 'lucide-react';
+import { Shield, Check, X, AlertCircle, Loader2, Globe, Lock } from 'lucide-react';
 import {
   Button,
   Card,

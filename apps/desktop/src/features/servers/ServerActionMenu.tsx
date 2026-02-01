@@ -28,12 +28,12 @@ export interface ServerActionMenuProps {
 }
 
 export function ServerActionMenu({
-  serverId,
-  serverName,
+  serverId: _serverId,
+  serverName: _serverName,
   hasInputs,
   isOAuth,
   isEnabled,
-  isConnected,
+  isConnected: _isConnected,
   onConfigure,
   onRefresh,
   onReconnect,

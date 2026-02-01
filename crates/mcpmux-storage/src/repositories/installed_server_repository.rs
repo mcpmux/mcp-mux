@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mcpmux_core::{InstalledServer, InstalledServerRepository, InstallationSource};
+use mcpmux_core::{InstallationSource, InstalledServer, InstalledServerRepository};
 use rusqlite::{params, OptionalExtension};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -86,12 +86,12 @@ impl SqliteInstalledServerRepository {
             _ => InstallationSource::Registry,
         }
     }
-    
+
     /// Standard column list for SELECT queries
-    const SELECT_COLUMNS: &'static str = 
+    const SELECT_COLUMNS: &'static str =
         "id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
          args_append, extra_headers, oauth_connected, created_at, updated_at, source";
-    
+
     /// Map a row to InstalledServer
     fn map_row(row: &rusqlite::Row) -> rusqlite::Result<InstalledServer> {
         let id: String = row.get(0)?;
@@ -162,7 +162,10 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         Ok(servers)
     }
 
-    async fn list_by_source_file(&self, file_path: &std::path::Path) -> Result<Vec<InstalledServer>> {
+    async fn list_by_source_file(
+        &self,
+        file_path: &std::path::Path,
+    ) -> Result<Vec<InstalledServer>> {
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -190,9 +193,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             Self::SELECT_COLUMNS
         ))?;
 
-        let server = stmt
-            .query_row([id.to_string()], Self::map_row)
-            .optional()?;
+        let server = stmt.query_row([id.to_string()], Self::map_row).optional()?;
 
         Ok(server)
     }
@@ -222,7 +223,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         let conn = db.connection();
 
         conn.execute(
-            "INSERT INTO installed_servers 
+            "INSERT INTO installed_servers
              (id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
               args_append, extra_headers, oauth_connected, created_at, updated_at, source)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
@@ -251,9 +252,9 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         let conn = db.connection();
 
         conn.execute(
-            "UPDATE installed_servers 
-             SET server_name = ?2, cached_definition = ?3, input_values = ?4, enabled = ?5, 
-                 env_overrides = ?6, args_append = ?7, extra_headers = ?8, oauth_connected = ?9, 
+            "UPDATE installed_servers
+             SET server_name = ?2, cached_definition = ?3, input_values = ?4, enabled = ?5,
+                 env_overrides = ?6, args_append = ?7, extra_headers = ?8, oauth_connected = ?9,
                  updated_at = ?10, source = ?11
              WHERE id = ?1",
             params![
@@ -347,7 +348,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         let conn = db.connection();
 
         let input_json = Self::serialize_json_map(&input_values);
-        
+
         tracing::debug!(
             "[InstalledServerRepo] Updating inputs for {}: {} values, JSON: {:?}",
             id,
@@ -359,8 +360,11 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             "UPDATE installed_servers SET input_values = ?2, updated_at = ?3 WHERE id = ?1",
             params![id.to_string(), input_json, Utc::now().to_rfc3339()],
         )?;
-        
-        tracing::debug!("[InstalledServerRepo] Successfully updated inputs for {}", id);
+
+        tracing::debug!(
+            "[InstalledServerRepo] Successfully updated inputs for {}",
+            id
+        );
         Ok(())
     }
 

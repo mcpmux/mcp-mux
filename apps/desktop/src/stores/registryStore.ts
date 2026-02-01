@@ -12,7 +12,6 @@ import type {
   InstalledServerState,
   UiConfig,
   HomeConfig,
-  FilterDefinition,
   FilterMatch,
   SortOption,
 } from '../types/registry';

@@ -36,26 +36,38 @@ export function RegistryPage() {
   } = useRegistryStore();
 
   const [localSearch, setLocalSearch] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
   const viewSpace = useViewSpace();
 
   const itemsPerPage = uiConfig?.items_per_page ?? 24;
 
-  // Reset page when display changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [displayServers.length, activeFilters, activeSort, searchQuery]);
+  // Create a key that changes when filters/search/sort change to reset pagination
+  const paginationKey = JSON.stringify({
+    filters: activeFilters,
+    sort: activeSort,
+    search: searchQuery,
+    length: displayServers.length
+  });
+
+  // Local page state that resets when key changes
+  const [pageState, setPageState] = useState({ page: 1, key: paginationKey });
+
+  // Reset page when key changes
+  if (pageState.key !== paginationKey) {
+    setPageState({ page: 1, key: paginationKey });
+  }
+
+  const activePage = pageState.page;
 
   // Pagination logic
   const totalPages = Math.ceil(displayServers.length / itemsPerPage);
   const paginatedServers = displayServers.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    (activePage - 1) * itemsPerPage,
+    activePage * itemsPerPage
   );
 
   const handlePageChange = (newPage: number) => {
     if (newPage >= 1 && newPage <= totalPages) {
-      setCurrentPage(newPage);
+      setPageState({ page: newPage, key: paginationKey });
       document.querySelector('.registry-grid-container')?.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
@@ -238,8 +250,8 @@ export function RegistryPage() {
         {totalPages > 1 && (
           <div className="flex items-center gap-2">
             <button
-              onClick={() => handlePageChange(currentPage - 1)}
-              disabled={currentPage === 1}
+              onClick={() => handlePageChange(activePage - 1)}
+              disabled={activePage === 1}
               className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -247,11 +259,11 @@ export function RegistryPage() {
               </svg>
             </button>
             <span className="text-sm font-medium min-w-[3rem] text-center">
-              {currentPage} / {totalPages}
+              {activePage} / {totalPages}
             </span>
             <button
-              onClick={() => handlePageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
+              onClick={() => handlePageChange(activePage + 1)}
+              disabled={activePage === totalPages}
               className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -289,7 +301,6 @@ interface FilterDropdownProps {
 }
 
 function FilterDropdown({ filter, value, onChange }: FilterDropdownProps) {
-  const selectedOption = filter.options.find(o => o.id === value);
   const isActive = value && value !== 'all';
 
   return (

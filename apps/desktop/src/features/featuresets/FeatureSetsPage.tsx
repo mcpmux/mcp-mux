@@ -1,10 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Wrench,
   Plus,
-  Trash2,
   Loader2,
-  Shield,
   Server,
   Package,
   Settings,
@@ -14,13 +11,11 @@ import {
   Star,
   Search,
   AlertCircle,
-  Users,
 } from 'lucide-react';
 import {
   Card,
   CardHeader,
   CardTitle,
-  CardDescription,
   CardContent,
   Button,
 } from '@mcpmux/ui';

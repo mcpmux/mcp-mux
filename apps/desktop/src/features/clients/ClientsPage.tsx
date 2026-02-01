@@ -12,7 +12,6 @@ import {
   Settings,
   Trash2,
   X,
-  Tag,
   Check,
   ChevronDown,
   ChevronRight,

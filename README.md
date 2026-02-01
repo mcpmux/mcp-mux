@@ -1,6 +1,6 @@
 # McpMux - Centralized MCP Server Management
 
-[![License: Elastic-2.0](https://img.shields.io/badge/License-Elastic%202.0-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 > A desktop application for managing Model Context Protocol (MCP) servers with spaces, credentials, and cloud sync.
 
@@ -88,5 +88,5 @@ McpMux acts as a local gateway that:
 
 ## License
 
-[Elastic License 2.0](LICENSE) - Free to use, modify, and distribute. Cannot be offered as a managed service.
+[GNU General Public License v3.0](LICENSE) - Free software, copyleft license.
 

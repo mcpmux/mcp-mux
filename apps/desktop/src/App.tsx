@@ -282,20 +282,21 @@ function DashboardView() {
       </div>
 
       {/* Gateway Status Banner */}
-      <Card className={gatewayStatus.running ? 'border-green-500' : 'border-orange-500'}>
+      <Card className={gatewayStatus.running ? 'border-green-500' : 'border-orange-500'} data-testid="gateway-status-card">
         <CardContent className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
             <span
               className={`h-3 w-3 rounded-full ${
                 gatewayStatus.running ? 'bg-green-500' : 'bg-orange-500'
               }`}
+              data-testid="gateway-status-indicator"
             />
             <div>
-              <span className="font-medium">
+              <span className="font-medium" data-testid="gateway-status-text">
                 Gateway: {gatewayStatus.running ? 'Running' : 'Stopped'}
               </span>
               {gatewayStatus.url && (
-                <span className="text-sm text-[rgb(var(--muted))] ml-2">
+                <span className="text-sm text-[rgb(var(--muted))] ml-2" data-testid="gateway-url">
                   {gatewayStatus.url}
                 </span>
               )}
@@ -305,6 +306,7 @@ function DashboardView() {
             variant={gatewayStatus.running ? 'ghost' : 'primary'}
             size="sm"
             onClick={handleToggleGateway}
+            data-testid="gateway-toggle-btn"
           >
             {gatewayStatus.running ? 'Stop' : 'Start'}
           </Button>
@@ -312,8 +314,8 @@ function DashboardView() {
       </Card>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="dashboard-stats-grid">
+        <Card data-testid="stat-servers">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Server className="h-5 w-5 text-primary-500" />
@@ -321,12 +323,12 @@ function DashboardView() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{stats.connectedServers}/{stats.installedServers}</div>
+            <div className="text-3xl font-bold" data-testid="stat-servers-value">{stats.connectedServers}/{stats.installedServers}</div>
             <div className="text-sm text-[rgb(var(--muted))]">Connected / Installed</div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card data-testid="stat-featuresets">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Wrench className="h-5 w-5 text-primary-500" />
@@ -334,12 +336,12 @@ function DashboardView() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{stats.featureSets}</div>
+            <div className="text-3xl font-bold" data-testid="stat-featuresets-value">{stats.featureSets}</div>
             <div className="text-sm text-[rgb(var(--muted))]">Permission bundles</div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card data-testid="stat-clients">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Monitor className="h-5 w-5 text-primary-500" />
@@ -347,12 +349,12 @@ function DashboardView() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{stats.clients}</div>
+            <div className="text-3xl font-bold" data-testid="stat-clients-value">{stats.clients}</div>
             <div className="text-sm text-[rgb(var(--muted))]">Registered AI clients</div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card data-testid="stat-active-space">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Globe className="h-5 w-5 text-primary-500" />
@@ -360,7 +362,7 @@ function DashboardView() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold truncate">
+            <div className="text-xl font-bold truncate" data-testid="stat-active-space-value">
               {viewSpace?.icon} {viewSpace?.name || 'None'}
             </div>
             <div className="text-sm text-[rgb(var(--muted))]">Current context</div>
@@ -407,6 +409,7 @@ function DashboardView() {
                   setExportSuccess('Config copied to clipboard!');
                   setTimeout(() => setExportSuccess(null), 2000);
                 }}
+                data-testid="copy-config-btn"
               >
                 📋 Copy
               </Button>
@@ -473,11 +476,12 @@ function SettingsView() {
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium">Theme</label>
-              <div className="flex gap-2 mt-2">
+              <div className="flex gap-2 mt-2" data-testid="theme-buttons">
                 <Button
                   variant={theme === 'light' ? 'primary' : 'secondary'}
                   size="sm"
                   onClick={() => setTheme('light')}
+                  data-testid="theme-light-btn"
                 >
                   <Sun className="h-4 w-4 mr-2" />
                   Light
@@ -486,6 +490,7 @@ function SettingsView() {
                   variant={theme === 'dark' ? 'primary' : 'secondary'}
                   size="sm"
                   onClick={() => setTheme('dark')}
+                  data-testid="theme-dark-btn"
                 >
                   <Moon className="h-4 w-4 mr-2" />
                   Dark
@@ -494,6 +499,7 @@ function SettingsView() {
                   variant={theme === 'system' ? 'primary' : 'secondary'}
                   size="sm"
                   onClick={() => setTheme('system')}
+                  data-testid="theme-system-btn"
                 >
                   <Monitor className="h-4 w-4 mr-2" />
                   System
@@ -516,7 +522,7 @@ function SettingsView() {
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium">Log Files Location</label>
-              <p className="text-sm text-[rgb(var(--muted))] mt-1 font-mono bg-surface-secondary rounded px-2 py-1">
+              <p className="text-sm text-[rgb(var(--muted))] mt-1 font-mono bg-surface-secondary rounded px-2 py-1" data-testid="logs-path">
                 {logsPath || 'Loading...'}
               </p>
             </div>
@@ -526,6 +532,7 @@ function SettingsView() {
                 size="sm"
                 onClick={handleOpenLogs}
                 disabled={openingLogs}
+                data-testid="open-logs-btn"
               >
                 {openingLogs ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

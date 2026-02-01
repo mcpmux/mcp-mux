@@ -79,11 +79,17 @@ if (-not $SkipTauriDriver) {
                 Expand-Archive -Path $driverZip -DestinationPath $driverDir -Force
                 Remove-Item $driverZip
                 
-                # Add to PATH for this session
+                # Add to PATH permanently (user level)
+                $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+                if ($currentPath -notlike "*$driverDir*") {
+                    [Environment]::SetEnvironmentVariable("PATH", "$driverDir;$currentPath", "User")
+                    Write-Host "  Added to user PATH permanently" -ForegroundColor Green
+                }
+                
+                # Also add to current session
                 $env:PATH = "$driverDir;$env:PATH"
                 
                 Write-Host "  Edge WebDriver installed to: $driverDir" -ForegroundColor Green
-                Write-Host "  Add to PATH: $driverDir" -ForegroundColor Yellow
             } catch {
                 Write-Host "  Warning: Could not download Edge WebDriver" -ForegroundColor Yellow
                 Write-Host "  Download manually from: https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/" -ForegroundColor Yellow

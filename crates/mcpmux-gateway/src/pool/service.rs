@@ -43,7 +43,7 @@ impl ReconnectResult {
     pub fn total_success(&self) -> usize {
         self.connected.len() + self.reused.len()
     }
-    
+
     pub fn total_failed(&self) -> usize {
         self.failed.len() + self.needs_oauth.len()
     }
@@ -84,22 +84,22 @@ impl PoolService {
             token_service,
         }
     }
-    
+
     /// Get the token service for token operations
     pub fn token_service(&self) -> Arc<TokenService> {
         self.token_service.clone()
     }
-    
+
     /// Get the feature service for feature resolution
     pub fn feature_service(&self) -> Arc<FeatureService> {
         self.feature_service.clone()
     }
-    
+
     /// Get the OAuth manager for checking pending flows
     pub fn oauth_manager(&self) -> Arc<OutboundOAuthManager> {
         self.connection_service.oauth_manager()
     }
-    
+
     /// Read a resource from a backend server
     pub async fn read_resource(
         &self,
@@ -107,35 +107,38 @@ impl PoolService {
         server_id: &str,
         uri: &str,
     ) -> Result<Vec<Value>> {
-        let instance = self.get_instance(space_id, server_id)
+        let instance = self
+            .get_instance(space_id, server_id)
             .ok_or_else(|| anyhow::anyhow!("Server not connected: {}", server_id))?;
 
-        let client_handle = instance.with_client(|client| {
-            client.peer().clone()
-        });
+        let client_handle = instance.with_client(|client| client.peer().clone());
 
         match client_handle {
             Some(client) => {
                 use rmcp::model::ReadResourceRequestParams;
-                
+
                 let params = ReadResourceRequestParams {
                     uri: uri.into(),
                     meta: None,
                 };
-                
-                let res = client.read_resource(params).await
+
+                let res = client
+                    .read_resource(params)
+                    .await
                     .map_err(|e| anyhow::anyhow!("MCP read_resource failed: {}", e))?;
-                    
-                let content: Vec<Value> = res.contents.into_iter()
+
+                let content: Vec<Value> = res
+                    .contents
+                    .into_iter()
                     .map(|c| serde_json::to_value(c).unwrap_or(Value::Null))
                     .collect();
-                    
+
                 Ok(content)
             }
             None => Err(anyhow::anyhow!("Server instance has no active client")),
         }
     }
-    
+
     /// Get a prompt from a backend server
     pub async fn get_prompt(
         &self,
@@ -144,26 +147,27 @@ impl PoolService {
         prompt_name: &str,
         arguments: Option<serde_json::Map<String, Value>>,
     ) -> Result<Value> {
-        let instance = self.get_instance(space_id, server_id)
+        let instance = self
+            .get_instance(space_id, server_id)
             .ok_or_else(|| anyhow::anyhow!("Server not connected: {}", server_id))?;
 
-        let client_handle = instance.with_client(|client| {
-            client.peer().clone()
-        });
+        let client_handle = instance.with_client(|client| client.peer().clone());
 
         match client_handle {
             Some(client) => {
                 use rmcp::model::GetPromptRequestParams;
-                
+
                 let params = GetPromptRequestParams {
                     name: prompt_name.into(),
                     arguments,
                     meta: None,
                 };
-                
-                let res = client.get_prompt(params).await
+
+                let res = client
+                    .get_prompt(params)
+                    .await
                     .map_err(|e| anyhow::anyhow!("MCP get_prompt failed: {}", e))?;
-                    
+
                 // Return the full response as JSON
                 serde_json::to_value(res)
                     .map_err(|e| anyhow::anyhow!("Failed to serialize prompt response: {}", e))
@@ -171,14 +175,11 @@ impl PoolService {
             None => Err(anyhow::anyhow!("Server instance has no active client")),
         }
     }
-    
+
     /// Connect a server for a space
-    pub async fn connect_server(
-        &self,
-        ctx: &ConnectionContext,
-    ) -> ConnectionResult {
+    pub async fn connect_server(&self, ctx: &ConnectionContext) -> ConnectionResult {
         let key = (ctx.space_id, ctx.server_id.to_string());
-        
+
         // Check for existing instance
         if let Some(instance) = self.instances.get(&key) {
             if instance.is_healthy() {
@@ -186,30 +187,27 @@ impl PoolService {
                     "[PoolService] Reusing existing instance for {}/{}",
                     ctx.space_id, ctx.server_id
                 );
-                
+
                 return ConnectionResult::Connected {
                     reused: true,
                     // Empty cached features - they're already in DB
                     features: CachedFeatures::default(),
                 };
             }
-            
+
             // Existing instance but not healthy - reconnect through it
-            return self.connection_service
-                .connect_with_instance(
-                    ctx,
-                    &instance,
-                    &self.feature_service,
-                )
+            return self
+                .connection_service
+                .connect_with_instance(ctx, &instance, &self.feature_service)
                 .await;
         }
-        
+
         // Create new instance
         let transport_type = match &ctx.transport {
             ResolvedTransport::Stdio { .. } => TransportType::Stdio,
             ResolvedTransport::Http { .. } => TransportType::Http,
         };
-        
+
         // Use proper InstanceKey constructors that include the URL
         let instance_key = match &ctx.transport {
             ResolvedTransport::Stdio { command, args, env } => {
@@ -219,37 +217,34 @@ impl PoolService {
                 InstanceKey::http(ctx.space_id, url, headers)
             }
         };
-        
+
         let instance = Arc::new(ServerInstance::new(
             instance_key,
             ctx.server_id.to_string(),
             transport_type,
         ));
-        
+
         // Store instance - keyed by (space_id, server_id) for complete isolation
         self.instances.insert(key.clone(), instance.clone());
-        
+
         // Connect through connection service
-        let result = self.connection_service
-            .connect_with_instance(
-                ctx,
-                &instance,
-                &self.feature_service,
-            )
+        let result = self
+            .connection_service
+            .connect_with_instance(ctx, &instance, &self.feature_service)
             .await;
-        
+
         // If connection failed completely, remove the instance
         if let ConnectionResult::Failed { .. } = &result {
             self.instances.remove(&key);
         }
-        
+
         result
     }
-    
+
     /// Remove instance only (for disable - keeps tokens)
     pub fn remove_instance(&self, space_id: Uuid, server_id: &str) {
         let key = (space_id, server_id.to_string());
-        
+
         if let Some((_, _instance)) = self.instances.remove(&key) {
             info!(
                 "[PoolService] Removed instance for {}/{} (tokens preserved)",
@@ -257,41 +252,37 @@ impl PoolService {
             );
         }
     }
-    
+
     /// Disconnect a server (logout - clears tokens but keeps DCR)
-    pub async fn disconnect_server(
-        &self,
-        space_id: Uuid,
-        server_id: &str,
-    ) -> Result<()> {
+    pub async fn disconnect_server(&self, space_id: Uuid, server_id: &str) -> Result<()> {
         // Cancel any pending OAuth flows first
         self.connection_service
             .oauth_manager()
             .cancel_flow_for_space(space_id, server_id);
-        
+
         // Remove instance
         self.remove_instance(space_id, server_id);
-        
+
         // Disconnect through connection service (clears tokens, marks features unavailable)
         self.connection_service
             .disconnect(space_id, server_id, &self.feature_service)
             .await
     }
-    
+
     /// Get an instance for a space/server pair
     pub fn get_instance(&self, space_id: Uuid, server_id: &str) -> Option<Arc<ServerInstance>> {
         self.instances
             .get(&(space_id, server_id.to_string()))
             .map(|r| r.clone())
     }
-    
+
     /// Check if a server is connected
     pub fn is_connected(&self, space_id: Uuid, server_id: &str) -> bool {
         self.get_instance(space_id, server_id)
             .map(|i| i.is_healthy())
             .unwrap_or(false)
     }
-    
+
     /// Get all instances for a space
     pub fn instances_for_space(&self, space_id: Uuid) -> Vec<Arc<ServerInstance>> {
         self.instances
@@ -300,11 +291,11 @@ impl PoolService {
             .map(|entry| entry.value().clone())
             .collect()
     }
-    
+
     /// Get pool statistics
     pub fn stats(&self) -> PoolStats {
         let mut stats = PoolStats::default();
-        
+
         for entry in self.instances.iter() {
             stats.total_instances += 1;
             match entry.value().state() {
@@ -315,21 +306,17 @@ impl PoolService {
                 InstanceState::Disconnected => {}
             }
         }
-        
+
         stats
     }
-    
+
     /// Reconnect an existing instance (e.g., after OAuth completes)
-    /// 
+    ///
     /// This is called when OAuth flow completes to reconnect with the new token.
     /// Uses the connection service to reconnect using stored credentials.
-    pub async fn reconnect_instance(
-        &self,
-        space_id: Uuid,
-        server_id: &str,
-    ) -> ConnectionResult {
+    pub async fn reconnect_instance(&self, space_id: Uuid, server_id: &str) -> ConnectionResult {
         let key = (space_id, server_id.to_string());
-        
+
         // Get existing instance
         let instance = match self.instances.get(&key) {
             Some(inst) => inst.clone(),
@@ -343,31 +330,27 @@ impl PoolService {
                 };
             }
         };
-        
+
         info!(
             "[PoolService] Reconnecting instance for {}/{} after OAuth",
             space_id, server_id
         );
-        
+
         // Reconnect using connection service with OAuth tokens
         self.connection_service
-            .reconnect_after_oauth(
-                space_id,
-                server_id,
-                &instance,
-                &self.feature_service,
-            )
+            .reconnect_after_oauth(space_id, server_id, &instance, &self.feature_service)
             .await
     }
-    
+
     /// Disconnect all servers in a space
     pub async fn disconnect_space(&self, space_id: Uuid) -> Result<()> {
-        let server_ids: Vec<String> = self.instances
+        let server_ids: Vec<String> = self
+            .instances
             .iter()
             .filter(|entry| entry.key().0 == space_id)
             .map(|entry| entry.key().1.clone())
             .collect();
-        
+
         for server_id in server_ids {
             if let Err(e) = self.disconnect_server(space_id, &server_id).await {
                 warn!(
@@ -376,10 +359,10 @@ impl PoolService {
                 );
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Reconnect all enabled servers on startup
     ///
     /// This is called when the gateway starts to restore connections
@@ -393,12 +376,12 @@ impl PoolService {
         F: Fn(&InstalledServerInfo) -> Option<ResolvedTransport>,
     {
         let mut result = ReconnectResult::default();
-        
+
         info!(
             "[PoolService] Reconnecting {} enabled servers",
             installed_servers.len()
         );
-        
+
         for server in installed_servers {
             // Skip servers that don't have OAuth credentials if they require OAuth
             if server.requires_oauth && !server.has_credentials {
@@ -406,18 +389,17 @@ impl PoolService {
                     "[PoolService] Skipping {} - requires OAuth but no credentials",
                     server.server_id
                 );
-                result.needs_oauth.push((server.server_id.clone(), server.space_id));
+                result
+                    .needs_oauth
+                    .push((server.server_id.clone(), server.space_id));
                 continue;
             }
-            
+
             // Get transport config
             let config = match get_config(&server) {
                 Some(c) => c,
                 None => {
-                    warn!(
-                        "[PoolService] No transport config for {}",
-                        server.server_id
-                    );
+                    warn!("[PoolService] No transport config for {}", server.server_id);
                     result.failed.push((
                         server.server_id.clone(),
                         server.space_id,
@@ -426,7 +408,7 @@ impl PoolService {
                     continue;
                 }
             };
-            
+
             // Attempt connection (auto-reconnect mode - no browser opening)
             let ctx = ConnectionContext::new(server.space_id, server.server_id.clone(), config)
                 .with_auto_reconnect(true);
@@ -442,11 +424,13 @@ impl PoolService {
                     result.needs_oauth.push((server.server_id, server.space_id));
                 }
                 ConnectionResult::Failed { error } => {
-                    result.failed.push((server.server_id, server.space_id, error));
+                    result
+                        .failed
+                        .push((server.server_id, server.space_id, error));
                 }
             }
         }
-        
+
         info!(
             "[PoolService] Reconnect complete: {} connected, {} reused, {} failed, {} need OAuth",
             result.connected.len(),
@@ -454,10 +438,10 @@ impl PoolService {
             result.failed.len(),
             result.needs_oauth.len()
         );
-        
+
         result
     }
-    
+
     /// Get the server URL for an instance (for OAuth token refresh).
     /// Returns None for STDIO transports or if instance not found.
     pub fn get_server_url(&self, space_id: Uuid, server_id: &str) -> Option<String> {

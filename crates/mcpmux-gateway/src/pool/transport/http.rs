@@ -9,18 +9,17 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use mcpmux_core::{
-    CredentialRepository, LogLevel, LogSource, OutboundOAuthRepository, ServerLog,
-    ServerLogManager,
+    CredentialRepository, LogLevel, LogSource, OutboundOAuthRepository, ServerLog, ServerLogManager,
 };
-use rmcp::ServiceExt;
-use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::auth::{AuthClient, AuthorizationManager};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::StreamableHttpClientTransport;
+use rmcp::ServiceExt;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use super::{Transport, TransportConnectResult, create_client_handler};
 use super::TransportType;
+use super::{create_client_handler, Transport, TransportConnectResult};
 use crate::pool::credential_store::DatabaseCredentialStore;
 
 /// HTTP transport for Streamable HTTP MCP servers
@@ -71,12 +70,15 @@ impl HttpTransport {
     async fn log(&self, level: LogLevel, source: LogSource, message: String) {
         if let Some(log_manager) = &self.log_manager {
             let log = ServerLog::new(level, source, message);
-            if let Err(e) = log_manager.append(&self.space_id.to_string(), &self.server_id, log).await {
+            if let Err(e) = log_manager
+                .append(&self.space_id.to_string(), &self.server_id, log)
+                .await
+            {
                 error!("Failed to write log: {}", e);
             }
         }
     }
-    
+
     /// Check if an error indicates OAuth is required
     fn requires_oauth(error_str: &str) -> bool {
         let error_lower = error_str.to_lowercase();
@@ -116,7 +118,10 @@ impl HttpTransport {
         self.log(
             LogLevel::Info,
             LogSource::HttpRequest,
-            format!("Connecting to {} with OAuth (auto-refresh enabled)", self.url),
+            format!(
+                "Connecting to {} with OAuth (auto-refresh enabled)",
+                self.url
+            ),
         )
         .await;
 
@@ -146,7 +151,8 @@ impl HttpTransport {
 
         // Load stored metadata from initial OAuth flow
         // This bypasses RMCP's metadata discovery which can fail on non-spec-compliant servers
-        let has_stored_metadata = if let Ok(Some(registration)) = self.backend_oauth_repo
+        let has_stored_metadata = if let Ok(Some(registration)) = self
+            .backend_oauth_repo
             .get(&self.space_id, &self.server_id)
             .await
         {
@@ -156,7 +162,8 @@ impl HttpTransport {
                     space_id = %self.space_id,
                     "Using stored OAuth metadata (bypassing RMCP discovery)"
                 );
-                let rmcp_metadata = crate::pool::oauth_utils::convert_from_stored_metadata(&stored_metadata);
+                let rmcp_metadata =
+                    crate::pool::oauth_utils::convert_from_stored_metadata(&stored_metadata);
                 auth_manager.set_metadata(rmcp_metadata);
                 true
             } else {
@@ -174,7 +181,7 @@ impl HttpTransport {
 
         // Initialize from stored credentials
         let init_result = auth_manager.initialize_from_store().await;
-        
+
         match init_result {
             Ok(true) => {
                 debug!(
@@ -206,23 +213,27 @@ impl HttpTransport {
                     server_id = %self.server_id,
                     "RMCP initialize_from_store failed: {} (stored_metadata={})", e, has_stored_metadata
                 );
-                
+
                 if has_stored_metadata {
                     // We had metadata but RMCP still failed - this shouldn't happen
                     let err = format!("OAuth initialization failed despite stored metadata: {}", e);
                     error!(server_id = %self.server_id, "{}", err);
-                    self.log(LogLevel::Error, LogSource::OAuth, err.clone()).await;
+                    self.log(LogLevel::Error, LogSource::OAuth, err.clone())
+                        .await;
                     return TransportConnectResult::Failed(err);
                 }
-                
+
                 // No stored metadata - try manual token injection
                 self.log(
                     LogLevel::Warn,
                     LogSource::OAuth,
-                    format!("OAuth metadata discovery failed: {}, trying manual token injection", e),
+                    format!(
+                        "OAuth metadata discovery failed: {}, trying manual token injection",
+                        e
+                    ),
                 )
                 .await;
-                
+
                 return self.connect_with_manual_token().await;
             }
         }
@@ -283,7 +294,7 @@ impl HttpTransport {
             }
         }
     }
-    
+
     /// Connect with manual token injection when RMCP's metadata discovery fails.
     ///
     /// Some servers (like Cloudflare) don't serve OAuth metadata at the standard location
@@ -296,7 +307,11 @@ impl HttpTransport {
         );
 
         // Load token from our database
-        let credential = match self.credential_repo.get(&self.space_id, &self.server_id).await {
+        let credential = match self
+            .credential_repo
+            .get(&self.space_id, &self.server_id)
+            .await
+        {
             Ok(Some(cred)) => cred,
             Ok(None) => {
                 debug!(server_id = %self.server_id, "No stored token for manual injection");
@@ -320,7 +335,7 @@ impl HttpTransport {
                 return TransportConnectResult::Failed(err);
             }
         };
-        
+
         self.log(
             LogLevel::Info,
             LogSource::HttpRequest,
@@ -342,10 +357,7 @@ impl HttpTransport {
             }
         }
 
-        let client = match reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-        {
+        let client = match reqwest::Client::builder().default_headers(headers).build() {
             Ok(c) => c,
             Err(e) => {
                 let err = format!("Failed to build HTTP client: {}", e);
@@ -408,23 +420,25 @@ impl HttpTransport {
             }
         }
     }
-    
+
     /// Try connecting without authentication
     async fn connect_without_auth(&self) -> TransportConnectResult {
         debug!(
             server_id = %self.server_id,
             "Trying connection without auth"
         );
-        
+
         self.log(
             LogLevel::Info,
             LogSource::HttpRequest,
             format!("Connecting to {} without auth", self.url),
-        ).await;
-        
+        )
+        .await;
+
         let transport = StreamableHttpClientTransport::from_uri(self.url.as_str());
-        let client_handler = create_client_handler(&self.server_id, self.space_id, self.event_tx.clone());
-        
+        let client_handler =
+            create_client_handler(&self.server_id, self.space_id, self.event_tx.clone());
+
         let connect_future = client_handler.serve(transport);
         match tokio::time::timeout(self.connect_timeout, connect_future).await {
             Ok(Ok(client)) => {
@@ -436,7 +450,8 @@ impl HttpTransport {
                     LogLevel::Info,
                     LogSource::HttpResponse,
                     "Connected successfully without auth".to_string(),
-                ).await;
+                )
+                .await;
                 TransportConnectResult::Connected(client)
             }
             Ok(Err(e)) => {
@@ -450,21 +465,24 @@ impl HttpTransport {
                         LogLevel::Info,
                         LogSource::OAuth,
                         "Server requires OAuth authentication".to_string(),
-                    ).await;
-                    TransportConnectResult::OAuthRequired { 
-                        server_url: self.url.clone() 
+                    )
+                    .await;
+                    TransportConnectResult::OAuthRequired {
+                        server_url: self.url.clone(),
                     }
                 } else {
                     let err = format!("HTTP connection failed: {}", e);
                     error!(server_id = %self.server_id, "{}", err);
-                    self.log(LogLevel::Error, LogSource::HttpResponse, err.clone()).await;
+                    self.log(LogLevel::Error, LogSource::HttpResponse, err.clone())
+                        .await;
                     TransportConnectResult::Failed(err)
                 }
             }
             Err(_) => {
                 let err = format!("Connection timeout ({:?})", self.connect_timeout);
                 error!(server_id = %self.server_id, "{}", err);
-                self.log(LogLevel::Error, LogSource::HttpRequest, err.clone()).await;
+                self.log(LogLevel::Error, LogSource::HttpRequest, err.clone())
+                    .await;
                 TransportConnectResult::Failed(err)
             }
         }
@@ -518,11 +536,11 @@ impl Transport for HttpTransport {
             self.connect_without_auth().await
         }
     }
-    
+
     fn transport_type(&self) -> TransportType {
         TransportType::Http
     }
-    
+
     fn description(&self) -> String {
         format!("http:{}", self.url)
     }

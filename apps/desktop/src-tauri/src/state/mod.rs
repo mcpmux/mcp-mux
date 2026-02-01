@@ -4,16 +4,17 @@
 //! between Tauri commands.
 
 use mcpmux_core::{
-    OutboundOAuthRepository, InboundMcpClientRepository, CredentialRepository, FeatureSetRepository,
-    InstalledServerRepository, LogConfig, ServerLogManager, SpaceRepository,
-    SpaceService, ServerFeatureRepository as CoreServerFeatureRepository, ClientService,
-    ServerDiscoveryService, AppSettingsRepository, AppSettingsService, GatewayPortService,
+    AppSettingsRepository, AppSettingsService, ClientService, CredentialRepository,
+    FeatureSetRepository, GatewayPortService, InboundMcpClientRepository,
+    InstalledServerRepository, LogConfig, OutboundOAuthRepository, ServerDiscoveryService,
+    ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager, SpaceRepository,
+    SpaceService,
 };
 use mcpmux_storage::{
-    Database, FieldEncryptor, KeychainKeyProvider, MasterKeyProvider, SqliteOutboundOAuthRepository,
-    SqliteInboundMcpClientRepository, SqliteCredentialRepository, SqliteFeatureSetRepository,
-    SqliteInstalledServerRepository, SqliteServerFeatureRepository, SqliteSpaceRepository,
-    SqliteAppSettingsRepository,
+    Database, FieldEncryptor, KeychainKeyProvider, MasterKeyProvider, SqliteAppSettingsRepository,
+    SqliteCredentialRepository, SqliteFeatureSetRepository, SqliteInboundMcpClientRepository,
+    SqliteInstalledServerRepository, SqliteOutboundOAuthRepository, SqliteServerFeatureRepository,
+    SqliteSpaceRepository,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,8 +90,9 @@ impl AppState {
         let installed_server_repository: Arc<dyn InstalledServerRepository> =
             Arc::new(SqliteInstalledServerRepository::new(db.clone()));
 
-        let credential_repository: Arc<dyn CredentialRepository> =
-            Arc::new(SqliteCredentialRepository::new(db.clone(), encryptor.clone()));
+        let credential_repository: Arc<dyn CredentialRepository> = Arc::new(
+            SqliteCredentialRepository::new(db.clone(), encryptor.clone()),
+        );
 
         let backend_oauth_repository: Arc<dyn OutboundOAuthRepository> =
             Arc::new(SqliteOutboundOAuthRepository::new(db.clone()));
@@ -102,7 +104,8 @@ impl AppState {
             Arc::new(SqliteInboundMcpClientRepository::new(db.clone()));
 
         let server_feature_repository = Arc::new(SqliteServerFeatureRepository::new(db.clone()));
-        let server_feature_repository_core: Arc<dyn CoreServerFeatureRepository> = server_feature_repository.clone();
+        let server_feature_repository_core: Arc<dyn CoreServerFeatureRepository> =
+            server_feature_repository.clone();
 
         // Create app settings repository and services
         let settings_repository: Arc<dyn AppSettingsRepository> =
@@ -115,32 +118,30 @@ impl AppState {
             space_repository,
             feature_set_repository.clone(),
         );
-        let client_service = ClientService::new(
-            client_repository.clone(),
-            feature_set_repository.clone(),
-        );
+        let client_service =
+            ClientService::new(client_repository.clone(), feature_set_repository.clone());
 
         // Create server discovery service
         // Spaces directory is relative to app data_dir (single source of truth)
         let spaces_dir = data_dir.join("spaces");
         std::fs::create_dir_all(&spaces_dir)?;
         info!("Using spaces directory: {:?}", spaces_dir);
-        
+
         let registry_url = std::env::var("MCPMUX_REGISTRY_URL")
             .unwrap_or_else(|_| "http://localhost:8787".to_string());
         info!("Using Registry API URL: {}", registry_url);
-        
+
         let server_discovery = Arc::new(
             ServerDiscoveryService::new(data_dir.clone(), spaces_dir.clone())
                 .with_registry_api(registry_url)
-                .with_settings_service(settings_service)
+                .with_settings_service(settings_service),
         );
 
         // Create server log manager
         let log_config = LogConfig {
             base_dir: data_dir.join("logs"),
             max_file_size: 10 * 1024 * 1024, // 10MB
-            max_files: 30,                     // 30 files
+            max_files: 30,                   // 30 files
             compress: true,
         };
         let server_log_manager = Arc::new(ServerLogManager::new(log_config));

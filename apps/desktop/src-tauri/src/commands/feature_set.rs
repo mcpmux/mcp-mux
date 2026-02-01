@@ -2,17 +2,17 @@
 //!
 //! IPC commands for managing feature sets (permission bundles).
 
+use chrono::Utc;
 use mcpmux_core::{FeatureSet, FeatureSetMember, MemberMode, MemberType};
 use serde::{Deserialize, Serialize};
-use tauri::State;
-use chrono::Utc;
 use std::sync::Arc;
+use tauri::State;
 use tokio::sync::RwLock;
 use tracing::warn;
 use uuid::Uuid as StdUuid;
 
-use crate::state::AppState;
 use crate::commands::gateway::GatewayAppState;
+use crate::state::AppState;
 
 /// Response for feature set member
 #[derive(Debug, Serialize)]
@@ -89,9 +89,9 @@ pub struct UpdateFeatureSetInput {
 /// Input for adding a member to a feature set
 #[derive(Debug, Deserialize)]
 pub struct AddMemberInput {
-    pub member_type: String,  // "feature" or "feature_set"
+    pub member_type: String, // "feature" or "feature_set"
     pub member_id: String,
-    pub mode: Option<String>,  // "include" or "exclude", defaults to "include"
+    pub mode: Option<String>, // "include" or "exclude", defaults to "include"
 }
 
 /// List all feature sets.
@@ -127,7 +127,7 @@ pub async fn list_feature_sets_by_space(
         .list_for_space(&space_id)
         .await
         .map_err(|e: anyhow::Error| e.to_string())?;
-    
+
     let enabled_server_ids: std::collections::HashSet<String> = installed_servers
         .into_iter()
         .filter(|s| s.enabled)
@@ -140,7 +140,9 @@ pub async fn list_feature_sets_by_space(
         .filter(|fs| {
             if fs.feature_set_type == mcpmux_core::FeatureSetType::ServerAll {
                 // Only include if server is enabled
-                fs.server_id.as_ref().is_some_and(|sid| enabled_server_ids.contains(sid))
+                fs.server_id
+                    .as_ref()
+                    .is_some_and(|sid| enabled_server_ids.contains(sid))
             } else {
                 true
             }
@@ -189,11 +191,11 @@ pub async fn create_feature_set(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<FeatureSetResponse, String> {
     let mut feature_set = FeatureSet::new_custom(&input.name, &input.space_id);
-    
+
     if let Some(desc) = input.description {
         feature_set = feature_set.with_description(desc);
     }
-    
+
     if let Some(icon) = input.icon {
         feature_set = feature_set.with_icon(icon);
     }
@@ -203,12 +205,12 @@ pub async fn create_feature_set(
         .create(&feature_set)
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // Emit domain event if gateway is running
     let gw_state = gateway_state.read().await;
     if let Some(ref gw) = gw_state.gateway_state {
         let gw = gw.read().await;
-        
+
         // Parse space_id as Uuid
         if let Ok(space_uuid) = StdUuid::parse_str(&input.space_id) {
             gw.emit_domain_event(mcpmux_core::DomainEvent::FeatureSetCreated {
@@ -236,18 +238,18 @@ pub async fn delete_feature_set(
         .get(&id)
         .await
         .map_err(|e| e.to_string())?;
-    
+
     state
         .feature_set_repository
         .delete(&id)
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // Emit domain event if gateway is running
     let gw_state = gateway_state.read().await;
     if let Some(ref gw) = gw_state.gateway_state {
         let gw = gw.read().await;
-        
+
         // Only emit if we found the feature set and it has a space_id
         if let Some(fs) = feature_set {
             if let Some(space_id_str) = fs.space_id {
@@ -260,7 +262,7 @@ pub async fn delete_feature_set(
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -336,7 +338,10 @@ pub async fn update_feature_set(
     let space_id = feature_set.space_id.as_deref().unwrap_or("default");
     let gw_state = gateway_state.read().await;
     if let Some(ref grant_service) = gw_state.grant_service {
-        if let Err(e) = grant_service.notify_feature_set_modified(space_id, &id).await {
+        if let Err(e) = grant_service
+            .notify_feature_set_modified(space_id, &id)
+            .await
+        {
             warn!("[FeatureSet] Failed to emit notifications: {}", e);
         }
     }
@@ -380,9 +385,11 @@ pub async fn add_feature_set_member(
         .unwrap_or(MemberMode::Include);
 
     // Check for duplicates
-    if feature_set.members.iter().any(|m| {
-        m.member_type == member_type && m.member_id == input.member_id
-    }) {
+    if feature_set
+        .members
+        .iter()
+        .any(|m| m.member_type == member_type && m.member_id == input.member_id)
+    {
         return Err("Member already exists in this feature set".to_string());
     }
 
@@ -425,7 +432,10 @@ pub async fn add_feature_set_member(
     let space_id = feature_set.space_id.as_deref().unwrap_or("default");
     let gw_state = gateway_state.read().await;
     if let Some(ref grant_service) = gw_state.grant_service {
-        if let Err(e) = grant_service.notify_feature_set_modified(space_id, &feature_set_id).await {
+        if let Err(e) = grant_service
+            .notify_feature_set_modified(space_id, &feature_set_id)
+            .await
+        {
             warn!("[FeatureSet] Failed to emit notifications: {}", e);
         }
     }
@@ -465,7 +475,10 @@ pub async fn remove_feature_set_member(
     let space_id = feature_set.space_id.as_deref().unwrap_or("default");
     let gw_state = gateway_state.read().await;
     if let Some(ref grant_service) = gw_state.grant_service {
-        if let Err(e) = grant_service.notify_feature_set_modified(space_id, &feature_set_id).await {
+        if let Err(e) = grant_service
+            .notify_feature_set_modified(space_id, &feature_set_id)
+            .await
+        {
             warn!("[FeatureSet] Failed to emit notifications: {}", e);
         }
     }
@@ -544,7 +557,10 @@ pub async fn set_feature_set_members(
     let space_id = feature_set.space_id.as_deref().unwrap_or("default");
     let gw_state = gateway_state.read().await;
     if let Some(ref grant_service) = gw_state.grant_service {
-        if let Err(e) = grant_service.notify_feature_set_modified(space_id, &feature_set_id).await {
+        if let Err(e) = grant_service
+            .notify_feature_set_modified(space_id, &feature_set_id)
+            .await
+        {
             warn!("[FeatureSet] Failed to emit notifications: {}", e);
         }
     }

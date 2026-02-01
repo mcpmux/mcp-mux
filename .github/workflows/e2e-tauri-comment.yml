@@ -7,6 +7,9 @@ on:
   issue_comment:
     types: [created]
 
+env:
+  PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+
 jobs:
   e2e-tauri:
     # Only run when comment on a PR contains /e2e-tauri
@@ -43,22 +46,33 @@ jobs:
         with:
           ref: ${{ steps.pr.outputs.sha }}
 
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev webkit2gtk-driver xvfb
+          echo "=== Verifying glib-2.0 installation ==="
+          dpkg -l | grep libglib2.0-dev || echo "libglib2.0-dev not installed"
+          find /usr -name 'glib-2.0.pc' 2>/dev/null || echo "glib-2.0.pc not found"
+          pkg-config --modversion glib-2.0 || echo "pkg-config cannot find glib-2.0"
+          pkg-config --exists 'glib-2.0 >= 2.70' && echo "glib-2.0 >= 2.70 found" || (echo "ERROR: glib-2.0 >= 2.70 not found"; exit 1)
+          echo "PKG_CONFIG_PATH=$(pkg-config --variable pc_path pkg-config)" >> $GITHUB_ENV
+
       - uses: dtolnay/rust-toolchain@stable
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.os }}-e2e-comment
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'pnpm'
-
-      - name: Install Linux deps
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev webkit2gtk-driver xvfb
 
       - name: Cache tauri-driver
         uses: actions/cache@v4
@@ -70,12 +84,15 @@ jobs:
       - name: Install tauri-driver
         if: steps.tauri-driver-cache.outputs.cache-hit != 'true'
         run: cargo install tauri-driver --locked
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       - run: pnpm install --frozen-lockfile
 
       - name: Build app
         run: pnpm build
         env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Run Tauri E2E tests (Linux)

@@ -28,9 +28,9 @@ struct Migration {
 }
 
 /// All migrations in order. Add new migrations here.
-/// 
+///
 /// Note: Migrations have been consolidated into a single clean initial migration.
-/// The schema includes cached_definition for offline operation and excludes 
+/// The schema includes cached_definition for offline operation and excludes
 /// runtime fields (connection_status, last_connected_at, last_error).
 const MIGRATIONS: &[Migration] = &[
     Migration {
@@ -189,7 +189,7 @@ impl Database {
                 // Upgrade old schema_migrations table to new format
                 info!("Upgrading schema_migrations table to new format...");
                 self.conn.execute_batch(
-                    "ALTER TABLE schema_migrations ADD COLUMN name TEXT DEFAULT 'unknown';"
+                    "ALTER TABLE schema_migrations ADD COLUMN name TEXT DEFAULT 'unknown';",
                 )?;
             }
         } else {

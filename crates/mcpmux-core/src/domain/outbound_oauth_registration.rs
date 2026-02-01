@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Cached OAuth metadata from server discovery.
-/// 
+///
 /// Stored during initial OAuth flow to avoid re-discovery on reconnect.
 /// RMCP's metadata discovery can fail for servers that don't follow the exact
 /// MCP spec path conventions (e.g., Cloudflare serves metadata at root, not path-suffixed).
@@ -39,19 +39,19 @@ pub struct StoredOAuthMetadata {
 }
 
 /// McpMux's OUTBOUND OAuth client registration WITH a backend MCP server.
-/// 
+///
 /// When connecting to OAuth-protected servers (e.g., Cloudflare, Atlassian),
 /// McpMux registers as an OAuth client with them via DCR.
-/// 
+///
 /// This stores:
 /// - The client_id McpMux received from their DCR
 /// - The redirect_uri used during DCR (includes port)
 /// - The server_url for AuthorizationManager creation
-/// 
+///
 /// The redirect_uri is stored to detect port changes across app restarts.
 /// If the callback server port changes, we must re-DCR since OAuth providers
 /// validate redirect_uri exactly.
-/// 
+///
 /// Separate from tokens (in credentials table) so:
 /// - Logout clears tokens but keeps registration
 /// - Re-auth uses existing client_id without new DCR (if port matches)
@@ -71,12 +71,12 @@ pub struct OutboundOAuthRegistration {
 
     /// Client ID from Dynamic Client Registration
     pub client_id: String,
-    
+
     /// Redirect URI used during DCR (e.g., "http://127.0.0.1:9876/callback")
     /// Must match when reusing client_id, otherwise re-DCR is needed.
     #[serde(default)]
     pub redirect_uri: Option<String>,
-    
+
     /// Cached OAuth metadata from initial discovery.
     /// Stored to avoid RMCP's metadata discovery failures on non-spec-compliant servers.
     #[serde(default)]
@@ -111,7 +111,7 @@ impl OutboundOAuthRegistration {
             updated_at: now,
         }
     }
-    
+
     /// Create a new registration with metadata
     pub fn with_metadata(
         space_id: Uuid,
@@ -134,9 +134,12 @@ impl OutboundOAuthRegistration {
             updated_at: now,
         }
     }
-    
+
     /// Check if this registration can be reused with the given redirect_uri
     pub fn matches_redirect_uri(&self, redirect_uri: &str) -> bool {
-        self.redirect_uri.as_ref().map(|r| r == redirect_uri).unwrap_or(false)
+        self.redirect_uri
+            .as_ref()
+            .map(|r| r == redirect_uri)
+            .unwrap_or(false)
     }
 }

@@ -5,13 +5,13 @@
 //!
 //! Uses TraceContext from logging_middleware for request correlation.
 
-use std::sync::Arc;
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode},
     middleware::Next,
     response::IntoResponse,
 };
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::auth::validate_token;
@@ -67,8 +67,9 @@ pub async fn mcp_oauth_middleware(
                 warn!(trace_id = %trace_id, "JWT secret not configured");
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Server not configured for authentication"
-                ).into_response();
+                    "Server not configured for authentication",
+                )
+                    .into_response();
             }
         }
     };
@@ -82,7 +83,8 @@ pub async fn mcp_oauth_middleware(
     };
 
     // Resolve space for this client
-    let space_id = match services.space_resolver_service
+    let space_id = match services
+        .space_resolver_service
         .resolve_space_for_client(&claims.client_id)
         .await
     {
@@ -95,8 +97,9 @@ pub async fn mcp_oauth_middleware(
             );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to resolve space: {}", e)
-            ).into_response();
+                format!("Failed to resolve space: {}", e),
+            )
+                .into_response();
         }
     };
 
@@ -113,13 +116,13 @@ pub async fn mcp_oauth_middleware(
     // Extract MCP method from body if POST
     let mcp_method = if request.method() == axum::http::Method::POST {
         use axum::body::to_bytes;
-        
+
         let (parts, body) = request.into_parts();
-        
+
         match to_bytes(body, usize::MAX).await {
             Ok(body_bytes) => {
                 let method = crate::server::logging_middleware::extract_mcp_method(&body_bytes);
-                
+
                 // Log single consolidated entry line
                 info!(
                     trace_id = %trace_id,
@@ -128,7 +131,7 @@ pub async fn mcp_oauth_middleware(
                     method = method.as_deref().unwrap_or("-"),
                     "→ MCP"
                 );
-                
+
                 // Reconstruct the request
                 request = axum::http::Request::from_parts(parts, Body::from(body_bytes));
                 method
@@ -137,8 +140,9 @@ pub async fn mcp_oauth_middleware(
                 warn!(trace_id = %trace_id, "Failed to read body: {}", e);
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Failed to read request body: {}", e)
-                ).into_response();
+                    format!("Failed to read request body: {}", e),
+                )
+                    .into_response();
             }
         }
     } else {
@@ -146,9 +150,9 @@ pub async fn mcp_oauth_middleware(
         debug!(trace_id = %trace_id, "SSE stream request");
         None
     };
-    
+
     let response = next.run(request).await;
-    
+
     // Log errors only
     let status = response.status();
     if status.is_server_error() || status.is_client_error() {
@@ -160,7 +164,7 @@ pub async fn mcp_oauth_middleware(
             "← MCP error"
         );
     }
-    
+
     response
 }
 
@@ -176,7 +180,3 @@ fn unauthorized_response(message: &str) -> Response<Body> {
     )
         .into_response()
 }
-
-
-
-

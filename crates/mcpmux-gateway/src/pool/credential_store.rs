@@ -8,13 +8,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use mcpmux_core::{
-    OutboundOAuthRegistration, OutboundOAuthRepository, Credential, CredentialRepository,
-    CredentialValue,
+    Credential, CredentialRepository, CredentialValue, OutboundOAuthRegistration,
+    OutboundOAuthRepository,
 };
-use oauth2::{
-    AccessToken, RefreshToken, TokenResponse,
-    basic::BasicTokenType,
-};
+use oauth2::{basic::BasicTokenType, AccessToken, RefreshToken, TokenResponse};
 use rmcp::transport::auth::{AuthError, CredentialStore, OAuthTokenResponse, StoredCredentials};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -83,10 +80,12 @@ impl DatabaseCredentialStore {
         // Save token to credentials table
         if let Some(token_response) = &creds.token_response {
             let access_token = token_response.access_token().secret().to_string();
-            let refresh_token = token_response.refresh_token().map(|t| t.secret().to_string());
-            let expires_at = token_response.expires_in().map(|d| {
-                Utc::now() + Duration::seconds(d.as_secs() as i64)
-            });
+            let refresh_token = token_response
+                .refresh_token()
+                .map(|t| t.secret().to_string());
+            let expires_at = token_response
+                .expires_in()
+                .map(|d| Utc::now() + Duration::seconds(d.as_secs() as i64));
 
             let credential = Credential {
                 space_id: self.space_id,
@@ -136,7 +135,7 @@ impl DatabaseCredentialStore {
                     .as_ref()
                     .and_then(|r| r.redirect_uri.clone())
                     .unwrap_or_default();
-                
+
                 let registration = OutboundOAuthRegistration::new(
                     self.space_id,
                     &self.server_id,
@@ -170,13 +169,15 @@ impl CredentialStore for DatabaseCredentialStore {
             "[CredentialStore] load() called for {}/{}",
             self.space_id, self.server_id
         );
-        
+
         // Check cache first
         {
             let cache = self.cache.read().await;
             if cache.is_some() {
-                debug!("[CredentialStore] Returning cached credentials for {}/{}", 
-                    self.space_id, self.server_id);
+                debug!(
+                    "[CredentialStore] Returning cached credentials for {}/{}",
+                    self.space_id, self.server_id
+                );
                 return Ok(cache.clone());
             }
         }

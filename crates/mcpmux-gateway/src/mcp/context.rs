@@ -2,11 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use http;
-use rmcp::{
-    RoleServer,
-    model::Extensions,
-    service::RequestContext,
-};
+use rmcp::{model::Extensions, service::RequestContext, RoleServer};
 use uuid::Uuid;
 
 /// OAuth claims extracted from JWT token
@@ -17,14 +13,15 @@ pub struct OAuthContext {
 }
 
 /// Extract OAuth context from extensions
-/// 
+///
 /// The context is injected via custom HTTP headers by OAuth middleware.
 /// If headers are missing, returns None (caller should check session metadata fallback).
 pub fn extract_oauth_context(extensions: &Extensions) -> Result<OAuthContext> {
     // OAuth context is passed via custom headers (preserved by rmcp)
-    let parts = extensions.get::<http::request::Parts>()
+    let parts = extensions
+        .get::<http::request::Parts>()
         .ok_or_else(|| anyhow!("HTTP request parts not found in extensions"))?;
-    
+
     // Extract client_id from header
     let client_id = parts.headers.get("x-mcpmux-client-id")
         .ok_or_else(|| {
@@ -37,16 +34,18 @@ pub fn extract_oauth_context(extensions: &Extensions) -> Result<OAuthContext> {
         .to_str()
         .map_err(|_| anyhow!("Invalid x-mcpmux-client-id header value"))?
         .to_string();
-    
+
     // Extract space_id from header
-    let space_id_str = parts.headers.get("x-mcpmux-space-id")
+    let space_id_str = parts
+        .headers
+        .get("x-mcpmux-space-id")
         .ok_or_else(|| anyhow!("x-mcpmux-space-id header missing"))?
         .to_str()
         .map_err(|_| anyhow!("Invalid x-mcpmux-space-id header value"))?;
-    
-    let space_id = Uuid::parse_str(space_id_str)
-        .map_err(|e| anyhow!("Failed to parse space_id: {}", e))?;
-    
+
+    let space_id =
+        Uuid::parse_str(space_id_str).map_err(|e| anyhow!("Failed to parse space_id: {}", e))?;
+
     Ok(OAuthContext {
         client_id,
         space_id,
@@ -55,9 +54,11 @@ pub fn extract_oauth_context(extensions: &Extensions) -> Result<OAuthContext> {
 
 /// Extract session ID from request headers
 pub fn extract_session_id(extensions: &Extensions) -> Option<String> {
-    extensions.get::<http::request::Parts>()
+    extensions
+        .get::<http::request::Parts>()
         .and_then(|parts| {
-            parts.headers
+            parts
+                .headers
                 .get("mcp-session-id")
                 .or_else(|| parts.headers.get("Mcp-Session-Id"))
         })
@@ -74,7 +75,3 @@ pub fn extract_client_id(context: &RequestContext<RoleServer>) -> Result<String>
 pub fn extract_space_id(context: &RequestContext<RoleServer>) -> Result<Uuid> {
     Ok(extract_oauth_context(&context.extensions)?.space_id)
 }
-
-
-
-

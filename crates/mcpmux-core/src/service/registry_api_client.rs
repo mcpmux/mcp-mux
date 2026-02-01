@@ -90,7 +90,7 @@ pub struct SortOption {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SortRule {
     pub field: String,
-    pub direction: String, // "asc" or "desc"
+    pub direction: String,     // "asc" or "desc"
     pub nulls: Option<String>, // "first" or "last"
 }
 
@@ -154,24 +154,24 @@ impl RegistryApiClient {
     /// All filtering, searching, and sorting is done client-side.
     pub async fn fetch_bundle(&self, current_etag: Option<&str>) -> Result<FetchBundleResult> {
         let url = format!("{}/v1/bundle", self.base_url);
-        
+
         tracing::info!("Fetching registry bundle from {}", url);
-        
+
         let mut request = self.client.get(&url);
-        
+
         // Add If-None-Match header if we have a cached ETag
         if let Some(etag) = current_etag {
             tracing::debug!("Sending If-None-Match: {}", etag);
             request = request.header("If-None-Match", etag);
         }
-        
+
         let response = request
             .send()
             .await
             .context("Failed to send request to registry API")?;
 
         let status = response.status();
-        
+
         // Handle 304 Not Modified
         if status == reqwest::StatusCode::NOT_MODIFIED {
             tracing::info!("Registry bundle not modified (304)");
@@ -195,7 +195,7 @@ impl RegistryApiClient {
             .context("Failed to parse registry bundle JSON")?;
 
         let bundle = api_response.data;
-        
+
         tracing::info!(
             "Fetched {} servers, {} filters, {} sort options (version: {}, updated: {}, etag: {:?})",
             bundle.servers.len(),
@@ -206,7 +206,10 @@ impl RegistryApiClient {
             etag
         );
 
-        Ok(FetchBundleResult::Updated { bundle: Box::new(bundle), etag })
+        Ok(FetchBundleResult::Updated {
+            bundle: Box::new(bundle),
+            etag,
+        })
     }
 }
 
@@ -218,14 +221,20 @@ mod tests {
     async fn test_fetch_bundle_from_local() {
         // Assumes local dev server is running: pnpm dev
         let client = RegistryApiClient::new("http://localhost:8787".to_string());
-        
+
         let result = client.fetch_bundle(None).await;
-        
+
         // This will fail if dev server is not running - that's expected
         if let Ok(FetchBundleResult::Updated { bundle, etag }) = result {
-            assert!(!bundle.servers.is_empty(), "Should have at least one server");
+            assert!(
+                !bundle.servers.is_empty(),
+                "Should have at least one server"
+            );
             assert!(!bundle.ui.filters.is_empty(), "Should have filters");
-            assert!(!bundle.ui.sort_options.is_empty(), "Should have sort options");
+            assert!(
+                !bundle.ui.sort_options.is_empty(),
+                "Should have sort options"
+            );
             assert!(etag.is_some(), "Should have ETag");
         }
     }
@@ -233,10 +242,13 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_bundle_with_etag() {
         let client = RegistryApiClient::new("http://localhost:8787".to_string());
-        
+
         // First fetch to get ETag
         let first_result = client.fetch_bundle(None).await;
-        if let Ok(FetchBundleResult::Updated { etag: Some(etag), .. }) = first_result {
+        if let Ok(FetchBundleResult::Updated {
+            etag: Some(etag), ..
+        }) = first_result
+        {
             // Second fetch with ETag should return NotModified
             let second_result = client.fetch_bundle(Some(&etag)).await;
             if let Ok(FetchBundleResult::NotModified) = second_result {

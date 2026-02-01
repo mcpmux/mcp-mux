@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use super::{GatewayState, ServiceContainer};
 use crate::auth::{create_access_token, create_refresh_token};
-use crate::oauth::{DcrRequest, DcrResponse, DcrError, process_dcr_request};
+use crate::oauth::{process_dcr_request, DcrError, DcrRequest, DcrResponse};
 
 /// App State structure holding both GatewayState and ServiceContainer
 #[derive(Clone)]
@@ -58,7 +58,7 @@ pub struct OAuthServerMetadata {
     pub code_challenge_methods_supported: Vec<String>,
     pub token_endpoint_auth_methods_supported: Vec<String>,
     pub scopes_supported: Vec<String>,
-    
+
     // MCP spec 2025-11-25: Support for Client ID Metadata Documents
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id_metadata_document_supported: Option<bool>,
@@ -76,11 +76,14 @@ pub async fn oauth_metadata(
         token_endpoint: format!("{}/oauth/token", base),
         registration_endpoint: format!("{}/oauth/register", base),
         response_types_supported: vec!["code".to_string()],
-        grant_types_supported: vec!["authorization_code".to_string(), "refresh_token".to_string()],
+        grant_types_supported: vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ],
         code_challenge_methods_supported: vec!["S256".to_string()],
         token_endpoint_auth_methods_supported: vec!["none".to_string()],
         scopes_supported: vec!["mcp".to_string(), "offline_access".to_string()],
-        
+
         // MCP spec 2025-11-25: Advertise CIMD support
         client_id_metadata_document_supported: Some(true),
     })
@@ -136,7 +139,7 @@ pub struct PendingAuthorization {
 }
 
 /// OAuth authorization endpoint
-/// 
+///
 /// This endpoint receives the authorization request and:
 /// 1. Validates the client_id and redirect_uri
 /// 2. Shows consent UI (TODO: for now auto-approves)
@@ -145,11 +148,16 @@ pub async fn oauth_authorize(
     State(state): State<Arc<RwLock<GatewayState>>>,
     Query(params): Query<AuthorizeParams>,
 ) -> Response {
-    info!("[OAuth] Authorization request: client_id={}, response_type={}, redirect_uri={}", 
-        params.client_id, params.response_type, params.redirect_uri);
-    
+    info!(
+        "[OAuth] Authorization request: client_id={}, response_type={}, redirect_uri={}",
+        params.client_id, params.response_type, params.redirect_uri
+    );
+
     if params.response_type != "code" {
-        warn!("[OAuth] Unsupported response_type: {}", params.response_type);
+        warn!(
+            "[OAuth] Unsupported response_type: {}",
+            params.response_type
+        );
         return oauth_error_redirect(
             &params.redirect_uri,
             "unsupported_response_type",
@@ -161,7 +169,7 @@ pub async fn oauth_authorize(
     // Resolve and validate client (CIMD or traditional)
     {
         let gateway_state = state.read().await;
-        
+
         let client_metadata_service = match gateway_state.client_metadata_service() {
             Some(s) => s,
             None => {
@@ -174,9 +182,12 @@ pub async fn oauth_authorize(
                 );
             }
         };
-        
+
         // Resolve client (handles CIMD URL or traditional client_id)
-        let client = match client_metadata_service.resolve_client(&params.client_id).await {
+        let client = match client_metadata_service
+            .resolve_client(&params.client_id)
+            .await
+        {
             Ok(Some(c)) => c,
             Ok(None) => {
                 warn!("[OAuth] Unknown client_id: {}", params.client_id);
@@ -200,8 +211,10 @@ pub async fn oauth_authorize(
 
         // Validate redirect_uri against resolved client
         if !client.redirect_uris.contains(&params.redirect_uri) {
-            warn!("[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})", 
-                params.redirect_uri, client.redirect_uris);
+            warn!(
+                "[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})",
+                params.redirect_uri, client.redirect_uris
+            );
             return oauth_error_redirect(
                 &params.redirect_uri,
                 "invalid_redirect_uri",
@@ -225,14 +238,20 @@ pub async fn oauth_authorize(
     if let Some(ref scope) = params.scope {
         debug!("[OAuth] Requested scope: {}", scope);
     }
-    debug!("[OAuth] PKCE code_challenge present (method: {:?})", params.code_challenge_method);
+    debug!(
+        "[OAuth] PKCE code_challenge present (method: {:?})",
+        params.code_challenge_method
+    );
 
     // Security: Always show consent prompt, even for previously approved clients
     // This ensures user explicitly approves each session
     // Note: DCR/CIMD prevent duplicate clients - they update existing by client_name
 
-    info!("[OAuth] Showing consent page for client: {}", params.client_id);
-    
+    info!(
+        "[OAuth] Showing consent page for client: {}",
+        params.client_id
+    );
+
     // Get client display name from metadata service for new clients
     let display_name = {
         let gateway_state = state.read().await;
@@ -245,14 +264,14 @@ pub async fn oauth_authorize(
             "Unknown Application".to_string()
         }
     };
-    
+
     // Store pending authorization request with expiration (5 minutes)
     let request_id = uuid::Uuid::new_v4().to_string();
     let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64 + 300) // 5 minutes
         .unwrap_or(i64::MAX);
-    
+
     {
         let mut gateway_state = state.write().await;
         gateway_state.store_pending_authorization(
@@ -269,22 +288,23 @@ pub async fn oauth_authorize(
             },
         );
     }
-    
+
     // Build deep link URL for the Tauri app (only request_id - app fetches details from backend)
     let deep_link_url = format!(
         "{}://authorize?request_id={}",
         branding::DEEP_LINK_SCHEME,
         urlencoding::encode(&request_id),
     );
-    
+
     info!("[OAuth] Deep link URL: {}", deep_link_url);
-    
+
     let app_name = branding::DISPLAY_NAME;
-    
+
     // HTML page that triggers the deep link
     // The page shows a brief message while the app opens
     // Industry standard: Don't auto-close, let user close after approval
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -425,16 +445,26 @@ pub async fn oauth_authorize(
         }})();
     </script>
 </body>
-</html>"#);
-    
+</html>"#
+    );
+
     axum::response::Html(html).into_response()
 }
 
 /// Helper to create OAuth error redirect
-fn oauth_error_redirect(redirect_uri: &str, error: &str, description: &str, state: Option<&str>) -> Response {
+fn oauth_error_redirect(
+    redirect_uri: &str,
+    error: &str,
+    description: &str,
+    state: Option<&str>,
+) -> Response {
     let mut url = redirect_uri.to_string();
     url.push_str(if url.contains('?') { "&" } else { "?" });
-    url.push_str(&format!("error={}&error_description={}", error, urlencoding::encode(description)));
+    url.push_str(&format!(
+        "error={}&error_description={}",
+        error,
+        urlencoding::encode(description)
+    ));
     if let Some(s) = state {
         url.push_str(&format!("&state={}", s));
     }
@@ -479,9 +509,11 @@ pub async fn oauth_token(
     State(state): State<Arc<RwLock<GatewayState>>>,
     axum::Form(request): axum::Form<TokenRequest>,
 ) -> Result<Json<TokenResponseBody>, (StatusCode, Json<TokenErrorResponse>)> {
-    info!("[OAuth] Token request: grant_type={}, client_id={:?}", 
-        request.grant_type, request.client_id);
-    
+    info!(
+        "[OAuth] Token request: grant_type={}, client_id={:?}",
+        request.grant_type, request.client_id
+    );
+
     match request.grant_type.as_str() {
         "authorization_code" => {
             // Validate required fields
@@ -502,7 +534,10 @@ pub async fn oauth_token(
 
             let Some(pending) = pending else {
                 warn!("[OAuth] Unknown or expired authorization code");
-                return Err(token_error("invalid_grant", "Authorization code is invalid or expired"));
+                return Err(token_error(
+                    "invalid_grant",
+                    "Authorization code is invalid or expired",
+                ));
             };
 
             // Validate client_id matches
@@ -523,7 +558,11 @@ pub async fn oauth_token(
 
             // Validate PKCE
             if let Some(ref code_challenge) = pending.code_challenge {
-                if !verify_pkce(code_verifier, code_challenge, pending.code_challenge_method.as_deref()) {
+                if !verify_pkce(
+                    code_verifier,
+                    code_challenge,
+                    pending.code_challenge_method.as_deref(),
+                ) {
                     warn!("[OAuth] PKCE verification failed");
                     return Err(token_error("invalid_grant", "PKCE verification failed"));
                 }
@@ -533,7 +572,10 @@ pub async fn oauth_token(
             let gateway_state = state.read().await;
             let Some(secret) = gateway_state.get_jwt_secret() else {
                 warn!("[OAuth] JWT secret not configured");
-                return Err(token_error("server_error", "Server not properly configured"));
+                return Err(token_error(
+                    "server_error",
+                    "Server not properly configured",
+                ));
             };
 
             // Issue tokens
@@ -546,24 +588,32 @@ pub async fn oauth_token(
             // Track that this client has active tokens and emit event
             {
                 let mut gateway_state = state.write().await;
-                gateway_state.clients_with_tokens.insert(client_id_for_tracking.clone());
-                
+                gateway_state
+                    .clients_with_tokens
+                    .insert(client_id_for_tracking.clone());
+
                 // Update last_seen in database
                 if let Some(repo) = gateway_state.inbound_client_repository() {
                     if let Err(e) = repo.update_client_last_seen(&client_id_for_tracking).await {
                         warn!("[OAuth] Failed to update last_seen: {}", e);
                     }
                 }
-                
+
                 // Emit domain event for token issued
                 use mcpmux_core::DomainEvent;
-                info!("[OAuth] Emitting token issued event for: {}", client_id_for_tracking);
+                info!(
+                    "[OAuth] Emitting token issued event for: {}",
+                    client_id_for_tracking
+                );
                 gateway_state.emit_domain_event(DomainEvent::ClientTokenIssued {
                     client_id: client_id_for_tracking.clone(),
                 });
             }
 
-            info!("[OAuth] Issued tokens for client: {} (expires_in=3600s)", client_id_for_tracking);
+            info!(
+                "[OAuth] Issued tokens for client: {} (expires_in=3600s)",
+                client_id_for_tracking
+            );
 
             Ok(Json(TokenResponseBody {
                 access_token,
@@ -582,13 +632,19 @@ pub async fn oauth_token(
             // Get JWT secret and validate refresh token
             let gateway_state = state.read().await;
             let Some(secret) = gateway_state.get_jwt_secret() else {
-                return Err(token_error("server_error", "Server not properly configured"));
+                return Err(token_error(
+                    "server_error",
+                    "Server not properly configured",
+                ));
             };
 
             // Validate the refresh token
             let Some(claims) = crate::auth::validate_token(refresh_token, secret) else {
                 warn!("[OAuth] Invalid or expired refresh token");
-                return Err(token_error("invalid_grant", "Refresh token is invalid or expired"));
+                return Err(token_error(
+                    "invalid_grant",
+                    "Refresh token is invalid or expired",
+                ));
             };
 
             // Update last_seen in database
@@ -599,7 +655,8 @@ pub async fn oauth_token(
             }
 
             // Issue new access token
-            let access_token = create_access_token(&claims.client_id, claims.scope.as_deref(), 3600, secret);
+            let access_token =
+                create_access_token(&claims.client_id, claims.scope.as_deref(), 3600, secret);
 
             info!("[OAuth] Refreshed tokens for client: {}", claims.client_id);
 
@@ -613,31 +670,37 @@ pub async fn oauth_token(
         }
         _ => {
             warn!("[OAuth] Unsupported grant_type: {}", request.grant_type);
-            Err(token_error("unsupported_grant_type", "Only authorization_code and refresh_token are supported"))
-        },
+            Err(token_error(
+                "unsupported_grant_type",
+                "Only authorization_code and refresh_token are supported",
+            ))
+        }
     }
 }
 
 /// Helper to create token error response
 fn token_error(error: &str, description: &str) -> (StatusCode, Json<TokenErrorResponse>) {
-    (StatusCode::BAD_REQUEST, Json(TokenErrorResponse {
-        error: error.to_string(),
-        error_description: Some(description.to_string()),
-    }))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(TokenErrorResponse {
+            error: error.to_string(),
+            error_description: Some(description.to_string()),
+        }),
+    )
 }
 
 /// Verify PKCE code_verifier against code_challenge
 fn verify_pkce(code_verifier: &str, code_challenge: &str, method: Option<&str>) -> bool {
     match method.unwrap_or("S256") {
         "S256" => {
-            use sha2::{Sha256, Digest};
-            use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-            
+            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+            use sha2::{Digest, Sha256};
+
             let mut hasher = Sha256::new();
             hasher.update(code_verifier.as_bytes());
             let hash = hasher.finalize();
             let computed_challenge = URL_SAFE_NO_PAD.encode(hash);
-            
+
             computed_challenge == code_challenge
         }
         "plain" => code_verifier == code_challenge,
@@ -678,7 +741,7 @@ pub struct ConsentApprovalResponse {
 }
 
 /// Approve or deny an OAuth consent request
-/// 
+///
 /// This endpoint is called by the McpMux desktop app after the user has reviewed
 /// and approved (or denied) an OAuth authorization request.
 /// Future feature - not yet routed
@@ -689,14 +752,21 @@ pub async fn oauth_consent_approve(
 ) -> impl IntoResponse {
     info!(
         "[OAuth] Consent {} for request_id: {}",
-        if request.approved { "approved" } else { "denied" },
+        if request.approved {
+            "approved"
+        } else {
+            "denied"
+        },
         request.request_id
     );
 
     // Look up the pending authorization
     let pending = {
         let gateway_state = state.read().await;
-        gateway_state.pending_authorizations.get(&request.request_id).cloned()
+        gateway_state
+            .pending_authorizations
+            .get(&request.request_id)
+            .cloned()
     };
 
     let Some(pending) = pending else {
@@ -711,7 +781,9 @@ pub async fn oauth_consent_approve(
     // Remove the pending authorization (it's been processed)
     {
         let mut gateway_state = state.write().await;
-        gateway_state.pending_authorizations.remove(&request.request_id);
+        gateway_state
+            .pending_authorizations
+            .remove(&request.request_id);
     }
 
     if !request.approved {
@@ -722,8 +794,11 @@ pub async fn oauth_consent_approve(
         if let Some(ref state_param) = pending.state {
             redirect_url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
         }
-        
-        info!("[OAuth] User denied consent for client: {}", pending.client_id);
+
+        info!(
+            "[OAuth] User denied consent for client: {}",
+            pending.client_id
+        );
         return Json(ConsentApprovalResponse {
             success: true,
             redirect_url,
@@ -733,13 +808,13 @@ pub async fn oauth_consent_approve(
 
     // User approved - generate authorization code
     let code = format!("mc_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-    
+
     // Auth codes expire in 10 minutes (standard OAuth)
     let code_expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64 + 600) // 10 minutes
         .unwrap_or(i64::MAX);
-    
+
     // Store the authorization with the new code
     {
         let mut gateway_state = state.write().await;
@@ -766,7 +841,10 @@ pub async fn oauth_consent_approve(
                     if let Err(e) = repo.save_client(&client).await {
                         warn!("[OAuth] Failed to save client alias: {}", e);
                     } else {
-                        info!("[OAuth] Set client alias '{}' for client_id: {}", alias, pending.client_id);
+                        info!(
+                            "[OAuth] Set client alias '{}' for client_id: {}",
+                            alias, pending.client_id
+                        );
                     }
                 }
             }
@@ -781,8 +859,11 @@ pub async fn oauth_consent_approve(
         redirect_url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
     }
 
-    info!("[OAuth] Authorization approved for client: {}, issuing code", pending.client_id);
-    
+    info!(
+        "[OAuth] Authorization approved for client: {}, issuing code",
+        pending.client_id
+    );
+
     Json(ConsentApprovalResponse {
         success: true,
         redirect_url,
@@ -804,7 +885,7 @@ pub struct OAuthClientInfoResponse {
     pub client_alias: Option<String>,
     pub redirect_uris: Vec<String>,
     pub scope: Option<String>,
-    
+
     // RFC 7591 Client Metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo_uri: Option<String>,
@@ -814,7 +895,7 @@ pub struct OAuthClientInfoResponse {
     pub software_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub software_version: Option<String>,
-    
+
     // CIMD-specific fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_url: Option<String>,
@@ -822,7 +903,7 @@ pub struct OAuthClientInfoResponse {
     pub metadata_cached_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_cache_ttl: Option<i64>,
-    
+
     // MCP client preferences
     pub connection_mode: String,
     pub locked_space_id: Option<String>,
@@ -837,13 +918,13 @@ pub async fn oauth_list_clients(
     State(state): State<Arc<RwLock<GatewayState>>>,
 ) -> impl IntoResponse {
     let gateway_state = state.read().await;
-    
+
     // Get clients from database (required)
     let Some(repo) = gateway_state.inbound_client_repository() else {
         warn!("[OAuth] Database not available for listing clients");
-        return Json(vec![]);  // Return empty list if database unavailable
+        return Json(vec![]); // Return empty list if database unavailable
     };
-    
+
     match repo.list_clients().await {
         Ok(db_clients) => {
             let clients: Vec<OAuthClientInfoResponse> = db_clients
@@ -877,7 +958,7 @@ pub async fn oauth_list_clients(
         }
         Err(e) => {
             error!("[OAuth] Failed to list clients from database: {}", e);
-            Json(vec![])  // Return empty list on error
+            Json(vec![]) // Return empty list on error
         }
     }
 }
@@ -892,18 +973,21 @@ pub struct UpdateClientRequest {
 
 /// Update client settings (connection mode, alias, etc.)
 /// Get resolved features (tools/prompts/resources) for a client
-/// 
+///
 /// DIP: Thin handler that orchestrates services
 /// Get resolved features (tools/prompts/resources) for a client
-/// 
+///
 /// Supports both DCR and CIMD clients. CIMD client_ids (URLs) should be URL-encoded.
 /// Axum automatically URL-decodes path parameters.
 pub async fn oauth_get_client_features(
     State(state): State<AppState>,
     axum::extract::Path(client_id): axum::extract::Path<String>,
 ) -> Response {
-    info!("[OAuth] Getting resolved features for client: {}", client_id);
-    
+    info!(
+        "[OAuth] Getting resolved features for client: {}",
+        client_id
+    );
+
     // Step 1: Resolve space for client (SRP: SpaceResolverService)
     let space_id = match state
         .services
@@ -913,19 +997,26 @@ pub async fn oauth_get_client_features(
     {
         Ok(id) => id,
         Err(e) => {
-            warn!("[OAuth] Failed to resolve space for client {}: {}", client_id, e);
+            warn!(
+                "[OAuth] Failed to resolve space for client {}: {}",
+                client_id, e
+            );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "error": "space_resolution_failed",
                     "error_description": format!("Failed to resolve space: {}", e)
-                }))
-            ).into_response();
+                })),
+            )
+                .into_response();
         }
     };
-    
-    debug!("[OAuth] Resolved space {} for client {}", space_id, client_id);
-    
+
+    debug!(
+        "[OAuth] Resolved space {} for client {}",
+        space_id, client_id
+    );
+
     // Step 2: Get client grants (SRP: AuthorizationService)
     let feature_set_ids = match state
         .services
@@ -935,37 +1026,54 @@ pub async fn oauth_get_client_features(
     {
         Ok(grants) => grants,
         Err(e) => {
-            warn!("[OAuth] Failed to get grants for client {}: {}", client_id, e);
+            warn!(
+                "[OAuth] Failed to get grants for client {}: {}",
+                client_id, e
+            );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
                     "error": "authorization_failed",
                     "error_description": format!("Failed to get grants: {}", e)
-                }))
-            ).into_response();
+                })),
+            )
+                .into_response();
         }
     };
-    
-    debug!("[OAuth] Client {} has {} grants", client_id, feature_set_ids.len());
-    
+
+    debug!(
+        "[OAuth] Client {} has {} grants",
+        client_id,
+        feature_set_ids.len()
+    );
+
     // Step 3: Resolve features (SRP: FeatureService)
     let space_id_str = space_id.to_string();
-    
-    let tools = state.services.pool_services.feature_service
+
+    let tools = state
+        .services
+        .pool_services
+        .feature_service
         .get_tools_for_grants(&space_id_str, &feature_set_ids)
         .await
         .unwrap_or_default();
-    
-    let prompts = state.services.pool_services.feature_service
+
+    let prompts = state
+        .services
+        .pool_services
+        .feature_service
         .get_prompts_for_grants(&space_id_str, &feature_set_ids)
         .await
         .unwrap_or_default();
-    
-    let resources = state.services.pool_services.feature_service
+
+    let resources = state
+        .services
+        .pool_services
+        .feature_service
         .get_resources_for_grants(&space_id_str, &feature_set_ids)
         .await
         .unwrap_or_default();
-    
+
     info!(
         "[OAuth] Client {} features: {} tools, {} prompts, {} resources",
         client_id,
@@ -973,37 +1081,53 @@ pub async fn oauth_get_client_features(
         prompts.len(),
         resources.len()
     );
-    
+
     // Convert to response format
-    let tools_response: Vec<_> = tools.iter().map(|f| json!({
-        "name": f.feature_name,
-        "description": f.description,
-        "server_id": f.server_id,
-    })).collect();
-    
-    let prompts_response: Vec<_> = prompts.iter().map(|f| json!({
-        "name": f.feature_name,
-        "description": f.description,
-        "server_id": f.server_id,
-    })).collect();
-    
-    let resources_response: Vec<_> = resources.iter().map(|f| json!({
-        "name": f.feature_name,
-        "description": f.description,
-        "server_id": f.server_id,
-    })).collect();
-    
+    let tools_response: Vec<_> = tools
+        .iter()
+        .map(|f| {
+            json!({
+                "name": f.feature_name,
+                "description": f.description,
+                "server_id": f.server_id,
+            })
+        })
+        .collect();
+
+    let prompts_response: Vec<_> = prompts
+        .iter()
+        .map(|f| {
+            json!({
+                "name": f.feature_name,
+                "description": f.description,
+                "server_id": f.server_id,
+            })
+        })
+        .collect();
+
+    let resources_response: Vec<_> = resources
+        .iter()
+        .map(|f| {
+            json!({
+                "name": f.feature_name,
+                "description": f.description,
+                "server_id": f.server_id,
+            })
+        })
+        .collect();
+
     Json(json!({
         "space_id": space_id_str,
         "feature_set_ids": feature_set_ids,
         "tools": tools_response,
         "prompts": prompts_response,
         "resources": resources_response,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// Update client settings (connection mode, alias, etc.)
-/// 
+///
 /// Supports both DCR and CIMD clients. CIMD client_ids (URLs) should be URL-encoded.
 pub async fn oauth_update_client(
     State(state): State<Arc<RwLock<GatewayState>>>,
@@ -1011,41 +1135,47 @@ pub async fn oauth_update_client(
     Json(req): Json<UpdateClientRequest>,
 ) -> Response {
     info!("[OAuth] Updating client settings: {}", client_id);
-    
+
     let gateway_state = state.read().await;
-    
+
     let Some(repo) = gateway_state.inbound_client_repository() else {
         warn!("[OAuth] Database not available for client update");
         return (StatusCode::SERVICE_UNAVAILABLE, "Database not available").into_response();
     };
-    
+
     // Validate connection_mode if provided
     if let Some(ref mode) = req.connection_mode {
         if !["follow_active", "locked", "ask_on_change"].contains(&mode.as_str()) {
             return (StatusCode::BAD_REQUEST, "Invalid connection_mode").into_response();
         }
     }
-    
+
     // Handle locked_space_id: convert to Option<Option<String>>
     let locked_space_id = if req.connection_mode.as_deref() == Some("locked") {
         Some(req.locked_space_id.clone())
-    } else if req.connection_mode.as_deref() == Some("follow_active") 
-           || req.connection_mode.as_deref() == Some("ask_on_change") {
+    } else if req.connection_mode.as_deref() == Some("follow_active")
+        || req.connection_mode.as_deref() == Some("ask_on_change")
+    {
         // Clear locked_space_id when switching away from locked mode
         Some(None)
     } else {
         // Don't change if not explicitly setting mode
         None
     };
-    
-    match repo.update_client_settings(
-        &client_id,
-        req.client_alias,
-        req.connection_mode,
-        locked_space_id,
-    ).await {
+
+    match repo
+        .update_client_settings(
+            &client_id,
+            req.client_alias,
+            req.connection_mode,
+            locked_space_id,
+        )
+        .await
+    {
         Ok(Some(client)) => {
-            let has_active = gateway_state.clients_with_tokens.contains(&client.client_id);
+            let has_active = gateway_state
+                .clients_with_tokens
+                .contains(&client.client_id);
             let response = OAuthClientInfoResponse {
                 client_id: client.client_id,
                 registration_type: client.registration_type.as_str().to_string(),
@@ -1075,28 +1205,32 @@ pub async fn oauth_update_client(
         }
         Err(e) => {
             warn!("[OAuth] Failed to update client: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update client: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to update client: {}", e),
+            )
+                .into_response()
         }
     }
 }
 
 /// Delete a client and revoke all tokens
 /// Delete a client and revoke all tokens
-/// 
+///
 /// Supports both DCR and CIMD clients. CIMD client_ids (URLs) should be URL-encoded.
 pub async fn oauth_delete_client(
     State(state): State<Arc<RwLock<GatewayState>>>,
     axum::extract::Path(client_id): axum::extract::Path<String>,
 ) -> Response {
     info!("[OAuth] Deleting client: {}", client_id);
-    
+
     let mut gateway_state = state.write().await;
-    
+
     let Some(repo) = gateway_state.inbound_client_repository() else {
         warn!("[OAuth] Database not available for client deletion");
         return (StatusCode::SERVICE_UNAVAILABLE, "Database not available").into_response();
     };
-    
+
     match repo.delete_client(&client_id).await {
         Ok(true) => {
             // Remove from active tokens set
@@ -1110,7 +1244,11 @@ pub async fn oauth_delete_client(
         }
         Err(e) => {
             warn!("[OAuth] Failed to delete client: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to delete client: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to delete client: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -1124,27 +1262,35 @@ pub async fn oauth_register(
     State(state): State<Arc<RwLock<GatewayState>>>,
     Json(request): Json<DcrRequest>,
 ) -> Result<Json<DcrResponse>, (StatusCode, Json<DcrError>)> {
-    info!("[DCR] Registration request from: {} (redirect_uris: {:?})", 
-        request.client_name, request.redirect_uris);
-    
+    info!(
+        "[DCR] Registration request from: {} (redirect_uris: {:?})",
+        request.client_name, request.redirect_uris
+    );
+
     let gateway_state = state.read().await;
-    
+
     // Get database repository (required for DCR)
-    let repo = gateway_state.inbound_client_repository()
-        .ok_or_else(|| (
+    let repo = gateway_state.inbound_client_repository().ok_or_else(|| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(DcrError::invalid_client_metadata("Database not available"))
-        ))?;
-    
+            Json(DcrError::invalid_client_metadata("Database not available")),
+        )
+    })?;
+
     // Process DCR request (saves to database)
     match process_dcr_request(repo, request).await {
         Ok(response) => {
-            info!("[DCR] Successfully registered client: {} ({})", 
-                response.client_name, response.client_id);
+            info!(
+                "[DCR] Successfully registered client: {} ({})",
+                response.client_name, response.client_id
+            );
             Ok(Json(response))
         }
         Err(error) => {
-            warn!("[DCR] Registration failed: {} - {:?}", error.error, error.error_description);
+            warn!(
+                "[DCR] Registration failed: {} - {:?}",
+                error.error, error.error_description
+            );
             Err((StatusCode::BAD_REQUEST, Json(error)))
         }
     }

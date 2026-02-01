@@ -6,9 +6,9 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use tests::mocks::{MockFeatureSetRepository, MockServerFeatureRepository};
 use mcpmux_core::{FeatureSetRepository, ServerFeature, ServerFeatureRepository};
 use mcpmux_gateway::{FeatureService, PrefixCacheService};
+use tests::mocks::{MockFeatureSetRepository, MockServerFeatureRepository};
 
 // Helper to create test features
 fn create_tool(space_id: &str, server_id: &str, name: &str) -> ServerFeature {
@@ -56,10 +56,15 @@ async fn test_find_server_for_qualified_tool_with_alias() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Register server with alias
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some(alias)).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some(alias))
+        .await;
 
     // Create tool
-    feature_repo.upsert(&create_tool(&space_id, server_id, "read_file")).await.unwrap();
+    feature_repo
+        .upsert(&create_tool(&space_id, server_id, "read_file"))
+        .await
+        .unwrap();
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -85,10 +90,15 @@ async fn test_find_server_for_qualified_tool_with_server_id() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Register server without alias (uses server_id as prefix)
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, None).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, None)
+        .await;
 
     // Create tool
-    feature_repo.upsert(&create_tool(&space_id, server_id, "do_something")).await.unwrap();
+    feature_repo
+        .upsert(&create_tool(&space_id, server_id, "do_something"))
+        .await
+        .unwrap();
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -114,8 +124,13 @@ async fn test_find_server_for_qualified_prompt() {
     let feature_set_repo = Arc::new(MockFeatureSetRepository::new());
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some(alias)).await;
-    feature_repo.upsert(&create_prompt(&space_id, server_id, "summarize")).await.unwrap();
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some(alias))
+        .await;
+    feature_repo
+        .upsert(&create_prompt(&space_id, server_id, "summarize"))
+        .await
+        .unwrap();
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -139,7 +154,9 @@ async fn test_unavailable_tool_not_resolved() {
     let feature_set_repo = Arc::new(MockFeatureSetRepository::new());
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some("s")).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some("s"))
+        .await;
 
     // Create unavailable tool
     let mut tool = create_tool(&space_id, server_id, "unavailable_tool");
@@ -170,7 +187,10 @@ async fn test_find_server_for_resource_uri() {
     let feature_set_repo = Arc::new(MockFeatureSetRepository::new());
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
-    feature_repo.upsert(&create_resource(&space_id, server_id, uri)).await.unwrap();
+    feature_repo
+        .upsert(&create_resource(&space_id, server_id, uri))
+        .await
+        .unwrap();
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -194,7 +214,10 @@ async fn test_find_server_for_custom_uri_scheme() {
     let feature_set_repo = Arc::new(MockFeatureSetRepository::new());
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
-    feature_repo.upsert(&create_resource(&space_id, server_id, uri)).await.unwrap();
+    feature_repo
+        .upsert(&create_resource(&space_id, server_id, uri))
+        .await
+        .unwrap();
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -239,7 +262,9 @@ async fn test_parse_qualified_tool_name() {
     let feature_set_repo = Arc::new(MockFeatureSetRepository::new());
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some(alias)).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some(alias))
+        .await;
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -263,7 +288,9 @@ async fn test_parse_qualified_tool_name_with_underscores() {
     let feature_set_repo = Arc::new(MockFeatureSetRepository::new());
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some(alias)).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some(alias))
+        .await;
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -310,7 +337,9 @@ async fn test_parse_qualified_prompt_name() {
     let feature_set_repo = Arc::new(MockFeatureSetRepository::new());
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some(alias)).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some(alias))
+        .await;
 
     let service = create_feature_service(feature_repo, feature_set_repo, prefix_cache);
 
@@ -335,11 +364,17 @@ async fn test_prefix_cache_alias_priority() {
     let alias = "short";
 
     let prefix_cache = Arc::new(PrefixCacheService::new());
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some(alias)).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some(alias))
+        .await;
 
     // Both alias and server_id should resolve to server
-    let alias_result = prefix_cache.resolve_qualified_name(&space_id, "short_tool").await;
-    let server_result = prefix_cache.resolve_qualified_name(&space_id, "long-server-name_tool").await;
+    let alias_result = prefix_cache
+        .resolve_qualified_name(&space_id, "short_tool")
+        .await;
+    let server_result = prefix_cache
+        .resolve_qualified_name(&space_id, "long-server-name_tool")
+        .await;
 
     assert!(alias_result.is_some());
     assert!(server_result.is_some());
@@ -358,11 +393,19 @@ async fn test_prefix_cache_multiple_servers() {
     let space_id = Uuid::new_v4().to_string();
 
     let prefix_cache = Arc::new(PrefixCacheService::new());
-    prefix_cache.assign_prefix_runtime(&space_id, "server-a", Some("a")).await;
-    prefix_cache.assign_prefix_runtime(&space_id, "server-b", Some("b")).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, "server-a", Some("a"))
+        .await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, "server-b", Some("b"))
+        .await;
 
-    let result_a = prefix_cache.resolve_qualified_name(&space_id, "a_tool").await;
-    let result_b = prefix_cache.resolve_qualified_name(&space_id, "b_tool").await;
+    let result_a = prefix_cache
+        .resolve_qualified_name(&space_id, "a_tool")
+        .await;
+    let result_b = prefix_cache
+        .resolve_qualified_name(&space_id, "b_tool")
+        .await;
 
     assert!(result_a.is_some());
     assert!(result_b.is_some());
@@ -380,19 +423,31 @@ async fn test_prefix_cache_space_isolation() {
     let space_b = Uuid::new_v4().to_string();
 
     let prefix_cache = Arc::new(PrefixCacheService::new());
-    prefix_cache.assign_prefix_runtime(&space_a, "actual-server", Some("s")).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_a, "actual-server", Some("s"))
+        .await;
     // Don't register in space_b
 
-    let result_a = prefix_cache.resolve_qualified_name(&space_a, "s_tool").await;
-    let result_b = prefix_cache.resolve_qualified_name(&space_b, "s_tool").await;
+    let result_a = prefix_cache
+        .resolve_qualified_name(&space_a, "s_tool")
+        .await;
+    let result_b = prefix_cache
+        .resolve_qualified_name(&space_b, "s_tool")
+        .await;
 
     // Both parse the qualified name, but resolve server differently
     assert!(result_a.is_some(), "Should parse in space_a");
-    assert!(result_b.is_some(), "Should also parse in space_b (with fallback)");
+    assert!(
+        result_b.is_some(),
+        "Should also parse in space_b (with fallback)"
+    );
 
     // Space A: "s" resolves to "actual-server" (registered)
     let (server_a, _) = result_a.unwrap();
-    assert_eq!(server_a, "actual-server", "Should resolve to registered server");
+    assert_eq!(
+        server_a, "actual-server",
+        "Should resolve to registered server"
+    );
 
     // Space B: "s" falls back to "s" itself (not registered)
     let (server_b, _) = result_b.unwrap();
@@ -406,9 +461,13 @@ async fn test_get_prefix_for_server_returns_alias() {
     let alias = "myalias";
 
     let prefix_cache = Arc::new(PrefixCacheService::new());
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some(alias)).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some(alias))
+        .await;
 
-    let prefix = prefix_cache.get_prefix_for_server(&space_id, server_id).await;
+    let prefix = prefix_cache
+        .get_prefix_for_server(&space_id, server_id)
+        .await;
     assert_eq!(prefix, alias);
 }
 
@@ -418,8 +477,12 @@ async fn test_get_prefix_for_server_fallback() {
     let server_id = "my-server";
 
     let prefix_cache = Arc::new(PrefixCacheService::new());
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, None).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, None)
+        .await;
 
-    let prefix = prefix_cache.get_prefix_for_server(&space_id, server_id).await;
+    let prefix = prefix_cache
+        .get_prefix_for_server(&space_id, server_id)
+        .await;
     assert_eq!(prefix, server_id);
 }

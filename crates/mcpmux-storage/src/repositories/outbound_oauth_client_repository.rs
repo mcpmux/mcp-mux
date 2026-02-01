@@ -1,5 +1,5 @@
 //! SQLite implementation of OutboundOAuthRepository.
-//! 
+//!
 //! Manages OUTBOUND OAuth registrations where McpMux acts as OAuth client
 //! connecting TO backend MCP servers (e.g., Cloudflare, Atlassian).
 
@@ -39,7 +39,11 @@ impl SqliteOutboundOAuthRepository {
 
 #[async_trait]
 impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
-    async fn get(&self, space_id: &Uuid, server_id: &str) -> Result<Option<OutboundOAuthRegistration>> {
+    async fn get(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+    ) -> Result<Option<OutboundOAuthRegistration>> {
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -66,18 +70,27 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
             .optional()?;
 
         match row {
-            Some((id, space_id_str, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at)) => {
+            Some((
+                id,
+                space_id_str,
+                server_id,
+                server_url,
+                client_id,
+                redirect_uri,
+                metadata_json,
+                created_at,
+                updated_at,
+            )) => {
                 // Parse metadata from JSON if present
-                let metadata: Option<StoredOAuthMetadata> = metadata_json
-                    .and_then(|json| {
-                        serde_json::from_str(&json)
-                            .map_err(|e| {
-                                warn!("Failed to parse stored OAuth metadata: {}", e);
-                                e
-                            })
-                            .ok()
-                    });
-                
+                let metadata: Option<StoredOAuthMetadata> = metadata_json.and_then(|json| {
+                    serde_json::from_str(&json)
+                        .map_err(|e| {
+                            warn!("Failed to parse stored OAuth metadata: {}", e);
+                            e
+                        })
+                        .ok()
+                });
+
                 Ok(Some(OutboundOAuthRegistration {
                     id: id.parse().unwrap_or_else(|_| Uuid::new_v4()),
                     space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
@@ -99,7 +112,8 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
         let conn = db.connection();
 
         // Serialize metadata to JSON if present
-        let metadata_json: Option<String> = reg.metadata
+        let metadata_json: Option<String> = reg
+            .metadata
             .as_ref()
             .and_then(|m| serde_json::to_string(m).ok());
 
@@ -168,11 +182,21 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
 
         let mut registrations = Vec::new();
         for row in rows {
-            let (id, space_id_str, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at) = row?;
+            let (
+                id,
+                space_id_str,
+                server_id,
+                server_url,
+                client_id,
+                redirect_uri,
+                metadata_json,
+                created_at,
+                updated_at,
+            ) = row?;
 
             // Parse metadata from JSON if present
-            let metadata: Option<StoredOAuthMetadata> = metadata_json
-                .and_then(|json| serde_json::from_str(&json).ok());
+            let metadata: Option<StoredOAuthMetadata> =
+                metadata_json.and_then(|json| serde_json::from_str(&json).ok());
 
             registrations.push(OutboundOAuthRegistration {
                 id: id.parse().unwrap_or_else(|_| Uuid::new_v4()),
@@ -226,11 +250,18 @@ mod tests {
         let found = found.unwrap();
         assert_eq!(found.client_id, "client_123");
         assert_eq!(found.server_url, "https://bindings.mcp.cloudflare.com");
-        assert_eq!(found.redirect_uri, Some("http://127.0.0.1:9876/callback".to_string()));
+        assert_eq!(
+            found.redirect_uri,
+            Some("http://127.0.0.1:9876/callback".to_string())
+        );
         assert!(found.matches_redirect_uri("http://127.0.0.1:9876/callback"));
         assert!(!found.matches_redirect_uri("http://127.0.0.1:9877/callback"));
 
         repo.delete(&space_id, "cloudflare-bindings").await.unwrap();
-        assert!(repo.get(&space_id, "cloudflare-bindings").await.unwrap().is_none());
+        assert!(repo
+            .get(&space_id, "cloudflare-bindings")
+            .await
+            .unwrap()
+            .is_none());
     }
 }

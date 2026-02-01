@@ -37,7 +37,6 @@ impl FeatureType {
     }
 }
 
-
 /// A discovered feature from an MCP server
 ///
 /// Features are discovered when a server is connected and reports
@@ -68,7 +67,7 @@ pub struct ServerFeature {
 
     /// Description of what this feature does
     pub description: Option<String>,
-    
+
     /// Raw JSON from backend MCP server (complete feature object)
     /// This preserves all fields from the backend, making the system
     /// forward-compatible with any MCP protocol changes
@@ -191,9 +190,9 @@ impl ServerFeature {
     /// Get a qualified name for this feature
     /// Format for tools/prompts: prefix_feature_name (e.g., "cfdocs_search")
     /// Format for resources: unchanged URI (e.g., "instant-domains://tld-categories")
-    /// 
+    ///
     /// Resources don't need prefixing because URIs have built-in namespacing via their scheme.
-    /// 
+    ///
     /// Uses underscore separator for maximum client compatibility (Cursor only allows [a-z0-9_-])
     pub fn qualified_name(&self) -> String {
         match self.feature_type {
@@ -215,9 +214,7 @@ impl ServerFeature {
             FeatureType::Tool | FeatureType::Prompt => {
                 format!("{}_{}", self.server_id, self.feature_name)
             }
-            FeatureType::Resource => {
-                self.feature_name.clone()
-            }
+            FeatureType::Resource => self.feature_name.clone(),
         }
     }
 }
@@ -242,11 +239,7 @@ mod tests {
 
     #[test]
     fn test_unique_key() {
-        let feature = ServerFeature::tool(
-            "space_1",
-            "com.cloudflare/docs-mcp",
-            "search_docs",
-        );
+        let feature = ServerFeature::tool("space_1", "com.cloudflare/docs-mcp", "search_docs");
 
         assert_eq!(
             feature.unique_key(),

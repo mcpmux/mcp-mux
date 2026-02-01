@@ -6,14 +6,14 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use mcpmux_core::DomainEvent;
 use parking_lot::RwLock;
-use rmcp::RoleClient;
 use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
-use rmcp::service::{RunningService, NotificationContext};
+use rmcp::service::{NotificationContext, RunningService};
+use rmcp::RoleClient;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
-use mcpmux_core::DomainEvent;
 
 // Re-export TransportType from mcpmux-core as the single source of truth
 pub use mcpmux_core::TransportType;
@@ -60,7 +60,7 @@ impl rmcp::ClientHandler for McpClientHandler {
     fn get_info(&self) -> ClientInfo {
         self.info.clone()
     }
-    
+
     // Handle notifications from backend MCP servers
     fn on_tool_list_changed(
         &self,
@@ -75,7 +75,7 @@ impl rmcp::ClientHandler for McpClientHandler {
                 space_id = %space_id,
                 "[McpClientHandler] 🔔 Backend server sent tools/list_changed notification"
             );
-            
+
             if let Some(tx) = &event_tx {
                 let event = DomainEvent::ToolsChanged {
                     server_id: server_id.clone(),
@@ -104,7 +104,7 @@ impl rmcp::ClientHandler for McpClientHandler {
             }
         }
     }
-    
+
     fn on_prompt_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
@@ -118,7 +118,7 @@ impl rmcp::ClientHandler for McpClientHandler {
                 space_id = %space_id,
                 "[McpClientHandler] 🔔 Backend server sent prompts/list_changed notification"
             );
-            
+
             if let Some(tx) = &event_tx {
                 let event = DomainEvent::PromptsChanged {
                     server_id: server_id.clone(),
@@ -147,7 +147,7 @@ impl rmcp::ClientHandler for McpClientHandler {
             }
         }
     }
-    
+
     fn on_resource_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
@@ -161,7 +161,7 @@ impl rmcp::ClientHandler for McpClientHandler {
                 space_id = %space_id,
                 "[McpClientHandler] 🔔 Backend server sent resources/list_changed notification"
             );
-            
+
             if let Some(tx) = &event_tx {
                 let event = DomainEvent::ResourcesChanged {
                     server_id: server_id.clone(),
@@ -204,13 +204,18 @@ pub struct InstanceKey {
 
 impl InstanceKey {
     /// Create instance key for STDIO transport.
-    pub fn stdio(space_id: Uuid, command: &str, _args: &[String], _env: &HashMap<String, String>) -> Self {
+    pub fn stdio(
+        space_id: Uuid,
+        command: &str,
+        _args: &[String],
+        _env: &HashMap<String, String>,
+    ) -> Self {
         Self {
             space_id,
             description: format!("stdio:{}", command),
         }
     }
-    
+
     /// Create instance key for HTTP transport.
     pub fn http(space_id: Uuid, url: &str, _headers: &HashMap<String, String>) -> Self {
         Self {
@@ -296,13 +301,9 @@ pub struct ServerInstance {
 /// The actual MCP client connection.
 pub enum McpClientConnection {
     /// STDIO transport - child process with MCP client
-    Stdio {
-        client: McpClient,
-    },
+    Stdio { client: McpClient },
     /// HTTP transport - streamable HTTP
-    Http {
-        client: McpClient,
-    },
+    Http { client: McpClient },
 }
 
 impl McpClientConnection {
@@ -327,24 +328,24 @@ impl ServerInstance {
             client: RwLock::new(None),
         }
     }
-    
+
     /// Get the current state.
     pub fn state(&self) -> InstanceState {
         self.stats.read().state
     }
-    
+
     /// Check if connected and healthy.
     pub fn is_healthy(&self) -> bool {
         self.stats.read().state == InstanceState::Connected && self.client.read().is_some()
     }
-    
+
     /// Update state to connecting.
     pub fn mark_connecting(&self) {
         let mut stats = self.stats.write();
         stats.state = InstanceState::Connecting;
         stats.last_attempt = Some(Instant::now());
     }
-    
+
     /// Update state to connected with discovered features.
     pub fn mark_connected(&self, features: DiscoveredFeatures, connection: McpClientConnection) {
         let mut stats = self.stats.write();
@@ -352,11 +353,11 @@ impl ServerInstance {
         stats.connected_at = Some(Instant::now());
         stats.consecutive_failures = 0;
         stats.last_error = None;
-        
+
         *self.features.write() = Some(features);
         *self.client.write() = Some(connection);
     }
-    
+
     /// Update state to failed.
     pub fn mark_failed(&self, error: String) {
         let mut stats = self.stats.write();
@@ -364,30 +365,30 @@ impl ServerInstance {
         stats.consecutive_failures += 1;
         stats.last_error = Some(error);
     }
-    
+
     /// Update state to OAuth pending.
     pub fn mark_oauth_pending(&self) {
         let mut stats = self.stats.write();
         stats.state = InstanceState::OAuthPending;
     }
-    
+
     /// Record a successful request.
     pub fn record_success(&self) {
         self.stats.write().requests_served += 1;
     }
-    
+
     /// Record a failed request.
     pub fn record_failure(&self, error: &str) {
         let mut stats = self.stats.write();
         stats.consecutive_failures += 1;
         stats.last_error = Some(error.to_string());
     }
-    
+
     /// Get discovered features.
     pub fn get_features(&self) -> Option<DiscoveredFeatures> {
         self.features.read().clone()
     }
-    
+
     /// Execute an operation with the MCP client.
     ///
     /// This is the primary API for accessing the MCP client. The closure receives
@@ -409,7 +410,7 @@ impl ServerInstance {
         let guard = self.client.read();
         guard.as_ref().and_then(|conn| conn.client().map(f))
     }
-    
+
     /// Get the server URL from the instance key (for HTTP/SSE transports).
     /// Returns None for STDIO transports.
     pub fn get_url(&self) -> Option<String> {

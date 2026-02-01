@@ -3,13 +3,7 @@
 //! Centralized logging with trace IDs for request correlation.
 //! Uses TraceContext for consistent, non-repetitive logging.
 
-use axum::{
-    body::Body,
-    extract::Request,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response};
 use http_body_util::BodyExt;
 use tracing::{debug, warn, Instrument};
 
@@ -46,7 +40,11 @@ fn redact_headers_compact(headers: &axum::http::HeaderMap) -> String {
             let n = name.as_str().to_lowercase();
             matches!(
                 n.as_str(),
-                "content-type" | "accept" | "user-agent" | "mcp-session-id" | "mcp-protocol-version"
+                "content-type"
+                    | "accept"
+                    | "user-agent"
+                    | "mcp-session-id"
+                    | "mcp-protocol-version"
             )
         })
         .map(|(name, value)| {
@@ -105,7 +103,10 @@ fn format_mcp_response(bytes: &[u8]) -> Option<String> {
     // Check for error response
     if let Some(error) = json.get("error") {
         let code = error.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
-        let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown");
+        let message = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown");
         return Some(format!("error: {} ({})", message, code));
     }
 
@@ -126,11 +127,18 @@ fn format_mcp_response(bytes: &[u8]) -> Option<String> {
                 .iter()
                 .filter_map(|c| c.get("type").and_then(|t| t.as_str()))
                 .collect();
-            return Some(format!("content: {} items [{}]", content.len(), types.join(", ")));
+            return Some(format!(
+                "content: {} items [{}]",
+                content.len(),
+                types.join(", ")
+            ));
         }
         // For initialize response
         if result.get("protocolVersion").is_some() {
-            let version = result.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("?");
+            let version = result
+                .get("protocolVersion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             let name = result
                 .get("serverInfo")
                 .and_then(|s| s.get("name"))
@@ -140,7 +148,12 @@ fn format_mcp_response(bytes: &[u8]) -> Option<String> {
         }
         // Generic result
         if result.is_object() {
-            let keys: Vec<&str> = result.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+            let keys: Vec<&str> = result
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(|k| k.as_str())
+                .collect();
             if keys.is_empty() {
                 return Some("ok".to_string());
             }
@@ -165,10 +178,7 @@ pub fn extract_mcp_method(bytes: &[u8]) -> Option<String> {
 /// Logging middleware for requests and responses
 ///
 /// Generates a trace_id and logs a single entry/exit line per request.
-pub async fn http_logging_middleware(
-    request: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
+pub async fn http_logging_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
     let method = request.method().to_string();
     let uri = request.uri().clone();
     let path = uri.path().to_string();
@@ -340,10 +350,14 @@ mod tests {
 
         // Resources list
         let resources = br#"{"jsonrpc":"2.0","id":1,"result":{"resources":[{"uri":"x"}]}}"#;
-        assert_eq!(format_mcp_response(resources), Some("resources: 1".to_string()));
+        assert_eq!(
+            format_mcp_response(resources),
+            Some("resources: 1".to_string())
+        );
 
         // Error response
-        let error = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Invalid request"}}"#;
+        let error =
+            br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Invalid request"}}"#;
         assert_eq!(
             format_mcp_response(error),
             Some("error: Invalid request (-32600)".to_string())
@@ -358,4 +372,3 @@ mod tests {
         assert_eq!(format_mcp_response(no_result), None);
     }
 }
-

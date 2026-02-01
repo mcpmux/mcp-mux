@@ -37,11 +37,7 @@ pub fn is_deep_link(url: &str) -> bool {
 /// // Returns: "https://api.mcpmux.com/v1/servers"
 /// ```
 pub fn api_url(path: &str) -> String {
-    format!(
-        "https://{}/{}",
-        API_DOMAIN,
-        path.trim_start_matches('/')
-    )
+    format!("https://{}/{}", API_DOMAIN, path.trim_start_matches('/'))
 }
 
 /// Get the schema URL for a schema name
@@ -128,7 +124,7 @@ pub fn outbound_oauth_client_name_for_space(space_name: Option<&str>) -> String 
 }
 
 /// Default preferred port for OAuth callbacks (adjacent to gateway port)
-/// 
+///
 /// Uses a high port number to avoid conflicts:
 /// - Adjacent to gateway port (45818) for easy identification
 /// - Well above common service ports (0-10000)
@@ -178,19 +174,15 @@ pub fn is_oauth_callback(url: &str) -> bool {
 // =============================================================================
 
 pub use crate::service::{
-    GatewayPortService,
-    PortAllocationError,
-    PortResolution,
-    DEFAULT_GATEWAY_PORT,
-    is_port_available,
-    allocate_dynamic_port,
+    allocate_dynamic_port, is_port_available, GatewayPortService, PortAllocationError,
+    PortResolution, DEFAULT_GATEWAY_PORT,
 };
 
 // =============================================================================
 // App Settings (re-exports)
 // =============================================================================
 
-pub use crate::service::{AppSettingsService, keys as settings_keys};
+pub use crate::service::{keys as settings_keys, AppSettingsService};
 
 #[cfg(test)]
 mod tests {
@@ -271,13 +263,19 @@ mod tests {
     fn test_is_oauth_callback() {
         // IPv4 loopback should match
         assert!(is_oauth_callback("http://127.0.0.1:9876/oauth2redirect"));
-        assert!(is_oauth_callback("http://127.0.0.1:9876/oauth2redirect?code=123&state=abc"));
-        assert!(is_oauth_callback("http://127.0.0.1:51234/oauth2redirect?error=access_denied"));
-        
+        assert!(is_oauth_callback(
+            "http://127.0.0.1:9876/oauth2redirect?code=123&state=abc"
+        ));
+        assert!(is_oauth_callback(
+            "http://127.0.0.1:51234/oauth2redirect?error=access_denied"
+        ));
+
         // IPv6 loopback should match
         assert!(is_oauth_callback("http://[::1]:9876/oauth2redirect"));
-        assert!(is_oauth_callback("http://[::1]:9876/oauth2redirect?code=123"));
-        
+        assert!(is_oauth_callback(
+            "http://[::1]:9876/oauth2redirect?code=123"
+        ));
+
         // Non-matching formats
         assert!(!is_oauth_callback("https://127.0.0.1:9876/oauth2redirect")); // https not http
         assert!(!is_oauth_callback("http://localhost:9876/oauth2redirect")); // localhost not IP
@@ -291,4 +289,3 @@ mod tests {
         assert_eq!(DEFAULT_GATEWAY_PORT, 45818);
     }
 }
-

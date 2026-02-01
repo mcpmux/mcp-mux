@@ -1,5 +1,5 @@
 //! Client Metadata Service
-//! 
+//!
 //! Orchestrates client resolution, including CIMD fetching, caching, and persistence.
 //! This service follows SOLID principles by separating concerns:
 //! - CIMD fetching (CimdMetadataFetcher from mcpmux-core)
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 /// Service for resolving and managing client metadata
-/// 
+///
 /// Handles both traditional clients (DCR, pre-registered) and CIMD clients
 pub struct ClientMetadataService {
     repository: Arc<InboundClientRepository>,
@@ -33,15 +33,15 @@ impl ClientMetadataService {
     }
 
     /// Resolve a client by ID
-    /// 
+    ///
     /// Determines if the client_id is a CIMD URL or a traditional client_id,
     /// and fetches/retrieves accordingly.
-    /// 
+    ///
     /// For CIMD URLs:
     /// 1. Check cache validity
     /// 2. If stale/missing, fetch from URL
     /// 3. Save to database
-    /// 
+    ///
     /// For traditional client_ids:
     /// 1. Look up in database (DCR or pre-registered)
     pub async fn resolve_client(&self, client_id: &str) -> Result<Option<InboundClient>> {
@@ -55,7 +55,7 @@ impl ClientMetadataService {
     }
 
     /// Get or fetch a CIMD client
-    /// 
+    ///
     /// If the client is cached and the cache is valid, returns the cached version.
     /// Otherwise, fetches fresh metadata from the CIMD URL.
     async fn get_or_fetch_cimd_client(&self, client_id_url: &str) -> Result<InboundClient> {
@@ -71,13 +71,13 @@ impl ClientMetadataService {
 
         // Fetch fresh metadata
         let metadata = self.cimd_fetcher.fetch(client_id_url).await?;
-        
+
         // Convert to InboundClient
         let client = self.cimd_metadata_to_client(metadata);
-        
+
         // Save to database
         self.repository.save_client(&client).await?;
-        
+
         info!("[CIMD] Fetched and cached metadata for: {}", client_id_url);
         Ok(client)
     }
@@ -113,11 +113,14 @@ impl ClientMetadataService {
             client_alias: None,
             redirect_uris: metadata.redirect_uris,
             grant_types: metadata.grant_types.unwrap_or_else(|| {
-                vec!["authorization_code".to_string(), "refresh_token".to_string()]
+                vec![
+                    "authorization_code".to_string(),
+                    "refresh_token".to_string(),
+                ]
             }),
-            response_types: metadata.response_types.unwrap_or_else(|| {
-                vec!["code".to_string()]
-            }),
+            response_types: metadata
+                .response_types
+                .unwrap_or_else(|| vec!["code".to_string()]),
             token_endpoint_auth_method: metadata
                 .token_endpoint_auth_method
                 .unwrap_or_else(|| "none".to_string()),
@@ -139,4 +142,3 @@ impl ClientMetadataService {
         }
     }
 }
-

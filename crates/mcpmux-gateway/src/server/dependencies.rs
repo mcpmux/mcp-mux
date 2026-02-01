@@ -3,16 +3,15 @@
 //! Provides a clean DI pattern for Gateway dependencies.
 //! Makes testing easier and dependencies explicit.
 
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use mcpmux_core::{
-    OutboundOAuthRepository, CredentialRepository, FeatureSetRepository,
-    InstalledServerRepository, ServerFeatureRepository, ServerLogManager,
-    CimdMetadataFetcher, SpaceRepository, ServerDiscoveryService,
-    AppSettingsRepository,
-};
 use crate::services::ClientMetadataService;
+use mcpmux_core::{
+    AppSettingsRepository, CimdMetadataFetcher, CredentialRepository, FeatureSetRepository,
+    InstalledServerRepository, OutboundOAuthRepository, ServerDiscoveryService,
+    ServerFeatureRepository, ServerLogManager, SpaceRepository,
+};
 use mcpmux_storage::{Database, InboundClientRepository};
 use tokio::sync::Mutex;
 
@@ -127,10 +126,7 @@ impl DependenciesBuilder {
         }
     }
 
-    pub fn with_installed_server_repo(
-        mut self,
-        repo: Arc<dyn InstalledServerRepository>,
-    ) -> Self {
+    pub fn with_installed_server_repo(mut self, repo: Arc<dyn InstalledServerRepository>) -> Self {
         self.installed_server_repo = Some(repo);
         self
     }
@@ -170,7 +166,10 @@ impl DependenciesBuilder {
         self
     }
 
-    pub fn with_jwt_secret(mut self, secret: zeroize::Zeroizing<[u8; mcpmux_storage::JWT_SECRET_SIZE]>) -> Self {
+    pub fn with_jwt_secret(
+        mut self,
+        secret: zeroize::Zeroizing<[u8; mcpmux_storage::JWT_SECRET_SIZE]>,
+    ) -> Self {
         self.jwt_secret = Some(secret);
         self
     }
@@ -187,30 +186,34 @@ impl DependenciesBuilder {
 
     pub fn build(self) -> Result<GatewayDependencies, String> {
         let database = self.database.ok_or("database is required")?;
-        
+
         // Create CIMD fetcher if not provided
-        let cimd_fetcher = self.cimd_fetcher.unwrap_or_else(|| {
-            Arc::new(CimdMetadataFetcher::default())
-        });
-        
+        let cimd_fetcher = self
+            .cimd_fetcher
+            .unwrap_or_else(|| Arc::new(CimdMetadataFetcher::default()));
+
         // Create ClientMetadataService if not provided
         let client_metadata_service = self.client_metadata_service.unwrap_or_else(|| {
-            let inbound_client_repo = Arc::new(mcpmux_storage::InboundClientRepository::new(database.clone()));
+            let inbound_client_repo = Arc::new(mcpmux_storage::InboundClientRepository::new(
+                database.clone(),
+            ));
             Arc::new(ClientMetadataService::new(
                 inbound_client_repo,
                 cimd_fetcher.clone(),
             ))
         });
-        
+
         // Create repositories from database if not provided
         let space_repo = self.space_repo.unwrap_or_else(|| {
             Arc::new(mcpmux_storage::SqliteSpaceRepository::new(database.clone()))
         });
-        
+
         let inbound_client_repo = self.inbound_client_repo.unwrap_or_else(|| {
-            Arc::new(mcpmux_storage::InboundClientRepository::new(database.clone()))
+            Arc::new(mcpmux_storage::InboundClientRepository::new(
+                database.clone(),
+            ))
         });
-        
+
         Ok(GatewayDependencies {
             installed_server_repo: self
                 .installed_server_repo
@@ -220,10 +223,14 @@ impl DependenciesBuilder {
                 .backend_oauth_repo
                 .ok_or("backend_oauth_repo is required")?,
             feature_repo: self.feature_repo.ok_or("feature_repo is required")?,
-            feature_set_repo: self.feature_set_repo.ok_or("feature_set_repo is required")?,
+            feature_set_repo: self
+                .feature_set_repo
+                .ok_or("feature_set_repo is required")?,
             space_repo,
             inbound_client_repo,
-            server_discovery: self.server_discovery.ok_or("server_discovery is required")?,
+            server_discovery: self
+                .server_discovery
+                .ok_or("server_discovery is required")?,
             log_manager: self.log_manager.ok_or("log_manager is required")?,
             cimd_fetcher,
             client_metadata_service,

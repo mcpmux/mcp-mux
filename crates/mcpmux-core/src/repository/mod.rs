@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::domain::{
-    OutboundOAuthRegistration, Client, Credential, FeatureSet, FeatureSetMember,
-    InstalledServer, MemberMode, ServerFeature, Space,
+    Client, Credential, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
+    OutboundOAuthRegistration, ServerFeature, Space,
 };
 
 /// Result type for repository operations
@@ -49,13 +49,20 @@ pub trait InstalledServerRepository: Send + Sync {
     async fn list_for_space(&self, space_id: &str) -> RepoResult<Vec<InstalledServer>>;
 
     /// Get all servers installed from a specific source file
-    async fn list_by_source_file(&self, file_path: &std::path::Path) -> RepoResult<Vec<InstalledServer>>;
+    async fn list_by_source_file(
+        &self,
+        file_path: &std::path::Path,
+    ) -> RepoResult<Vec<InstalledServer>>;
 
     /// Get an installed server by ID
     async fn get(&self, id: &Uuid) -> RepoResult<Option<InstalledServer>>;
 
     /// Get an installed server by space and registry server ID
-    async fn get_by_server_id(&self, space_id: &str, server_id: &str) -> RepoResult<Option<InstalledServer>>;
+    async fn get_by_server_id(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Option<InstalledServer>>;
 
     /// Install a server (create)
     async fn install(&self, server: &InstalledServer) -> RepoResult<()>;
@@ -101,7 +108,11 @@ pub trait ServerFeatureRepository: Send + Sync {
     async fn list_for_space(&self, space_id: &str) -> RepoResult<Vec<ServerFeature>>;
 
     /// List features for a specific server in a space
-    async fn list_for_server(&self, space_id: &str, server_id: &str) -> RepoResult<Vec<ServerFeature>>;
+    async fn list_for_server(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Vec<ServerFeature>>;
 
     /// Get a feature by ID
     async fn get(&self, id: &Uuid) -> RepoResult<Option<ServerFeature>>;
@@ -150,10 +161,19 @@ pub trait FeatureSetRepository: Send + Sync {
     async fn list_builtin(&self, space_id: &str) -> RepoResult<Vec<FeatureSet>>;
 
     /// Get server-all featureset for a server in a space
-    async fn get_server_all(&self, space_id: &str, server_id: &str) -> RepoResult<Option<FeatureSet>>;
+    async fn get_server_all(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Option<FeatureSet>>;
 
     /// Create server-all featureset if it doesn't exist
-    async fn ensure_server_all(&self, space_id: &str, server_id: &str, server_name: &str) -> RepoResult<FeatureSet>;
+    async fn ensure_server_all(
+        &self,
+        space_id: &str,
+        server_id: &str,
+        server_name: &str,
+    ) -> RepoResult<FeatureSet>;
 
     /// Get the "Default" featureset for a space
     async fn get_default_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>>;
@@ -163,7 +183,7 @@ pub trait FeatureSetRepository: Send + Sync {
 
     /// Ensure builtin feature sets exist for a space (All + Default)
     async fn ensure_builtin_for_space(&self, space_id: &str) -> RepoResult<()>;
-    
+
     /// Delete server-all feature set for a server (used when uninstalling)
     async fn delete_server_all(&self, space_id: &str, server_id: &str) -> RepoResult<()>;
 
@@ -176,18 +196,15 @@ pub trait FeatureSetRepository: Send + Sync {
     ) -> RepoResult<()>;
 
     /// Remove an individual feature from a feature set
-    async fn remove_feature_member(
-        &self,
-        feature_set_id: &str,
-        feature_id: &str,
-    ) -> RepoResult<()>;
+    async fn remove_feature_member(&self, feature_set_id: &str, feature_id: &str)
+        -> RepoResult<()>;
 
     /// Get all individual feature members of a feature set
     async fn get_feature_members(&self, feature_set_id: &str) -> RepoResult<Vec<FeatureSetMember>>;
 }
 
 /// Inbound MCP Client repository trait
-/// 
+///
 /// Manages MCP client entities (apps connecting TO McpMux).
 /// Works with the unified `inbound_clients` table.
 #[async_trait]
@@ -234,7 +251,10 @@ pub trait InboundMcpClientRepository: Send + Sync {
     ) -> RepoResult<Vec<String>>;
 
     /// Get all grants for a client (all spaces)
-    async fn get_all_grants(&self, client_id: &Uuid) -> RepoResult<std::collections::HashMap<String, Vec<String>>>;
+    async fn get_all_grants(
+        &self,
+        client_id: &Uuid,
+    ) -> RepoResult<std::collections::HashMap<String, Vec<String>>>;
 
     /// Set all grants for a client in a space (replaces existing)
     async fn set_grants_for_space(
@@ -245,11 +265,7 @@ pub trait InboundMcpClientRepository: Send + Sync {
     ) -> RepoResult<()>;
 
     /// Check if client has any grants for a space
-    async fn has_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-    ) -> RepoResult<bool>;
+    async fn has_grants_for_space(&self, client_id: &Uuid, space_id: &str) -> RepoResult<bool>;
 }
 
 /// Credential repository trait (local-only, never synced)
@@ -278,7 +294,11 @@ pub trait CredentialRepository: Send + Sync {
 #[async_trait]
 pub trait OutboundOAuthRepository: Send + Sync {
     /// Get registration for a (space, server) combination
-    async fn get(&self, space_id: &Uuid, server_id: &str) -> RepoResult<Option<OutboundOAuthRegistration>>;
+    async fn get(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+    ) -> RepoResult<Option<OutboundOAuthRegistration>>;
 
     /// Save or update registration
     async fn save(&self, registration: &OutboundOAuthRegistration) -> RepoResult<()>;
@@ -291,10 +311,10 @@ pub trait OutboundOAuthRepository: Send + Sync {
 }
 
 /// App Settings repository trait
-/// 
+///
 /// Key-value store for application-wide settings.
 /// Replaces scattered config files with a unified SQLite-backed store.
-/// 
+///
 /// # Key Naming Convention
 /// Use dot-notation for namespacing:
 /// - `gateway.port` - Gateway server port

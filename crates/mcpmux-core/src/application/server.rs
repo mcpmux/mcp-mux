@@ -2,13 +2,13 @@
 //!
 //! Manages server installation and configuration with automatic event emission.
 
+use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::{anyhow, Result};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::domain::{DomainEvent, InstalledServer, InstallationSource, ServerDefinition};
+use crate::domain::{DomainEvent, InstallationSource, InstalledServer, ServerDefinition};
 use crate::event_bus::EventSender;
 use crate::repository::{
     CredentialRepository, FeatureSetRepository, InstalledServerRepository, ServerFeatureRepository,
@@ -68,7 +68,12 @@ impl ServerAppService {
         let space_id_str = space_id.to_string();
 
         // Check if already installed
-        if self.server_repo.get_by_server_id(&space_id_str, server_id).await?.is_some() {
+        if self
+            .server_repo
+            .get_by_server_id(&space_id_str, server_id)
+            .await?
+            .is_some()
+        {
             return Err(anyhow!("Server already installed in this space"));
         }
 
@@ -83,7 +88,10 @@ impl ServerAppService {
 
         // Create server-all feature set
         if let Some(ref fs_repo) = self.feature_set_repo {
-            if let Err(e) = fs_repo.ensure_server_all(&space_id_str, server_id, &definition.name).await {
+            if let Err(e) = fs_repo
+                .ensure_server_all(&space_id_str, server_id, &definition.name)
+                .await
+            {
                 tracing::warn!(
                     server_id = server_id,
                     error = %e,
@@ -117,7 +125,10 @@ impl ServerAppService {
     pub async fn uninstall(&self, space_id: Uuid, server_id: &str) -> Result<()> {
         let space_id_str = space_id.to_string();
 
-        let server = self.server_repo.get_by_server_id(&space_id_str, server_id).await?
+        let server = self
+            .server_repo
+            .get_by_server_id(&space_id_str, server_id)
+            .await?
             .ok_or_else(|| anyhow!("Server not installed"))?;
 
         // Source-aware cleanup: remove from config file if UserConfig
@@ -152,7 +163,10 @@ impl ServerAppService {
 
         // Delete discovered features
         if let Some(ref feature_repo) = self.feature_repo {
-            if let Err(e) = feature_repo.delete_for_server(&space_id_str, server_id).await {
+            if let Err(e) = feature_repo
+                .delete_for_server(&space_id_str, server_id)
+                .await
+            {
                 warn!(
                     server_id = server_id,
                     error = %e,
@@ -198,11 +212,12 @@ impl ServerAppService {
             .map_err(|e| anyhow!("Failed to read config file: {}", e))?;
 
         // Parse as JSON
-        let mut config: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| anyhow!("Failed to parse config: {}", e))?;
+        let mut config: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| anyhow!("Failed to parse config: {}", e))?;
 
         // Get mcpServers object
-        let servers = config.get_mut("mcpServers")
+        let servers = config
+            .get_mut("mcpServers")
             .and_then(|v| v.as_object_mut())
             .ok_or_else(|| anyhow!("Config file missing mcpServers object"))?;
 
@@ -233,7 +248,10 @@ impl ServerAppService {
     ) -> Result<InstalledServer> {
         let space_id_str = space_id.to_string();
 
-        let mut server = self.server_repo.get_by_server_id(&space_id_str, server_id).await?
+        let mut server = self
+            .server_repo
+            .get_by_server_id(&space_id_str, server_id)
+            .await?
             .ok_or_else(|| anyhow!("Server not installed"))?;
 
         server.input_values = input_values;
@@ -262,7 +280,10 @@ impl ServerAppService {
     pub async fn enable(&self, space_id: Uuid, server_id: &str) -> Result<()> {
         let space_id_str = space_id.to_string();
 
-        let server = self.server_repo.get_by_server_id(&space_id_str, server_id).await?
+        let server = self
+            .server_repo
+            .get_by_server_id(&space_id_str, server_id)
+            .await?
             .ok_or_else(|| anyhow!("Server not installed"))?;
 
         self.server_repo.set_enabled(&server.id, true).await?;
@@ -288,7 +309,10 @@ impl ServerAppService {
     pub async fn disable(&self, space_id: Uuid, server_id: &str) -> Result<()> {
         let space_id_str = space_id.to_string();
 
-        let server = self.server_repo.get_by_server_id(&space_id_str, server_id).await?
+        let server = self
+            .server_repo
+            .get_by_server_id(&space_id_str, server_id)
+            .await?
             .ok_or_else(|| anyhow!("Server not installed"))?;
 
         self.server_repo.set_enabled(&server.id, false).await?;
@@ -309,13 +333,23 @@ impl ServerAppService {
     }
 
     /// Update OAuth connected status
-    pub async fn set_oauth_connected(&self, space_id: Uuid, server_id: &str, connected: bool) -> Result<()> {
+    pub async fn set_oauth_connected(
+        &self,
+        space_id: Uuid,
+        server_id: &str,
+        connected: bool,
+    ) -> Result<()> {
         let space_id_str = space_id.to_string();
 
-        let server = self.server_repo.get_by_server_id(&space_id_str, server_id).await?
+        let server = self
+            .server_repo
+            .get_by_server_id(&space_id_str, server_id)
+            .await?
             .ok_or_else(|| anyhow!("Server not installed"))?;
 
-        self.server_repo.set_oauth_connected(&server.id, connected).await?;
+        self.server_repo
+            .set_oauth_connected(&server.id, connected)
+            .await?;
 
         info!(
             space_id = %space_id,
@@ -327,4 +361,3 @@ impl ServerAppService {
         Ok(())
     }
 }
-

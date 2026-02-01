@@ -8,8 +8,8 @@ use tauri::State;
 use tokio::sync::RwLock;
 use uuid::Uuid as StdUuid;
 
-use crate::state::AppState;
 use crate::commands::gateway::GatewayAppState;
+use crate::state::AppState;
 
 /// Add an individual feature (tool/prompt/resource) to a feature set
 #[tauri::command]
@@ -21,7 +21,7 @@ pub async fn add_feature_to_set(
     mode: String,
 ) -> Result<(), String> {
     let app_state = &*state;
-    
+
     let mode = match mode.as_str() {
         "include" => MemberMode::Include,
         "exclude" => MemberMode::Exclude,
@@ -33,12 +33,12 @@ pub async fn add_feature_to_set(
         .add_feature_member(&feature_set_id, &feature_id, mode)
         .await
         .map_err(|e| format!("Failed to add feature to set: {}", e))?;
-    
+
     // Emit domain event if gateway is running
     let gw_state = gateway_state.read().await;
     if let Some(ref gw) = gw_state.gateway_state {
         let gw = gw.read().await;
-        
+
         // Get feature set to access space_id
         if let Ok(Some(fs)) = app_state.feature_set_repository.get(&feature_set_id).await {
             if let Some(space_id_str) = fs.space_id {
@@ -72,12 +72,12 @@ pub async fn remove_feature_from_set(
         .remove_feature_member(&feature_set_id, &feature_id)
         .await
         .map_err(|e| format!("Failed to remove feature from set: {}", e))?;
-    
+
     // Emit domain event if gateway is running
     let gw_state = gateway_state.read().await;
     if let Some(ref gw) = gw_state.gateway_state {
         let gw = gw.read().await;
-        
+
         // Get feature set to access space_id
         if let Ok(Some(fs)) = app_state.feature_set_repository.get(&feature_set_id).await {
             if let Some(space_id_str) = fs.space_id {
@@ -112,4 +112,3 @@ pub async fn get_feature_set_members(
 
     Ok(members)
 }
-

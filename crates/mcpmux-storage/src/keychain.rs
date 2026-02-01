@@ -54,8 +54,7 @@ impl KeychainKeyProvider {
     /// Create with a custom service and key name (for testing).
     #[cfg(test)]
     pub fn with_names(service: &str, key_name: &str) -> Result<Self> {
-        let entry = Entry::new(service, key_name)
-            .context("Failed to create keychain entry")?;
+        let entry = Entry::new(service, key_name).context("Failed to create keychain entry")?;
 
         Ok(Self { entry })
     }
@@ -67,8 +66,7 @@ impl MasterKeyProvider for KeychainKeyProvider {
         match self.entry.get_password() {
             Ok(hex_key) => {
                 debug!("Retrieved existing master key from keychain");
-                let key_bytes = hex::decode(&hex_key)
-                    .context("Invalid key format in keychain")?;
+                let key_bytes = hex::decode(&hex_key).context("Invalid key format in keychain")?;
 
                 if key_bytes.len() != KEY_SIZE {
                     anyhow::bail!(
@@ -169,8 +167,7 @@ impl KeychainJwtSecretProvider {
     /// Create with a custom service and key name (for testing).
     #[cfg(test)]
     pub fn with_names(service: &str, key_name: &str) -> Result<Self> {
-        let entry = Entry::new(service, key_name)
-            .context("Failed to create keychain entry")?;
+        let entry = Entry::new(service, key_name).context("Failed to create keychain entry")?;
 
         Ok(Self { entry })
     }
@@ -179,13 +176,16 @@ impl KeychainJwtSecretProvider {
 impl JwtSecretProvider for KeychainJwtSecretProvider {
     fn get_or_create_secret(&self) -> Result<Zeroizing<[u8; JWT_SECRET_SIZE]>> {
         debug!("[Keychain] Attempting to retrieve JWT signing secret from keychain");
-        
+
         // Try to get existing secret
         match self.entry.get_password() {
             Ok(hex_secret) => {
-                info!("[Keychain] Retrieved existing JWT signing secret (len={})", hex_secret.len());
-                let secret_bytes = hex::decode(&hex_secret)
-                    .context("Invalid JWT secret format in keychain")?;
+                info!(
+                    "[Keychain] Retrieved existing JWT signing secret (len={})",
+                    hex_secret.len()
+                );
+                let secret_bytes =
+                    hex::decode(&hex_secret).context("Invalid JWT secret format in keychain")?;
 
                 if secret_bytes.len() != JWT_SECRET_SIZE {
                     anyhow::bail!(
@@ -204,8 +204,11 @@ impl JwtSecretProvider for KeychainJwtSecretProvider {
                 info!("[Keychain] No JWT signing secret found, generating new secret");
                 let secret = generate_jwt_secret()?;
                 let hex_secret = hex::encode(secret);
-                
-                debug!("[Keychain] Storing JWT secret (hex len={})", hex_secret.len());
+
+                debug!(
+                    "[Keychain] Storing JWT secret (hex len={})",
+                    hex_secret.len()
+                );
 
                 match self.entry.set_password(&hex_secret) {
                     Ok(()) => {
@@ -213,7 +216,10 @@ impl JwtSecretProvider for KeychainJwtSecretProvider {
                     }
                     Err(e) => {
                         warn!("[Keychain] Failed to store JWT secret: {:?}", e);
-                        return Err(anyhow::anyhow!("Failed to store JWT signing secret in keychain: {}", e));
+                        return Err(anyhow::anyhow!(
+                            "Failed to store JWT signing secret in keychain: {}",
+                            e
+                        ));
                     }
                 }
 
@@ -221,7 +227,10 @@ impl JwtSecretProvider for KeychainJwtSecretProvider {
             }
             Err(e) => {
                 warn!("[Keychain] Error accessing JWT secret: {:?}", e);
-                Err(anyhow::anyhow!("Failed to access keychain for JWT secret: {}", e))
+                Err(anyhow::anyhow!(
+                    "Failed to access keychain for JWT secret: {}",
+                    e
+                ))
             }
         }
     }
@@ -240,7 +249,10 @@ impl JwtSecretProvider for KeychainJwtSecretProvider {
                 debug!("[Keychain] No JWT secret to delete");
                 Ok(())
             }
-            Err(e) => Err(anyhow::anyhow!("Failed to delete JWT secret from keychain: {}", e)),
+            Err(e) => Err(anyhow::anyhow!(
+                "Failed to delete JWT secret from keychain: {}",
+                e
+            )),
         }
     }
 }
@@ -413,4 +425,3 @@ mod tests {
         provider.delete_key().unwrap();
     }
 }
-

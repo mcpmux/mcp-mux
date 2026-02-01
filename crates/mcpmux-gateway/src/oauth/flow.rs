@@ -2,8 +2,8 @@
 //!
 //! Implements OAuth 2.1 Authorization Code flow with PKCE.
 
-use super::{OAuthMetadata, OAuthToken, PkceChallenge};
 use super::token::TokenResponse;
+use super::{OAuthMetadata, OAuthToken, PkceChallenge};
 use serde::Deserialize;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -41,11 +41,9 @@ impl AuthorizationCallback {
 
     /// Get error message if present
     pub fn error_message(&self) -> Option<String> {
-        self.error.as_ref().map(|e| {
-            match &self.error_description {
-                Some(desc) => format!("{}: {}", e, desc),
-                None => e.clone(),
-            }
+        self.error.as_ref().map(|e| match &self.error_description {
+            Some(desc) => format!("{}: {}", e, desc),
+            None => e.clone(),
         })
     }
 }
@@ -59,11 +57,7 @@ pub struct OAuthFlow {
 
 impl OAuthFlow {
     /// Create a new OAuth flow
-    pub fn new(
-        metadata: OAuthMetadata,
-        client_id: String,
-        client_secret: Option<String>,
-    ) -> Self {
+    pub fn new(metadata: OAuthMetadata, client_id: String, client_secret: Option<String>) -> Self {
         Self {
             metadata,
             client_id,
@@ -79,13 +73,13 @@ impl OAuthFlow {
     ) -> anyhow::Result<AuthorizationRequest> {
         // Generate state for CSRF protection
         let state = generate_state();
-        
+
         // Generate PKCE challenge
         let pkce = PkceChallenge::generate();
-        
+
         // Build authorization URL
         let mut url = Url::parse(&self.metadata.authorization_endpoint)?;
-        
+
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("response_type", "code");
@@ -93,14 +87,14 @@ impl OAuthFlow {
             query.append_pair("redirect_uri", redirect_uri);
             query.append_pair("scope", &scopes.join(" "));
             query.append_pair("state", &state);
-            
+
             // PKCE parameters
             query.append_pair("code_challenge", &pkce.challenge);
             query.append_pair("code_challenge_method", &pkce.method);
         }
-        
+
         debug!("Created authorization URL: {}", url);
-        
+
         Ok(AuthorizationRequest {
             authorization_url: url.to_string(),
             state,
@@ -117,36 +111,36 @@ impl OAuthFlow {
         pkce_verifier: &str,
     ) -> anyhow::Result<OAuthToken> {
         info!("Exchanging authorization code for tokens");
-        
+
         let mut params = HashMap::new();
         params.insert("grant_type", "authorization_code");
         params.insert("code", code);
         params.insert("redirect_uri", redirect_uri);
         params.insert("client_id", &self.client_id);
         params.insert("code_verifier", pkce_verifier);
-        
+
         // Add client secret if available
         let client_secret;
         if let Some(secret) = &self.client_secret {
             client_secret = secret.clone();
             params.insert("client_secret", &client_secret);
         }
-        
+
         let response = http_client
             .post(&self.metadata.token_endpoint)
             .form(&params)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!("Token exchange failed: HTTP {} - {}", status, body);
         }
-        
+
         let token_response: TokenResponse = response.json().await?;
         info!("Token exchange successful");
-        
+
         Ok(token_response.into())
     }
 
@@ -157,34 +151,34 @@ impl OAuthFlow {
         refresh_token: &str,
     ) -> anyhow::Result<OAuthToken> {
         info!("Refreshing access token");
-        
+
         let mut params = HashMap::new();
         params.insert("grant_type", "refresh_token");
         params.insert("refresh_token", refresh_token);
         params.insert("client_id", &self.client_id);
-        
+
         // Add client secret if available
         let client_secret;
         if let Some(secret) = &self.client_secret {
             client_secret = secret.clone();
             params.insert("client_secret", &client_secret);
         }
-        
+
         let response = http_client
             .post(&self.metadata.token_endpoint)
             .form(&params)
             .send()
             .await?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!("Token refresh failed: HTTP {} - {}", status, body);
         }
-        
+
         let token_response: TokenResponse = response.json().await?;
         info!("Token refresh successful");
-        
+
         Ok(token_response.into())
     }
 }
@@ -221,11 +215,7 @@ mod tests {
 
     #[test]
     fn test_authorization_request() {
-        let flow = OAuthFlow::new(
-            test_metadata(),
-            "test_client".to_string(),
-            None,
-        );
+        let flow = OAuthFlow::new(test_metadata(), "test_client".to_string(), None);
 
         let request = flow
             .create_authorization_request(
@@ -238,8 +228,10 @@ mod tests {
         assert!(request.authorization_url.contains("response_type=code"));
         assert!(request.authorization_url.contains("client_id=test_client"));
         assert!(request.authorization_url.contains("code_challenge="));
-        assert!(request.authorization_url.contains("code_challenge_method=S256"));
-        
+        assert!(request
+            .authorization_url
+            .contains("code_challenge_method=S256"));
+
         // State and verifier should be present
         assert!(!request.state.is_empty());
         assert!(!request.pkce_verifier.is_empty());

@@ -14,10 +14,10 @@ mod state;
 use handlers::AppState; // Import AppState
 
 pub use dependencies::{DependenciesBuilder, GatewayDependencies};
+pub use handlers::PendingAuthorization;
 pub use service_container::ServiceContainer;
 pub use startup::{AutoConnectResult, StartupOrchestrator, TokenRefreshResult};
 pub use state::{ClientSession, GatewayState};
-pub use handlers::PendingAuthorization;
 
 use axum::{
     middleware,
@@ -31,9 +31,11 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
 
-use crate::mcp::{McpMuxGatewayHandler, mcp_oauth_middleware};
 use crate::consumers::MCPNotifier;
-use rmcp::transport::streamable_http_server::{StreamableHttpService, StreamableHttpServerConfig, session::local::LocalSessionManager};
+use crate::mcp::{mcp_oauth_middleware, McpMuxGatewayHandler};
+use rmcp::transport::streamable_http_server::{
+    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+};
 use tokio_util::sync::CancellationToken;
 
 /// Gateway server configuration
@@ -64,7 +66,7 @@ impl GatewayConfig {
             .parse()
             .expect("Invalid address")
     }
-    
+
     /// Get the base URL for this gateway
     /// Uses localhost for consistency with client configurations
     pub fn base_url(&self) -> String {
@@ -93,7 +95,7 @@ impl GatewayServer {
 
         // Create broadcast channel for unified event system
         let (domain_event_tx, _) = tokio::sync::broadcast::channel(256);
-        
+
         // Configure gateway state
         let mut state = GatewayState::new(domain_event_tx.clone());
         state.set_base_url(config.base_url());
@@ -107,7 +109,8 @@ impl GatewayServer {
             tokio::runtime::Handle::current().block_on(async {
                 let mut state_guard = state.write().await;
                 state_guard.set_database(dependencies.database.clone());
-                state_guard.set_client_metadata_service(dependencies.client_metadata_service.clone());
+                state_guard
+                    .set_client_metadata_service(dependencies.client_metadata_service.clone());
             });
         });
 
@@ -142,29 +145,29 @@ impl GatewayServer {
     pub fn feature_service(&self) -> Arc<crate::pool::FeatureService> {
         self.services.pool_services.feature_service.clone()
     }
-    
+
     /// Get the connection service
     pub fn connection_service(&self) -> Arc<crate::pool::ConnectionService> {
         self.services.pool_services.connection_service.clone()
     }
-    
+
     /// Get the token service
     pub fn token_service(&self) -> Arc<crate::pool::TokenService> {
         self.services.pool_services.token_service.clone()
     }
-    
+
     /// Get the event emitter (for external components to trigger notifications)
     pub fn event_emitter(&self) -> Arc<crate::services::EventEmitter> {
         let state = tokio::task::block_in_place(|| self.state.blocking_read());
         let event_tx = state.domain_event_sender();
         Arc::new(crate::services::EventEmitter::new(event_tx))
     }
-    
+
     /// Get the grant service (centralized grant management with auto-notifications)
     pub fn grant_service(&self) -> Arc<crate::services::GrantService> {
         self.services.grant_service.clone()
     }
-    
+
     /// Get the OAuth manager
     pub fn oauth_manager(&self) -> Arc<crate::pool::OutboundOAuthManager> {
         self.services.pool_services.oauth_manager.clone()
@@ -198,7 +201,7 @@ impl GatewayServer {
     /// Build the Axum router
     fn build_router(&self) -> Router {
         let state = self.state.clone();
-        
+
         // Create app state with services
         let app_state = AppState {
             gateway_state: state.clone(),
@@ -211,31 +214,32 @@ impl GatewayServer {
             self.services.space_resolver_service.clone(),
             self.services.pool_services.feature_service.clone(),
         ));
-        
+
         // Start listening to DomainEvents
         {
             let gw_state = tokio::task::block_in_place(|| state.blocking_read());
             let event_rx = gw_state.subscribe_domain_events();
             notification_bridge.clone().start(event_rx);
         }
-        
+
         // Create OAuth event handler (updates oauth_connected flag on OAuth success)
         {
             let oauth_handler = Arc::new(crate::consumers::OAuthEventHandler::new(
                 self.services.dependencies.installed_server_repo.clone(),
             ));
-            let oauth_rx = self.services.pool_services.pool_service
+            let oauth_rx = self
+                .services
+                .pool_services
+                .pool_service
                 .oauth_manager()
                 .subscribe();
             oauth_handler.start(oauth_rx);
         }
-        
+
         // Create MCP handler
-        let handler = McpMuxGatewayHandler::new(
-            Arc::new(self.services.clone()),
-            notification_bridge.clone(),
-        );
-        
+        let handler =
+            McpMuxGatewayHandler::new(Arc::new(self.services.clone()), notification_bridge.clone());
+
         // Create STATELESS MCP service
         // stateful_mode: false means:
         // - No Mcp-Session-Id header
@@ -256,21 +260,25 @@ impl GatewayServer {
                 cancellation_token: CancellationToken::new(),
             },
         );
-        
+
         // Wrap MCP service with OAuth middleware
         // In stateless mode, no session healing needed - rmcp handles 405 for GET/DELETE
-        let mcp_routes = Router::new()
-            .nest_service("/mcp", mcp_service)
-            .layer(middleware::from_fn_with_state(
-                Arc::new(self.services.clone()),
-                mcp_oauth_middleware,
-            ));
+        let mcp_routes =
+            Router::new()
+                .nest_service("/mcp", mcp_service)
+                .layer(middleware::from_fn_with_state(
+                    Arc::new(self.services.clone()),
+                    mcp_oauth_middleware,
+                ));
 
         // Client features endpoint (needs services, public)
         // Supports both DCR (simple IDs) and CIMD (URL-encoded IDs)
         // Clients should URL-encode client_ids that contain special characters
         let client_features_routes = Router::new()
-            .route("/oauth/clients/{client_id}/features", get(handlers::oauth_get_client_features))
+            .route(
+                "/oauth/clients/{client_id}/features",
+                get(handlers::oauth_get_client_features),
+            )
             .with_state(app_state.clone());
 
         let mut router = Router::new()
@@ -295,24 +303,34 @@ impl GatewayServer {
             // Fallback for clients that don't fetch metadata (VS Code default behavior)
             .route("/authorize", get(handlers::oauth_authorize))
             .route("/oauth/token", post(handlers::oauth_token))
-
-            .route("/oauth/consent/approve", post(handlers::oauth_consent_approve))
+            .route(
+                "/oauth/consent/approve",
+                post(handlers::oauth_consent_approve),
+            )
             // Client registration (DCR - public)
             .route("/oauth/register", post(handlers::oauth_register))
             // Client management (for desktop app)
             .route("/oauth/clients", get(handlers::oauth_list_clients))
             // Client CRUD - expects URL-encoded client_id for CIMD clients
-            .route("/oauth/clients/{client_id}", put(handlers::oauth_update_client))
-            .route("/oauth/clients/{client_id}", delete(handlers::oauth_delete_client))
+            .route(
+                "/oauth/clients/{client_id}",
+                put(handlers::oauth_update_client),
+            )
+            .route(
+                "/oauth/clients/{client_id}",
+                delete(handlers::oauth_delete_client),
+            )
             // Protected MCP routes (using rmcp's StreamableHttpService)
             .merge(mcp_routes)
             // Client features (needs services)
             .merge(client_features_routes)
             // Global state for all routes
-            .with_state(app_state.clone()) 
+            .with_state(app_state.clone())
             .layer(TraceLayer::new_for_http())
             // Request/Response logging with body (DEBUG level)
-            .layer(middleware::from_fn(logging_middleware::http_logging_middleware));
+            .layer(middleware::from_fn(
+                logging_middleware::http_logging_middleware,
+            ));
 
         // Add CORS if enabled
         if self.config.enable_cors {
@@ -364,31 +382,44 @@ impl GatewayServer {
         tokio::spawn(async move {
             // Step 0: Mark all features unavailable (will be restored when servers connect)
             // This ensures features don't appear available until servers actually reconnect
-            if let Err(e) = self_for_autoconnect.services.startup_orchestrator.mark_all_features_unavailable().await {
+            if let Err(e) = self_for_autoconnect
+                .services
+                .startup_orchestrator
+                .mark_all_features_unavailable()
+                .await
+            {
                 warn!("[Gateway] Failed to mark features unavailable: {}", e);
             }
-            
+
             // Step 1: Resolve server prefixes BEFORE connecting (priority-based)
-            if let Err(e) = self_for_autoconnect.services.startup_orchestrator.resolve_server_prefixes().await {
+            if let Err(e) = self_for_autoconnect
+                .services
+                .startup_orchestrator
+                .resolve_server_prefixes()
+                .await
+            {
                 warn!("[Gateway] Failed to resolve server prefixes: {}", e);
             }
-            
+
             // Step 2: Refresh OAuth tokens BEFORE connecting
             // This uses TokenService with proper origin URL fallback (e.g., Atlassian)
-            match self_for_autoconnect.services.startup_orchestrator.refresh_oauth_tokens().await {
+            match self_for_autoconnect
+                .services
+                .startup_orchestrator
+                .refresh_oauth_tokens()
+                .await
+            {
                 Ok(result) => {
                     info!(
                         "[Gateway] Token refresh: {} checked, {} ready, {} failed",
-                        result.servers_checked,
-                        result.tokens_refreshed,
-                        result.refresh_failed
+                        result.servers_checked, result.tokens_refreshed, result.refresh_failed
                     );
                 }
                 Err(e) => {
                     warn!("[Gateway] Token refresh failed: {}", e);
                 }
             }
-            
+
             // Step 3: Auto-connect enabled servers (non-blocking)
             // As each server connects, it will emit list_changed notifications
             self_for_autoconnect.auto_connect_servers().await;

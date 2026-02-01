@@ -26,10 +26,12 @@ pub use repository::*;
 pub use service::*;
 
 // Event-driven architecture exports
-pub use event_bus::{EventBus, EventSender, EventReceiver, SharedEventBus, create_shared_event_bus};
 pub use application::{
-    ApplicationServices, ApplicationServicesBuilder,
-    SpaceAppService, ServerAppService, PermissionAppService, ClientAppService,
+    ApplicationServices, ApplicationServicesBuilder, ClientAppService, PermissionAppService,
+    ServerAppService, SpaceAppService,
+};
+pub use event_bus::{
+    create_shared_event_bus, EventBus, EventReceiver, EventSender, SharedEventBus,
 };
 
 use std::path::{Path, PathBuf};

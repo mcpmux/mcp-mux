@@ -8,4 +8,4 @@
 
 mod trace_context;
 
-pub use trace_context::{TraceContext, RequestSpan};
+pub use trace_context::{RequestSpan, TraceContext};

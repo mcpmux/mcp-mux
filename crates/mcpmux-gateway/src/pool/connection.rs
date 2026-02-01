@@ -11,17 +11,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use mcpmux_core::{OutboundOAuthRepository, CredentialRepository, ServerLogManager};
+use mcpmux_core::{CredentialRepository, OutboundOAuthRepository, ServerLogManager};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::features::{CachedFeatures, FeatureService};
-use super::instance::{
-    DiscoveredFeatures, McpClientConnection, ServerInstance,
-};
-use super::oauth::{OutboundOAuthManager, OAuthInitResult};
+use super::instance::{DiscoveredFeatures, McpClientConnection, ServerInstance};
+use super::oauth::{OAuthInitResult, OutboundOAuthManager};
 use super::token::TokenService;
-use super::transport::{ResolvedTransport, TransportConnectResult, TransportFactory, TransportType};
+use super::transport::{
+    ResolvedTransport, TransportConnectResult, TransportFactory, TransportType,
+};
 
 /// Default connection timeout
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -79,37 +79,40 @@ impl ConnectionService {
             event_tx: None,
         }
     }
-    
+
     pub fn with_log_manager(mut self, log_manager: Arc<ServerLogManager>) -> Self {
         self.log_manager = Some(log_manager);
         self
     }
-    
-    pub fn with_event_tx(mut self, event_tx: tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>) -> Self {
+
+    pub fn with_event_tx(
+        mut self,
+        event_tx: tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>,
+    ) -> Self {
         self.event_tx = Some(event_tx);
         self
     }
-    
+
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
     }
-    
+
     /// Get the OAuth manager for checking pending flows
     pub fn oauth_manager(&self) -> Arc<OutboundOAuthManager> {
         self.oauth_manager.clone()
     }
-    
+
     /// Get the token service
     pub fn token_service(&self) -> Arc<TokenService> {
         self.token_service.clone()
     }
-    
+
     /// Get the log manager
     pub fn log_manager(&self) -> Option<Arc<ServerLogManager>> {
         self.log_manager.clone()
     }
-    
+
     /// Helper method to log connection events to server-specific log files
     async fn log_connection_event(
         &self,
@@ -128,15 +131,17 @@ impl ConnectionService {
             if let Some(meta) = metadata {
                 log = log.with_metadata(meta);
             }
-            let _ = log_manager.append(&space_id.to_string(), server_id, log).await;
+            let _ = log_manager
+                .append(&space_id.to_string(), server_id, log)
+                .await;
         }
     }
-    
+
     /// Connect to a server
     ///
     /// Creates the appropriate transport and attempts connection.
     /// For OAuth-protected servers, initiates OAuth flow if needed (unless auto_reconnect=true).
-    /// 
+    ///
     /// # Parameters
     /// - `ctx`: Connection context with space_id, server_id, transport config, and auto_reconnect flag
     pub async fn connect(
@@ -148,27 +153,33 @@ impl ConnectionService {
         let server_id = &ctx.server_id;
         let config = &ctx.transport;
         let auto_reconnect = ctx.auto_reconnect;
-        
+
         // Determine the actual config to use (checking for DCR override)
         let mut final_config = config.clone();
-        
+
         // If HTTP, check if we have a DCR registration with a different URL
         if let Some(config_url) = config.url() {
-             if let Ok(Some(registration)) = self.backend_oauth_repo.get(&space_id, server_id).await {
-                 if registration.server_url != config_url {
-                     info!("[ConnectionService] Overriding config URL with DCR URL: {}", registration.server_url);
-                     if let ResolvedTransport::Http { url, .. } = &mut final_config {
-                         *url = registration.server_url;
-                     }
-                 }
-             }
+            if let Ok(Some(registration)) = self.backend_oauth_repo.get(&space_id, server_id).await
+            {
+                if registration.server_url != config_url {
+                    info!(
+                        "[ConnectionService] Overriding config URL with DCR URL: {}",
+                        registration.server_url
+                    );
+                    if let ResolvedTransport::Http { url, .. } = &mut final_config {
+                        *url = registration.server_url;
+                    }
+                }
+            }
         }
 
         info!(
             "[ConnectionService] Connecting {}/{} via {:?}",
-            space_id, server_id, final_config.transport_type()
+            space_id,
+            server_id,
+            final_config.transport_type()
         );
-        
+
         // Log connection attempt to server log
         let transport_name = match &final_config {
             ResolvedTransport::Stdio { .. } => "STDIO",
@@ -180,8 +191,9 @@ impl ConnectionService {
             mcpmux_core::LogLevel::Info,
             format!("Attempting connection via {}", transport_name),
             Some(serde_json::json!({ "transport_type": transport_name })),
-        ).await;
-        
+        )
+        .await;
+
         // Create transport
         let transport = TransportFactory::create(
             &final_config,
@@ -193,7 +205,7 @@ impl ConnectionService {
             self.connect_timeout,
             self.event_tx.clone(),
         );
-        
+
         // Attempt connection
         match transport.connect().await {
             TransportConnectResult::Connected(client) => {
@@ -204,41 +216,45 @@ impl ConnectionService {
                 {
                     Ok(f) => f,
                     Err(e) => {
-                        warn!(
-                            "[ConnectionService] Feature discovery failed: {}",
-                            e
-                        );
-                        
+                        warn!("[ConnectionService] Feature discovery failed: {}", e);
+
                         self.log_connection_event(
                             &space_id,
                             server_id,
                             mcpmux_core::LogLevel::Warn,
                             format!("Feature discovery failed: {}", e),
                             None,
-                        ).await;
-                        
+                        )
+                        .await;
+
                         CachedFeatures::default()
                     }
                 };
-                
+
                 info!(
                     "[ConnectionService] Connected {}/{} - {} features",
-                    space_id, server_id, features.total_count()
+                    space_id,
+                    server_id,
+                    features.total_count()
                 );
-                
+
                 // Log successful connection to server log
                 self.log_connection_event(
                     &space_id,
                     server_id,
                     mcpmux_core::LogLevel::Info,
-                    format!("Connection established successfully - discovered {} features", features.total_count()),
+                    format!(
+                        "Connection established successfully - discovered {} features",
+                        features.total_count()
+                    ),
                     Some(serde_json::json!({
                         "tools": features.tools.len(),
                         "prompts": features.prompts.len(),
                         "resources": features.resources.len()
                     })),
-                ).await;
-                
+                )
+                .await;
+
                 ConnectionResult::Connected {
                     reused: false,
                     features,
@@ -252,9 +268,11 @@ impl ConnectionService {
                     mcpmux_core::LogLevel::Info,
                     "OAuth authentication required - waiting for user authorization",
                     Some(serde_json::json!({ "server_url": server_url })),
-                ).await;
-                
-                self.handle_oauth_required(space_id, server_id, &server_url, auto_reconnect).await
+                )
+                .await;
+
+                self.handle_oauth_required(space_id, server_id, &server_url, auto_reconnect)
+                    .await
             }
             TransportConnectResult::Failed(error) => {
                 // Log connection failure to server log
@@ -264,13 +282,14 @@ impl ConnectionService {
                     mcpmux_core::LogLevel::Error,
                     format!("Connection failed: {}", error),
                     Some(serde_json::json!({ "error": &error })),
-                ).await;
-                
+                )
+                .await;
+
                 ConnectionResult::Failed { error }
             }
         }
     }
-    
+
     /// Connect to a server with an existing instance (used for reconnection)
     pub async fn connect_with_instance(
         &self,
@@ -282,30 +301,33 @@ impl ConnectionService {
         let server_id = &ctx.server_id;
         let config = &ctx.transport;
         let auto_reconnect = ctx.auto_reconnect;
-        
+
         // Assign prefix for this server (fetches alias from registry internally)
         let space_id_str = space_id.to_string();
-        let _ = self.prefix_cache.assign_prefix_for_server(&space_id_str, server_id).await;
-        
+        let _ = self
+            .prefix_cache
+            .assign_prefix_for_server(&space_id_str, server_id)
+            .await;
+
         // If already healthy, just return
-        if instance.is_healthy()
-            && instance.get_features().is_some() {
-                // Log reuse to server log
-                self.log_connection_event(
-                    &space_id,
-                    server_id,
-                    mcpmux_core::LogLevel::Debug,
-                    "Reusing existing healthy connection",
-                    None,
-                ).await;
-                
-                return ConnectionResult::Connected {
-                    reused: true,
-                    // Empty features - they're already cached in DB
-                    features: CachedFeatures::default(),
-                };
-            }
-        
+        if instance.is_healthy() && instance.get_features().is_some() {
+            // Log reuse to server log
+            self.log_connection_event(
+                &space_id,
+                server_id,
+                mcpmux_core::LogLevel::Debug,
+                "Reusing existing healthy connection",
+                None,
+            )
+            .await;
+
+            return ConnectionResult::Connected {
+                reused: true,
+                // Empty features - they're already cached in DB
+                features: CachedFeatures::default(),
+            };
+        }
+
         // Log reconnection attempt to server log
         self.log_connection_event(
             &space_id,
@@ -313,10 +335,11 @@ impl ConnectionService {
             mcpmux_core::LogLevel::Info,
             "Reconnecting to server...",
             None,
-        ).await;
-        
+        )
+        .await;
+
         instance.mark_connecting();
-        
+
         // Create transport
         let transport = TransportFactory::create(
             config,
@@ -328,7 +351,7 @@ impl ConnectionService {
             self.connect_timeout,
             self.event_tx.clone(),
         );
-        
+
         // Attempt connection
         match transport.connect().await {
             TransportConnectResult::Connected(client) => {
@@ -339,39 +362,44 @@ impl ConnectionService {
                 {
                     Ok(f) => f,
                     Err(e) => {
-                        warn!(
-                            "[ConnectionService] Feature discovery failed: {}",
-                            e
-                        );
+                        warn!("[ConnectionService] Feature discovery failed: {}", e);
                         CachedFeatures::default()
                     }
                 };
-                
+
                 // Convert CachedFeatures to DiscoveredFeatures for instance state
                 let discovered_features = DiscoveredFeatures {
-                    tools: features.tools.iter()
+                    tools: features
+                        .tools
+                        .iter()
                         .map(|t| serde_json::to_value(t).unwrap_or_default())
                         .collect(),
-                    prompts: features.prompts.iter()
+                    prompts: features
+                        .prompts
+                        .iter()
                         .map(|p| serde_json::to_value(p).unwrap_or_default())
                         .collect(),
-                    resources: features.resources.iter()
+                    resources: features
+                        .resources
+                        .iter()
                         .map(|r| serde_json::to_value(r).unwrap_or_default())
                         .collect(),
                 };
-                
+
                 let connection = match config.transport_type() {
                     TransportType::Stdio => McpClientConnection::Stdio { client },
                     TransportType::Http => McpClientConnection::Http { client },
                 };
-                
+
                 instance.mark_connected(discovered_features, connection);
-                
+
                 info!(
                     "[ConnectionService] Connected {}/{} - {} features",
-                    space_id, server_id, features.total_count()
+                    space_id,
+                    server_id,
+                    features.total_count()
                 );
-                
+
                 ConnectionResult::Connected {
                     reused: false,
                     features,
@@ -379,7 +407,8 @@ impl ConnectionService {
             }
             TransportConnectResult::OAuthRequired { server_url } => {
                 instance.mark_oauth_pending();
-                self.handle_oauth_required(space_id, server_id, &server_url, auto_reconnect).await
+                self.handle_oauth_required(space_id, server_id, &server_url, auto_reconnect)
+                    .await
             }
             TransportConnectResult::Failed(error) => {
                 instance.mark_failed(error.clone());
@@ -387,7 +416,7 @@ impl ConnectionService {
             }
         }
     }
-    
+
     /// Disconnect from a server (logout)
     ///
     /// Clears OAuth tokens but preserves client_id for DCR reuse.
@@ -401,7 +430,7 @@ impl ConnectionService {
             "[ConnectionService] Disconnecting {}/{}",
             space_id, server_id
         );
-        
+
         // Log disconnection to server log
         self.log_connection_event(
             &space_id,
@@ -409,19 +438,20 @@ impl ConnectionService {
             mcpmux_core::LogLevel::Info,
             "Server disconnected",
             None,
-        ).await;
-        
+        )
+        .await;
+
         // Clear tokens (keeps client_id for re-auth)
         self.token_service.clear_tokens(space_id, server_id).await?;
-        
+
         // Mark features as unavailable
         feature_service
             .mark_unavailable(&space_id.to_string(), server_id)
             .await?;
-        
+
         Ok(())
     }
-    
+
     /// Reconnect after OAuth completes
     ///
     /// Uses the stored server URL and tokens from OAuth registration
@@ -437,7 +467,7 @@ impl ConnectionService {
             "[ConnectionService] Reconnecting {}/{} after OAuth",
             space_id, server_id
         );
-        
+
         // Get server URL from OAuth registration
         let server_url = match self.backend_oauth_repo.get(&space_id, server_id).await {
             Ok(Some(registration)) => registration.server_url,
@@ -452,14 +482,14 @@ impl ConnectionService {
                 };
             }
         };
-        
+
         info!(
             "[ConnectionService] Reconnecting to {} with OAuth token",
             server_url
         );
-        
+
         instance.mark_connecting();
-        
+
         // Create transport config with the stored URL, preserving transport type
         let config = match instance.transport_type {
             TransportType::Http => ResolvedTransport::Http {
@@ -475,7 +505,7 @@ impl ConnectionService {
                 }
             }
         };
-        
+
         // Create transport with credential repositories (will inject OAuth token via CredentialStore)
         let transport = TransportFactory::create(
             &config,
@@ -487,7 +517,7 @@ impl ConnectionService {
             self.connect_timeout,
             self.event_tx.clone(),
         );
-        
+
         // Attempt connection
         match transport.connect().await {
             TransportConnectResult::Connected(client) => {
@@ -505,32 +535,40 @@ impl ConnectionService {
                         CachedFeatures::default()
                     }
                 };
-                
+
                 // Convert CachedFeatures to DiscoveredFeatures for instance state
                 let discovered_features = DiscoveredFeatures {
-                    tools: features.tools.iter()
+                    tools: features
+                        .tools
+                        .iter()
                         .map(|t| serde_json::to_value(t).unwrap_or_default())
                         .collect(),
-                    prompts: features.prompts.iter()
+                    prompts: features
+                        .prompts
+                        .iter()
                         .map(|p| serde_json::to_value(p).unwrap_or_default())
                         .collect(),
-                    resources: features.resources.iter()
+                    resources: features
+                        .resources
+                        .iter()
                         .map(|r| serde_json::to_value(r).unwrap_or_default())
                         .collect(),
                 };
-                
+
                 let connection = match config.transport_type() {
                     TransportType::Stdio => McpClientConnection::Stdio { client },
                     TransportType::Http => McpClientConnection::Http { client },
                 };
-                
+
                 instance.mark_connected(discovered_features, connection);
-                
+
                 info!(
                     "[ConnectionService] Connected {}/{} after OAuth - {} features",
-                    space_id, server_id, features.total_count()
+                    space_id,
+                    server_id,
+                    features.total_count()
                 );
-                
+
                 ConnectionResult::Connected {
                     reused: false,
                     features,
@@ -552,7 +590,7 @@ impl ConnectionService {
             }
         }
     }
-    
+
     /// Handle OAuth required - initiate OAuth flow (only for manual connects, not auto-reconnect)
     async fn handle_oauth_required(
         &self,
@@ -567,20 +605,21 @@ impl ConnectionService {
                 "[ConnectionService] OAuth required for {}/{} (auto-reconnect, not starting flow)",
                 space_id, server_id
             );
-            
+
             // Return OAuthRequired with empty auth_url - this won't be used
             return ConnectionResult::OAuthRequired {
                 auth_url: String::new(),
             };
         }
-        
+
         // Manual connect: start OAuth flow
         info!(
             "[ConnectionService] OAuth required for {}/{}, initiating flow",
             space_id, server_id
         );
-        
-        match self.oauth_manager
+
+        match self
+            .oauth_manager
             .start_oauth_flow(
                 self.credential_repo.clone(),
                 self.backend_oauth_repo.clone(),
@@ -600,31 +639,24 @@ impl ConnectionService {
                     Some(serde_json::json!({
                         "auth_url": &auth_url,
                     })),
-                ).await;
-                
-                ConnectionResult::OAuthRequired {
-                    auth_url,
-                }
+                )
+                .await;
+
+                ConnectionResult::OAuthRequired { auth_url }
             }
             Ok(OAuthInitResult::AlreadyAuthorized) => {
                 // This shouldn't happen if we got here, but handle it
-                debug!(
-                    "[ConnectionService] AlreadyAuthorized but got OAuthRequired - retrying"
-                );
+                debug!("[ConnectionService] AlreadyAuthorized but got OAuthRequired - retrying");
                 ConnectionResult::Failed {
                     error: "OAuth state mismatch - please retry".to_string(),
                 }
             }
-            Ok(OAuthInitResult::NotSupported(reason)) => {
-                ConnectionResult::Failed {
-                    error: format!("OAuth not supported: {}", reason),
-                }
-            }
-            Err(e) => {
-                ConnectionResult::Failed {
-                    error: format!("OAuth flow failed: {}", e),
-                }
-            }
+            Ok(OAuthInitResult::NotSupported(reason)) => ConnectionResult::Failed {
+                error: format!("OAuth not supported: {}", reason),
+            },
+            Err(e) => ConnectionResult::Failed {
+                error: format!("OAuth flow failed: {}", e),
+            },
         }
     }
 }

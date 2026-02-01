@@ -23,7 +23,8 @@ use mcpmux_core::InstalledServerRepository;
 pub struct SpaceFileWatcher {
     /// The watcher handle - kept alive to continue watching
     _watcher: RecommendedWatcher,
-    /// Directory being watched
+    /// Directory being watched (stored for builder API; construction uses it)
+    #[allow(dead_code)]
     spaces_dir: PathBuf,
 }
 
@@ -67,12 +68,9 @@ impl SpaceFileWatcher {
             match res {
                 Ok(event) => {
                     // Only handle modify/create events for JSON files
-                    if matches!(
-                        event.kind,
-                        EventKind::Modify(_) | EventKind::Create(_)
-                    ) {
+                    if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                         for path in event.paths {
-                            if path.extension().map_or(false, |e| e == "json") {
+                            if path.extension().is_some_and(|e| e == "json") {
                                 debug!("File change detected: {:?}", path);
                                 if let Err(e) = tx_clone.blocking_send(path) {
                                     warn!("Failed to send file change event: {}", e);
@@ -166,24 +164,24 @@ impl SpaceFileWatcher {
     }
 
     /// Get the directory being watched
+    #[allow(dead_code)]
     pub fn spaces_dir(&self) -> &Path {
         &self.spaces_dir
     }
 }
 
 /// Builder for SpaceFileWatcher with fluent API
+#[allow(dead_code)]
 pub struct SpaceFileWatcherBuilder {
     spaces_dir: PathBuf,
     installed_repo: Arc<dyn InstalledServerRepository>,
     default_space_id: String,
 }
 
+#[allow(dead_code)]
 impl SpaceFileWatcherBuilder {
     /// Create a new builder
-    pub fn new(
-        spaces_dir: PathBuf,
-        installed_repo: Arc<dyn InstalledServerRepository>,
-    ) -> Self {
+    pub fn new(spaces_dir: PathBuf, installed_repo: Arc<dyn InstalledServerRepository>) -> Self {
         Self {
             spaces_dir,
             installed_repo,

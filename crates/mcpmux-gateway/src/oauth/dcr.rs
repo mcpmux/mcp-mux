@@ -27,7 +27,7 @@ pub struct DcrRequest {
     /// Scope values the client may request
     #[serde(default)]
     pub scope: Option<String>,
-    
+
     // RFC 7591 Client Metadata
     /// URL for the client's logo
     #[serde(default)]
@@ -72,7 +72,7 @@ pub struct DcrResponse {
     /// Scope values the client may request
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
-    
+
     // RFC 7591 Client Metadata
     /// URL for the client's logo
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,7 +181,9 @@ impl DcrError {
 /// - http:// URLs to non-loopback addresses
 pub fn validate_redirect_uris(uris: &[String]) -> Result<(), DcrError> {
     if uris.is_empty() {
-        return Err(DcrError::invalid_redirect_uri("At least one redirect_uri is required"));
+        return Err(DcrError::invalid_redirect_uri(
+            "At least one redirect_uri is required",
+        ));
     }
 
     for uri in uris {
@@ -194,60 +196,77 @@ pub fn validate_redirect_uris(uris: &[String]) -> Result<(), DcrError> {
         let is_custom_scheme = !uri.starts_with("http://") && !uri.starts_with("https://");
 
         if !is_loopback && !is_custom_scheme {
-            warn!("[DCR] Rejected redirect_uri: {} (must be loopback or custom scheme)", uri);
+            warn!(
+                "[DCR] Rejected redirect_uri: {} (must be loopback or custom scheme)",
+                uri
+            );
             return Err(DcrError::invalid_redirect_uri(
                 "Redirect URI must be loopback (http://127.0.0.1 or http://localhost) \
-                 or a custom URL scheme (e.g., cursor://, vscode://)"
+                 or a custom URL scheme (e.g., cursor://, vscode://)",
             ));
         }
 
-        debug!("[DCR] Validated redirect_uri: {} (loopback={}, custom_scheme={})", 
-            uri, is_loopback, is_custom_scheme);
+        debug!(
+            "[DCR] Validated redirect_uri: {} (loopback={}, custom_scheme={})",
+            uri, is_loopback, is_custom_scheme
+        );
     }
 
     Ok(())
 }
 
 /// Process a DCR request and return a registered client or error
-/// 
+///
 /// Uses the database as the single source of truth (no in-memory registry)
 pub async fn process_dcr_request(
     repo: &mcpmux_storage::InboundClientRepository,
     request: DcrRequest,
 ) -> Result<DcrResponse, DcrError> {
-    info!("[DCR] Processing registration for: {} (redirect_uris: {:?})", 
-        request.client_name, request.redirect_uris);
+    info!(
+        "[DCR] Processing registration for: {} (redirect_uris: {:?})",
+        request.client_name, request.redirect_uris
+    );
 
     // Validate redirect URIs
     validate_redirect_uris(&request.redirect_uris)?;
 
     // Check for existing client with same name (idempotent registration by client_name)
-    let existing = repo.find_client_by_name(&request.client_name)
+    let existing = repo
+        .find_client_by_name(&request.client_name)
         .await
         .map_err(|e| DcrError::invalid_client_metadata(format!("Database error: {}", e)))?;
-    
+
     if let Some(existing) = existing {
-        info!("[DCR] Updating existing client: {} ({})", request.client_name, existing.client_id);
-        
+        info!(
+            "[DCR] Updating existing client: {} ({})",
+            request.client_name, existing.client_id
+        );
+
         let client_id = existing.client_id.clone();
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let now_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         // Merge redirect URIs (accumulate - keep old URIs valid)
         let mut merged_uris = existing.redirect_uris;
         for uri in &request.redirect_uris {
             if !merged_uris.contains(uri) {
                 merged_uris.push(uri.clone());
-                info!("[DCR] Adding new redirect_uri: {} to client: {}", uri, client_id);
+                info!(
+                    "[DCR] Adding new redirect_uri: {} to client: {}",
+                    uri, client_id
+                );
             }
         }
-        
+
         // Default grant_types and response_types if not provided
         let grant_types = if request.grant_types.is_empty() {
-            vec!["authorization_code".to_string(), "refresh_token".to_string()]
+            vec![
+                "authorization_code".to_string(),
+                "refresh_token".to_string(),
+            ]
         } else {
             request.grant_types.clone()
         };
@@ -271,18 +290,18 @@ pub async fn process_dcr_request(
             grant_types.clone(),
             response_types.clone(),
             token_endpoint_auth_method.clone(),
-            existing.client_alias,  // Preserve user-set alias
-            existing.connection_mode,  // Preserve connection mode
-            existing.locked_space_id,  // Preserve locked space
+            existing.client_alias,    // Preserve user-set alias
+            existing.connection_mode, // Preserve connection mode
+            existing.locked_space_id, // Preserve locked space
             existing.last_seen,
             existing.created_at,
             now,
         );
-        
+
         // Save to database (single source of truth)
-        repo.save_client(&updated_client)
-            .await
-            .map_err(|e| DcrError::invalid_client_metadata(format!("Failed to save client: {}", e)))?;
+        repo.save_client(&updated_client).await.map_err(|e| {
+            DcrError::invalid_client_metadata(format!("Failed to save client: {}", e))
+        })?;
 
         return Ok(DcrResponse {
             client_id,
@@ -314,7 +333,10 @@ pub async fn process_dcr_request(
 
     // Default grant_types and response_types per OAuth 2.1
     let grant_types = if request.grant_types.is_empty() {
-        vec!["authorization_code".to_string(), "refresh_token".to_string()]
+        vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ]
     } else {
         request.grant_types.clone()
     };
@@ -338,9 +360,9 @@ pub async fn process_dcr_request(
         grant_types.clone(),
         response_types.clone(),
         token_endpoint_auth_method.clone(),
-        None,  // No alias yet
-        "follow_active".to_string(),  // Default connection mode
-        None,  // No locked space
+        None,                        // No alias yet
+        "follow_active".to_string(), // Default connection mode
+        None,                        // No locked space
         Some(now_str.clone()),
         now_str.clone(),
         now_str,
@@ -351,7 +373,10 @@ pub async fn process_dcr_request(
         .await
         .map_err(|e| DcrError::invalid_client_metadata(format!("Failed to save client: {}", e)))?;
 
-    info!("[DCR] New client registered: {} ({})", request.client_name, client_id);
+    info!(
+        "[DCR] New client registered: {} ({})",
+        request.client_name, client_id
+    );
 
     Ok(DcrResponse {
         client_id,

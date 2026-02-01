@@ -2,8 +2,8 @@
 //!
 //! Manages spaces with automatic event emission.
 
-use std::sync::Arc;
 use anyhow::{anyhow, Result};
+use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
@@ -68,7 +68,10 @@ impl SpaceAppService {
 
         // Create builtin feature sets
         if let Some(ref fs_repo) = self.feature_set_repo {
-            if let Err(e) = fs_repo.ensure_builtin_for_space(&space.id.to_string()).await {
+            if let Err(e) = fs_repo
+                .ensure_builtin_for_space(&space.id.to_string())
+                .await
+            {
                 tracing::warn!(
                     space_id = %space.id,
                     error = %e,
@@ -92,8 +95,17 @@ impl SpaceAppService {
     /// Update a space
     ///
     /// Emits: `SpaceUpdated`
-    pub async fn update(&self, id: Uuid, name: Option<String>, icon: Option<String>, description: Option<String>) -> Result<Space> {
-        let mut space = self.space_repo.get(&id).await?
+    pub async fn update(
+        &self,
+        id: Uuid,
+        name: Option<String>,
+        icon: Option<String>,
+        description: Option<String>,
+    ) -> Result<Space> {
+        let mut space = self
+            .space_repo
+            .get(&id)
+            .await?
             .ok_or_else(|| anyhow!("Space not found"))?;
 
         if let Some(name) = name {
@@ -124,7 +136,10 @@ impl SpaceAppService {
     ///
     /// Emits: `SpaceDeleted`
     pub async fn delete(&self, id: Uuid) -> Result<()> {
-        let space = self.space_repo.get(&id).await?
+        let space = self
+            .space_repo
+            .get(&id)
+            .await?
             .ok_or_else(|| anyhow!("Space not found"))?;
 
         if space.is_default {
@@ -136,7 +151,8 @@ impl SpaceAppService {
         info!(space_id = %id, "[SpaceAppService] Deleted space");
 
         // Emit event
-        self.event_sender.emit(DomainEvent::SpaceDeleted { space_id: id });
+        self.event_sender
+            .emit(DomainEvent::SpaceDeleted { space_id: id });
 
         Ok(())
     }
@@ -149,7 +165,10 @@ impl SpaceAppService {
         let old_space = self.space_repo.get_default().await?;
 
         // Get new space
-        let new_space = self.space_repo.get(&id).await?
+        let new_space = self
+            .space_repo
+            .get(&id)
+            .await?
             .ok_or_else(|| anyhow!("Space not found"))?;
 
         // Set as default
@@ -171,4 +190,3 @@ impl SpaceAppService {
         Ok(new_space)
     }
 }
-

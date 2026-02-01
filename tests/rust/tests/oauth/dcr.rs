@@ -130,7 +130,7 @@ fn minimal_dcr_request() -> DcrRequest {
 #[test]
 fn test_dcr_request_with_minimal_fields() {
     let request = minimal_dcr_request();
-    
+
     assert_eq!(request.client_name, "Test Client");
     assert_eq!(request.redirect_uris.len(), 1);
     assert!(request.grant_types.is_empty()); // defaults applied by process_dcr_request

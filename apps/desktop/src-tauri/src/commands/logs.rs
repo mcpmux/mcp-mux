@@ -49,13 +49,16 @@ pub async fn get_server_logs(
     level_filter: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ServerLogEntry>, String> {
-    info!("[Logs] Getting logs for server {} (limit: {:?}, filter: {:?})", server_id, limit, level_filter);
+    info!(
+        "[Logs] Getting logs for server {} (limit: {:?}, filter: {:?})",
+        server_id, limit, level_filter
+    );
 
     let space_id = get_default_space_id(&state).await?;
-    
+
     // Parse level filter
     let level = level_filter.and_then(|s| LogLevel::parse(&s));
-    
+
     // Get logs
     let logs = state
         .server_log_manager
@@ -78,7 +81,7 @@ pub async fn clear_server_logs(
     info!("[Logs] Clearing logs for server {}", server_id);
 
     let space_id = get_default_space_id(&state).await?;
-    
+
     state
         .server_log_manager
         .clear_logs(&space_id, &server_id)
@@ -99,11 +102,8 @@ pub async fn get_server_log_file(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let space_id = get_default_space_id(&state).await?;
-    
-    let path = state
-        .server_log_manager
-        .get_log_file(&space_id, &server_id);
-    
+
+    let path = state.server_log_manager.get_log_file(&space_id, &server_id);
+
     Ok(path.to_string_lossy().to_string())
 }
-

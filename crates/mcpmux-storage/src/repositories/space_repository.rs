@@ -30,12 +30,12 @@ impl SqliteSpaceRepository {
         if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
             return dt.with_timezone(&Utc);
         }
-        
+
         // Try SQLite's datetime format (e.g., "2024-01-01 00:00:00")
         if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
             return dt.and_utc();
         }
-        
+
         // Fallback to current time
         Utc::now()
     }
@@ -48,7 +48,7 @@ impl SpaceRepository for SqliteSpaceRepository {
         let conn = db.connection();
 
         tracing::debug!("[SpaceRepository::list] Querying spaces...");
-        
+
         let mut stmt = conn.prepare(
             "SELECT id, name, icon, description, is_default, sort_order, created_at, updated_at 
              FROM spaces 
@@ -60,10 +60,14 @@ impl SpaceRepository for SqliteSpaceRepository {
                 let id_str: String = row.get(0)?;
                 let name: String = row.get(1)?;
                 tracing::debug!("[SpaceRepository::list] Found space: {} ({})", name, id_str);
-                
+
                 Ok(Space {
                     id: id_str.parse().unwrap_or_else(|e| {
-                        tracing::warn!("[SpaceRepository::list] Failed to parse UUID '{}': {}", id_str, e);
+                        tracing::warn!(
+                            "[SpaceRepository::list] Failed to parse UUID '{}': {}",
+                            id_str,
+                            e
+                        );
                         Uuid::new_v4()
                     }),
                     name,
@@ -76,7 +80,7 @@ impl SpaceRepository for SqliteSpaceRepository {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        
+
         tracing::info!("[SpaceRepository::list] Returning {} spaces", spaces.len());
 
         Ok(spaces)
@@ -95,7 +99,10 @@ impl SpaceRepository for SqliteSpaceRepository {
         let space = stmt
             .query_row(params![id.to_string()], |row| {
                 Ok(Space {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| Uuid::new_v4()),
+                    id: row
+                        .get::<_, String>(0)?
+                        .parse()
+                        .unwrap_or_else(|_| Uuid::new_v4()),
                     name: row.get(1)?,
                     icon: row.get(2)?,
                     description: row.get(3)?,
@@ -195,7 +202,7 @@ impl SpaceRepository for SqliteSpaceRepository {
     async fn get_default(&self) -> Result<Option<Space>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         let mut stmt = conn.prepare(
             "SELECT id, name, icon, description, is_default, sort_order, created_at, updated_at
              FROM spaces
@@ -207,7 +214,7 @@ impl SpaceRepository for SqliteSpaceRepository {
             .query_row([], |row| {
                 let id_str: String = row.get(0)?;
                 let name: String = row.get(1)?;
-                
+
                 Ok(Space {
                     id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
                     name,
@@ -321,4 +328,3 @@ mod tests {
         assert_eq!(default.unwrap().name, "My Space");
     }
 }
-

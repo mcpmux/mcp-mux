@@ -8,7 +8,7 @@ use anyhow::Result;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::repository::{InboundMcpClientRepository, FeatureSetRepository};
+use crate::repository::{FeatureSetRepository, InboundMcpClientRepository};
 
 /// Service for managing AI clients and their permissions
 pub struct ClientService {
@@ -32,12 +32,20 @@ impl ClientService {
     /// This is called when a client first connects to a space.
     pub async fn ensure_default_grant(&self, client_id: &Uuid, space_id: &str) -> Result<bool> {
         // Check if client already has any grants for this space
-        if self.client_repository.has_grants_for_space(client_id, space_id).await? {
+        if self
+            .client_repository
+            .has_grants_for_space(client_id, space_id)
+            .await?
+        {
             return Ok(false); // Already has grants, don't auto-grant
         }
 
         // Get the Default feature set for this space
-        let default_fs = match self.feature_set_repository.get_default_for_space(space_id).await? {
+        let default_fs = match self
+            .feature_set_repository
+            .get_default_for_space(space_id)
+            .await?
+        {
             Some(fs) => fs,
             None => {
                 warn!(
@@ -45,13 +53,22 @@ impl ClientService {
                     space_id
                 );
                 // Try to create builtin feature sets
-                self.feature_set_repository.ensure_builtin_for_space(space_id).await?;
-                
+                self.feature_set_repository
+                    .ensure_builtin_for_space(space_id)
+                    .await?;
+
                 // Try again
-                match self.feature_set_repository.get_default_for_space(space_id).await? {
+                match self
+                    .feature_set_repository
+                    .get_default_for_space(space_id)
+                    .await?
+                {
                     Some(fs) => fs,
                     None => {
-                        anyhow::bail!("Could not find or create Default feature set for space {}", space_id);
+                        anyhow::bail!(
+                            "Could not find or create Default feature set for space {}",
+                            space_id
+                        );
                     }
                 }
             }
@@ -75,14 +92,24 @@ impl ClientService {
     /// Ensure a client has the All feature set granted for a space.
     pub async fn grant_all_features(&self, client_id: &Uuid, space_id: &str) -> Result<()> {
         // Get the All feature set for this space
-        let all_fs = match self.feature_set_repository.get_all_for_space(space_id).await? {
+        let all_fs = match self
+            .feature_set_repository
+            .get_all_for_space(space_id)
+            .await?
+        {
             Some(fs) => fs,
             None => {
                 // Try to create builtin feature sets
-                self.feature_set_repository.ensure_builtin_for_space(space_id).await?;
-                
-                self.feature_set_repository.get_all_for_space(space_id).await?
-                    .ok_or_else(|| anyhow::anyhow!("Could not find All feature set for space {}", space_id))?
+                self.feature_set_repository
+                    .ensure_builtin_for_space(space_id)
+                    .await?;
+
+                self.feature_set_repository
+                    .get_all_for_space(space_id)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Could not find All feature set for space {}", space_id)
+                    })?
             }
         };
 
@@ -121,12 +148,17 @@ impl ClientService {
         space_id: &str,
     ) -> Result<Vec<String>> {
         // Get explicit grants from DB
-        let mut grants = self.client_repository
+        let mut grants = self
+            .client_repository
             .get_grants_for_space(client_id, space_id)
             .await?;
 
         // Get default feature set for this space
-        if let Some(default_fs) = self.feature_set_repository.get_default_for_space(space_id).await? {
+        if let Some(default_fs) = self
+            .feature_set_repository
+            .get_default_for_space(space_id)
+            .await?
+        {
             // Add default if not already in grants (set semantics)
             if !grants.contains(&default_fs.id) {
                 grants.push(default_fs.id);

@@ -11,12 +11,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rmcp::{
-    ClientHandler,
-    RoleClient,
-    ServiceExt,
-    model::{CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo, Implementation, ListToolsResult, Tool},
+    model::{
+        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo, Implementation,
+        ListToolsResult, Tool,
+    },
     service::RunningService,
     transport::{ConfigureCommandExt, TokioChildProcess},
+    ClientHandler, RoleClient, ServiceExt,
 };
 use serde_json::Value;
 use tokio::process::Command;
@@ -33,9 +34,7 @@ pub enum TransportConfig {
         env: HashMap<String, String>,
     },
     /// HTTP connection (Streamable HTTP)
-    Http {
-        url: String,
-    },
+    Http { url: String },
 }
 
 /// Server configuration for connecting
@@ -122,7 +121,7 @@ impl McpSession {
         // Parse the command string - it may contain embedded arguments (e.g., "docker run -i ...")
         // This is common in user configs copied from Cursor, Claude Desktop, etc.
         let (executable, parsed_args) = Self::parse_command(command, args)?;
-        
+
         info!(
             server_id = %server_id,
             executable = %executable,
@@ -190,7 +189,8 @@ impl McpSession {
 
         let args = arguments.and_then(|v| v.as_object().cloned());
 
-        let result = self.client
+        let result = self
+            .client
             .peer()
             .call_tool(CallToolRequestParams {
                 name: name.to_string().into(),
@@ -206,7 +206,8 @@ impl McpSession {
 
     /// List tools available on this server
     pub async fn list_tools(&self) -> Result<ListToolsResult> {
-        let result = self.client
+        let result = self
+            .client
             .peer()
             .list_tools(Default::default())
             .await
@@ -217,7 +218,10 @@ impl McpSession {
     /// Disconnect from the server
     pub async fn disconnect(self) -> Result<()> {
         info!(server_id = %self.server_id, "Disconnecting from MCP server");
-        self.client.cancel().await.context("Failed to cancel service")?;
+        self.client
+            .cancel()
+            .await
+            .context("Failed to cancel service")?;
         Ok(())
     }
 
@@ -227,12 +231,12 @@ impl McpSession {
     }
 
     /// Parse a command string that may contain embedded arguments.
-    /// 
+    ///
     /// This handles common formats from user configs (Cursor, Claude Desktop, etc.):
     /// - "docker run -i --rm image" → ("docker", ["run", "-i", "--rm", "image"])
     /// - "npx -y @some/server" → ("npx", ["-y", "@some/server"])
     /// - "node" with args: ["server.js"] → ("node", ["server.js"])
-    /// 
+    ///
     /// If the command contains spaces and no separate args are provided,
     /// it will be parsed using shell-words to properly handle quoting.
     fn parse_command(command: &str, args: &[String]) -> Result<(String, Vec<String>)> {
@@ -246,14 +250,14 @@ impl McpSession {
             // Parse the command string using shell-words for proper quoting
             let parts = shell_words::split(command)
                 .context("Failed to parse command string - check for unmatched quotes")?;
-            
+
             if parts.is_empty() {
                 return Err(anyhow::anyhow!("Empty command after parsing"));
             }
 
             let executable = parts[0].clone();
             let parsed_args = parts[1..].to_vec();
-            
+
             Ok((executable, parsed_args))
         } else {
             // Simple command with no embedded args
@@ -277,7 +281,11 @@ impl ServerManager {
     }
 
     /// Connect to an MCP server based on its configuration
-    pub async fn connect(&self, server: &ServerConfig, env_vars: HashMap<String, String>) -> Result<()> {
+    pub async fn connect(
+        &self,
+        server: &ServerConfig,
+        env_vars: HashMap<String, String>,
+    ) -> Result<()> {
         let server_id = server.id.clone();
 
         // Check if already connected

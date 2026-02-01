@@ -16,7 +16,10 @@ fn test_metadata(server_url: &str) -> OAuthMetadata {
         registration_endpoint: None,
         jwks_uri: None,
         response_types_supported: vec!["code".to_string()],
-        grant_types_supported: vec!["authorization_code".to_string(), "refresh_token".to_string()],
+        grant_types_supported: vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ],
         scopes_supported: vec!["openid".to_string(), "profile".to_string()],
         code_challenge_methods_supported: vec!["S256".to_string()],
         token_endpoint_auth_methods_supported: vec!["none".to_string()],
@@ -93,12 +96,14 @@ fn test_authorization_request_multiple_scopes() {
         .unwrap();
 
     // Scopes are space-separated and URL encoded
-    assert!(request
-        .authorization_url
-        .contains("scope=openid+profile+email")
-        || request
+    assert!(
+        request
             .authorization_url
-            .contains("scope=openid%20profile%20email"));
+            .contains("scope=openid+profile+email")
+            || request
+                .authorization_url
+                .contains("scope=openid%20profile%20email")
+    );
 }
 
 #[tokio::test]
@@ -175,12 +180,10 @@ async fn test_exchange_code_error_response() {
 
     Mock::given(method("POST"))
         .and(path("/token"))
-        .respond_with(
-            ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                "error": "invalid_grant",
-                "error_description": "Authorization code expired"
-            })),
-        )
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "invalid_grant",
+            "error_description": "Authorization code expired"
+        })))
         .mount(&mock_server)
         .await;
 
@@ -189,7 +192,12 @@ async fn test_exchange_code_error_response() {
     let http_client = reqwest::Client::new();
 
     let result = flow
-        .exchange_code(&http_client, "expired_code", "http://localhost/cb", "verifier")
+        .exchange_code(
+            &http_client,
+            "expired_code",
+            "http://localhost/cb",
+            "verifier",
+        )
         .await;
 
     assert!(result.is_err());
@@ -218,13 +226,13 @@ async fn test_refresh_token_success() {
     let flow = OAuthFlow::new(metadata, "client_123".to_string(), None);
     let http_client = reqwest::Client::new();
 
-    let token = flow.refresh_token(&http_client, "old_refresh").await.unwrap();
+    let token = flow
+        .refresh_token(&http_client, "old_refresh")
+        .await
+        .unwrap();
 
     assert_eq!(token.access_token, "new_access_token");
-    assert_eq!(
-        token.refresh_token,
-        Some("new_refresh_token".to_string())
-    );
+    assert_eq!(token.refresh_token, Some("new_refresh_token".to_string()));
 }
 
 #[tokio::test]
@@ -247,7 +255,10 @@ async fn test_refresh_token_without_new_refresh() {
     let flow = OAuthFlow::new(metadata, "client_123".to_string(), None);
     let http_client = reqwest::Client::new();
 
-    let token = flow.refresh_token(&http_client, "old_refresh").await.unwrap();
+    let token = flow
+        .refresh_token(&http_client, "old_refresh")
+        .await
+        .unwrap();
 
     assert_eq!(token.access_token, "new_access");
     assert!(token.refresh_token.is_none());
@@ -387,7 +398,9 @@ async fn test_oauth_manager_start_authorization() {
     assert!(auth_request
         .authorization_url
         .starts_with(&format!("{}/authorize", mock_server.uri())));
-    assert!(auth_request.authorization_url.contains("client_id=my_client"));
+    assert!(auth_request
+        .authorization_url
+        .contains("client_id=my_client"));
     assert!(!auth_request.state.is_empty());
     assert!(!auth_request.pkce_verifier.is_empty());
 }
@@ -458,7 +471,11 @@ async fn test_oauth_manager_full_flow() {
 
     // Step 2: Exchange code (simulating callback)
     let token = manager
-        .exchange_code("auth_code", "http://localhost/cb", &auth_request.pkce_verifier)
+        .exchange_code(
+            "auth_code",
+            "http://localhost/cb",
+            &auth_request.pkce_verifier,
+        )
         .await
         .unwrap();
 

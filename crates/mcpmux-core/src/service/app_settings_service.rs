@@ -4,8 +4,8 @@
 //! Provides convenient methods for common settings while using the repository
 //! for persistence.
 
-use std::sync::Arc;
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::AppSettingsRepository;
@@ -154,7 +154,9 @@ impl AppSettingsService {
     /// Set the gateway port.
     pub async fn set_gateway_port(&self, port: u16) -> anyhow::Result<()> {
         info!("[Settings] Setting gateway port to {}", port);
-        self.repository.set(keys::gateway::PORT, &port.to_string()).await
+        self.repository
+            .set(keys::gateway::PORT, &port.to_string())
+            .await
     }
 
     /// Clear the gateway port (revert to default/dynamic).
@@ -174,7 +176,12 @@ impl AppSettingsService {
     /// Set gateway auto-start preference.
     pub async fn set_gateway_auto_start(&self, auto_start: bool) -> anyhow::Result<()> {
         info!("[Settings] Setting gateway auto_start to {}", auto_start);
-        self.repository.set(keys::gateway::AUTO_START, if auto_start { "true" } else { "false" }).await
+        self.repository
+            .set(
+                keys::gateway::AUTO_START,
+                if auto_start { "true" } else { "false" },
+            )
+            .await
     }
 
     // =========================================================================
@@ -194,7 +201,9 @@ impl AppSettingsService {
     /// Set the preferred OAuth callback port.
     pub async fn set_oauth_callback_port(&self, port: u16) -> anyhow::Result<()> {
         info!("[Settings] Setting OAuth callback port to {}", port);
-        self.repository.set(keys::oauth::CALLBACK_PORT, &port.to_string()).await
+        self.repository
+            .set(keys::oauth::CALLBACK_PORT, &port.to_string())
+            .await
     }
 
     // =========================================================================
@@ -216,7 +225,9 @@ impl AppSettingsService {
 
     /// Get window state (position, size, maximized).
     pub async fn get_window_state<T: DeserializeOwned + Default>(&self) -> T {
-        self.get_typed(keys::ui::WINDOW_STATE).await.unwrap_or_default()
+        self.get_typed(keys::ui::WINDOW_STATE)
+            .await
+            .unwrap_or_default()
     }
 
     /// Set window state.
@@ -267,7 +278,10 @@ mod tests {
         }
 
         async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
-            self.data.write().await.insert(key.to_string(), value.to_string());
+            self.data
+                .write()
+                .await
+                .insert(key.to_string(), value.to_string());
             Ok(())
         }
 
@@ -355,7 +369,12 @@ mod tests {
             height: u32,
         }
 
-        let state = WindowState { x: 100, y: 200, width: 800, height: 600 };
+        let state = WindowState {
+            x: 100,
+            y: 200,
+            width: 800,
+            height: 600,
+        };
         service.set_window_state(&state).await.unwrap();
 
         let loaded: WindowState = service.get_window_state().await;

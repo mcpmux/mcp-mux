@@ -34,4 +34,3 @@ mod oauth_handler;
 
 pub use mcp_notifier::MCPNotifier;
 pub use oauth_handler::OAuthEventHandler;
-

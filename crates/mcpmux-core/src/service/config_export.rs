@@ -10,7 +10,7 @@
 //! - `InstalledServer` - User's installation with input values
 
 use crate::domain::InstalledServer;
-use crate::registry::{TransportConfig, RegistryServer};
+use crate::registry::{RegistryServer, TransportConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -57,13 +57,11 @@ impl ConfigFormat {
                 }
                 #[cfg(target_os = "windows")]
                 {
-                    dirs::config_dir()
-                        .map(|c| c.join("Claude").join("claude_desktop_config.json"))
+                    dirs::config_dir().map(|c| c.join("Claude").join("claude_desktop_config.json"))
                 }
                 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
                 {
-                    dirs::config_dir()
-                        .map(|c| c.join("Claude").join("claude_desktop_config.json"))
+                    dirs::config_dir().map(|c| c.join("Claude").join("claude_desktop_config.json"))
                 }
             }
         }
@@ -152,7 +150,8 @@ pub enum ClaudeServerConfig {
 }
 
 /// Type alias for credential resolver function
-pub type CredentialResolver = Box<dyn Fn(&str, &Uuid) -> Option<HashMap<String, String>> + Send + Sync>;
+pub type CredentialResolver =
+    Box<dyn Fn(&str, &Uuid) -> Option<HashMap<String, String>> + Send + Sync>;
 
 /// Configuration exporter
 pub struct ConfigExporter {
@@ -229,20 +228,25 @@ impl ConfigExporter {
         credentials: &HashMap<String, String>,
     ) -> ResolvedServer {
         let transport = match &registry_server.transport {
-            TransportConfig::Stdio { command, args, env, .. } => {
+            TransportConfig::Stdio {
+                command, args, env, ..
+            } => {
                 let resolved_command = Self::resolve_placeholders(command, &installed.input_values);
                 let resolved_args: Vec<String> = args
                     .iter()
                     .map(|a| Self::resolve_placeholders(a, &installed.input_values))
                     .collect();
-                
+
                 let mut resolved_env: HashMap<String, String> = env
                     .iter()
                     .map(|(k, v)| {
-                        (k.clone(), Self::resolve_placeholders(v, &installed.input_values))
+                        (
+                            k.clone(),
+                            Self::resolve_placeholders(v, &installed.input_values),
+                        )
                     })
                     .collect();
-                
+
                 // Merge in credentials
                 resolved_env.extend(credentials.clone());
 
@@ -257,7 +261,10 @@ impl ConfigExporter {
                 let resolved_headers: HashMap<String, String> = headers
                     .iter()
                     .map(|(k, v)| {
-                        (k.clone(), Self::resolve_placeholders(v, &installed.input_values))
+                        (
+                            k.clone(),
+                            Self::resolve_placeholders(v, &installed.input_values),
+                        )
                     })
                     .collect();
 
@@ -280,14 +287,14 @@ impl ConfigExporter {
 
         for server in servers {
             let server_config = match &server.transport {
-                ResolvedTransport::Stdio { command, args, env } => {
-                    CursorServerConfig::Stdio {
-                        command: command.clone(),
-                        args: args.clone(),
-                        env: env.clone(),
-                    }
+                ResolvedTransport::Stdio { command, args, env } => CursorServerConfig::Stdio {
+                    command: command.clone(),
+                    args: args.clone(),
+                    env: env.clone(),
+                },
+                ResolvedTransport::Http { url, .. } => {
+                    CursorServerConfig::Http { url: url.clone() }
                 }
-                ResolvedTransport::Http { url, .. } => CursorServerConfig::Http { url: url.clone() },
             };
 
             mcp_servers.insert(server.server_id.clone(), server_config);
@@ -302,20 +309,15 @@ impl ConfigExporter {
 
         for server in servers {
             let transport = match &server.transport {
-                ResolvedTransport::Stdio { command, args, env } => {
-                    ContinueTransport::Stdio {
-                        command: command.clone(),
-                        args: args.clone(),
-                        env: env.clone(),
-                    }
-                }
+                ResolvedTransport::Stdio { command, args, env } => ContinueTransport::Stdio {
+                    command: command.clone(),
+                    args: args.clone(),
+                    env: env.clone(),
+                },
                 ResolvedTransport::Http { url, .. } => ContinueTransport::Http { url: url.clone() },
             };
 
-            mcp_servers.insert(
-                server.server_id.clone(),
-                ContinueServerConfig { transport },
-            );
+            mcp_servers.insert(server.server_id.clone(), ContinueServerConfig { transport });
         }
 
         ContinueConfig {
@@ -333,20 +335,16 @@ impl ConfigExporter {
 
         for server in servers {
             let server_config = match &server.transport {
-                ResolvedTransport::Stdio { command, args, env } => {
-                    ClaudeServerConfig::Stdio {
-                        command: command.clone(),
-                        args: args.clone(),
-                        env: env.clone(),
-                    }
-                }
+                ResolvedTransport::Stdio { command, args, env } => ClaudeServerConfig::Stdio {
+                    command: command.clone(),
+                    args: args.clone(),
+                    env: env.clone(),
+                },
                 // Claude Desktop uses HTTP for remote connections
-                ResolvedTransport::Http { url, .. } => {
-                    ClaudeServerConfig::Http {
-                        url: url.clone(),
-                        transport: "http".to_string(),
-                    }
-                }
+                ResolvedTransport::Http { url, .. } => ClaudeServerConfig::Http {
+                    url: url.clone(),
+                    transport: "http".to_string(),
+                },
             };
 
             mcp_servers.insert(server.server_id.clone(), server_config);

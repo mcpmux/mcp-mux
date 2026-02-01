@@ -22,7 +22,14 @@ import { ServerActionMenu } from './ServerActionMenu';
 import type { ServerViewModel, ServerDefinition, InstalledServerState, InputDefinition } from '../../types/registry';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
+import type { ConnectionStatus } from '@/lib/api/serverManager';
 import { useViewSpace } from '@/stores';
+import { useServerManager } from '@/hooks/useServerManager';
+import { useGatewayEvents, useDomainEvents } from '@/hooks/useDomainEvents';
+import type { GatewayChangedPayload, ServerChangedPayload } from '@/hooks/useDomainEvents';
+import type { FeaturesUpdatedEvent } from '@/lib/api/serverManager';
+import { ServerLogViewer } from '@/components/ServerLogViewer';
+import { ConfigEditorModal } from '@/components/ConfigEditorModal';
 import { SourceBadge } from '@/components/SourceBadge';
 
 // Helper to merge definitions with states (same as registryStore)
@@ -172,7 +179,7 @@ export function ServersPage() {
     retry: retryConnectionV2,
   } = useServerManager({
     spaceId: viewSpace?.id || '',
-    onFeaturesChange: (event) => {
+    onFeaturesChange: (event: FeaturesUpdatedEvent) => {
       // Update features when they change
       console.log('[ServersPage] Features updated:', event);
       
@@ -228,7 +235,7 @@ export function ServersPage() {
   }, [viewSpace?.id]);
 
   // Subscribe to gateway events for reactive updates (no polling!)
-  useGatewayEvents((payload) => {
+  useGatewayEvents((payload: GatewayChangedPayload) => {
     if (payload.action === 'started') {
       setGatewayRunning(true);
       setGatewayUrl(payload.url || null);
@@ -242,7 +249,7 @@ export function ServersPage() {
   // Subscribe to server lifecycle events (install/uninstall)
   const { subscribe } = useDomainEvents();
   useEffect(() => {
-    return subscribe('server-changed', (payload) => {
+    return subscribe('server-changed', (payload: ServerChangedPayload) => {
       if (!viewSpace || payload.space_id !== viewSpace.id) {
         return;
       }

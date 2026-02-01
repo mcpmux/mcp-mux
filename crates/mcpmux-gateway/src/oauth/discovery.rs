@@ -57,7 +57,8 @@ pub struct OAuthMetadata {
 impl OAuthMetadata {
     /// Check if PKCE is supported
     pub fn supports_pkce(&self) -> bool {
-        self.code_challenge_methods_supported.contains(&"S256".to_string())
+        self.code_challenge_methods_supported
+            .contains(&"S256".to_string())
     }
 
     /// Check if a specific scope is supported
@@ -80,7 +81,10 @@ impl OAuthDiscovery {
     /// Fetch OAuth metadata from issuer
     pub async fn fetch(&self, issuer: &str) -> anyhow::Result<OAuthMetadata> {
         // Try OIDC discovery first
-        let oidc_url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+        let oidc_url = format!(
+            "{}/.well-known/openid-configuration",
+            issuer.trim_end_matches('/')
+        );
         debug!("Trying OIDC discovery: {}", oidc_url);
 
         match self.fetch_metadata(&oidc_url).await {
@@ -212,7 +216,10 @@ mod tests {
         let metadata: OAuthMetadata = serde_json::from_str(json).unwrap();
 
         assert_eq!(metadata.issuer, "https://auth.example.com");
-        assert_eq!(metadata.authorization_endpoint, "https://auth.example.com/authorize");
+        assert_eq!(
+            metadata.authorization_endpoint,
+            "https://auth.example.com/authorize"
+        );
         assert_eq!(metadata.token_endpoint, "https://auth.example.com/token");
         assert!(metadata.supports_pkce());
         assert!(metadata.supports_scope("email"));
@@ -233,10 +240,22 @@ mod tests {
 
         let metadata: OAuthMetadata = serde_json::from_str(json).unwrap();
 
-        assert_eq!(metadata.userinfo_endpoint, Some("https://auth.example.com/userinfo".to_string()));
-        assert_eq!(metadata.revocation_endpoint, Some("https://auth.example.com/revoke".to_string()));
-        assert_eq!(metadata.registration_endpoint, Some("https://auth.example.com/register".to_string()));
-        assert_eq!(metadata.jwks_uri, Some("https://auth.example.com/.well-known/jwks.json".to_string()));
+        assert_eq!(
+            metadata.userinfo_endpoint,
+            Some("https://auth.example.com/userinfo".to_string())
+        );
+        assert_eq!(
+            metadata.revocation_endpoint,
+            Some("https://auth.example.com/revoke".to_string())
+        );
+        assert_eq!(
+            metadata.registration_endpoint,
+            Some("https://auth.example.com/register".to_string())
+        );
+        assert_eq!(
+            metadata.jwks_uri,
+            Some("https://auth.example.com/.well-known/jwks.json".to_string())
+        );
     }
 
     #[test]

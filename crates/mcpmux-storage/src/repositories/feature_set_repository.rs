@@ -90,7 +90,10 @@ impl SqliteFeatureSetRepository {
     }
 
     /// Load members for a feature set (synchronous version for use with locked connection)
-    fn get_members_sync(conn: &rusqlite::Connection, feature_set_id: &str) -> Result<Vec<FeatureSetMember>> {
+    fn get_members_sync(
+        conn: &rusqlite::Connection,
+        feature_set_id: &str,
+    ) -> Result<Vec<FeatureSetMember>> {
         let mut stmt = conn.prepare(
             "SELECT id, feature_set_id, member_type, member_id, mode
              FROM feature_set_members
@@ -314,11 +317,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         Ok(feature_sets)
     }
 
-    async fn get_server_all(
-        &self,
-        space_id: &str,
-        server_id: &str,
-    ) -> Result<Option<FeatureSet>> {
+    async fn get_server_all(&self, space_id: &str, server_id: &str) -> Result<Option<FeatureSet>> {
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -388,11 +387,11 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
 
         Ok(result)
     }
-    
+
     async fn delete_server_all(&self, space_id: &str, server_id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         // Hard delete server-all feature set for this server (used during uninstall)
         // Unlike regular delete(), this allows deleting builtin server-all feature sets
         conn.execute(
@@ -400,7 +399,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
              WHERE space_id = ? AND server_id = ? AND feature_set_type = 'server-all'",
             params![space_id, server_id],
         )?;
-        
+
         Ok(())
     }
 
@@ -455,11 +454,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
     }
 
     /// Remove an individual feature from a feature set
-    async fn remove_feature_member(
-        &self,
-        feature_set_id: &str,
-        feature_id: &str,
-    ) -> Result<()> {
+    async fn remove_feature_member(&self, feature_set_id: &str, feature_id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -473,10 +468,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
     }
 
     /// Get all feature members (not feature_set members) of a feature set
-    async fn get_feature_members(
-        &self,
-        feature_set_id: &str,
-    ) -> Result<Vec<FeatureSetMember>> {
+    async fn get_feature_members(&self, feature_set_id: &str) -> Result<Vec<FeatureSetMember>> {
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -538,7 +530,10 @@ mod tests {
         assert_eq!(builtin.len(), 2);
 
         // Cannot delete builtin
-        let all_fs = builtin.iter().find(|f| f.feature_set_type == FeatureSetType::All).unwrap();
+        let all_fs = builtin
+            .iter()
+            .find(|f| f.feature_set_type == FeatureSetType::All)
+            .unwrap();
         let result = repo.delete(&all_fs.id).await;
         assert!(result.is_err());
     }

@@ -2,7 +2,7 @@
 //!
 //! This service uses the bundle-only strategy (see ADR-001).
 //! All filtering and searching is done client-side against cached data.
-//! 
+//!
 //! Offline support: The bundle is cached to disk after successful fetch,
 //! and loaded from disk when the API is unreachable.
 
@@ -14,8 +14,10 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::domain::{ServerDefinition, ServerSource, UserSpaceConfig};
-use crate::service::registry_api_client::{RegistryApiClient, RegistryBundle, UiConfig, HomeConfig, FetchBundleResult};
-use crate::service::app_settings_service::{AppSettingsService, keys};
+use crate::service::app_settings_service::{keys, AppSettingsService};
+use crate::service::registry_api_client::{
+    FetchBundleResult, HomeConfig, RegistryApiClient, RegistryBundle, UiConfig,
+};
 
 const BUNDLE_CACHE_FILENAME: &str = "registry-bundle.json";
 
@@ -54,7 +56,7 @@ pub struct ServerDiscoveryService {
 
 impl ServerDiscoveryService {
     /// Create a new server discovery service.
-    /// 
+    ///
     /// - `data_dir`: App data directory (e.g. %LOCALAPPDATA%/mcpmux)
     /// - `spaces_dir`: User spaces directory (e.g. %LOCALAPPDATA%/mcpmux/spaces)
     pub fn new(data_dir: PathBuf, spaces_dir: PathBuf) -> Self {
@@ -118,7 +120,7 @@ impl ServerDiscoveryService {
         let path = self.bundle_cache_path();
         let json = serde_json::to_string_pretty(bundle)?;
         tokio::fs::write(&path, json).await?;
-        
+
         info!("Saved registry bundle to disk cache: {}", path.display());
         Ok(())
     }
@@ -126,29 +128,27 @@ impl ServerDiscoveryService {
     /// Load bundle from disk cache
     async fn load_bundle_from_disk(&self) -> Option<RegistryBundle> {
         let path = self.bundle_cache_path();
-        
+
         if !path.exists() {
             return None;
         }
 
         match tokio::fs::read_to_string(&path).await {
-            Ok(content) => {
-                match serde_json::from_str::<RegistryBundle>(&content) {
-                    Ok(bundle) => {
-                        info!(
-                            "Loaded registry bundle from disk cache: {} servers (v{}, updated {})",
-                            bundle.servers.len(),
-                            bundle.version,
-                            bundle.updated_at
-                        );
-                        Some(bundle)
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse cached bundle: {}", e);
-                        None
-                    }
+            Ok(content) => match serde_json::from_str::<RegistryBundle>(&content) {
+                Ok(bundle) => {
+                    info!(
+                        "Loaded registry bundle from disk cache: {} servers (v{}, updated {})",
+                        bundle.servers.len(),
+                        bundle.version,
+                        bundle.updated_at
+                    );
+                    Some(bundle)
                 }
-            }
+                Err(e) => {
+                    warn!("Failed to parse cached bundle: {}", e);
+                    None
+                }
+            },
             Err(e) => {
                 warn!("Failed to read cached bundle: {}", e);
                 None
@@ -183,7 +183,7 @@ impl ServerDiscoveryService {
     // ============================================
 
     /// Initialize the service by loading from Registry API (with disk cache fallback) and user spaces.
-    /// 
+    ///
     /// Uses ETag-based conditional fetching to avoid re-downloading unchanged bundles.
     pub async fn refresh(&self) -> anyhow::Result<()> {
         let mut merged_servers = HashMap::new();
@@ -218,13 +218,13 @@ impl ServerDiscoveryService {
                 Ok(FetchBundleResult::NotModified) => {
                     // Bundle unchanged - but we still need to ensure memory is populated
                     info!("Registry bundle unchanged (304 Not Modified)");
-                    
+
                     // Check if in-memory cache is empty (e.g., after app restart)
                     let memory_empty = {
                         let servers = self.servers.read().await;
                         servers.is_empty()
                     };
-                    
+
                     if memory_empty {
                         // Load from disk cache to populate memory
                         info!("Memory empty, loading bundle from disk cache");
@@ -239,10 +239,10 @@ impl ServerDiscoveryService {
                         // Memory already has data, just update timestamp
                         let mut last_refresh = self.last_refresh.write().await;
                         *last_refresh = Some(Instant::now());
-                        
+
                         // Still need to reload user spaces in case they changed
                         self.reload_user_spaces().await;
-                        
+
                         return Ok(());
                     }
                 }
@@ -270,8 +270,11 @@ impl ServerDiscoveryService {
                     Some(bundle)
                 }
                 Err(e) => {
-                    warn!("Failed to fetch from Registry API: {}. Trying disk cache...", e);
-                    
+                    warn!(
+                        "Failed to fetch from Registry API: {}. Trying disk cache...",
+                        e
+                    );
+
                     // Try loading from disk cache
                     if let Some(cached_bundle) = self.load_bundle_from_disk().await {
                         info!("Using cached bundle from disk (offline mode)");
@@ -309,20 +312,25 @@ impl ServerDiscoveryService {
                 let mut home_lock = self.home_config.write().await;
                 *home_lock = bundle.home.clone();
             }
-            
+
             // Mark source as Registry
-            let registry_url = self.registry_client
+            let registry_url = self
+                .registry_client
                 .as_ref()
                 .map(|c| c.base_url().to_string())
                 .unwrap_or_else(|| "cached".to_string());
-            
-            bundle.servers.into_iter().map(|mut s| {
-                s.source = ServerSource::Registry {
-                    url: registry_url.clone(),
-                    name: "McpMux Registry".to_string(),
-                };
-                s
-            }).collect::<Vec<_>>()
+
+            bundle
+                .servers
+                .into_iter()
+                .map(|mut s| {
+                    s.source = ServerSource::Registry {
+                        url: registry_url.clone(),
+                        name: "McpMux Registry".to_string(),
+                    };
+                    s
+                })
+                .collect::<Vec<_>>()
         } else {
             vec![]
         };
@@ -354,7 +362,7 @@ impl ServerDiscoveryService {
         // 4. Update Cache
         let mut lock = self.servers.write().await;
         *lock = merged_servers;
-        
+
         // 5. Update refresh timestamp ONLY if we got a bundle
         // This ensures we retry on next request if both API and disk cache failed
         if got_bundle {
@@ -363,7 +371,7 @@ impl ServerDiscoveryService {
         } else {
             info!("No bundle available, will retry on next request");
         }
-        
+
         Ok(())
     }
 
@@ -379,10 +387,10 @@ impl ServerDiscoveryService {
     async fn reload_user_spaces(&self) {
         // Get current servers (registry servers from cache)
         let mut servers = self.servers.read().await.clone();
-        
+
         // Remove existing user space servers (they might have changed)
         servers.retain(|_, s| !matches!(s.source, ServerSource::UserSpace { .. }));
-        
+
         // Load fresh user spaces
         match self.load_user_spaces().await {
             Ok(user_servers) => {
@@ -393,7 +401,7 @@ impl ServerDiscoveryService {
             }
             Err(e) => error!("Failed to reload user spaces: {}", e),
         }
-        
+
         // Update cache
         let mut lock = self.servers.write().await;
         *lock = servers;
@@ -401,7 +409,7 @@ impl ServerDiscoveryService {
 
     async fn load_user_spaces(&self) -> anyhow::Result<Vec<ServerDefinition>> {
         let mut results = Vec::new();
-        
+
         if !self.spaces_dir.exists() {
             return Ok(results);
         }
@@ -410,8 +418,12 @@ impl ServerDiscoveryService {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
-                
+                let file_name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
                 match self.load_single_user_file(&path, &file_name).await {
                     Ok(servers) => results.extend(servers),
                     Err(e) => warn!("Failed to parse user config {}: {}", path.display(), e),
@@ -422,7 +434,11 @@ impl ServerDiscoveryService {
         Ok(results)
     }
 
-    async fn load_single_user_file(&self, path: &PathBuf, space_id: &str) -> anyhow::Result<Vec<ServerDefinition>> {
+    async fn load_single_user_file(
+        &self,
+        path: &PathBuf,
+        space_id: &str,
+    ) -> anyhow::Result<Vec<ServerDefinition>> {
         let content = tokio::fs::read_to_string(path).await?;
         let config: UserSpaceConfig = serde_json::from_str(&content)?;
         Ok(config.to_server_definitions(space_id, path.clone()))
@@ -454,7 +470,7 @@ impl ServerDiscoveryService {
     pub async fn featured(&self) -> Vec<ServerDefinition> {
         let servers = self.servers.read().await;
         let featured_ids = self.featured_ids().await;
-        
+
         featured_ids
             .iter()
             .filter_map(|id| servers.get(id))
@@ -465,16 +481,25 @@ impl ServerDiscoveryService {
     /// Search servers (searches in-memory cache)
     pub async fn search(&self, query: &str) -> Vec<ServerDefinition> {
         let query_lower = query.to_lowercase();
-        
+
         self.servers
             .read()
             .await
             .values()
             .filter(|server| {
                 server.name.to_lowercase().contains(&query_lower)
-                    || server.description.as_ref().is_some_and(|d| d.to_lowercase().contains(&query_lower))
-                    || server.alias.as_ref().is_some_and(|a| a.to_lowercase().contains(&query_lower))
-                    || server.categories.iter().any(|c| c.to_lowercase().contains(&query_lower))
+                    || server
+                        .description
+                        .as_ref()
+                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
+                    || server
+                        .alias
+                        .as_ref()
+                        .is_some_and(|a| a.to_lowercase().contains(&query_lower))
+                    || server
+                        .categories
+                        .iter()
+                        .any(|c| c.to_lowercase().contains(&query_lower))
             })
             .cloned()
             .collect()

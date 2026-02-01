@@ -12,9 +12,9 @@ fn main() {
             }
         }
     }
-    
+
     // Tell Cargo to re-run this script if tauri.conf.json changes
     println!("cargo:rerun-if-changed=tauri.conf.json");
-    
+
     tauri_build::build()
 }

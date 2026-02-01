@@ -186,16 +186,23 @@ pub struct RegistryServer {
     pub replaced_by: Option<String>,
 }
 
-
 impl RegistryServer {
     /// Check if this server requires user configuration
     pub fn requires_configuration(&self) -> bool {
-        !self.inputs.is_empty() || self.auth.as_ref().map(|a| a.auth_type != AuthType::None).unwrap_or(false)
+        !self.inputs.is_empty()
+            || self
+                .auth
+                .as_ref()
+                .map(|a| a.auth_type != AuthType::None)
+                .unwrap_or(false)
     }
 
     /// Check if this server requires OAuth
     pub fn requires_oauth(&self) -> bool {
-        self.auth.as_ref().map(|a| a.auth_type == AuthType::Oauth).unwrap_or(false)
+        self.auth
+            .as_ref()
+            .map(|a| a.auth_type == AuthType::Oauth)
+            .unwrap_or(false)
     }
 
     /// Get required inputs (non-optional)
@@ -239,9 +246,7 @@ impl ServerRegistry {
     pub fn by_category(&self, category: &ServerCategory) -> Vec<&RegistryServer> {
         self.servers
             .values()
-            .filter(|s| {
-                s.category.as_ref() == Some(category) || s.categories.contains(category)
-            })
+            .filter(|s| s.category.as_ref() == Some(category) || s.categories.contains(category))
             .collect()
     }
 

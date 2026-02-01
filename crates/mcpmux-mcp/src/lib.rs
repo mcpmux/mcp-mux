@@ -47,7 +47,7 @@
 //!     "-y".to_string(),
 //!     "@modelcontextprotocol/server-github".to_string(),
 //! ]);
-//! 
+//!
 //! let mut env = HashMap::new();
 //! env.insert("GITHUB_TOKEN".to_string(), "ghp_xxx".to_string());
 //!
@@ -66,4 +66,6 @@ pub mod client_pool;
 pub mod transports;
 
 pub use client_pool::{ClientPool, PoolConfig, PooledClient};
-pub use transports::{ConnectionStatus, McpClient, McpClientHandler, McpSession, ServerInfo, ServerManager};
+pub use transports::{
+    ConnectionStatus, McpClient, McpClientHandler, McpSession, ServerInfo, ServerManager,
+};

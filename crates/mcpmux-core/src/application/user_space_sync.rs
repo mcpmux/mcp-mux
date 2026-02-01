@@ -10,8 +10,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tracing::{debug, info};
 
-use crate::domain::{InstalledServer, InstallationSource};
 use crate::domain::config::UserSpaceConfig;
+use crate::domain::{InstallationSource, InstalledServer};
 use crate::repository::InstalledServerRepository;
 
 /// Result of a sync operation
@@ -61,11 +61,7 @@ impl UserSpaceSyncService {
     ///
     /// # Returns
     /// A `SyncResult` with lists of added, updated, and removed server IDs
-    pub async fn sync_from_file(
-        &self,
-        space_id: &str,
-        file_path: &Path,
-    ) -> Result<SyncResult> {
+    pub async fn sync_from_file(&self, space_id: &str, file_path: &Path) -> Result<SyncResult> {
         info!("Syncing servers from file: {:?}", file_path);
 
         // 1. Parse the JSON file
@@ -78,9 +74,7 @@ impl UserSpaceSyncService {
 
         // 2. Convert to ServerDefinitions
         let definitions = config.to_server_definitions(space_id, file_path.to_path_buf());
-        let file_server_ids: HashSet<String> = definitions.iter()
-            .map(|d| d.id.clone())
-            .collect();
+        let file_server_ids: HashSet<String> = definitions.iter().map(|d| d.id.clone()).collect();
 
         debug!(
             "Found {} servers in config file: {:?}",
@@ -89,7 +83,8 @@ impl UserSpaceSyncService {
         );
 
         // 3. Get existing servers from this file
-        let existing = self.installed_repo
+        let existing = self
+            .installed_repo
             .list_by_source_file(file_path)
             .await
             .with_context(|| "Failed to list existing servers from source file")?;
@@ -179,7 +174,8 @@ impl UserSpaceSyncService {
     pub async fn remove_all_from_file(&self, file_path: &Path) -> Result<Vec<String>> {
         info!("Removing all servers from file: {:?}", file_path);
 
-        let servers = self.installed_repo
+        let servers = self
+            .installed_repo
             .list_by_source_file(file_path)
             .await
             .with_context(|| "Failed to list servers from source file")?;
@@ -201,9 +197,7 @@ impl UserSpaceSyncService {
 
     /// Check if a file path is already being tracked as a source
     pub async fn is_file_tracked(&self, file_path: &Path) -> Result<bool> {
-        let servers = self.installed_repo
-            .list_by_source_file(file_path)
-            .await?;
+        let servers = self.installed_repo.list_by_source_file(file_path).await?;
 
         Ok(!servers.is_empty())
     }

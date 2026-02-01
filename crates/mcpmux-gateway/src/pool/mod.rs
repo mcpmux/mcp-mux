@@ -34,10 +34,10 @@ pub use instance::{
 };
 
 // OAuth
-pub use oauth::{
-    OutboundOAuthManager, OAuthCallback, OAuthCompleteEvent, OAuthInitResult, OAuthTokenInfo,
-};
 pub use credential_store::DatabaseCredentialStore;
+pub use oauth::{
+    OAuthCallback, OAuthCompleteEvent, OAuthInitResult, OAuthTokenInfo, OutboundOAuthManager,
+};
 
 // SOLID Services
 pub use connection::{ConnectionResult, ConnectionService};
@@ -45,12 +45,10 @@ pub use features::{CachedFeatures, FeatureService};
 pub use routing::{RoutedPrompt, RoutedResource, RoutedTool, RoutingService};
 pub use service::{InstalledServerInfo, PoolService, PoolStats, ReconnectResult};
 pub use token::TokenService;
-pub use transport::{Transport, ResolvedTransport, TransportConnectResult, TransportFactory};
+pub use transport::{ResolvedTransport, Transport, TransportConnectResult, TransportFactory};
 
 // Server Manager (Event-driven orchestrator)
-pub use server_manager::{
-    ConnectionStatus, ConnectResult, ServerKey, ServerManager, ServerState,
-};
+pub use server_manager::{ConnectResult, ConnectionStatus, ServerKey, ServerManager, ServerState};
 
 // Service Factory (DRY initialization)
-pub use service_factory::{ServiceFactory, PoolServices};
+pub use service_factory::{PoolServices, ServiceFactory};

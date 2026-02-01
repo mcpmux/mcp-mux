@@ -8,10 +8,10 @@
 //! Ensures that the `oauth_connected` flag accurately reflects user OAuth approval
 //! status, which is used to prevent auto-connection without explicit user consent.
 
+use mcpmux_core::InstalledServerRepository;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tracing::{info, warn, error, debug};
-use mcpmux_core::InstalledServerRepository;
+use tracing::{debug, error, info, warn};
 
 use crate::pool::OAuthCompleteEvent;
 
@@ -23,9 +23,7 @@ pub struct OAuthEventHandler {
 
 impl OAuthEventHandler {
     /// Create a new OAuth event handler
-    pub fn new(
-        installed_server_repo: Arc<dyn InstalledServerRepository + Send + Sync>,
-    ) -> Self {
+    pub fn new(installed_server_repo: Arc<dyn InstalledServerRepository + Send + Sync>) -> Self {
         Self {
             installed_server_repo,
         }
@@ -39,10 +37,7 @@ impl OAuthEventHandler {
     /// 3. Updates `oauth_connected=false` on failure/cancel
     ///
     /// The task runs indefinitely until the receiver is dropped.
-    pub fn start(
-        self: Arc<Self>,
-        mut oauth_rx: broadcast::Receiver<OAuthCompleteEvent>,
-    ) {
+    pub fn start(self: Arc<Self>, mut oauth_rx: broadcast::Receiver<OAuthCompleteEvent>) {
         tokio::spawn(async move {
             info!("[OAuthHandler] Started listening for OAuth completion events");
 

@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 use crate::pool::{PoolServices, ServerManager, ServiceFactory};
 use crate::services::{
-    AuthorizationService, SpaceResolverService, PrefixCacheService,
-    ClientMetadataService, GrantService,
+    AuthorizationService, ClientMetadataService, GrantService, PrefixCacheService,
+    SpaceResolverService,
 };
 use mcpmux_core::DomainEvent;
 
-use super::{dependencies::GatewayDependencies, StartupOrchestrator, GatewayState};
+use super::{dependencies::GatewayDependencies, GatewayState, StartupOrchestrator};
 
 /// Container for all Gateway services
 ///
@@ -23,31 +23,31 @@ use super::{dependencies::GatewayDependencies, StartupOrchestrator, GatewayState
 pub struct ServiceContainer {
     /// All pool-related services
     pub pool_services: PoolServices,
-    
+
     /// Server manager for event-driven connection orchestration
     pub server_manager: Arc<ServerManager>,
-    
+
     /// Startup orchestrator for initialization tasks
     pub startup_orchestrator: Arc<StartupOrchestrator>,
-    
+
     /// Authorization service for checking client permissions (SRP)
     pub authorization_service: Arc<AuthorizationService>,
-    
+
     /// Space resolver for determining client's active space (SRP)
     pub space_resolver_service: Arc<SpaceResolverService>,
-    
+
     /// Prefix cache service for tool name qualification (SRP)
     pub prefix_cache_service: Arc<PrefixCacheService>,
-    
+
     /// Client metadata service for OAuth client information
     pub client_metadata_service: Arc<ClientMetadataService>,
-    
+
     /// Grant service for centralized grant management with auto-notifications (SRP + DRY)
     pub grant_service: Arc<GrantService>,
-    
+
     /// Gateway state (for accessing base_url, JWT secret, etc.)
     pub gateway_state: Arc<tokio::sync::RwLock<GatewayState>>,
-    
+
     /// Gateway dependencies (for accessing repositories, etc.)
     pub dependencies: GatewayDependencies,
 }
@@ -62,15 +62,17 @@ impl ServiceContainer {
         gateway_state: Arc<tokio::sync::RwLock<GatewayState>>,
     ) -> Self {
         // Create prefix cache service with dependencies
-        let prefix_cache_service = Arc::new(
-            PrefixCacheService::new().with_dependencies(
-                deps.installed_server_repo.clone(),
-                deps.server_discovery.clone(),
-            )
-        );
-        
+        let prefix_cache_service = Arc::new(PrefixCacheService::new().with_dependencies(
+            deps.installed_server_repo.clone(),
+            deps.server_discovery.clone(),
+        ));
+
         // Create pool services using factory (pass event_tx and prefix_cache)
-        let pool_services = ServiceFactory::create_pool_services(deps, domain_event_tx.clone(), prefix_cache_service.clone());
+        let pool_services = ServiceFactory::create_pool_services(
+            deps,
+            domain_event_tx.clone(),
+            prefix_cache_service.clone(),
+        );
 
         // Extract server_manager before moving pool_services
         let server_manager = pool_services.server_manager.clone();
@@ -101,9 +103,9 @@ impl ServiceContainer {
         // Create grant service (centralized grant management with domain events)
         // Emits domain events (what happened) instead of implementation-specific events (what to do)
         let grant_service = Arc::new(GrantService::new(
-            deps.inbound_client_repo.clone(),  // Concrete type (pragmatic)
-            deps.feature_set_repo.clone(),      // Trait (DIP)
-            domain_event_tx.clone(),            // Direct event bus (decoupled)
+            deps.inbound_client_repo.clone(), // Concrete type (pragmatic)
+            deps.feature_set_repo.clone(),    // Trait (DIP)
+            domain_event_tx.clone(),          // Direct event bus (decoupled)
         ));
 
         Self {
@@ -120,4 +122,3 @@ impl ServiceContainer {
         }
     }
 }
-

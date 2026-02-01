@@ -7,8 +7,8 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::AppSettingsRepository;
 use super::app_settings_service::keys;
+use crate::AppSettingsRepository;
 
 /// Default port for the MCP gateway server.
 ///
@@ -142,7 +142,10 @@ impl GatewayPortService {
             info!("[PortService] Using default port {}", DEFAULT_GATEWAY_PORT);
             return PortResolution::Fixed(DEFAULT_GATEWAY_PORT);
         }
-        info!("[PortService] Default port {} unavailable", DEFAULT_GATEWAY_PORT);
+        info!(
+            "[PortService] Default port {} unavailable",
+            DEFAULT_GATEWAY_PORT
+        );
 
         // 3. Need dynamic port assignment
         info!("[PortService] Will use dynamic port allocation");
@@ -165,12 +168,15 @@ impl GatewayPortService {
             }
             PortResolution::Dynamic => {
                 let port = allocate_dynamic_port()?;
-                
+
                 // Persist for next startup
                 if let Err(e) = self.save_port(port).await {
-                    warn!("[PortService] Failed to persist dynamic port {}: {}", port, e);
+                    warn!(
+                        "[PortService] Failed to persist dynamic port {}: {}",
+                        port, e
+                    );
                 }
-                
+
                 Ok(port)
             }
         }
@@ -180,7 +186,10 @@ impl GatewayPortService {
     ///
     /// If `explicit_port` is provided, validates it's available.
     /// Otherwise, uses the standard resolution strategy.
-    pub async fn resolve_with_override(&self, explicit_port: Option<u16>) -> Result<u16, PortAllocationError> {
+    pub async fn resolve_with_override(
+        &self,
+        explicit_port: Option<u16>,
+    ) -> Result<u16, PortAllocationError> {
         if let Some(port) = explicit_port {
             if is_port_available(port) {
                 Ok(port)
@@ -203,7 +212,10 @@ impl GatewayPortService {
     /// Set gateway auto-start preference.
     pub async fn set_auto_start(&self, auto_start: bool) -> Result<(), PortAllocationError> {
         self.settings
-            .set(keys::gateway::AUTO_START, if auto_start { "true" } else { "false" })
+            .set(
+                keys::gateway::AUTO_START,
+                if auto_start { "true" } else { "false" },
+            )
             .await
             .map_err(|e| PortAllocationError::PersistFailed(e.to_string()))
     }
@@ -222,7 +234,9 @@ mod tests {
 
     impl InMemorySettings {
         fn new() -> Self {
-            Self { data: RwLock::new(HashMap::new()) }
+            Self {
+                data: RwLock::new(HashMap::new()),
+            }
         }
     }
 
@@ -232,7 +246,10 @@ mod tests {
             Ok(self.data.read().await.get(key).cloned())
         }
         async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
-            self.data.write().await.insert(key.to_string(), value.to_string());
+            self.data
+                .write()
+                .await
+                .insert(key.to_string(), value.to_string());
             Ok(())
         }
         async fn delete(&self, key: &str) -> anyhow::Result<()> {
@@ -240,10 +257,20 @@ mod tests {
             Ok(())
         }
         async fn list(&self) -> anyhow::Result<Vec<(String, String)>> {
-            Ok(self.data.read().await.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            Ok(self
+                .data
+                .read()
+                .await
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect())
         }
         async fn list_by_prefix(&self, prefix: &str) -> anyhow::Result<Vec<(String, String)>> {
-            Ok(self.data.read().await.iter()
+            Ok(self
+                .data
+                .read()
+                .await
+                .iter()
                 .filter(|(k, _)| k.starts_with(prefix))
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect())

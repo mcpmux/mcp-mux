@@ -48,11 +48,10 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
-  
-  // Edit state for custom sets (placeholder for future functionality)
-  // const _editName = featureSet.name;
-  // const _editDescription = featureSet.description || '';
-  // const _editIcon = featureSet.icon || '';
+  // Edit state for custom sets (setters reserved for future metadata edit UI)
+  const [editName, _setEditName] = useState(featureSet.name);
+  const [editDescription, _setEditDescription] = useState(featureSet.description || '');
+  const [editIcon, _setEditIcon] = useState(featureSet.icon || '');
 
   // Collapsible sections - only one expanded at a time, features by default
   const [expandedSections, setExpandedSections] = useState({

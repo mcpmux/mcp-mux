@@ -51,7 +51,7 @@ pub struct ServerFeature {
     pub feature_name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
-    pub raw_json: Option<serde_json::Value>,  // Complete JSON from backend
+    pub raw_json: Option<serde_json::Value>, // Complete JSON from backend
     pub discovered_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub is_available: bool,
@@ -412,9 +412,11 @@ impl ServerFeatureRepository for SqliteServerFeatureRepository {
             )?;
         } else {
             // Build placeholders for IN clause
-            let placeholders: Vec<String> = (0..available_names.len()).map(|_| "?".to_string()).collect();
+            let placeholders: Vec<String> = (0..available_names.len())
+                .map(|_| "?".to_string())
+                .collect();
             let in_clause = placeholders.join(", ");
-            
+
             let sql = format!(
                 "UPDATE server_features 
                  SET is_available = 0, last_seen_at = datetime('now')
@@ -424,7 +426,7 @@ impl ServerFeatureRepository for SqliteServerFeatureRepository {
             );
 
             let mut stmt = conn.prepare(&sql)?;
-            
+
             // Build params dynamically
             let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
             param_values.push(Box::new(space_id.to_string()));
@@ -433,8 +435,9 @@ impl ServerFeatureRepository for SqliteServerFeatureRepository {
             for name in available_names {
                 param_values.push(Box::new(name.clone()));
             }
-            
-            let params_refs: Vec<&dyn rusqlite::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                param_values.iter().map(|p| p.as_ref()).collect();
             stmt.execute(params_refs.as_slice())?;
         }
 
@@ -512,17 +515,27 @@ impl From<mcpmux_core::ServerFeature> for ServerFeature {
 // This converts between the storage's ServerFeature and core's ServerFeature types
 #[async_trait]
 impl mcpmux_core::ServerFeatureRepository for SqliteServerFeatureRepository {
-    async fn list_for_space(&self, space_id: &str) -> mcpmux_core::RepoResult<Vec<mcpmux_core::ServerFeature>> {
+    async fn list_for_space(
+        &self,
+        space_id: &str,
+    ) -> mcpmux_core::RepoResult<Vec<mcpmux_core::ServerFeature>> {
         let features = self.list_by_space(space_id).await?;
         Ok(features.into_iter().map(|f| f.into()).collect())
     }
 
-    async fn list_for_server(&self, space_id: &str, server_id: &str) -> mcpmux_core::RepoResult<Vec<mcpmux_core::ServerFeature>> {
+    async fn list_for_server(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> mcpmux_core::RepoResult<Vec<mcpmux_core::ServerFeature>> {
         let features = self.list_by_server(space_id, server_id).await?;
         Ok(features.into_iter().map(|f| f.into()).collect())
     }
 
-    async fn get(&self, id: &uuid::Uuid) -> mcpmux_core::RepoResult<Option<mcpmux_core::ServerFeature>> {
+    async fn get(
+        &self,
+        id: &uuid::Uuid,
+    ) -> mcpmux_core::RepoResult<Option<mcpmux_core::ServerFeature>> {
         let result = ServerFeatureRepository::get(self, &id.to_string()).await?;
         Ok(result.map(|f| f.into()))
     }
@@ -532,8 +545,12 @@ impl mcpmux_core::ServerFeatureRepository for SqliteServerFeatureRepository {
         ServerFeatureRepository::upsert(self, &storage_feature).await
     }
 
-    async fn upsert_many(&self, features: &[mcpmux_core::ServerFeature]) -> mcpmux_core::RepoResult<()> {
-        let storage_features: Vec<ServerFeature> = features.iter().map(|f| f.clone().into()).collect();
+    async fn upsert_many(
+        &self,
+        features: &[mcpmux_core::ServerFeature],
+    ) -> mcpmux_core::RepoResult<()> {
+        let storage_features: Vec<ServerFeature> =
+            features.iter().map(|f| f.clone().into()).collect();
         ServerFeatureRepository::upsert_many(self, &storage_features).await
     }
 
@@ -541,27 +558,35 @@ impl mcpmux_core::ServerFeatureRepository for SqliteServerFeatureRepository {
         ServerFeatureRepository::delete(self, &id.to_string()).await
     }
 
-    async fn mark_unavailable(&self, space_id: &str, server_id: &str) -> mcpmux_core::RepoResult<()> {
+    async fn mark_unavailable(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> mcpmux_core::RepoResult<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         conn.execute(
             "UPDATE server_features SET is_available = 0 WHERE space_id = ? AND server_id = ?",
             params![space_id, server_id],
         )?;
-        
+
         Ok(())
     }
 
-    async fn delete_for_server(&self, space_id: &str, server_id: &str) -> mcpmux_core::RepoResult<()> {
+    async fn delete_for_server(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> mcpmux_core::RepoResult<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         conn.execute(
             "DELETE FROM server_features WHERE space_id = ? AND server_id = ?",
             params![space_id, server_id],
         )?;
-        
+
         Ok(())
     }
 }

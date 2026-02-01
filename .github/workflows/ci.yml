@@ -6,9 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-progress runs when a new commit is pushed to the same PR.
+# PR: same group per PR so new push cancels previous run. Push to main: unique group so no cancel.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,6 +18,8 @@ env:
   # Cache keys for better hit rates
   RUST_CACHE_KEY: v1
   PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
+  # Linux: pkg-config must find glib-2.0.pc (set before any cargo step; only used on Linux)
+  PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
 jobs:
   # ─────────────────────────────────────────────────────────────
@@ -25,24 +29,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
 
       - name: Install Linux deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+          echo "=== Verifying glib-2.0 installation ==="
+          dpkg -l | grep libglib2.0-dev || echo "libglib2.0-dev not installed"
+          find /usr -name 'glib-2.0.pc' 2>/dev/null || echo "glib-2.0.pc not found"
+          pkg-config --modversion glib-2.0 || echo "pkg-config cannot find glib-2.0"
+          pkg-config --exists 'glib-2.0 >= 2.70' && echo "glib-2.0 >= 2.70 found" || (echo "ERROR: glib-2.0 >= 2.70 not found"; exit 1)
+          echo "PKG_CONFIG_PATH=$(pkg-config --variable pc_path pkg-config)" >> $GITHUB_ENV
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+
+      - uses: Swatinem/rust-cache@v2
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       - name: Format check
         run: cargo fmt --all --check
 
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       - name: Check (no features)
         run: cargo check --workspace
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
   # ─────────────────────────────────────────────────────────────
   # TypeScript Checks (fast)
@@ -51,6 +71,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+          echo "PKG_CONFIG_PATH=$(pkg-config --variable pc_path pkg-config)" >> $GITHUB_ENV
+
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -82,19 +109,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
 
-      # Linux dependencies for Tauri
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+          echo "=== Verifying glib-2.0 installation ==="
+          dpkg -l | grep libglib2.0-dev || echo "libglib2.0-dev not installed"
+          find /usr -name 'glib-2.0.pc' 2>/dev/null || echo "glib-2.0.pc not found"
+          pkg-config --modversion glib-2.0 || echo "pkg-config cannot find glib-2.0"
+          pkg-config --exists 'glib-2.0 >= 2.70' && echo "glib-2.0 >= 2.70 found" || (echo "ERROR: glib-2.0 >= 2.70 not found"; exit 1)
+          echo "PKG_CONFIG_PATH=$(pkg-config --variable pc_path pkg-config)" >> $GITHUB_ENV
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
       # Install cargo-nextest
       - name: Install nextest
@@ -131,27 +165,40 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
+          echo "=== Verifying glib-2.0 installation ==="
+          dpkg -l | grep libglib2.0-dev || echo "libglib2.0-dev not installed"
+          find /usr -name 'glib-2.0.pc' 2>/dev/null || echo "glib-2.0.pc not found"
+          pkg-config --modversion glib-2.0 || echo "pkg-config cannot find glib-2.0"
+          pkg-config --exists 'glib-2.0 >= 2.70' && echo "glib-2.0 >= 2.70 found" || (echo "ERROR: glib-2.0 >= 2.70 not found"; exit 1)
+          echo "PKG_CONFIG_PATH=$(pkg-config --variable pc_path pkg-config)" >> $GITHUB_ENV
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}-build
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'pnpm'
 
-      - name: Install Linux deps
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
-
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
         env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
   # ─────────────────────────────────────────────────────────────
@@ -215,21 +262,34 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev webkit2gtk-driver xvfb
+          echo "=== Verifying glib-2.0 installation ==="
+          dpkg -l | grep libglib2.0-dev || echo "libglib2.0-dev not installed"
+          find /usr -name 'glib-2.0.pc' 2>/dev/null || echo "glib-2.0.pc not found"
+          pkg-config --modversion glib-2.0 || echo "pkg-config cannot find glib-2.0"
+          pkg-config --exists 'glib-2.0 >= 2.70' && echo "glib-2.0 >= 2.70 found" || (echo "ERROR: glib-2.0 >= 2.70 not found"; exit 1)
+          echo "PKG_CONFIG_PATH=$(pkg-config --variable pc_path pkg-config)" >> $GITHUB_ENV
+
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.os }}-e2e
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'pnpm'
 
-      - name: Install Linux deps
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev webkit2gtk-driver xvfb
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-e2e
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       # Cache tauri-driver binary
       - name: Cache tauri-driver
@@ -242,12 +302,15 @@ jobs:
       - name: Install tauri-driver
         if: steps.tauri-driver-cache.outputs.cache-hit != 'true'
         run: cargo install tauri-driver --locked
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       - run: pnpm install --frozen-lockfile
       
       - name: Build app
         run: pnpm build
         env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Run Tauri E2E tests (Linux)

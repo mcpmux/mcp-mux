@@ -1,7 +1,7 @@
 //! MCP Client Pool
 //!
 //! Manages connections to MCP servers using config-hash-based pooling.
-//! 
+//!
 //! The pool key is computed as: `server_id + ":" + sha256(final_config)[:16]`
 //! where final_config includes the server configuration and credential values.
 //! This ensures that:
@@ -19,7 +19,7 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::transports::{McpSession, ConnectionStatus};
+use crate::transports::{ConnectionStatus, McpSession};
 
 /// Configuration that uniquely identifies a pooled connection
 #[derive(Debug, Clone, Serialize)]
@@ -233,7 +233,9 @@ mod tests {
     fn test_pool_key_generation() {
         let config = PoolConfig {
             server_id: "github".to_string(),
-            transport_config: r#"{"command":"npx","args":["-y","@modelcontextprotocol/server-github"]}"#.to_string(),
+            transport_config:
+                r#"{"command":"npx","args":["-y","@modelcontextprotocol/server-github"]}"#
+                    .to_string(),
             env_vars: [("GITHUB_TOKEN".to_string(), "ghp_xxx".to_string())]
                 .into_iter()
                 .collect(),

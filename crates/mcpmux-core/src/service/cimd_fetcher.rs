@@ -1,5 +1,5 @@
 //! CIMD (Client ID Metadata Document) fetcher
-//! 
+//!
 //! Handles HTTP fetching of client metadata from URLs per the OAuth Client ID
 //! Metadata Document specification (draft).
 
@@ -24,7 +24,7 @@ pub struct CimdMetadata {
 }
 
 /// Fetches client metadata from CIMD URLs
-/// 
+///
 /// Single responsibility: HTTP operations only, no persistence
 pub struct CimdMetadataFetcher {
     http_client: reqwest::Client,
@@ -36,7 +36,7 @@ impl CimdMetadataFetcher {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()?;
-        
+
         Ok(Self { http_client })
     }
 
@@ -46,22 +46,20 @@ impl CimdMetadataFetcher {
     }
 
     /// Fetch metadata from a CIMD URL
-    /// 
+    ///
     /// Returns the parsed metadata or an error if fetching fails
     pub async fn fetch(&self, client_id_url: &str) -> Result<CimdMetadata> {
         info!("[CIMD] Fetching client metadata from: {}", client_id_url);
-        
-        let response = self.http_client
+
+        let response = self
+            .http_client
             .get(client_id_url)
             .header("Accept", "application/json")
             .send()
             .await?;
 
         if !response.status().is_success() {
-            anyhow::bail!(
-                "Failed to fetch CIMD metadata: HTTP {}",
-                response.status()
-            );
+            anyhow::bail!("Failed to fetch CIMD metadata: HTTP {}", response.status());
         }
 
         let metadata: CimdMetadata = response.json().await?;
@@ -75,7 +73,10 @@ impl CimdMetadataFetcher {
             );
         }
 
-        info!("[CIMD] Successfully fetched metadata for: {}", client_id_url);
+        info!(
+            "[CIMD] Successfully fetched metadata for: {}",
+            client_id_url
+        );
         Ok(metadata)
     }
 
@@ -97,10 +98,13 @@ mod tests {
 
     #[test]
     fn test_is_cimd_url() {
-        assert!(CimdMetadataFetcher::is_cimd_url("https://example.com/client.json"));
-        assert!(CimdMetadataFetcher::is_cimd_url("http://localhost:3000/client"));
+        assert!(CimdMetadataFetcher::is_cimd_url(
+            "https://example.com/client.json"
+        ));
+        assert!(CimdMetadataFetcher::is_cimd_url(
+            "http://localhost:3000/client"
+        ));
         assert!(!CimdMetadataFetcher::is_cimd_url("mcp_abc123"));
         assert!(!CimdMetadataFetcher::is_cimd_url("client-name"));
     }
 }
-

@@ -9,8 +9,8 @@
 //!
 //! Note: MCPNotifier (notification bridge) is now in `consumers/` module.
 
-pub mod handler;
 pub mod context;
+pub mod handler;
 pub mod oauth_middleware;
 
 pub use handler::McpMuxGatewayHandler;

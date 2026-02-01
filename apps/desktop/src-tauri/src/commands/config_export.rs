@@ -2,7 +2,9 @@
 //!
 //! IPC commands for generating MCP configuration files for clients.
 
-use mcpmux_core::{ConfigExporter, ConfigFormat, ResolvedTransport, ResolvedServer, TransportConfig};
+use mcpmux_core::{
+    ConfigExporter, ConfigFormat, ResolvedServer, ResolvedTransport, TransportConfig,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -78,27 +80,29 @@ async fn build_resolved_servers(
         if let Some(entry) = inst.get_definition() {
             // Build resolved transport from registry transport + input values
             let transport = match &entry.transport {
-                TransportConfig::Stdio { command, args, env, .. } => {
+                TransportConfig::Stdio {
+                    command, args, env, ..
+                } => {
                     // Resolve placeholders in command
                     let resolved_command = resolve_placeholders(command, &inst.input_values);
-                    
+
                     // Resolve placeholders in args
                     let mut resolved_args: Vec<String> = args
                         .iter()
                         .map(|arg| resolve_placeholders(arg, &inst.input_values))
                         .collect();
-                    
+
                     // Append user's extra args
                     resolved_args.extend(inst.args_append.clone());
 
                     // Build env from registry + input values + env_overrides
                     let mut resolved_env = HashMap::new();
-                    
+
                     // 1. Start with registry env
                     for (k, v) in env {
                         resolved_env.insert(k.clone(), resolve_placeholders(v, &inst.input_values));
                     }
-                    
+
                     // 2. Add input values (for api_key type servers)
                     if !mask_credentials {
                         resolved_env.extend(inst.input_values.clone());
@@ -107,7 +111,7 @@ async fn build_resolved_servers(
                             resolved_env.insert(k.clone(), "***MASKED***".to_string());
                         }
                     }
-                    
+
                     // 3. Apply user's env overrides
                     resolved_env.extend(inst.env_overrides.clone());
 
@@ -119,16 +123,16 @@ async fn build_resolved_servers(
                 }
                 TransportConfig::Http { url, headers, .. } => {
                     let resolved_url = resolve_placeholders(url, &inst.input_values);
-                    
+
                     // Resolve headers from registry
                     let mut resolved_headers: HashMap<String, String> = headers
                         .iter()
                         .map(|(k, v)| (k.clone(), resolve_placeholders(v, &inst.input_values)))
                         .collect();
-                    
+
                     // Add user's extra headers
                     resolved_headers.extend(inst.extra_headers.clone());
-                    
+
                     ResolvedTransport::Http {
                         url: resolved_url,
                         headers: resolved_headers,

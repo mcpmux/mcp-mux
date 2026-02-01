@@ -44,21 +44,21 @@
 //! // -> Emits SpaceCreated event
 //! ```
 
-mod space;
-mod server;
-mod permission;
 mod client;
+mod permission;
+mod server;
+mod space;
 mod user_space_sync;
 
-pub use space::SpaceAppService;
-pub use server::ServerAppService;
-pub use permission::PermissionAppService;
 pub use client::ClientAppService;
-pub use user_space_sync::{UserSpaceSyncService, SyncResult};
+pub use permission::PermissionAppService;
+pub use server::ServerAppService;
+pub use space::SpaceAppService;
+pub use user_space_sync::{SyncResult, UserSpaceSyncService};
 
-use std::sync::Arc;
 use crate::event_bus::EventBus;
 use crate::repository::*;
+use std::sync::Arc;
 
 /// Builder for creating all application services with shared dependencies
 pub struct ApplicationServicesBuilder {
@@ -121,14 +121,16 @@ impl ApplicationServicesBuilder {
 
     /// Build all application services
     pub fn build(self) -> anyhow::Result<ApplicationServices> {
-        let event_bus = self.event_bus.ok_or_else(|| anyhow::anyhow!("Event bus required"))?;
+        let event_bus = self
+            .event_bus
+            .ok_or_else(|| anyhow::anyhow!("Event bus required"))?;
         let sender = event_bus.sender();
 
         Ok(ApplicationServices {
             event_bus,
-            space: self.space_repo.map(|r| {
-                SpaceAppService::new(r, self.feature_set_repo.clone(), sender.clone())
-            }),
+            space: self
+                .space_repo
+                .map(|r| SpaceAppService::new(r, self.feature_set_repo.clone(), sender.clone())),
             server: self.installed_server_repo.map(|r| {
                 ServerAppService::new(
                     r,
@@ -138,12 +140,12 @@ impl ApplicationServicesBuilder {
                     sender.clone(),
                 )
             }),
-            permission: self.feature_set_repo.map(|r| {
-                PermissionAppService::new(r, self.client_repo.clone(), sender.clone())
-            }),
-            client: self.client_repo.map(|r| {
-                ClientAppService::new(r, sender.clone())
-            }),
+            permission: self
+                .feature_set_repo
+                .map(|r| PermissionAppService::new(r, self.client_repo.clone(), sender.clone())),
+            client: self
+                .client_repo
+                .map(|r| ClientAppService::new(r, sender.clone())),
         })
     }
 }
@@ -176,17 +178,23 @@ impl ApplicationServices {
 
     /// Get server service (panics if not configured)
     pub fn server(&self) -> &ServerAppService {
-        self.server.as_ref().expect("ServerAppService not configured")
+        self.server
+            .as_ref()
+            .expect("ServerAppService not configured")
     }
 
     /// Get permission service (panics if not configured)
     pub fn permission(&self) -> &PermissionAppService {
-        self.permission.as_ref().expect("PermissionAppService not configured")
+        self.permission
+            .as_ref()
+            .expect("PermissionAppService not configured")
     }
 
     /// Get client service (panics if not configured)
     pub fn client(&self) -> &ClientAppService {
-        self.client.as_ref().expect("ClientAppService not configured")
+        self.client
+            .as_ref()
+            .expect("ClientAppService not configured")
     }
 
     /// Subscribe to events from all services
@@ -194,4 +202,3 @@ impl ApplicationServices {
         self.event_bus.subscribe()
     }
 }
-

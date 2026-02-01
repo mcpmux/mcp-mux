@@ -40,20 +40,22 @@ impl StartupOrchestrator {
             prefix_cache_service,
         }
     }
-    
+
     /// Mark all features as unavailable on startup
-    /// 
+    ///
     /// This ensures features don't appear available until servers reconnect.
     /// Should be called BEFORE auto-connecting servers.
     pub async fn mark_all_features_unavailable(&self) -> Result<()> {
         info!("[Startup] Marking all features as unavailable (will be restored when servers connect)...");
-        
+
         // Get all installed servers
         let installed_servers = self.dependencies.installed_server_repo.list().await?;
-        
+
         let mut count = 0;
         for server in installed_servers {
-            if let Err(e) = self.dependencies.feature_repo
+            if let Err(e) = self
+                .dependencies
+                .feature_repo
                 .mark_unavailable(&server.space_id, &server.server_id)
                 .await
             {
@@ -65,37 +67,47 @@ impl StartupOrchestrator {
                 count += 1;
             }
         }
-        
-        info!("[Startup] Marked features unavailable for {} servers", count);
+
+        info!(
+            "[Startup] Marked features unavailable for {} servers",
+            count
+        );
         Ok(())
     }
-    
+
     /// Resolve server prefixes for all spaces
-    /// 
+    ///
     /// Should be called BEFORE auto-connecting servers to ensure
     /// tools have correct prefixes when clients connect.
     pub async fn resolve_server_prefixes(&self) -> Result<()> {
         info!("[Startup] Resolving server prefixes for all spaces...");
-        
+
         // Get all spaces
         let spaces = self.dependencies.space_repo.list().await?;
-        
+
         for space in spaces {
             let space_id = space.id.to_string();
-            match self.prefix_cache_service.resolve_prefixes_on_startup(&space_id).await {
+            match self
+                .prefix_cache_service
+                .resolve_prefixes_on_startup(&space_id)
+                .await
+            {
                 Ok(()) => {
                     info!("[Startup] ✓ Prefixes resolved for space: {}", space.name);
                 }
                 Err(e) => {
-                    warn!("[Startup] Failed to resolve prefixes for space {}: {}", space.name, e);
+                    warn!(
+                        "[Startup] Failed to resolve prefixes for space {}: {}",
+                        space.name, e
+                    );
                 }
             }
         }
-        
+
         info!("[Startup] Server prefix resolution complete");
         Ok(())
     }
-    
+
     /// Refresh OAuth tokens for all HTTP/SSE servers before attempting connections
     ///
     /// **DEPRECATED**: This method is now a no-op.
@@ -118,11 +130,7 @@ impl StartupOrchestrator {
         let mut result = AutoConnectResult::default();
 
         // Get all installed servers
-        let installed_servers = self
-            .dependencies
-            .installed_server_repo
-            .list()
-            .await?;
+        let installed_servers = self.dependencies.installed_server_repo.list().await?;
 
         // Filter to enabled servers only
         let enabled_servers: Vec<_> = installed_servers
@@ -201,12 +209,20 @@ impl StartupOrchestrator {
             Some(def) => def,
             None => {
                 // Fallback: try registry for servers installed before caching was added
-                self.dependencies.server_discovery.refresh_if_needed().await?;
-                self.dependencies.server_discovery.get(&server.server_id).await
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "No cached definition and not found in registry: {}", 
-                        server.server_id
-                    ))?
+                self.dependencies
+                    .server_discovery
+                    .refresh_if_needed()
+                    .await?;
+                self.dependencies
+                    .server_discovery
+                    .get(&server.server_id)
+                    .await
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "No cached definition and not found in registry: {}",
+                            server.server_id
+                        )
+                    })?
             }
         };
 
@@ -216,15 +232,20 @@ impl StartupOrchestrator {
 
         // Check if server requires OAuth but hasn't been approved yet
         // This prevents auto-connect from setting "Connected" status without user approval
-        let requires_oauth = matches!(definition.auth, Some(mcpmux_core::domain::AuthConfig::Oauth));
-        
+        let requires_oauth = matches!(
+            definition.auth,
+            Some(mcpmux_core::domain::AuthConfig::Oauth)
+        );
+
         if requires_oauth && !server.oauth_connected {
             info!(
                 "[Startup] Skipping {}/{} - requires OAuth approval",
                 server.space_id, server.server_id
             );
             let key = crate::pool::ServerKey::new(space_id, server.server_id.clone());
-            self.server_manager.set_auth_required(&key, Some("OAuth authentication required".to_string())).await;
+            self.server_manager
+                .set_auth_required(&key, Some("OAuth authentication required".to_string()))
+                .await;
             return Ok(ConnectOutcome::NeedsOAuth);
         }
 
@@ -245,17 +266,14 @@ impl StartupOrchestrator {
         // OAuthRequired without starting the callback server or opening browser
         let ctx = ConnectionContext::new(space_id, server.server_id.clone(), transport_config)
             .with_auto_reconnect(true);
-        let connection_result = self
-            .pool_service
-            .connect_server(&ctx)
-            .await;
+        let connection_result = self.pool_service.connect_server(&ctx).await;
 
         match connection_result {
             ConnectionResult::Connected { reused, features } => {
                 // Explicitly update ServerManager status to Connected
                 // While PoolService might update instance state, ServerManager is the source of truth for UI events
                 self.server_manager.set_connected(&key, features).await;
-                
+
                 if reused {
                     Ok(ConnectOutcome::AlreadyConnected)
                 } else {
@@ -266,7 +284,7 @@ impl StartupOrchestrator {
                 // Explicitly set status to AuthRequired
                 self.server_manager.set_auth_required(&key, None).await;
                 Ok(ConnectOutcome::NeedsOAuth)
-            },
+            }
             ConnectionResult::Failed { error } => {
                 // Explicitly set status to Error
                 self.server_manager.set_error(&key, error.clone()).await;

@@ -16,7 +16,7 @@ pub struct SpaceService {
 impl SpaceService {
     /// Create a new SpaceService
     pub fn new(repository: Arc<dyn SpaceRepository>) -> Self {
-        Self { 
+        Self {
             repository,
             feature_set_repository: None,
         }
@@ -60,7 +60,10 @@ impl SpaceService {
 
         // Create builtin feature sets for the new space
         if let Some(ref fs_repo) = self.feature_set_repository {
-            if let Err(e) = fs_repo.ensure_builtin_for_space(&space.id.to_string()).await {
+            if let Err(e) = fs_repo
+                .ensure_builtin_for_space(&space.id.to_string())
+                .await
+            {
                 tracing::warn!(
                     space_id = %space.id,
                     error = %e,
@@ -98,4 +101,3 @@ impl SpaceService {
         self.repository.set_default(id).await
     }
 }
-

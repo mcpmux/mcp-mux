@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mcpmux_core::{Client, InboundMcpClientRepository, ConnectionMode};
+use mcpmux_core::{Client, ConnectionMode, InboundMcpClientRepository};
 use rusqlite::{params, OptionalExtension};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::Database;
 
 /// SQLite-backed implementation of InboundMcpClientRepository.
-/// 
+///
 /// Works with the unified `inbound_clients` table which stores both
 /// OAuth registration data and MCP client preferences.
 pub struct SqliteInboundMcpClientRepository {
@@ -84,7 +84,8 @@ impl SqliteInboundMcpClientRepository {
                 m.into_iter()
                     .filter_map(|(k, v)| {
                         let key: Uuid = k.parse().ok()?;
-                        let vals: Vec<Uuid> = v.into_iter().filter_map(|s| s.parse().ok()).collect();
+                        let vals: Vec<Uuid> =
+                            v.into_iter().filter_map(|s| s.parse().ok()).collect();
                         Some((key, vals))
                     })
                     .collect()
@@ -110,7 +111,10 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
             .query_map([], |row| {
                 let grants_json: Option<String> = row.get(6)?; // Empty grants JSON placeholder
                 Ok(Client {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| Uuid::new_v4()),
+                    id: row
+                        .get::<_, String>(0)?
+                        .parse()
+                        .unwrap_or_else(|_| Uuid::new_v4()),
                     name: row.get(1)?,
                     client_type: row.get(2)?,
                     connection_mode: Self::parse_connection_mode(
@@ -144,7 +148,10 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
             .query_row(params![id.to_string()], |row| {
                 let grants_json: Option<String> = row.get(6)?; // Empty grants JSON placeholder
                 Ok(Client {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| Uuid::new_v4()),
+                    id: row
+                        .get::<_, String>(0)?
+                        .parse()
+                        .unwrap_or_else(|_| Uuid::new_v4()),
                     name: row.get(1)?,
                     client_type: row.get(2)?,
                     connection_mode: Self::parse_connection_mode(
@@ -178,7 +185,10 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
             .query_row(params![key_hash], |row| {
                 let grants_json: Option<String> = row.get(6)?;
                 Ok(Client {
-                    id: row.get::<_, String>(0)?.parse().unwrap_or_else(|_| Uuid::new_v4()),
+                    id: row
+                        .get::<_, String>(0)?
+                        .parse()
+                        .unwrap_or_else(|_| Uuid::new_v4()),
                     name: row.get(1)?,
                     client_type: row.get(2)?,
                     connection_mode: Self::parse_connection_mode(
@@ -219,10 +229,10 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
                 client.last_seen.map(|dt| dt.to_rfc3339()),
                 client.created_at.to_rfc3339(),
                 client.updated_at.to_rfc3339(),
-                "[]", // Empty redirect_uris array
-                "[]", // Empty grant_types array
-                "[]", // Empty response_types array
-                "none", // Default auth method
+                "[]",           // Empty redirect_uris array
+                "[]",           // Empty grant_types array
+                "[]",           // Empty response_types array
+                "none",         // Default auth method
                 None::<String>, // No scope
             ],
         )?;
@@ -262,7 +272,10 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        conn.execute("DELETE FROM inbound_clients WHERE client_id = ?", params![id.to_string()])?;
+        conn.execute(
+            "DELETE FROM inbound_clients WHERE client_id = ?",
+            params![id.to_string()],
+        )?;
 
         Ok(())
     }
@@ -303,11 +316,7 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
         Ok(())
     }
 
-    async fn get_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-    ) -> Result<Vec<String>> {
+    async fn get_grants_for_space(&self, client_id: &Uuid, space_id: &str) -> Result<Vec<String>> {
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -347,10 +356,7 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
 
         for row in rows {
             let (space_id, feature_set_id) = row?;
-            grants
-                .entry(space_id)
-                .or_default()
-                .push(feature_set_id);
+            grants.entry(space_id).or_default().push(feature_set_id);
         }
 
         Ok(grants)
@@ -383,11 +389,7 @@ impl InboundMcpClientRepository for SqliteInboundMcpClientRepository {
         Ok(())
     }
 
-    async fn has_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-    ) -> Result<bool> {
+    async fn has_grants_for_space(&self, client_id: &Uuid, space_id: &str) -> Result<bool> {
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -451,7 +453,10 @@ mod tests {
         repo.create(&client1).await.unwrap();
 
         let found = repo.get(&client1.id).await.unwrap().unwrap();
-        assert!(matches!(found.connection_mode, ConnectionMode::FollowActive));
+        assert!(matches!(
+            found.connection_mode,
+            ConnectionMode::FollowActive
+        ));
 
         // Create with Locked (use default space from migration for FK constraint)
         let mut client2 = Client::vscode();

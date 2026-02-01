@@ -52,10 +52,10 @@ impl RegistrationType {
 }
 
 /// Inbound client (unified OAuth + MCP model)
-/// 
+///
 /// Represents both the OAuth registration and MCP client configuration
 /// in a unified model, supporting all three MCP registration approaches.
-/// 
+///
 /// ## Client Identification
 /// Per RFC 7591, clients self-identify via metadata they provide:
 /// - `logo_uri`: Client's logo (use this for display)
@@ -66,29 +66,29 @@ pub struct InboundClient {
     pub client_id: String,
     pub registration_type: RegistrationType,
     pub client_name: String,
-    pub client_alias: Option<String>,  // User-friendly override name
+    pub client_alias: Option<String>, // User-friendly override name
     pub redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
     pub response_types: Vec<String>,
     pub token_endpoint_auth_method: String,
     pub scope: Option<String>,
-    
+
     // Approval status - true if user has explicitly approved this client
     pub approved: bool,
-    
+
     // RFC 7591 Client Metadata (use these for client identification)
-    pub logo_uri: Option<String>,  // URL for client's logo
-    pub client_uri: Option<String>,  // URL of client's homepage
-    pub software_id: Option<String>,  // Unique software identifier (e.g., "com.cursor.app")
-    pub software_version: Option<String>,  // Version of the client software
-    
+    pub logo_uri: Option<String>,         // URL for client's logo
+    pub client_uri: Option<String>,       // URL of client's homepage
+    pub software_id: Option<String>,      // Unique software identifier (e.g., "com.cursor.app")
+    pub software_version: Option<String>, // Version of the client software
+
     // CIMD-specific fields (only used for registration_type=Cimd)
-    pub metadata_url: Option<String>,  // URL where metadata was fetched
-    pub metadata_cached_at: Option<String>,  // When we last fetched
-    pub metadata_cache_ttl: Option<i64>,  // Cache duration in seconds
-    
+    pub metadata_url: Option<String>, // URL where metadata was fetched
+    pub metadata_cached_at: Option<String>, // When we last fetched
+    pub metadata_cache_ttl: Option<i64>, // Cache duration in seconds
+
     // MCP client preferences
-    pub connection_mode: String,  // 'follow_active', 'locked', 'ask_on_change'
+    pub connection_mode: String, // 'follow_active', 'locked', 'ask_on_change'
     pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
@@ -162,7 +162,7 @@ impl InboundClientRepository {
     // =========================================================================
 
     /// Map a SQL row to InboundClient
-    /// 
+    ///
     /// Expects columns in this exact order (as returned by our queries):
     /// 0: client_id, 1: registration_type, 2: client_name, 3: client_alias,
     /// 4: logo_uri, 5: client_uri, 6: software_id, 7: software_version,
@@ -175,7 +175,7 @@ impl InboundClientRepository {
         let grant_types_json: Option<String> = row.get(9)?;
         let response_types_json: Option<String> = row.get(10)?;
         let approved_int: i32 = row.get::<_, Option<i32>>(21)?.unwrap_or(0);
-        
+
         Ok(InboundClient {
             client_id: row.get(0)?,
             registration_type: RegistrationType::parse(&registration_type_str)
@@ -214,8 +214,7 @@ impl InboundClientRepository {
     }
 
     /// Standard column selection for InboundClient queries
-    const CLIENT_COLUMNS: &'static str = 
-        "client_id, registration_type, client_name, client_alias,
+    const CLIENT_COLUMNS: &'static str = "client_id, registration_type, client_name, client_alias,
          logo_uri, client_uri, software_id, software_version,
          redirect_uris, grant_types, response_types, token_endpoint_auth_method, scope,
          metadata_url, metadata_cached_at, metadata_cache_ttl,
@@ -272,7 +271,10 @@ impl InboundClientRepository {
                 client.approved as i32,
             ],
         )?;
-        debug!("[OAuth] Saved client: {} ({})", client.client_name, client.client_id);
+        debug!(
+            "[OAuth] Saved client: {} ({})",
+            client.client_name, client.client_id
+        );
         Ok(())
     }
 
@@ -295,12 +297,12 @@ impl InboundClientRepository {
     }
 
     /// Find client by name (for idempotent DCR)
-    /// 
+    ///
     /// Allows a client to register with different redirect_uris
     pub async fn find_client_by_name(&self, name: &str) -> Result<Option<InboundClient>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         let mut stmt = conn.prepare(&format!(
             "SELECT {} FROM inbound_clients WHERE client_name = ?1",
             Self::CLIENT_COLUMNS
@@ -352,9 +354,9 @@ impl InboundClientRepository {
         debug!("[OAuth] Updated last_seen for client: {}", client_id);
         Ok(())
     }
-    
+
     /// Mark a client as approved by the user
-    /// 
+    ///
     /// This is called when user explicitly approves the OAuth consent.
     /// Only approved clients get silent re-authentication.
     pub async fn approve_client(&self, client_id: &str) -> Result<()> {
@@ -368,35 +370,39 @@ impl InboundClientRepository {
         debug!("[OAuth] Approved client: {}", client_id);
         Ok(())
     }
-    
+
     /// Check if a client has been approved by the user
     pub async fn is_client_approved(&self, client_id: &str) -> Result<bool> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        let approved: i32 = conn.query_row(
-            "SELECT approved FROM inbound_clients WHERE client_id = ?1",
-            params![client_id],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let approved: i32 = conn
+            .query_row(
+                "SELECT approved FROM inbound_clients WHERE client_id = ?1",
+                params![client_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
         Ok(approved != 0)
     }
-    
+
     /// Merge new redirect URIs with existing ones for a client
     /// Avoids duplicates and preserves existing URIs
-    pub async fn merge_redirect_uris(&self, client_id: &str, new_uris: Vec<String>) -> Result<Vec<String>> {
+    pub async fn merge_redirect_uris(
+        &self,
+        client_id: &str,
+        new_uris: Vec<String>,
+    ) -> Result<Vec<String>> {
         // Get existing client
         let existing_client = self.get_client(client_id).await?;
-        let mut merged_uris = existing_client
-            .map(|c| c.redirect_uris)
-            .unwrap_or_default();
-        
+        let mut merged_uris = existing_client.map(|c| c.redirect_uris).unwrap_or_default();
+
         // Add new URIs (avoid duplicates)
         for uri in new_uris {
             if !merged_uris.contains(&uri) {
                 merged_uris.push(uri);
             }
         }
-        
+
         // Update in database
         let db = self.db.lock().await;
         let conn = db.connection();
@@ -406,8 +412,11 @@ impl InboundClientRepository {
             "UPDATE inbound_clients SET redirect_uris = ?1, updated_at = ?2 WHERE client_id = ?3",
             params![uris_json, now, client_id],
         )?;
-        
-        debug!("[OAuth] Merged redirect_uris for client: {} -> {:?}", client_id, merged_uris);
+
+        debug!(
+            "[OAuth] Merged redirect_uris for client: {} -> {:?}",
+            client_id, merged_uris
+        );
         Ok(merged_uris)
     }
 
@@ -417,10 +426,10 @@ impl InboundClientRepository {
         client_id: &str,
         client_alias: Option<String>,
         connection_mode: Option<String>,
-        locked_space_id: Option<Option<String>>,  // None = don't change, Some(None) = clear, Some(Some(x)) = set
+        locked_space_id: Option<Option<String>>, // None = don't change, Some(None) = clear, Some(Some(x)) = set
     ) -> Result<Option<InboundClient>> {
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        
+
         // Update timestamp
         {
             let db = self.db.lock().await;
@@ -430,7 +439,7 @@ impl InboundClientRepository {
                 params![now, client_id],
             )?;
         }
-        
+
         // Update alias if provided
         if let Some(alias) = &client_alias {
             let db = self.db.lock().await;
@@ -440,7 +449,7 @@ impl InboundClientRepository {
                 params![alias, client_id],
             )?;
         }
-        
+
         // Update connection mode if provided
         if let Some(mode) = &connection_mode {
             let db = self.db.lock().await;
@@ -450,7 +459,7 @@ impl InboundClientRepository {
                 params![mode, client_id],
             )?;
         }
-        
+
         // Update locked_space_id if provided
         if let Some(space_id) = &locked_space_id {
             let db = self.db.lock().await;
@@ -460,9 +469,9 @@ impl InboundClientRepository {
                 params![space_id, client_id],
             )?;
         }
-        
+
         debug!("[OAuth] Updated settings for client: {}", client_id);
-        
+
         // Return updated client
         self.get_client(client_id).await
     }
@@ -471,13 +480,13 @@ impl InboundClientRepository {
     pub async fn delete_client(&self, client_id: &str) -> Result<bool> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         // Tokens and codes will be deleted via CASCADE
         let rows = conn.execute(
             "DELETE FROM inbound_clients WHERE client_id = ?1",
             params![client_id],
         )?;
-        
+
         if rows > 0 {
             info!("[OAuth] Deleted client: {}", client_id);
             Ok(true)
@@ -510,15 +519,21 @@ impl InboundClientRepository {
                 code.created_at,
             ],
         )?;
-        debug!("[OAuth] Saved authorization code for client: {}", code.client_id);
+        debug!(
+            "[OAuth] Saved authorization code for client: {}",
+            code.client_id
+        );
         Ok(())
     }
 
     /// Get and consume an authorization code (one-time use)
-    pub async fn consume_authorization_code(&self, code: &str) -> Result<Option<AuthorizationCode>> {
+    pub async fn consume_authorization_code(
+        &self,
+        code: &str,
+    ) -> Result<Option<AuthorizationCode>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         // Get the code
         let mut stmt = conn.prepare(
             "SELECT code, client_id, redirect_uri, scope, code_challenge, code_challenge_method, expires_at, created_at
@@ -541,8 +556,14 @@ impl InboundClientRepository {
         match result {
             Ok(auth_code) => {
                 // Delete the code (one-time use)
-                conn.execute("DELETE FROM oauth_authorization_codes WHERE code = ?1", params![code])?;
-                debug!("[OAuth] Consumed authorization code for client: {}", auth_code.client_id);
+                conn.execute(
+                    "DELETE FROM oauth_authorization_codes WHERE code = ?1",
+                    params![code],
+                )?;
+                debug!(
+                    "[OAuth] Consumed authorization code for client: {}",
+                    auth_code.client_id
+                );
                 Ok(Some(auth_code))
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -594,7 +615,11 @@ impl InboundClientRepository {
                 record.parent_token_id,
             ],
         )?;
-        debug!("[OAuth] Saved {} token for client: {}", record.token_type.as_str(), record.client_id);
+        debug!(
+            "[OAuth] Saved {} token for client: {}",
+            record.token_type.as_str(),
+            record.client_id
+        );
         Ok(())
     }
 
@@ -610,7 +635,7 @@ impl InboundClientRepository {
         let result = stmt.query_row(params![token_hash], |row| {
             let token_type_str: String = row.get(2)?;
             let revoked: i32 = row.get(6)?;
-            
+
             Ok(TokenRecord {
                 id: row.get(0)?,
                 client_id: row.get(1)?,
@@ -634,7 +659,7 @@ impl InboundClientRepository {
     /// Validate a token (check hash, expiration, revocation)
     pub async fn validate_token(&self, token: &str) -> Result<Option<TokenRecord>> {
         let hash = Self::hash_token(token);
-        
+
         if let Some(record) = self.find_token_by_hash(&hash).await? {
             // Check if revoked
             if record.revoked {
@@ -662,7 +687,7 @@ impl InboundClientRepository {
     pub async fn revoke_token(&self, token_id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         // Revoke the token itself
         conn.execute(
             "UPDATE oauth_tokens SET revoked = 1 WHERE id = ?1",
@@ -718,13 +743,13 @@ impl InboundClientRepository {
     ) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         conn.execute(
             "INSERT OR IGNORE INTO client_grants (client_id, space_id, feature_set_id)
              VALUES (?1, ?2, ?3)",
             params![client_id, space_id, feature_set_id],
         )?;
-        
+
         Ok(())
     }
 
@@ -737,13 +762,13 @@ impl InboundClientRepository {
     ) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         conn.execute(
             "DELETE FROM client_grants 
              WHERE client_id = ?1 AND space_id = ?2 AND feature_set_id = ?3",
             params![client_id, space_id, feature_set_id],
         )?;
-        
+
         Ok(())
     }
 
@@ -755,18 +780,16 @@ impl InboundClientRepository {
     ) -> Result<Vec<String>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         let mut stmt = conn.prepare(
             "SELECT feature_set_id FROM client_grants 
              WHERE client_id = ?1 AND space_id = ?2",
         )?;
-        
+
         let grants = stmt
-            .query_map(params![client_id, space_id], |row| {
-                row.get::<_, String>(0)
-            })?
+            .query_map(params![client_id, space_id], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        
+
         Ok(grants)
     }
 
@@ -777,28 +800,25 @@ impl InboundClientRepository {
     ) -> Result<std::collections::HashMap<String, Vec<String>>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-        
+
         let mut stmt = conn.prepare(
             "SELECT space_id, feature_set_id FROM client_grants 
              WHERE client_id = ?1
              ORDER BY space_id",
         )?;
-        
+
         let mut grants: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
-        
+
         let rows = stmt.query_map(params![client_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
-        
+
         for row in rows {
             let (space_id, feature_set_id) = row?;
-            grants
-                .entry(space_id)
-                .or_default()
-                .push(feature_set_id);
+            grants.entry(space_id).or_default().push(feature_set_id);
         }
-        
+
         Ok(grants)
     }
 
@@ -814,7 +834,7 @@ mod tests {
         let hash1 = InboundClientRepository::hash_token("test_token");
         let hash2 = InboundClientRepository::hash_token("test_token");
         let hash3 = InboundClientRepository::hash_token("different_token");
-        
+
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
         assert_eq!(hash1.len(), 64); // SHA-256 hex = 64 chars

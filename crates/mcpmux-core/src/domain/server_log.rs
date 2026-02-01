@@ -10,19 +10,19 @@ pub struct ServerLog {
     /// Timestamp (ISO 8601)
     #[serde(rename = "ts")]
     pub timestamp: DateTime<Utc>,
-    
+
     /// Log level
     #[serde(rename = "lvl")]
     pub level: LogLevel,
-    
+
     /// Log source
     #[serde(rename = "src")]
     pub source: LogSource,
-    
+
     /// Message
     #[serde(rename = "msg")]
     pub message: String,
-    
+
     /// Optional metadata (JSON object)
     #[serde(rename = "meta", skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
@@ -123,13 +123,13 @@ impl LogSource {
 pub struct LogConfig {
     /// Base directory for logs
     pub base_dir: PathBuf,
-    
+
     /// Maximum file size before rotation (bytes)
     pub max_file_size: u64,
-    
+
     /// Maximum number of rotated files to keep
     pub max_files: usize,
-    
+
     /// Whether to compress rotated files
     pub compress: bool,
 }
@@ -139,7 +139,7 @@ impl Default for LogConfig {
         Self {
             base_dir: PathBuf::from("logs"),
             max_file_size: 10 * 1024 * 1024, // 10MB
-            max_files: 30,                     // 30 files
+            max_files: 30,                   // 30 files
             compress: true,
         }
     }
@@ -153,12 +153,12 @@ mod tests {
     fn test_log_serialization() {
         let log = ServerLog::new(LogLevel::Info, LogSource::App, "Test message")
             .with_metadata(serde_json::json!({"key": "value"}));
-        
+
         let json = serde_json::to_string(&log).unwrap();
         assert!(json.contains("\"lvl\":\"info\""));
         assert!(json.contains("\"src\":\"app\""));
         assert!(json.contains("\"msg\":\"Test message\""));
-        
+
         let deserialized: ServerLog = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.level, LogLevel::Info);
         assert_eq!(deserialized.source, LogSource::App);
@@ -173,4 +173,3 @@ mod tests {
         assert!(LogLevel::Warn < LogLevel::Error);
     }
 }
-

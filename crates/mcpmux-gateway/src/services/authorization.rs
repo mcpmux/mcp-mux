@@ -11,7 +11,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Authorization service for checking client permissions
-/// 
+///
 /// SRP: Only handles authorization decisions
 /// DIP: Depends on repository abstractions
 pub struct AuthorizationService {
@@ -31,32 +31,32 @@ impl AuthorizationService {
     }
 
     /// Get effective feature set grants for a client in a specific space.
-    /// 
+    ///
     /// Uses layered resolution: Returns explicit grants PLUS the default feature set
     /// (deduplicated as a set). This ensures all clients always get default permissions.
-    /// 
+    ///
     /// Returns Vec of feature_set_ids that the client has access to.
-    pub async fn get_client_grants(
-        &self,
-        client_id: &str,
-        space_id: &Uuid,
-    ) -> Result<Vec<String>> {
+    pub async fn get_client_grants(&self, client_id: &str, space_id: &Uuid) -> Result<Vec<String>> {
         let space_id_str = space_id.to_string();
-        
+
         // Get explicit grants from DB
         let mut grants = self
             .client_repo
             .get_grants_for_space(client_id, &space_id_str)
             .await?;
-        
+
         // Add default feature set (layered resolution)
-        if let Some(default_fs) = self.feature_set_repo.get_default_for_space(&space_id_str).await? {
+        if let Some(default_fs) = self
+            .feature_set_repo
+            .get_default_for_space(&space_id_str)
+            .await?
+        {
             // Add default if not already in grants (set semantics - no repetition)
             if !grants.contains(&default_fs.id) {
                 grants.push(default_fs.id);
             }
         }
-        
+
         Ok(grants)
     }
 
@@ -77,4 +77,3 @@ impl AuthorizationService {
         Ok(grants.contains(&feature_set_id.to_string()))
     }
 }
-

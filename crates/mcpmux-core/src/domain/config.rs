@@ -1,8 +1,11 @@
+use crate::domain::server::{
+    AuthConfig, InputDefinition, PublisherInfo, ServerDefinition, ServerSource, TransportConfig,
+    TransportMetadata,
+};
+use lazy_static::lazy_static;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use regex::Regex;
-use lazy_static::lazy_static;
-use crate::domain::server::{ServerDefinition, TransportConfig, TransportMetadata, InputDefinition, ServerSource, PublisherInfo, AuthConfig};
 
 lazy_static! {
     static ref INPUT_REGEX: Regex = Regex::new(r"\$\{input:([A-Z_][A-Z0-9_]*)\}").unwrap();
@@ -16,7 +19,7 @@ pub struct UserSpaceConfig {
 }
 
 /// A single server entry in Format A (User Space Config)
-/// 
+///
 /// **IMPORTANT**: This follows the Standard MCP Format used by VS Code, Cursor, Claude Desktop.
 /// Transport fields (command/args/env OR url/headers) go at the TOP LEVEL.
 /// There is NO `transport: {}` wrapper - users copy the CONTENTS of registry transport blocks.
@@ -26,7 +29,7 @@ pub struct UserServerEntry {
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
     pub env: Option<HashMap<String, String>>,
-    
+
     // --- HTTP Transport (URL-based) ---
     pub url: Option<String>,
     pub headers: Option<HashMap<String, String>>,
@@ -37,7 +40,7 @@ pub struct UserServerEntry {
     pub icon: Option<String>,
     pub alias: Option<String>,
     pub auth: Option<AuthConfig>,
-    
+
     // Optional metadata block with inputs definition
     pub metadata: Option<UserServerMetadata>,
 }
@@ -50,15 +53,25 @@ pub struct UserServerMetadata {
 }
 
 impl UserSpaceConfig {
-    pub fn to_server_definitions(&self, space_id: &str, file_path: std::path::PathBuf) -> Vec<ServerDefinition> {
-        self.servers.iter().map(|(id, entry)| {
-            entry.to_server_definition(id, space_id, file_path.clone())
-        }).collect()
+    pub fn to_server_definitions(
+        &self,
+        space_id: &str,
+        file_path: std::path::PathBuf,
+    ) -> Vec<ServerDefinition> {
+        self.servers
+            .iter()
+            .map(|(id, entry)| entry.to_server_definition(id, space_id, file_path.clone()))
+            .collect()
     }
 }
 
 impl UserServerEntry {
-    pub fn to_server_definition(&self, id: &str, space_id: &str, file_path: std::path::PathBuf) -> ServerDefinition {
+    pub fn to_server_definition(
+        &self,
+        id: &str,
+        space_id: &str,
+        file_path: std::path::PathBuf,
+    ) -> ServerDefinition {
         let (transport, inputs) = self.resolve_transport_and_inputs();
 
         // Dynamically figure out AuthConfig if missing
@@ -66,7 +79,7 @@ impl UserServerEntry {
             // Heuristic: If we have required secret inputs, assume ApiKey
             let has_required_secret = inputs.iter().any(|i| i.required && i.secret);
             let has_optional_secret = inputs.iter().any(|i| !i.required && i.secret);
-            
+
             if has_required_secret {
                 Some(AuthConfig::ApiKey { instructions: None })
             } else if has_optional_secret {
@@ -82,10 +95,12 @@ impl UserServerEntry {
         // - IMPORTANT: No underscores allowed in prefix (underscore is the delimiter in qualified names)
         // This ensures tool prefixing works correctly (prefix_toolname format)
         let normalized_id = Self::normalize_server_id(id);
-        
+
         // Use explicit alias if provided, otherwise auto-generate from normalized ID
         // Aliases must also be underscore-free for routing to work
-        let alias = self.alias.clone()
+        let alias = self
+            .alias
+            .clone()
             .map(|a| Self::normalize_alias(&a))
             .or_else(|| {
                 // Auto-generate alias if ID was normalized (i.e., contained spaces/special chars)
@@ -129,11 +144,12 @@ impl UserServerEntry {
             })
             .collect()
     }
-    
+
     /// Normalize an alias to be underscore-free
     /// Underscores are replaced with hyphens since underscore is the prefix_toolname delimiter
     fn normalize_alias(alias: &str) -> String {
-        alias.chars()
+        alias
+            .chars()
             .map(|c| {
                 if c == '_' {
                     '-' // Replace underscore with hyphen
@@ -174,7 +190,8 @@ impl UserServerEntry {
 
         // 2. Gather explicit inputs
         // Check metadata.inputs (Format A style)
-        let mut inputs_map: HashMap<String, InputDefinition> = self.metadata
+        let mut inputs_map: HashMap<String, InputDefinition> = self
+            .metadata
             .as_ref()
             .and_then(|m| m.inputs.as_ref())
             .map(|inputs| inputs.iter().map(|i| (i.id.clone(), i.clone())).collect())
@@ -182,8 +199,7 @@ impl UserServerEntry {
 
         // Check transport.metadata.inputs (Format B copy-paste style)
         match &transport {
-            TransportConfig::Stdio { metadata, .. } 
-            | TransportConfig::Http { metadata, .. } => {
+            TransportConfig::Stdio { metadata, .. } | TransportConfig::Http { metadata, .. } => {
                 for input in &metadata.inputs {
                     inputs_map.entry(input.id.clone()).or_insert(input.clone());
                 }
@@ -192,14 +208,14 @@ impl UserServerEntry {
 
         // 3. Auto-discover inputs from placeholders in command, args, and env
         let mut discovered_ids = std::collections::HashSet::new();
-        
+
         // Scan command
         if let TransportConfig::Stdio { command, .. } = &transport {
             for cap in INPUT_REGEX.captures_iter(command) {
                 discovered_ids.insert(cap[1].to_string());
             }
         }
-        
+
         // Scan args
         if let TransportConfig::Stdio { args, .. } = &transport {
             for arg in args {
@@ -208,7 +224,7 @@ impl UserServerEntry {
                 }
             }
         }
-        
+
         // Scan environment variables
         if let TransportConfig::Stdio { env, .. } = &transport {
             for value in env.values() {
@@ -217,30 +233,35 @@ impl UserServerEntry {
                 }
             }
         }
-        
+
         // Create InputDefinitions for discovered IDs (if not already defined)
         for input_id in discovered_ids {
-            inputs_map.entry(input_id.clone()).or_insert_with(|| InputDefinition {
-                id: input_id.clone(),
-                label: input_id,
-                r#type: "password".to_string(), // Default to secret
-                required: true,
-                secret: true,
-                description: None,
-                placeholder: None,
-                obtain_url: None,
-                obtain_instructions: None,
-            });
+            inputs_map
+                .entry(input_id.clone())
+                .or_insert_with(|| InputDefinition {
+                    id: input_id.clone(),
+                    label: input_id,
+                    r#type: "password".to_string(), // Default to secret
+                    required: true,
+                    secret: true,
+                    description: None,
+                    placeholder: None,
+                    obtain_url: None,
+                    obtain_instructions: None,
+                });
         }
 
         (transport, inputs_map.into_values().collect())
     }
 
-    fn inject_inputs_into_transport(&self, mut transport: TransportConfig, inputs: Vec<InputDefinition>) -> TransportConfig {
+    fn inject_inputs_into_transport(
+        &self,
+        mut transport: TransportConfig,
+        inputs: Vec<InputDefinition>,
+    ) -> TransportConfig {
         // Update the transport's metadata with the consolidated inputs
         match &mut transport {
-            TransportConfig::Stdio { metadata, .. } 
-            | TransportConfig::Http { metadata, .. } => {
+            TransportConfig::Stdio { metadata, .. } | TransportConfig::Http { metadata, .. } => {
                 metadata.inputs = inputs;
             }
         }
@@ -258,9 +279,10 @@ mod tests {
         let entry = UserServerEntry {
             command: Some("node".to_string()),
             args: Some(vec!["server.js".to_string()]),
-            env: Some(HashMap::from([
-                ("GITHUB_TOKEN".to_string(), "${input:GITHUB_TOKEN}".to_string()),
-            ])),
+            env: Some(HashMap::from([(
+                "GITHUB_TOKEN".to_string(),
+                "${input:GITHUB_TOKEN}".to_string(),
+            )])),
             url: None,
             headers: None,
             name: None,
@@ -272,7 +294,7 @@ mod tests {
         };
 
         let (_, inputs) = entry.resolve_transport_and_inputs();
-        
+
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].id, "GITHUB_TOKEN");
         assert_eq!(inputs[0].r#type, "password");
@@ -297,7 +319,7 @@ mod tests {
         };
 
         let (_, inputs) = entry.resolve_transport_and_inputs();
-        
+
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].id, "BINARY_PATH");
     }
@@ -323,7 +345,7 @@ mod tests {
         };
 
         let (_, inputs) = entry.resolve_transport_and_inputs();
-        
+
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].id, "GITHUB_TOKEN");
     }
@@ -336,9 +358,10 @@ mod tests {
                 "--token".to_string(),
                 "${input:API_TOKEN}".to_string(),
             ]),
-            env: Some(HashMap::from([
-                ("API_KEY".to_string(), "${input:API_KEY}".to_string()),
-            ])),
+            env: Some(HashMap::from([(
+                "API_KEY".to_string(),
+                "${input:API_KEY}".to_string(),
+            )])),
             url: None,
             headers: None,
             name: None,
@@ -350,13 +373,13 @@ mod tests {
         };
 
         let (_, inputs) = entry.resolve_transport_and_inputs();
-        
+
         // Should discover 3 unique inputs
         assert_eq!(inputs.len(), 3);
-        
-        let input_ids: std::collections::HashSet<String> = 
+
+        let input_ids: std::collections::HashSet<String> =
             inputs.iter().map(|i| i.id.clone()).collect();
-        
+
         assert!(input_ids.contains("CLI_PATH"));
         assert!(input_ids.contains("API_TOKEN"));
         assert!(input_ids.contains("API_KEY"));
@@ -366,10 +389,7 @@ mod tests {
     fn test_auto_discover_deduplication() {
         let entry = UserServerEntry {
             command: Some("node".to_string()),
-            args: Some(vec![
-                "--token".to_string(),
-                "${input:TOKEN}".to_string(),
-            ]),
+            args: Some(vec!["--token".to_string(), "${input:TOKEN}".to_string()]),
             env: Some(HashMap::from([
                 ("TOKEN".to_string(), "${input:TOKEN}".to_string()),
                 ("BACKUP_TOKEN".to_string(), "${input:TOKEN}".to_string()),
@@ -385,7 +405,7 @@ mod tests {
         };
 
         let (_, inputs) = entry.resolve_transport_and_inputs();
-        
+
         // TOKEN appears 3 times but should only be discovered once
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].id, "TOKEN");
@@ -396,9 +416,10 @@ mod tests {
         let entry = UserServerEntry {
             command: Some("node".to_string()),
             args: None,
-            env: Some(HashMap::from([
-                ("API_KEY".to_string(), "${input:API_KEY}".to_string()),
-            ])),
+            env: Some(HashMap::from([(
+                "API_KEY".to_string(),
+                "${input:API_KEY}".to_string(),
+            )])),
             url: None,
             headers: None,
             name: None,
@@ -407,25 +428,23 @@ mod tests {
             alias: None,
             auth: None,
             metadata: Some(UserServerMetadata {
-                inputs: Some(vec![
-                    InputDefinition {
-                        id: "API_KEY".to_string(),
-                        label: "My Custom Label".to_string(),
-                        r#type: "text".to_string(),
-                        required: false,
-                        secret: false,
-                        description: Some("Custom description".to_string()),
-                        placeholder: None,
-                        obtain_url: None,
-                        obtain_instructions: None,
-                    }
-                ]),
+                inputs: Some(vec![InputDefinition {
+                    id: "API_KEY".to_string(),
+                    label: "My Custom Label".to_string(),
+                    r#type: "text".to_string(),
+                    required: false,
+                    secret: false,
+                    description: Some("Custom description".to_string()),
+                    placeholder: None,
+                    obtain_url: None,
+                    obtain_instructions: None,
+                }]),
                 publisher: None,
             }),
         };
 
         let (_, inputs) = entry.resolve_transport_and_inputs();
-        
+
         // Should use explicit definition, not auto-discovered defaults
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].id, "API_KEY");
@@ -450,15 +469,16 @@ mod tests {
         }"#;
 
         let config: UserSpaceConfig = serde_json::from_str(json).unwrap();
-        
+
         assert_eq!(config.servers.len(), 1);
         assert!(config.servers.contains_key("test-server"));
-        
-        let definitions = config.to_server_definitions("test-space", PathBuf::from("/test/path.json"));
-        
+
+        let definitions =
+            config.to_server_definitions("test-space", PathBuf::from("/test/path.json"));
+
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].id, "test-server");
-        
+
         // Check that input was auto-discovered
         let inputs = &definitions[0].transport.metadata().inputs;
         assert_eq!(inputs.len(), 1);
@@ -469,14 +489,23 @@ mod tests {
     fn test_normalize_server_id() {
         // Basic lowercase
         assert_eq!(UserServerEntry::normalize_server_id("GitHub"), "github");
-        
+
         // Hyphens and dots preserved
-        assert_eq!(UserServerEntry::normalize_server_id("my-server.v2"), "my-server.v2");
-        
+        assert_eq!(
+            UserServerEntry::normalize_server_id("my-server.v2"),
+            "my-server.v2"
+        );
+
         // Spaces and underscores removed
-        assert_eq!(UserServerEntry::normalize_server_id("My Server"), "myserver");
-        assert_eq!(UserServerEntry::normalize_server_id("my_server"), "myserver");
-        
+        assert_eq!(
+            UserServerEntry::normalize_server_id("My Server"),
+            "myserver"
+        );
+        assert_eq!(
+            UserServerEntry::normalize_server_id("my_server"),
+            "myserver"
+        );
+
         // Mixed special chars
         assert_eq!(
             UserServerEntry::normalize_server_id("GitHub Copilot v2"),
@@ -488,10 +517,10 @@ mod tests {
     fn test_normalize_alias() {
         // Underscores become hyphens
         assert_eq!(UserServerEntry::normalize_alias("my_alias"), "my-alias");
-        
+
         // Lowercase
         assert_eq!(UserServerEntry::normalize_alias("MyAlias"), "myalias");
-        
+
         // Multiple underscores
         assert_eq!(UserServerEntry::normalize_alias("a_b_c"), "a-b-c");
     }
@@ -503,9 +532,10 @@ mod tests {
             args: None,
             env: None,
             url: Some("https://api.example.com/mcp".to_string()),
-            headers: Some(HashMap::from([
-                ("Authorization".to_string(), "Bearer token".to_string()),
-            ])),
+            headers: Some(HashMap::from([(
+                "Authorization".to_string(),
+                "Bearer token".to_string(),
+            )])),
             name: None,
             description: None,
             icon: None,
@@ -515,11 +545,14 @@ mod tests {
         };
 
         let (transport, _) = entry.resolve_transport_and_inputs();
-        
+
         match transport {
             TransportConfig::Http { url, headers, .. } => {
                 assert_eq!(url, "https://api.example.com/mcp");
-                assert_eq!(headers.get("Authorization"), Some(&"Bearer token".to_string()));
+                assert_eq!(
+                    headers.get("Authorization"),
+                    Some(&"Bearer token".to_string())
+                );
             }
             _ => panic!("Expected HTTP transport"),
         }
@@ -530,7 +563,10 @@ mod tests {
         let entry = UserServerEntry {
             command: Some("npx".to_string()),
             args: Some(vec!["mcp-server".to_string()]),
-            env: Some(HashMap::from([("NODE_ENV".to_string(), "production".to_string())])),
+            env: Some(HashMap::from([(
+                "NODE_ENV".to_string(),
+                "production".to_string(),
+            )])),
             url: None,
             headers: None,
             name: None,
@@ -542,9 +578,11 @@ mod tests {
         };
 
         let (transport, _) = entry.resolve_transport_and_inputs();
-        
+
         match transport {
-            TransportConfig::Stdio { command, args, env, .. } => {
+            TransportConfig::Stdio {
+                command, args, env, ..
+            } => {
                 assert_eq!(command, "npx");
                 assert_eq!(args, vec!["mcp-server"]);
                 assert_eq!(env.get("NODE_ENV"), Some(&"production".to_string()));
@@ -558,9 +596,10 @@ mod tests {
         let entry = UserServerEntry {
             command: Some("node".to_string()),
             args: None,
-            env: Some(HashMap::from([
-                ("API_KEY".to_string(), "${input:API_KEY}".to_string()),
-            ])),
+            env: Some(HashMap::from([(
+                "API_KEY".to_string(),
+                "${input:API_KEY}".to_string(),
+            )])),
             url: None,
             headers: None,
             name: None,
@@ -572,7 +611,7 @@ mod tests {
         };
 
         let def = entry.to_server_definition("test", "space", PathBuf::from("/test"));
-        
+
         // Should auto-detect ApiKey auth from required secret input
         assert!(matches!(def.auth, Some(AuthConfig::ApiKey { .. })));
     }
@@ -582,9 +621,10 @@ mod tests {
         let entry = UserServerEntry {
             command: Some("node".to_string()),
             args: None,
-            env: Some(HashMap::from([
-                ("TOKEN".to_string(), "${input:TOKEN}".to_string()),
-            ])),
+            env: Some(HashMap::from([(
+                "TOKEN".to_string(),
+                "${input:TOKEN}".to_string(),
+            )])),
             url: None,
             headers: None,
             name: None,
@@ -596,9 +636,8 @@ mod tests {
         };
 
         let def = entry.to_server_definition("test", "space", PathBuf::from("/test"));
-        
+
         // Explicit OAuth should not be overridden
         assert!(matches!(def.auth, Some(AuthConfig::Oauth)));
     }
 }
-

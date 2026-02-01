@@ -14,8 +14,8 @@ use mcpmux_core::{
     },
     repository::{
         AppSettingsRepository, CredentialRepository, FeatureSetRepository,
-        InboundMcpClientRepository, InstalledServerRepository, OutboundOAuthRepository,
-        RepoResult, ServerFeatureRepository, SpaceRepository,
+        InboundMcpClientRepository, InstalledServerRepository, OutboundOAuthRepository, RepoResult,
+        ServerFeatureRepository, SpaceRepository,
     },
 };
 
@@ -66,7 +66,7 @@ impl SpaceRepository for MockSpaceRepository {
     }
 
     async fn get_default(&self) -> RepoResult<Option<Space>> {
-        let default_id = self.default_id.read().unwrap().clone();
+        let default_id = *self.default_id.read().unwrap();
         if let Some(id) = default_id {
             return self.get(&id).await;
         }
@@ -116,7 +116,10 @@ impl InstalledServerRepository for MockInstalledServerRepository {
             .collect())
     }
 
-    async fn list_by_source_file(&self, _file_path: &std::path::Path) -> RepoResult<Vec<InstalledServer>> {
+    async fn list_by_source_file(
+        &self,
+        _file_path: &std::path::Path,
+    ) -> RepoResult<Vec<InstalledServer>> {
         Ok(vec![])
     }
 
@@ -124,7 +127,11 @@ impl InstalledServerRepository for MockInstalledServerRepository {
         Ok(self.servers.read().unwrap().get(id).cloned())
     }
 
-    async fn get_by_server_id(&self, space_id: &str, server_id: &str) -> RepoResult<Option<InstalledServer>> {
+    async fn get_by_server_id(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Option<InstalledServer>> {
         Ok(self
             .servers
             .read()
@@ -135,12 +142,18 @@ impl InstalledServerRepository for MockInstalledServerRepository {
     }
 
     async fn install(&self, server: &InstalledServer) -> RepoResult<()> {
-        self.servers.write().unwrap().insert(server.id, server.clone());
+        self.servers
+            .write()
+            .unwrap()
+            .insert(server.id, server.clone());
         Ok(())
     }
 
     async fn update(&self, server: &InstalledServer) -> RepoResult<()> {
-        self.servers.write().unwrap().insert(server.id, server.clone());
+        self.servers
+            .write()
+            .unwrap()
+            .insert(server.id, server.clone());
         Ok(())
     }
 
@@ -227,10 +240,7 @@ impl MockServerFeatureRepository {
     }
 
     pub fn with_feature(self, feature: ServerFeature) -> Self {
-        self.features
-            .write()
-            .unwrap()
-            .insert(feature.id, feature);
+        self.features.write().unwrap().insert(feature.id, feature);
         self
     }
 }
@@ -248,7 +258,11 @@ impl ServerFeatureRepository for MockServerFeatureRepository {
             .collect())
     }
 
-    async fn list_for_server(&self, space_id: &str, server_id: &str) -> RepoResult<Vec<ServerFeature>> {
+    async fn list_for_server(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Vec<ServerFeature>> {
         Ok(self
             .features
             .read()
@@ -346,7 +360,13 @@ impl FeatureSetRepository for MockFeatureSetRepository {
     async fn get_with_members(&self, id: &str) -> RepoResult<Option<FeatureSet>> {
         let mut set = self.sets.read().unwrap().get(id).cloned();
         if let Some(ref mut s) = set {
-            s.members = self.members.read().unwrap().get(id).cloned().unwrap_or_default();
+            s.members = self
+                .members
+                .read()
+                .unwrap()
+                .get(id)
+                .cloned()
+                .unwrap_or_default();
         }
         Ok(set)
     }
@@ -388,13 +408,20 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             .values()
             .filter(|s| {
                 s.space_id.as_deref() == Some(space_id)
-                    && matches!(s.feature_set_type, FeatureSetType::All | FeatureSetType::Default)
+                    && matches!(
+                        s.feature_set_type,
+                        FeatureSetType::All | FeatureSetType::Default
+                    )
             })
             .cloned()
             .collect())
     }
 
-    async fn get_server_all(&self, space_id: &str, server_id: &str) -> RepoResult<Option<FeatureSet>> {
+    async fn get_server_all(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Option<FeatureSet>> {
         Ok(self
             .sets
             .read()
@@ -408,7 +435,12 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             .cloned())
     }
 
-    async fn ensure_server_all(&self, space_id: &str, server_id: &str, server_name: &str) -> RepoResult<FeatureSet> {
+    async fn ensure_server_all(
+        &self,
+        space_id: &str,
+        server_id: &str,
+        server_name: &str,
+    ) -> RepoResult<FeatureSet> {
         if let Some(existing) = self.get_server_all(space_id, server_id).await? {
             return Ok(existing);
         }
@@ -423,7 +455,10 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             .read()
             .unwrap()
             .values()
-            .find(|s| s.space_id.as_deref() == Some(space_id) && s.feature_set_type == FeatureSetType::Default)
+            .find(|s| {
+                s.space_id.as_deref() == Some(space_id)
+                    && s.feature_set_type == FeatureSetType::Default
+            })
             .cloned())
     }
 
@@ -433,7 +468,9 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             .read()
             .unwrap()
             .values()
-            .find(|s| s.space_id.as_deref() == Some(space_id) && s.feature_set_type == FeatureSetType::All)
+            .find(|s| {
+                s.space_id.as_deref() == Some(space_id) && s.feature_set_type == FeatureSetType::All
+            })
             .cloned())
     }
 
@@ -476,9 +513,14 @@ impl FeatureSetRepository for MockFeatureSetRepository {
         Ok(())
     }
 
-    async fn remove_feature_member(&self, feature_set_id: &str, feature_id: &str) -> RepoResult<()> {
+    async fn remove_feature_member(
+        &self,
+        feature_set_id: &str,
+        feature_id: &str,
+    ) -> RepoResult<()> {
         if let Some(members) = self.members.write().unwrap().get_mut(feature_set_id) {
-            members.retain(|m| !(m.member_type == MemberType::Feature && m.member_id == feature_id));
+            members
+                .retain(|m| !(m.member_type == MemberType::Feature && m.member_id == feature_id));
         }
         Ok(())
     }
@@ -536,12 +578,18 @@ impl InboundMcpClientRepository for MockInboundMcpClientRepository {
     }
 
     async fn create(&self, client: &Client) -> RepoResult<()> {
-        self.clients.write().unwrap().insert(client.id, client.clone());
+        self.clients
+            .write()
+            .unwrap()
+            .insert(client.id, client.clone());
         Ok(())
     }
 
     async fn update(&self, client: &Client) -> RepoResult<()> {
-        self.clients.write().unwrap().insert(client.id, client.clone());
+        self.clients
+            .write()
+            .unwrap()
+            .insert(client.id, client.clone());
         Ok(())
     }
 
@@ -582,7 +630,11 @@ impl InboundMcpClientRepository for MockInboundMcpClientRepository {
         Ok(())
     }
 
-    async fn get_grants_for_space(&self, client_id: &Uuid, space_id: &str) -> RepoResult<Vec<String>> {
+    async fn get_grants_for_space(
+        &self,
+        client_id: &Uuid,
+        space_id: &str,
+    ) -> RepoResult<Vec<String>> {
         Ok(self
             .grants
             .read()
@@ -662,10 +714,10 @@ impl CredentialRepository for MockCredentialRepository {
     }
 
     async fn save(&self, credential: &Credential) -> RepoResult<()> {
-        self.credentials
-            .write()
-            .unwrap()
-            .insert((credential.space_id, credential.server_id.clone()), credential.clone());
+        self.credentials.write().unwrap().insert(
+            (credential.space_id, credential.server_id.clone()),
+            credential.clone(),
+        );
         Ok(())
     }
 
@@ -680,7 +732,13 @@ impl CredentialRepository for MockCredentialRepository {
     async fn clear_tokens(&self, space_id: &Uuid, server_id: &str) -> RepoResult<bool> {
         // Clearing tokens means removing the credential entirely for simplicity in mock
         // In production, this preserves client_id but clears access/refresh tokens
-        if self.credentials.write().unwrap().remove(&(*space_id, server_id.to_string())).is_some() {
+        if self
+            .credentials
+            .write()
+            .unwrap()
+            .remove(&(*space_id, server_id.to_string()))
+            .is_some()
+        {
             return Ok(true);
         }
         Ok(false)
@@ -723,7 +781,11 @@ impl MockOutboundOAuthRepository {
 
 #[async_trait]
 impl OutboundOAuthRepository for MockOutboundOAuthRepository {
-    async fn get(&self, space_id: &Uuid, server_id: &str) -> RepoResult<Option<OutboundOAuthRegistration>> {
+    async fn get(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+    ) -> RepoResult<Option<OutboundOAuthRegistration>> {
         Ok(self
             .registrations
             .read()

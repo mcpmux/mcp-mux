@@ -19,7 +19,10 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use mcpmux_core::{branding, OutboundOAuthRepository, CredentialRepository, CredentialValue, LogLevel, LogSource, ServerLog, ServerLogManager};
+use mcpmux_core::{
+    branding, CredentialRepository, CredentialValue, LogLevel, LogSource, OutboundOAuthRepository,
+    ServerLog, ServerLogManager,
+};
 use rmcp::transport::auth::{AuthError, AuthorizationManager, AuthorizationSession, OAuthState};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -48,9 +51,7 @@ pub struct OAuthCallback {
 #[derive(Debug)]
 pub enum OAuthInitResult {
     /// OAuth flow initiated - browser should open auth_url
-    Initiated {
-        auth_url: String,
-    },
+    Initiated { auth_url: String },
     /// Already have valid credentials
     AlreadyAuthorized,
     /// OAuth not supported by server
@@ -160,38 +161,44 @@ impl OutboundOAuthManager {
             space_repo: None,
         }
     }
-    
+
     pub fn with_log_manager(mut self, log_manager: Arc<ServerLogManager>) -> Self {
         self.log_manager = Some(log_manager);
         self
     }
-    
-    pub fn with_settings_repo(mut self, settings_repo: Arc<dyn mcpmux_core::AppSettingsRepository>) -> Self {
+
+    pub fn with_settings_repo(
+        mut self,
+        settings_repo: Arc<dyn mcpmux_core::AppSettingsRepository>,
+    ) -> Self {
         self.settings_repo = Some(settings_repo);
         self
     }
-    
+
     pub fn with_space_repo(mut self, space_repo: Arc<dyn mcpmux_core::SpaceRepository>) -> Self {
         self.space_repo = Some(space_repo);
         self
     }
-    
+
     /// Get the DCR client name for a space (e.g., "McpMux (Work)")
     async fn get_client_name_for_space(&self, space_id: Uuid) -> String {
         let space_name = if let Some(repo) = &self.space_repo {
-            repo.get(&space_id)
-                .await
-                .ok()
-                .flatten()
-                .map(|s| s.name)
+            repo.get(&space_id).await.ok().flatten().map(|s| s.name)
         } else {
             None
         };
         branding::outbound_oauth_client_name_for_space(space_name.as_deref())
     }
-    
+
     /// Log an OAuth event
-    async fn log(&self, space_id: &str, server_id: &str, level: LogLevel, message: String, metadata: Option<serde_json::Value>) {
+    async fn log(
+        &self,
+        space_id: &str,
+        server_id: &str,
+        level: LogLevel,
+        message: String,
+        metadata: Option<serde_json::Value>,
+    ) {
         if let Some(log_manager) = &self.log_manager {
             let log = ServerLog::new(level, LogSource::OAuth, message)
                 .with_metadata(metadata.unwrap_or(serde_json::json!({})));
@@ -209,17 +216,18 @@ impl OutboundOAuthManager {
         _server_id: &str,
     ) -> Result<mcpmux_core::StoredOAuthMetadata, AuthError> {
         // Delegate to shared utility - returns both formats for setting on manager and storing
-        let (rmcp_metadata, stored_metadata) = oauth_utils::discover_and_convert_metadata(manager, server_url).await?;
+        let (rmcp_metadata, stored_metadata) =
+            oauth_utils::discover_and_convert_metadata(manager, server_url).await?;
         manager.set_metadata(rmcp_metadata);
         Ok(stored_metadata)
     }
-    
+
     /// Extract appropriate scopes from discovered OAuth metadata.
-    /// 
+    ///
     /// Uses server-advertised scopes if available, otherwise falls back to empty scopes
     /// (letting the server determine defaults). This ensures compatibility with servers
     /// like Miro that require specific scopes and don't support generic ones like `offline_access`.
-    /// 
+    ///
     /// Note: Some servers (like Atlassian) return `scopes_supported: null` in their metadata,
     /// meaning they don't advertise supported scopes. In this case, we pass empty scopes
     /// and the server will apply its default scope policy.
@@ -241,40 +249,42 @@ impl OutboundOAuthManager {
             }
         }
     }
-    
+
     /// Convert scope Vec to slice references for RMCP API
     fn scopes_as_refs(scopes: &[String]) -> Vec<&str> {
         scopes.iter().map(|s| s.as_str()).collect()
     }
-    
+
     /// Add RFC 8707 'resource' parameter to authorization URL.
-    /// 
+    ///
     /// The resource parameter tells the Authorization Server which protected resource
     /// (MCP server) the client is requesting access to. This enables the AS to:
     /// - Issue tokens scoped to the specific resource
     /// - Apply resource-specific policies
     /// - Prevent token replay at other resources
-    /// 
+    ///
     /// Some servers (like Miro) require this parameter.
     fn add_resource_parameter(auth_url: &str, server_url: &str) -> String {
         use url::Url;
-        
+
         match Url::parse(auth_url) {
             Ok(mut url) => {
                 // Add the resource parameter with the MCP server URL
-                url.query_pairs_mut()
-                    .append_pair("resource", server_url);
+                url.query_pairs_mut().append_pair("resource", server_url);
                 info!("[OAuth] Added RFC 8707 resource parameter: {}", server_url);
                 url.to_string()
             }
             Err(e) => {
-                warn!("[OAuth] Failed to parse auth URL to add resource parameter: {}", e);
+                warn!(
+                    "[OAuth] Failed to parse auth URL to add resource parameter: {}",
+                    e
+                );
                 // Return original URL if parsing fails
                 auth_url.to_string()
             }
         }
     }
-    
+
     /// Subscribe to OAuth completion events
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<OAuthCompleteEvent> {
         self.completion_tx.subscribe()
@@ -329,9 +339,9 @@ impl OutboundOAuthManager {
             .map(|e| e.elapsed() < Duration::from_secs(300))
             .unwrap_or(false)
     }
-    
+
     /// Cancel any pending OAuth flow for a server
-    /// 
+    ///
     /// Called when disconnecting to ensure a fresh flow can start on reconnect.
     /// Note: The persistent callback server keeps running - only the pending flow is removed.
     pub fn cancel_flow(&self, space_id: Uuid, server_id: &str) {
@@ -354,88 +364,100 @@ impl OutboundOAuthManager {
             }
         }
     }
-    
+
     /// Cancel any pending OAuth flow for a space/server pair
     pub fn cancel_flow_for_space(&self, space_id: Uuid, server_id: &str) {
         self.cancel_flow(space_id, server_id);
         // Also clear completed flows
-        self.completed_flows.remove(&(space_id, server_id.to_string()));
+        self.completed_flows
+            .remove(&(space_id, server_id.to_string()));
     }
-    
+
     /// Get the redirect URI for OAuth callbacks (loopback interface per RFC 8252)
-    /// 
+    ///
     /// Per RFC 8252 Section 7.3, loopback interface redirection uses:
     /// `http://127.0.0.1:{port}/oauth2redirect`
-    /// 
+    ///
     /// This is the most compatible method for native app OAuth as enterprise
     /// security systems don't block loopback addresses.
-    /// 
+    ///
     /// Note: Port is dynamically assigned when the callback server starts.
     pub fn get_redirect_uri_with_port(port: u16) -> String {
         branding::oauth_callback_uri_with_port(port)
     }
-    
+
     /// Try to bind to preferred port, fall back to dynamic port
-    /// 
+    ///
     /// Returns (listener, source_description)
-    async fn try_bind_with_fallback(preferred_port: u16) -> Result<(tokio::net::TcpListener, &'static str)> {
+    async fn try_bind_with_fallback(
+        preferred_port: u16,
+    ) -> Result<(tokio::net::TcpListener, &'static str)> {
         use tokio::net::TcpListener;
-        
+
         match TcpListener::bind(format!("127.0.0.1:{}", preferred_port)).await {
             Ok(l) => {
                 info!("[OAuth] Bound to preferred port {}", preferred_port);
                 Ok((l, "preferred"))
             }
             Err(_) => {
-                info!("[OAuth] Preferred port {} unavailable, allocating dynamic port", preferred_port);
-                let l = TcpListener::bind("127.0.0.1:0").await
+                info!(
+                    "[OAuth] Preferred port {} unavailable, allocating dynamic port",
+                    preferred_port
+                );
+                let l = TcpListener::bind("127.0.0.1:0")
+                    .await
                     .context("Failed to bind loopback callback server")?;
                 Ok((l, "dynamic"))
             }
         }
     }
-    
+
     /// Get or start the shared callback server
-    /// 
+    ///
     /// This ensures only ONE callback server runs at a time, shared across all
     /// concurrent OAuth flows. Like VS Code's consistent use of port 33418,
     /// this minimizes DCR re-registration by keeping the redirect_uri stable.
-    /// 
+    ///
     /// Port resolution order:
     /// 1. Persisted port (from previous run) - if available
     /// 2. Default preferred port (45819) - if available
     /// 3. Dynamic port allocation - always persist for next run
-    /// 
+    ///
     /// The server routes callbacks to the correct flow using the `state` parameter.
-    /// 
+    ///
     /// Returns the port the shared server is listening on.
     async fn ensure_callback_server(&self) -> Result<u16> {
-        use tokio::net::TcpListener;
         use axum::{
-            Router,
-            routing::get,
             extract::{Query, State as AxumState},
             response::Html,
+            routing::get,
+            Router,
         };
-        
+        use tokio::net::TcpListener;
+
         let mut server_guard = self.callback_server.lock().await;
-        
+
         // Check if server is already running
         if let Some(ref state) = *server_guard {
-            debug!("[OAuth] Reusing existing callback server on port {}", state.port);
+            debug!(
+                "[OAuth] Reusing existing callback server on port {}",
+                state.port
+            );
             return Ok(state.port);
         }
-        
+
         // Try to get persisted port from settings
         let persisted_port = if let Some(ref settings) = self.settings_repo {
-            settings.get("oauth.callback_port").await
+            settings
+                .get("oauth.callback_port")
+                .await
                 .ok()
                 .flatten()
                 .and_then(|s| s.parse::<u16>().ok())
         } else {
             None
         };
-        
+
         // Start new shared callback server
         // Port resolution: persisted > default > dynamic
         let (listener, port_source) = if let Some(port) = persisted_port {
@@ -445,17 +467,23 @@ impl OutboundOAuthManager {
                     (l, "persisted")
                 }
                 Err(_) => {
-                    info!("[OAuth] Persisted port {} unavailable, trying default", port);
+                    info!(
+                        "[OAuth] Persisted port {} unavailable, trying default",
+                        port
+                    );
                     Self::try_bind_with_fallback(branding::DEFAULT_OAUTH_CALLBACK_PORT).await?
                 }
             }
         } else {
             Self::try_bind_with_fallback(branding::DEFAULT_OAUTH_CALLBACK_PORT).await?
         };
-        
+
         let port = listener.local_addr()?.port();
-        info!("[OAuth] Shared callback server listening on 127.0.0.1:{} ({})", port, port_source);
-        
+        info!(
+            "[OAuth] Shared callback server listening on 127.0.0.1:{} ({})",
+            port, port_source
+        );
+
         // Persist the port for future runs (if it's not already persisted at this value)
         if persisted_port != Some(port) {
             if let Some(ref settings) = self.settings_repo {
@@ -466,36 +494,48 @@ impl OutboundOAuthManager {
                 }
             }
         }
-        
+
         // Create shutdown channel
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-        
+
         // Clone pending_by_state for the handler
         let pending_map = self.pending_by_state.clone();
-        
+
         // Build the callback handler that routes by state parameter
         let app = Router::new()
-            .route(branding::oauth_callback_path(), get(
-                |AxumState(pending): AxumState<Arc<DashMap<String, PendingOAuthFlow>>>,
-                 Query(callback): Query<OAuthCallback>| async move {
-                    let state = &callback.state;
-                    let state_short = if state.len() > 8 { &state[..8] } else { state };
-                    
-                    info!("[OAuth] Callback received on shared server, state={}", state_short);
-                    
-                    // Route to the correct pending flow
-                    match pending.remove(state) {
-                        Some((_, flow)) => {
-                            info!("[OAuth] Routing callback to server={} (space={})", flow.server_id, flow.space_id);
-                            let _ = flow.callback_tx.send(callback);
+            .route(
+                branding::oauth_callback_path(),
+                get(
+                    |AxumState(pending): AxumState<Arc<DashMap<String, PendingOAuthFlow>>>,
+                     Query(callback): Query<OAuthCallback>| async move {
+                        let state = &callback.state;
+                        let state_short = if state.len() > 8 { &state[..8] } else { state };
+
+                        info!(
+                            "[OAuth] Callback received on shared server, state={}",
+                            state_short
+                        );
+
+                        // Route to the correct pending flow
+                        match pending.remove(state) {
+                            Some((_, flow)) => {
+                                info!(
+                                    "[OAuth] Routing callback to server={} (space={})",
+                                    flow.server_id, flow.space_id
+                                );
+                                let _ = flow.callback_tx.send(callback);
+                            }
+                            None => {
+                                warn!(
+                                    "[OAuth] No pending flow for state={}, may have timed out",
+                                    state_short
+                                );
+                            }
                         }
-                        None => {
-                            warn!("[OAuth] No pending flow for state={}, may have timed out", state_short);
-                        }
-                    }
-                    
-                    // Return a nice HTML page that auto-closes
-                    Html(r#"
+
+                        // Return a nice HTML page that auto-closes
+                        Html(
+                            r#"
 <!DOCTYPE html>
 <html>
 <head>
@@ -518,35 +558,36 @@ impl OutboundOAuthManager {
     </div>
 </body>
 </html>
-                    "#)
-                }
-            ))
+                    "#,
+                        )
+                    },
+                ),
+            )
             .with_state(pending_map);
-        
+
         // Spawn persistent server task
         tokio::spawn(async move {
-            let server = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.changed().await;
-                    info!("[OAuth] Shared callback server shutting down");
-                });
-            
+            let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+                let _ = shutdown_rx.changed().await;
+                info!("[OAuth] Shared callback server shutting down");
+            });
+
             if let Err(e) = server.await {
                 error!("[OAuth] Shared callback server error: {}", e);
             }
         });
-        
+
         // Store server state
         *server_guard = Some(CallbackServerState {
             port,
             _shutdown_tx: shutdown_tx,
         });
-        
+
         Ok(port)
     }
-    
+
     /// Register a pending OAuth flow and get a receiver for the callback
-    /// 
+    ///
     /// This creates a oneshot channel for this specific flow and registers it
     /// in `pending_by_state` so the shared callback server can route to it.
     fn register_pending_flow(
@@ -557,7 +598,7 @@ impl OutboundOAuthManager {
         server_url: String,
     ) -> tokio::sync::oneshot::Receiver<OAuthCallback> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        
+
         let flow = PendingOAuthFlow {
             space_id,
             server_id: server_id.clone(),
@@ -565,38 +606,44 @@ impl OutboundOAuthManager {
             started_at: std::time::Instant::now(),
             callback_tx: tx,
         };
-        
+
         // Register by state for callback routing
         self.pending_by_state.insert(state.clone(), flow);
-        
+
         // Track active flow by server
         self.active_by_server.insert((space_id, server_id), state);
-        
+
         rx
     }
-    
+
     /// Handle an OAuth callback received via deep link (legacy/fallback)
-    /// 
+    ///
     /// This is called by the desktop app when it receives a deep link.
     /// With loopback redirect, this is typically not used, but kept for
     /// potential future custom scheme support.
-    /// 
+    ///
     /// Routes the callback to the appropriate pending flow based on the state parameter.
     pub fn handle_callback(&self, callback: OAuthCallback) -> Result<(), String> {
         let state = &callback.state;
         let state_short = if state.len() > 8 { &state[..8] } else { state };
-        
+
         info!("[OAuth] Deep link callback received, state={}", state_short);
-        
+
         // Look up the pending flow by state
         match self.pending_by_state.remove(state) {
             Some((_, flow)) => {
-                info!("[OAuth] Found pending flow for server={}, forwarding callback", flow.server_id);
-                
+                info!(
+                    "[OAuth] Found pending flow for server={}, forwarding callback",
+                    flow.server_id
+                );
+
                 // Send callback to the waiting task
                 match flow.callback_tx.send(callback) {
                     Ok(_) => {
-                        info!("[OAuth] Callback sent to waiting task for {}", flow.server_id);
+                        info!(
+                            "[OAuth] Callback sent to waiting task for {}",
+                            flow.server_id
+                        );
                         Ok(())
                     }
                     Err(_) => {
@@ -608,7 +655,10 @@ impl OutboundOAuthManager {
             None => {
                 // Check if state exists in oauth_states (callback for completed/cancelled flow)
                 if self.oauth_states.contains_key(state) {
-                    warn!("[OAuth] Duplicate callback for state={} - already processed", state_short);
+                    warn!(
+                        "[OAuth] Duplicate callback for state={} - already processed",
+                        state_short
+                    );
                     Err("OAuth callback already processed".to_string())
                 } else {
                     warn!("[OAuth] Unknown state={} - expired or invalid", state_short);
@@ -726,21 +776,24 @@ impl OutboundOAuthManager {
         server_url: &str,
     ) -> Result<OAuthInitResult> {
         let space_id_str = space_id.to_string();
-        info!("[OAuth] start_oauth_flow called for {}/{}", space_id, server_id);
-        
+        info!(
+            "[OAuth] start_oauth_flow called for {}/{}",
+            space_id, server_id
+        );
+
         self.log(
             &space_id_str,
             server_id,
             LogLevel::Info,
             format!("Starting OAuth flow for server: {}", server_url),
             Some(serde_json::json!({"server_url": server_url})),
-        ).await;
-        
+        )
+        .await;
+
         if self.is_pending(space_id, server_id) {
             warn!(
                 "[OAuth] Flow already pending for {}/{}; rejecting new request",
-                space_id,
-                server_id
+                space_id, server_id
             );
             return Err(anyhow::anyhow!(
                 "OAuth flow already in progress for {}/{}",
@@ -748,8 +801,11 @@ impl OutboundOAuthManager {
                 server_id
             ));
         }
-        
-        info!("[OAuth] No pending flow for {}/{}; proceeding", space_id, server_id);
+
+        info!(
+            "[OAuth] No pending flow for {}/{}; proceeding",
+            space_id, server_id
+        );
 
         // Check for existing valid/refreshable credentials
         if let Some(token_info) = self
@@ -792,15 +848,19 @@ impl OutboundOAuthManager {
                     LogLevel::Error,
                     format!("Failed to start callback server: {}", e),
                     Some(serde_json::json!({"error": e.to_string()})),
-                ).await;
+                )
+                .await;
                 return Err(e);
             }
         };
-        
+
         // Use loopback redirect URI with the shared port
         let redirect_uri = Self::get_redirect_uri_with_port(callback_port);
-        
-        info!("[OAuth] Using shared callback server on port {}, redirect_uri={}", callback_port, redirect_uri);
+
+        info!(
+            "[OAuth] Using shared callback server on port {}, redirect_uri={}",
+            callback_port, redirect_uri
+        );
 
         // Check for existing client_id (from previous DCR)
         let existing_registration = backend_oauth_repo
@@ -808,7 +868,7 @@ impl OutboundOAuthManager {
             .await
             .ok()
             .flatten();
-        
+
         // Create OAuthState using the SDK (this performs metadata discovery/handshake)
         self.log(
             &space_id_str,
@@ -816,8 +876,9 @@ impl OutboundOAuthManager {
             LogLevel::Info,
             "Discovering OAuth metadata (RFC 8414 handshake)".to_string(),
             Some(serde_json::json!({"server_url": server_url})),
-        ).await;
-        
+        )
+        .await;
+
         let oauth_state_result = OAuthState::new(server_url, None).await;
         let mut oauth_state = match oauth_state_result {
             Ok(state) => state,
@@ -828,18 +889,20 @@ impl OutboundOAuthManager {
                     LogLevel::Error,
                     format!("OAuth metadata discovery failed: {}", e),
                     Some(serde_json::json!({"error": e.to_string()})),
-                ).await;
+                )
+                .await;
                 return Err(anyhow::anyhow!("Failed to create OAuth state: {}", e));
             }
         };
-        
+
         self.log(
             &space_id_str,
             server_id,
             LogLevel::Info,
             "OAuth metadata discovery completed successfully".to_string(),
             None,
-        ).await;
+        )
+        .await;
 
         // Set our credential store on the manager
         if let OAuthState::Unauthorized(ref mut manager) = oauth_state {
@@ -862,16 +925,19 @@ impl OutboundOAuthManager {
             .as_ref()
             .map(|reg| reg.matches_redirect_uri(&redirect_uri))
             .unwrap_or(false);
-        
+
         // Track whether this is a new registration and capture discovered metadata
-        let (is_new_registration, discovered_metadata): (bool, Option<mcpmux_core::StoredOAuthMetadata>) = if can_reuse_dcr {
+        let (is_new_registration, discovered_metadata): (
+            bool,
+            Option<mcpmux_core::StoredOAuthMetadata>,
+        ) = if can_reuse_dcr {
             // REUSE EXISTING CLIENT_ID - redirect_uri matches!
             let reg = existing_registration.as_ref().unwrap();
             info!(
                 "[OAuth] Reusing existing client_id={} for {}/{} (redirect_uri matches)",
                 reg.client_id, space_id, server_id
             );
-            
+
             self.log(
                 &space_id_str,
                 server_id,
@@ -882,8 +948,9 @@ impl OutboundOAuthManager {
                     "redirect_uri": redirect_uri,
                     "action": "reuse_dcr"
                 })),
-            ).await;
-            
+            )
+            .await;
+
             if let OAuthState::Unauthorized(ref mut manager) = oauth_state {
                 // Discover metadata and configure the existing client
                 self.log(
@@ -892,8 +959,9 @@ impl OutboundOAuthManager {
                     LogLevel::Info,
                     "Configuring existing client with OAuth server".to_string(),
                     Some(serde_json::json!({"client_id": reg.client_id})),
-                ).await;
-                
+                )
+                .await;
+
                 // First discover OAuth metadata to get supported scopes
                 let discovered_metadata = match self
                     .ensure_metadata_with_origin_fallback(
@@ -912,14 +980,15 @@ impl OutboundOAuthManager {
                             LogLevel::Error,
                             format!("Failed to discover OAuth metadata: {}", e),
                             Some(serde_json::json!({"error": e.to_string()})),
-                        ).await;
+                        )
+                        .await;
                         return Err(anyhow::anyhow!("Failed to discover metadata: {}", e));
                     }
                 };
-                
+
                 // Get scopes from discovered metadata
                 let scopes = Self::get_scopes_from_metadata(&discovered_metadata);
-                
+
                 // Then configure client with the existing registration
                 let config = rmcp::transport::auth::OAuthClientConfig {
                     client_id: reg.client_id.clone(),
@@ -927,7 +996,7 @@ impl OutboundOAuthManager {
                     scopes: scopes.clone(),
                     redirect_uri: redirect_uri.clone(),
                 };
-                
+
                 if let Err(e) = manager.configure_client(config) {
                     self.log(
                         &space_id_str,
@@ -935,23 +1004,27 @@ impl OutboundOAuthManager {
                         LogLevel::Error,
                         format!("Failed to configure existing client: {}", e),
                         Some(serde_json::json!({"error": e.to_string()})),
-                    ).await;
+                    )
+                    .await;
                     return Err(anyhow::anyhow!("Failed to configure client: {}", e));
                 }
-                
+
                 self.log(
                     &space_id_str,
                     server_id,
                     LogLevel::Info,
                     "Client configuration completed".to_string(),
                     None,
-                ).await;
-                    
+                )
+                .await;
+
                 // Generate authorization URL with server-supported scopes
                 let scope_refs = Self::scopes_as_refs(&scopes);
-                let auth_url = manager.get_authorization_url(&scope_refs).await
+                let auth_url = manager
+                    .get_authorization_url(&scope_refs)
+                    .await
                     .map_err(|e| anyhow::anyhow!("Failed to get auth URL: {}", e))?;
-                
+
                 // Create session manually
                 oauth_state = OAuthState::Session(rmcp::transport::auth::AuthorizationSession {
                     auth_manager: std::mem::replace(
@@ -982,7 +1055,7 @@ impl OutboundOAuthManager {
                     space_id, server_id
                 );
             }
-            
+
             self.log(
                 &space_id_str,
                 server_id,
@@ -993,8 +1066,9 @@ impl OutboundOAuthManager {
                     "client_name": client_name,
                     "action": "new_dcr"
                 })),
-            ).await;
-            
+            )
+            .await;
+
             let manager = match std::mem::replace(
                 &mut oauth_state,
                 OAuthState::Unauthorized(AuthorizationManager::new(server_url).await?),
@@ -1032,11 +1106,12 @@ impl OutboundOAuthManager {
             };
 
             // Get scopes from discovered metadata (or use empty if not available)
-            let scopes = metadata_for_storage.as_ref()
+            let scopes = metadata_for_storage
+                .as_ref()
                 .map(Self::get_scopes_from_metadata)
                 .unwrap_or_default();
             let scope_refs = Self::scopes_as_refs(&scopes);
-            
+
             match AuthorizationSession::new(
                 manager,
                 &scope_refs,
@@ -1107,13 +1182,14 @@ impl OutboundOAuthManager {
                     LogLevel::Error,
                     format!("Failed to get authorization URL: {}", e),
                     Some(serde_json::json!({"error": e.to_string()})),
-                ).await;
+                )
+                .await;
                 return Err(anyhow::anyhow!("Failed to get auth URL: {}", e));
             }
         };
-        
+
         // Add RFC 8707 'resource' parameter to the authorization URL.
-        // This tells the Authorization Server which protected resource (MCP server) 
+        // This tells the Authorization Server which protected resource (MCP server)
         // the token is being requested for. Some servers (like Miro) require this.
         let auth_url = Self::add_resource_parameter(&auth_url, server_url);
 
@@ -1127,25 +1203,34 @@ impl OutboundOAuthManager {
                     LogLevel::Error,
                     "Failed to extract state parameter from auth URL".to_string(),
                     None,
-                ).await;
+                )
+                .await;
                 return Err(anyhow::anyhow!("Failed to extract state from auth URL"));
             }
         };
-        
-        info!("[OAuth] Auth URL ready, state={}: {}", &state[..8.min(state.len())], auth_url);
-        
+
+        info!(
+            "[OAuth] Auth URL ready, state={}: {}",
+            &state[..8.min(state.len())],
+            auth_url
+        );
+
         self.log(
             &space_id_str,
             server_id,
             LogLevel::Info,
-            format!("Authorization URL ready - browser should open (loopback callback: {})", redirect_uri),
+            format!(
+                "Authorization URL ready - browser should open (loopback callback: {})",
+                redirect_uri
+            ),
             Some(serde_json::json!({
                 "auth_url": auth_url,
                 "redirect_uri": redirect_uri,
                 "callback_port": callback_port,
                 "state": &state[..8.min(state.len())]
             })),
-        ).await;
+        )
+        .await;
 
         // Register this flow for callback routing (shared server routes by state parameter)
         let callback_rx = self.register_pending_flow(
@@ -1156,7 +1241,8 @@ impl OutboundOAuthManager {
         );
 
         // Store OAuth state for token exchange (keyed by state)
-        self.oauth_states.insert(state.clone(), Arc::new(Mutex::new(oauth_state)));
+        self.oauth_states
+            .insert(state.clone(), Arc::new(Mutex::new(oauth_state)));
 
         // Spawn callback handler task (callback_rx will receive from shared server)
         let server_id_clone = server_id.to_string();
@@ -1176,45 +1262,61 @@ impl OutboundOAuthManager {
         let log_manager_clone = self.log_manager.clone();
         let space_id_str_clone = space_id_str.clone();
         let discovered_metadata_clone = discovered_metadata.clone();
-        
+
         tokio::spawn(async move {
-            info!("[OAuth] Waiting for callback for {} (timeout={}s)", server_id_clone, timeout.as_secs());
-            
+            info!(
+                "[OAuth] Waiting for callback for {} (timeout={}s)",
+                server_id_clone,
+                timeout.as_secs()
+            );
+
             // Log waiting state
             if let Some(log_manager) = &log_manager_clone {
                 let log = ServerLog::new(
                     LogLevel::Info,
                     LogSource::OAuth,
-                    format!("Waiting for OAuth callback (timeout: {}s)", timeout.as_secs()),
+                    format!(
+                        "Waiting for OAuth callback (timeout: {}s)",
+                        timeout.as_secs()
+                    ),
                 );
-                let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                let _ = log_manager
+                    .append(&space_id_str_clone, &server_id_clone, log)
+                    .await;
             }
-            
+
             let result = tokio::time::timeout(timeout, callback_rx).await;
-            
+
             match result {
                 Ok(Ok(callback)) => {
                     // Check for OAuth error first
                     if let Some(ref error) = callback.error {
-                        let error_msg = callback.error_description
+                        let error_msg = callback
+                            .error_description
                             .as_ref()
                             .map(|d| format!("{}: {}", error, d))
                             .unwrap_or_else(|| error.clone());
-                        
-                        error!("[OAuth] Authorization failed for {}: {}", server_id_clone, error_msg);
-                        
+
+                        error!(
+                            "[OAuth] Authorization failed for {}: {}",
+                            server_id_clone, error_msg
+                        );
+
                         if let Some(log_manager) = &log_manager_clone {
                             let log = ServerLog::new(
                                 LogLevel::Error,
                                 LogSource::OAuth,
                                 format!("Authorization denied: {}", error_msg),
-                            ).with_metadata(serde_json::json!({
+                            )
+                            .with_metadata(serde_json::json!({
                                 "error": error,
                                 "error_description": callback.error_description,
                             }));
-                            let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                            let _ = log_manager
+                                .append(&space_id_str_clone, &server_id_clone, log)
+                                .await;
                         }
-                        
+
                         let _ = completion_tx.send(OAuthCompleteEvent {
                             space_id,
                             server_id: server_id_clone.clone(),
@@ -1223,22 +1325,24 @@ impl OutboundOAuthManager {
                         });
                         return;
                     }
-                    
+
                     // Check for authorization code
                     let code = match &callback.code {
                         Some(c) => c.clone(),
                         None => {
                             error!("[OAuth] Missing authorization code for {}", server_id_clone);
-                            
+
                             if let Some(log_manager) = &log_manager_clone {
                                 let log = ServerLog::new(
                                     LogLevel::Error,
                                     LogSource::OAuth,
                                     "Missing authorization code in callback".to_string(),
                                 );
-                                let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                                let _ = log_manager
+                                    .append(&space_id_str_clone, &server_id_clone, log)
+                                    .await;
                             }
-                            
+
                             let _ = completion_tx.send(OAuthCompleteEvent {
                                 space_id,
                                 server_id: server_id_clone.clone(),
@@ -1248,22 +1352,28 @@ impl OutboundOAuthManager {
                             return;
                         }
                     };
-                    
-                    info!("[OAuth] Callback received for {} with code length {}", 
-                        server_id_clone, code.len());
-                    
+
+                    info!(
+                        "[OAuth] Callback received for {} with code length {}",
+                        server_id_clone,
+                        code.len()
+                    );
+
                     // Log callback received
                     if let Some(log_manager) = &log_manager_clone {
                         let log = ServerLog::new(
                             LogLevel::Info,
                             LogSource::OAuth,
                             "OAuth callback received from browser".to_string(),
-                        ).with_metadata(serde_json::json!({
+                        )
+                        .with_metadata(serde_json::json!({
                             "code_length": code.len(),
                             "state": &callback.state[..8.min(callback.state.len())],
                             "has_error": callback.error.is_some(),
                         }));
-                        let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                        let _ = log_manager
+                            .append(&space_id_str_clone, &server_id_clone, log)
+                            .await;
                     }
 
                     // Get the OAuth state (keyed by state)
@@ -1283,7 +1393,7 @@ impl OutboundOAuthManager {
 
                     // Handle callback using SDK (token exchange)
                     let mut oauth_state = oauth_state_arc.lock().await;
-                    
+
                     // Log token exchange start
                     if let Some(log_manager) = &log_manager_clone {
                         let log = ServerLog::new(
@@ -1291,21 +1401,29 @@ impl OutboundOAuthManager {
                             LogSource::OAuth,
                             "Exchanging authorization code for tokens".to_string(),
                         );
-                        let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                        let _ = log_manager
+                            .append(&space_id_str_clone, &server_id_clone, log)
+                            .await;
                     }
-                    
+
                     if let Err(e) = oauth_state.handle_callback(&code, &callback.state).await {
-                        error!("[OAuth] Callback handling failed for {}: {}", server_id_clone, e);
-                        
+                        error!(
+                            "[OAuth] Callback handling failed for {}: {}",
+                            server_id_clone, e
+                        );
+
                         if let Some(log_manager) = &log_manager_clone {
                             let log = ServerLog::new(
                                 LogLevel::Error,
                                 LogSource::OAuth,
                                 format!("Token exchange failed: {}", e),
-                            ).with_metadata(serde_json::json!({"error": e.to_string()}));
-                            let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                            )
+                            .with_metadata(serde_json::json!({"error": e.to_string()}));
+                            let _ = log_manager
+                                .append(&space_id_str_clone, &server_id_clone, log)
+                                .await;
                         }
-                        
+
                         let _ = completion_tx.send(OAuthCompleteEvent {
                             space_id,
                             server_id: server_id_clone.clone(),
@@ -1314,38 +1432,41 @@ impl OutboundOAuthManager {
                         });
                     } else {
                         info!("[OAuth] Token exchange completed for {}", server_id_clone);
-                        
+
                         if let Some(log_manager) = &log_manager_clone {
                             let log = ServerLog::new(
                                 LogLevel::Info,
                                 LogSource::OAuth,
                                 "Token exchange completed successfully".to_string(),
                             );
-                            let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                            let _ = log_manager
+                                .append(&space_id_str_clone, &server_id_clone, log)
+                                .await;
                         }
 
                         // Save registration if new (includes redirect_uri, port change detection, AND metadata)
                         if is_new_registration {
                             if let Ok((client_id, _)) = oauth_state.get_credentials().await {
                                 // Use with_metadata if we have discovered metadata, otherwise use new
-                                let registration = if let Some(ref metadata) = discovered_metadata_clone {
-                                    mcpmux_core::OutboundOAuthRegistration::with_metadata(
-                                        space_id,
-                                        &server_id_clone,
-                                        &server_url_clone,
-                                        &client_id,
-                                        &redirect_uri_clone,
-                                        metadata.clone(),
-                                    )
-                                } else {
-                                    mcpmux_core::OutboundOAuthRegistration::new(
-                                        space_id,
-                                        &server_id_clone,
-                                        &server_url_clone,
-                                        &client_id,
-                                        &redirect_uri_clone,
-                                    )
-                                };
+                                let registration =
+                                    if let Some(ref metadata) = discovered_metadata_clone {
+                                        mcpmux_core::OutboundOAuthRegistration::with_metadata(
+                                            space_id,
+                                            &server_id_clone,
+                                            &server_url_clone,
+                                            &client_id,
+                                            &redirect_uri_clone,
+                                            metadata.clone(),
+                                        )
+                                    } else {
+                                        mcpmux_core::OutboundOAuthRegistration::new(
+                                            space_id,
+                                            &server_id_clone,
+                                            &server_url_clone,
+                                            &client_id,
+                                            &redirect_uri_clone,
+                                        )
+                                    };
                                 if let Err(e) = backend_oauth_repo_clone.save(&registration).await {
                                     error!("[OAuth] Failed to save registration: {}", e);
                                     if let Some(log_manager) = &log_manager_clone {
@@ -1353,8 +1474,11 @@ impl OutboundOAuthManager {
                                             LogLevel::Error,
                                             LogSource::OAuth,
                                             format!("Failed to save DCR registration: {}", e),
-                                        ).with_metadata(serde_json::json!({"error": e.to_string()}));
-                                        let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                                        )
+                                        .with_metadata(serde_json::json!({"error": e.to_string()}));
+                                        let _ = log_manager
+                                            .append(&space_id_str_clone, &server_id_clone, log)
+                                            .await;
                                     }
                                 } else {
                                     info!("[OAuth] Saved new registration for {}/{} with redirect_uri={}", 
@@ -1363,32 +1487,43 @@ impl OutboundOAuthManager {
                                         let log = ServerLog::new(
                                             LogLevel::Info,
                                             LogSource::OAuth,
-                                            format!("Saved DCR registration (client_id: {})", client_id),
-                                        ).with_metadata(serde_json::json!({
+                                            format!(
+                                                "Saved DCR registration (client_id: {})",
+                                                client_id
+                                            ),
+                                        )
+                                        .with_metadata(serde_json::json!({
                                             "client_id": client_id,
                                             "redirect_uri": redirect_uri_clone
                                         }));
-                                        let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                                        let _ = log_manager
+                                            .append(&space_id_str_clone, &server_id_clone, log)
+                                            .await;
                                     }
                                 }
                             }
                         }
 
                         // Mark as completed
-                        completed.insert((space_id, server_id_clone.clone()), std::time::Instant::now());
-                        
+                        completed.insert(
+                            (space_id, server_id_clone.clone()),
+                            std::time::Instant::now(),
+                        );
+
                         // Emit success event
                         info!("[OAuth] Emitting success event for {}", server_id_clone);
-                        
+
                         if let Some(log_manager) = &log_manager_clone {
                             let log = ServerLog::new(
                                 LogLevel::Info,
                                 LogSource::OAuth,
                                 "OAuth flow completed successfully - ready to connect".to_string(),
                             );
-                            let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                            let _ = log_manager
+                                .append(&space_id_str_clone, &server_id_clone, log)
+                                .await;
                         }
-                        
+
                         let _ = completion_tx.send(OAuthCompleteEvent {
                             space_id,
                             server_id: server_id_clone.clone(),
@@ -1400,16 +1535,18 @@ impl OutboundOAuthManager {
                 Ok(Err(_)) => {
                     // Sender dropped = flow was cancelled
                     info!("[OAuth] Flow cancelled for {}", server_id_clone);
-                    
+
                     if let Some(log_manager) = &log_manager_clone {
                         let log = ServerLog::new(
                             LogLevel::Warn,
                             LogSource::OAuth,
                             "OAuth flow cancelled by user".to_string(),
                         );
-                        let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                        let _ = log_manager
+                            .append(&space_id_str_clone, &server_id_clone, log)
+                            .await;
                     }
-                    
+
                     let _ = completion_tx.send(OAuthCompleteEvent {
                         space_id,
                         server_id: server_id_clone.clone(),
@@ -1419,17 +1556,23 @@ impl OutboundOAuthManager {
                 }
                 Err(_) => {
                     // Timeout
-                    error!("[OAuth] Timeout waiting for callback for {}", server_id_clone);
-                    
+                    error!(
+                        "[OAuth] Timeout waiting for callback for {}",
+                        server_id_clone
+                    );
+
                     if let Some(log_manager) = &log_manager_clone {
                         let log = ServerLog::new(
                             LogLevel::Error,
                             LogSource::OAuth,
                             format!("OAuth callback timeout after {}s", timeout.as_secs()),
-                        ).with_metadata(serde_json::json!({"timeout_seconds": timeout.as_secs()}));
-                        let _ = log_manager.append(&space_id_str_clone, &server_id_clone, log).await;
+                        )
+                        .with_metadata(serde_json::json!({"timeout_seconds": timeout.as_secs()}));
+                        let _ = log_manager
+                            .append(&space_id_str_clone, &server_id_clone, log)
+                            .await;
                     }
-                    
+
                     let _ = completion_tx.send(OAuthCompleteEvent {
                         space_id,
                         server_id: server_id_clone.clone(),
@@ -1438,7 +1581,7 @@ impl OutboundOAuthManager {
                     });
                 }
             }
-            
+
             // Cleanup
             oauth_states.remove(&state_clone);
             active_by_server.remove(&(space_id_for_cleanup, server_id_for_cleanup));
@@ -1446,14 +1589,14 @@ impl OutboundOAuthManager {
             info!("[OAuth] Callback handler completed for {}", server_id_clone);
         });
 
-        Ok(OAuthInitResult::Initiated {
-            auth_url,
-        })
+        Ok(OAuthInitResult::Initiated { auth_url })
     }
-    
+
     /// Extract state parameter from auth URL
     fn extract_state_from_url(url: &str) -> Option<String> {
-        url::Url::parse(url).ok()?.query_pairs()
+        url::Url::parse(url)
+            .ok()?
+            .query_pairs()
             .find(|(k, _)| k == "state")
             .map(|(_, v)| v.to_string())
     }
@@ -1466,13 +1609,10 @@ impl OutboundOAuthManager {
     ) -> Option<AuthorizationManager> {
         // Lookup state by space+server
         let key = (space_id, server_id.to_string());
-        let state_key = self.active_by_server.get(&key)
-            .map(|r| r.value().clone())?;
-        
+        let state_key = self.active_by_server.get(&key).map(|r| r.value().clone())?;
+
         if let Some((_, state_arc)) = self.oauth_states.remove(&state_key) {
-            let state = Arc::try_unwrap(state_arc)
-                .ok()?
-                .into_inner();
+            let state = Arc::try_unwrap(state_arc).ok()?.into_inner();
             state.into_authorization_manager()
         } else {
             None

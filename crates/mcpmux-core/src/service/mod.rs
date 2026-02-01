@@ -13,13 +13,13 @@ mod server_discovery;
 mod server_log_manager;
 mod space_service;
 
-pub use app_settings_service::{AppSettingsService, keys};
+pub use app_settings_service::{keys, AppSettingsService};
 pub use cimd_fetcher::*;
 pub use client_service::*;
 pub use config_export::*;
 pub use gateway_port_service::{
-    GatewayPortService, PortAllocationError, PortResolution,
-    DEFAULT_GATEWAY_PORT, is_port_available, allocate_dynamic_port,
+    allocate_dynamic_port, is_port_available, GatewayPortService, PortAllocationError,
+    PortResolution, DEFAULT_GATEWAY_PORT,
 };
 pub use permission_service::*;
 pub use registry_api_client::*;

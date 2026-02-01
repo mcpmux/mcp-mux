@@ -9,15 +9,20 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use tests::mocks::{MockFeatureSetRepository, MockServerFeatureRepository};
 use mcpmux_core::{
     FeatureSet, FeatureSetMember, FeatureSetRepository, FeatureType, MemberMode, MemberType,
     ServerFeature, ServerFeatureRepository,
 };
 use mcpmux_gateway::{FeatureService, PrefixCacheService};
+use tests::mocks::{MockFeatureSetRepository, MockServerFeatureRepository};
 
 // Helper functions
-fn create_feature(space_id: &str, server_id: &str, name: &str, feature_type: FeatureType) -> ServerFeature {
+fn create_feature(
+    space_id: &str,
+    server_id: &str,
+    name: &str,
+    feature_type: FeatureType,
+) -> ServerFeature {
     let mut feature = match feature_type {
         FeatureType::Tool => ServerFeature::tool(space_id, server_id, name),
         FeatureType::Prompt => ServerFeature::prompt(space_id, server_id, name),
@@ -59,7 +64,9 @@ impl TestContext {
     }
 
     async fn register_server(&self, server_id: &str, alias: Option<&str>) {
-        self.prefix_cache.assign_prefix_runtime(&self.space_id, server_id, alias).await;
+        self.prefix_cache
+            .assign_prefix_runtime(&self.space_id, server_id, alias)
+            .await;
     }
 
     async fn add_feature(&self, server_id: &str, name: &str, feature_type: FeatureType) -> Uuid {
@@ -83,24 +90,27 @@ impl TestContext {
 #[tokio::test]
 async fn test_list_tools_with_all_grant() {
     let ctx = TestContext::new();
-    
+
     // Setup: Register server and add tools
     ctx.register_server("files", Some("fs")).await;
-    ctx.add_feature("files", "read_file", FeatureType::Tool).await;
-    ctx.add_feature("files", "write_file", FeatureType::Tool).await;
+    ctx.add_feature("files", "read_file", FeatureType::Tool)
+        .await;
+    ctx.add_feature("files", "write_file", FeatureType::Tool)
+        .await;
 
     // Create "All" grant
     let all_fs = FeatureSet::new_all(&ctx.space_id);
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     // Simulate tools/list with grant
-    let tools = ctx.service
+    let tools = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();
 
     assert_eq!(tools.len(), 2);
-    
+
     // Tools should have qualified names
     let tool_names: Vec<String> = tools.iter().map(|t| t.qualified_name()).collect();
     assert!(tool_names.iter().any(|n| n == "fs_read_file"));
@@ -110,10 +120,13 @@ async fn test_list_tools_with_all_grant() {
 #[tokio::test]
 async fn test_list_tools_with_restricted_grant() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("files", Some("fs")).await;
-    let tool_a_id = ctx.add_feature("files", "safe_read", FeatureType::Tool).await;
-    ctx.add_feature("files", "dangerous_delete", FeatureType::Tool).await;
+    let tool_a_id = ctx
+        .add_feature("files", "safe_read", FeatureType::Tool)
+        .await;
+    ctx.add_feature("files", "dangerous_delete", FeatureType::Tool)
+        .await;
 
     // Create custom grant with only safe_read
     let mut custom_fs = FeatureSet::new_custom("Safe Tools", &ctx.space_id);
@@ -126,7 +139,8 @@ async fn test_list_tools_with_restricted_grant() {
     });
     let custom_fs_id = ctx.add_feature_set(custom_fs).await;
 
-    let tools = ctx.service
+    let tools = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[custom_fs_id])
         .await
         .unwrap();
@@ -138,12 +152,14 @@ async fn test_list_tools_with_restricted_grant() {
 #[tokio::test]
 async fn test_call_tool_routing() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("math-server", Some("math")).await;
-    ctx.add_feature("math-server", "calculate", FeatureType::Tool).await;
+    ctx.add_feature("math-server", "calculate", FeatureType::Tool)
+        .await;
 
     // Verify routing resolves correctly
-    let result = ctx.service
+    let result = ctx
+        .service
         .find_server_for_qualified_tool(&ctx.space_id, "math_calculate")
         .await
         .unwrap();
@@ -157,15 +173,17 @@ async fn test_call_tool_routing() {
 #[tokio::test]
 async fn test_call_tool_unauthorized() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("admin-server", Some("admin")).await;
-    ctx.add_feature("admin-server", "delete_all", FeatureType::Tool).await;
+    ctx.add_feature("admin-server", "delete_all", FeatureType::Tool)
+        .await;
 
     // No grants - empty feature set
     let empty_fs = FeatureSet::new_custom("Empty", &ctx.space_id);
     let empty_fs_id = ctx.add_feature_set(empty_fs).await;
 
-    let tools = ctx.service
+    let tools = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[empty_fs_id])
         .await
         .unwrap();
@@ -180,15 +198,18 @@ async fn test_call_tool_unauthorized() {
 #[tokio::test]
 async fn test_list_resources_with_grant() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("files", Some("fs")).await;
-    ctx.add_feature("files", "file:///docs/readme.md", FeatureType::Resource).await;
-    ctx.add_feature("files", "file:///docs/config.json", FeatureType::Resource).await;
+    ctx.add_feature("files", "file:///docs/readme.md", FeatureType::Resource)
+        .await;
+    ctx.add_feature("files", "file:///docs/config.json", FeatureType::Resource)
+        .await;
 
     let all_fs = FeatureSet::new_all(&ctx.space_id);
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
-    let resources = ctx.service
+    let resources = ctx
+        .service
         .get_resources_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();
@@ -199,12 +220,14 @@ async fn test_list_resources_with_grant() {
 #[tokio::test]
 async fn test_read_resource_routing() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("docs-server", Some("docs")).await;
-    ctx.add_feature("docs-server", "docs://api-reference", FeatureType::Resource).await;
+    ctx.add_feature("docs-server", "docs://api-reference", FeatureType::Resource)
+        .await;
 
     // Resolve resource URI to server
-    let result = ctx.service
+    let result = ctx
+        .service
         .find_server_for_resource(&ctx.space_id, "docs://api-reference")
         .await
         .unwrap();
@@ -216,20 +239,29 @@ async fn test_read_resource_routing() {
 #[tokio::test]
 async fn test_resource_custom_uri_scheme() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("domains", Some("dom")).await;
-    ctx.add_feature("domains", "instant-domains://tld-categories", FeatureType::Resource).await;
+    ctx.add_feature(
+        "domains",
+        "instant-domains://tld-categories",
+        FeatureType::Resource,
+    )
+    .await;
 
     let all_fs = FeatureSet::new_all(&ctx.space_id);
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
-    let resources = ctx.service
+    let resources = ctx
+        .service
         .get_resources_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();
 
     assert_eq!(resources.len(), 1);
-    assert_eq!(resources[0].feature_name, "instant-domains://tld-categories");
+    assert_eq!(
+        resources[0].feature_name,
+        "instant-domains://tld-categories"
+    );
 }
 
 // ============================================================================
@@ -239,21 +271,24 @@ async fn test_resource_custom_uri_scheme() {
 #[tokio::test]
 async fn test_list_prompts_with_grant() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("prompts-server", Some("p")).await;
-    ctx.add_feature("prompts-server", "summarize", FeatureType::Prompt).await;
-    ctx.add_feature("prompts-server", "explain_code", FeatureType::Prompt).await;
+    ctx.add_feature("prompts-server", "summarize", FeatureType::Prompt)
+        .await;
+    ctx.add_feature("prompts-server", "explain_code", FeatureType::Prompt)
+        .await;
 
     let all_fs = FeatureSet::new_all(&ctx.space_id);
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
-    let prompts = ctx.service
+    let prompts = ctx
+        .service
         .get_prompts_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();
 
     assert_eq!(prompts.len(), 2);
-    
+
     let prompt_names: Vec<String> = prompts.iter().map(|p| p.qualified_name()).collect();
     assert!(prompt_names.iter().any(|n| n == "p_summarize"));
     assert!(prompt_names.iter().any(|n| n == "p_explain_code"));
@@ -262,11 +297,13 @@ async fn test_list_prompts_with_grant() {
 #[tokio::test]
 async fn test_get_prompt_routing() {
     let ctx = TestContext::new();
-    
-    ctx.register_server("prompts", Some("pr")).await;
-    ctx.add_feature("prompts", "code_review", FeatureType::Prompt).await;
 
-    let result = ctx.service
+    ctx.register_server("prompts", Some("pr")).await;
+    ctx.add_feature("prompts", "code_review", FeatureType::Prompt)
+        .await;
+
+    let result = ctx
+        .service
         .find_server_for_qualified_prompt(&ctx.space_id, "pr_code_review")
         .await
         .unwrap();
@@ -284,17 +321,21 @@ async fn test_get_prompt_routing() {
 #[tokio::test]
 async fn test_server_provides_multiple_feature_types() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("full-server", Some("full")).await;
-    ctx.add_feature("full-server", "my_tool", FeatureType::Tool).await;
-    ctx.add_feature("full-server", "my_prompt", FeatureType::Prompt).await;
-    ctx.add_feature("full-server", "my://resource", FeatureType::Resource).await;
+    ctx.add_feature("full-server", "my_tool", FeatureType::Tool)
+        .await;
+    ctx.add_feature("full-server", "my_prompt", FeatureType::Prompt)
+        .await;
+    ctx.add_feature("full-server", "my://resource", FeatureType::Resource)
+        .await;
 
     let all_fs = FeatureSet::new_all(&ctx.space_id);
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     // List all
-    let all_features = ctx.service
+    let all_features = ctx
+        .service
         .resolve_feature_sets(&ctx.space_id, &[all_fs_id.clone()])
         .await
         .unwrap();
@@ -302,15 +343,18 @@ async fn test_server_provides_multiple_feature_types() {
     assert_eq!(all_features.len(), 3);
 
     // Filter by type
-    let tools = ctx.service
+    let tools = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[all_fs_id.clone()])
         .await
         .unwrap();
-    let prompts = ctx.service
+    let prompts = ctx
+        .service
         .get_prompts_for_grants(&ctx.space_id, &[all_fs_id.clone()])
         .await
         .unwrap();
-    let resources = ctx.service
+    let resources = ctx
+        .service
         .get_resources_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();
@@ -327,27 +371,31 @@ async fn test_server_provides_multiple_feature_types() {
 #[tokio::test]
 async fn test_aggregate_tools_from_multiple_servers() {
     let ctx = TestContext::new();
-    
+
     // Setup multiple servers
     ctx.register_server("server-a", Some("a")).await;
     ctx.register_server("server-b", Some("b")).await;
     ctx.register_server("server-c", Some("c")).await;
 
-    ctx.add_feature("server-a", "tool_a", FeatureType::Tool).await;
-    ctx.add_feature("server-b", "tool_b", FeatureType::Tool).await;
-    ctx.add_feature("server-c", "tool_c", FeatureType::Tool).await;
+    ctx.add_feature("server-a", "tool_a", FeatureType::Tool)
+        .await;
+    ctx.add_feature("server-b", "tool_b", FeatureType::Tool)
+        .await;
+    ctx.add_feature("server-c", "tool_c", FeatureType::Tool)
+        .await;
 
     // Grant access to all
     let all_fs = FeatureSet::new_all(&ctx.space_id);
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
-    let tools = ctx.service
+    let tools = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();
 
     assert_eq!(tools.len(), 3);
-    
+
     let qualified_names: Vec<String> = tools.iter().map(|t| t.qualified_name()).collect();
     assert!(qualified_names.contains(&"a_tool_a".to_string()));
     assert!(qualified_names.contains(&"b_tool_b".to_string()));
@@ -357,18 +405,21 @@ async fn test_aggregate_tools_from_multiple_servers() {
 #[tokio::test]
 async fn test_partial_server_grant() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("server-a", Some("a")).await;
     ctx.register_server("server-b", Some("b")).await;
 
-    ctx.add_feature("server-a", "tool_a", FeatureType::Tool).await;
-    ctx.add_feature("server-b", "tool_b", FeatureType::Tool).await;
+    ctx.add_feature("server-a", "tool_a", FeatureType::Tool)
+        .await;
+    ctx.add_feature("server-b", "tool_b", FeatureType::Tool)
+        .await;
 
     // Create ServerAll grant for server-a only
     let server_all_a = FeatureSet::new_server_all(&ctx.space_id, "server-a", "Server A");
     let server_all_a_id = ctx.add_feature_set(server_all_a).await;
 
-    let tools = ctx.service
+    let tools = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[server_all_a_id])
         .await
         .unwrap();
@@ -394,7 +445,8 @@ async fn test_features_dont_leak_between_spaces() {
     // Add features to different spaces
     let mut work_tool = ServerFeature::tool(&space_work, "work-server", "work_tool");
     work_tool.is_available = true;
-    let mut personal_tool = ServerFeature::tool(&space_personal, "personal-server", "personal_tool");
+    let mut personal_tool =
+        ServerFeature::tool(&space_personal, "personal-server", "personal_tool");
     personal_tool.is_available = true;
 
     feature_repo.upsert(&work_tool).await.unwrap();
@@ -433,8 +485,12 @@ async fn test_routing_is_space_scoped() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Register same alias in different spaces pointing to different servers
-    prefix_cache.assign_prefix_runtime(&space_a, "server-in-a", Some("common")).await;
-    prefix_cache.assign_prefix_runtime(&space_b, "server-in-b", Some("common")).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_a, "server-in-a", Some("common"))
+        .await;
+    prefix_cache
+        .assign_prefix_runtime(&space_b, "server-in-b", Some("common"))
+        .await;
 
     // Add features
     let mut feature_a = ServerFeature::tool(&space_a, "server-in-a", "my_tool");
@@ -477,12 +533,13 @@ async fn test_routing_is_space_scoped() {
 #[tokio::test]
 async fn test_unavailable_features_filtered_out() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("server", Some("s")).await;
-    
+
     // Add available tool
-    ctx.add_feature("server", "available_tool", FeatureType::Tool).await;
-    
+    ctx.add_feature("server", "available_tool", FeatureType::Tool)
+        .await;
+
     // Add unavailable tool
     let mut unavailable = ServerFeature::tool(&ctx.space_id, "server", "unavailable_tool");
     unavailable.is_available = false;
@@ -491,7 +548,8 @@ async fn test_unavailable_features_filtered_out() {
     let all_fs = FeatureSet::new_all(&ctx.space_id);
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
-    let tools = ctx.service
+    let tools = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();
@@ -503,7 +561,7 @@ async fn test_unavailable_features_filtered_out() {
 #[tokio::test]
 async fn test_server_disconnect_marks_features_unavailable() {
     let ctx = TestContext::new();
-    
+
     ctx.register_server("server", Some("s")).await;
     ctx.add_feature("server", "tool_1", FeatureType::Tool).await;
     ctx.add_feature("server", "tool_2", FeatureType::Tool).await;
@@ -512,17 +570,22 @@ async fn test_server_disconnect_marks_features_unavailable() {
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     // Initially available
-    let tools_before = ctx.service
+    let tools_before = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[all_fs_id.clone()])
         .await
         .unwrap();
     assert_eq!(tools_before.len(), 2);
 
     // Simulate server disconnect
-    ctx.feature_repo.mark_unavailable(&ctx.space_id, "server").await.unwrap();
+    ctx.feature_repo
+        .mark_unavailable(&ctx.space_id, "server")
+        .await
+        .unwrap();
 
     // After disconnect
-    let tools_after = ctx.service
+    let tools_after = ctx
+        .service
         .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
         .await
         .unwrap();

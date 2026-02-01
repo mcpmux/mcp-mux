@@ -48,7 +48,6 @@ impl FeatureSetType {
     }
 }
 
-
 /// Mode for including or excluding a member
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,7 +74,6 @@ impl MemberMode {
         }
     }
 }
-
 
 /// Type of member in a featureset
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,7 +229,9 @@ impl FeatureSet {
         Self {
             id: format!("fs_all_{}", space_id),
             name: "All Features".to_string(),
-            description: Some("All features from all connected MCP servers in this space".to_string()),
+            description: Some(
+                "All features from all connected MCP servers in this space".to_string(),
+            ),
             icon: Some("🌐".to_string()),
             space_id: Some(space_id),
             feature_set_type: FeatureSetType::All,
@@ -251,7 +251,9 @@ impl FeatureSet {
         Self {
             id: format!("fs_default_{}", space_id),
             name: "Default".to_string(),
-            description: Some("Features automatically granted to all connected clients in this space".to_string()),
+            description: Some(
+                "Features automatically granted to all connected clients in this space".to_string(),
+            ),
             icon: Some("⭐".to_string()),
             space_id: Some(space_id),
             feature_set_type: FeatureSetType::Default,
@@ -368,9 +370,18 @@ mod tests {
     #[test]
     fn test_feature_set_type_parse() {
         assert_eq!(FeatureSetType::parse("all"), Some(FeatureSetType::All));
-        assert_eq!(FeatureSetType::parse("default"), Some(FeatureSetType::Default));
-        assert_eq!(FeatureSetType::parse("server-all"), Some(FeatureSetType::ServerAll));
-        assert_eq!(FeatureSetType::parse("custom"), Some(FeatureSetType::Custom));
+        assert_eq!(
+            FeatureSetType::parse("default"),
+            Some(FeatureSetType::Default)
+        );
+        assert_eq!(
+            FeatureSetType::parse("server-all"),
+            Some(FeatureSetType::ServerAll)
+        );
+        assert_eq!(
+            FeatureSetType::parse("custom"),
+            Some(FeatureSetType::Custom)
+        );
         assert_eq!(FeatureSetType::parse("invalid"), None);
         assert_eq!(FeatureSetType::parse(""), None);
     }
@@ -414,7 +425,10 @@ mod tests {
     // MemberType parse tests
     #[test]
     fn test_member_type_parse() {
-        assert_eq!(MemberType::parse("feature_set"), Some(MemberType::FeatureSet));
+        assert_eq!(
+            MemberType::parse("feature_set"),
+            Some(MemberType::FeatureSet)
+        );
         assert_eq!(MemberType::parse("feature"), Some(MemberType::Feature));
         assert_eq!(MemberType::parse("invalid"), None);
     }
@@ -447,15 +461,13 @@ mod tests {
     // Builder pattern tests
     #[test]
     fn test_featureset_with_description() {
-        let fs = FeatureSet::new_custom("Test", "space")
-            .with_description("A test description");
+        let fs = FeatureSet::new_custom("Test", "space").with_description("A test description");
         assert_eq!(fs.description, Some("A test description".to_string()));
     }
 
     #[test]
     fn test_featureset_with_icon() {
-        let fs = FeatureSet::new_custom("Test", "space")
-            .with_icon("🔧");
+        let fs = FeatureSet::new_custom("Test", "space").with_icon("🔧");
         assert_eq!(fs.icon, Some("🔧".to_string()));
     }
 
@@ -464,7 +476,7 @@ mod tests {
         let fs = FeatureSet::new_custom("Test", "space")
             .with_icon("🔧")
             .with_description("Tools for testing");
-        
+
         assert_eq!(fs.name, "Test");
         assert_eq!(fs.icon, Some("🔧".to_string()));
         assert_eq!(fs.description, Some("Tools for testing".to_string()));

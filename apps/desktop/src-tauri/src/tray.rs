@@ -81,7 +81,11 @@ fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     // Build main menu
     let menu = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id("status", "McpMux 🟢").enabled(false).build(app)?)
+        .item(
+            &MenuItemBuilder::with_id("status", "McpMux 🟢")
+                .enabled(false)
+                .build(app)?,
+        )
         .separator()
         .item(&space_submenu)
         .separator()
@@ -191,14 +195,19 @@ pub async fn update_tray_spaces<R: Runtime>(
 
         for space in spaces {
             let icon = space.icon.clone().unwrap_or_else(|| "🌐".to_string());
-            let is_active = active_space.as_ref().map(|a| a.id == space.id).unwrap_or(false);
+            let is_active = active_space
+                .as_ref()
+                .map(|a| a.id == space.id)
+                .unwrap_or(false);
             let check = if is_active { "✓ " } else { "  " };
             let label = format!("{}{} {}", check, icon, space.name);
             let id = format!("space_{}", space.id);
             space_menu = space_menu.text(id, label);
         }
 
-        space_menu = space_menu.separator().text("create_space", "➕ Create Space...");
+        space_menu = space_menu
+            .separator()
+            .text("create_space", "➕ Create Space...");
 
         let space_submenu = space_menu.build()?;
 

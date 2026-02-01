@@ -68,9 +68,7 @@ impl OAuthToken {
     /// Check if the token will expire soon (within buffer time)
     pub fn expires_soon(&self, buffer_seconds: i64) -> bool {
         match self.expires_at {
-            Some(expires_at) => {
-                Utc::now() + Duration::seconds(buffer_seconds) >= expires_at
-            }
+            Some(expires_at) => Utc::now() + Duration::seconds(buffer_seconds) >= expires_at,
             None => false,
         }
     }

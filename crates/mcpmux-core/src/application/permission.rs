@@ -2,8 +2,8 @@
 //!
 //! Manages feature sets and grants with automatic event emission.
 
-use std::sync::Arc;
 use anyhow::{anyhow, Result};
+use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
@@ -61,7 +61,7 @@ impl PermissionAppService {
         icon: Option<String>,
     ) -> Result<FeatureSet> {
         let mut feature_set = FeatureSet::new_custom(name, space_id);
-        
+
         if let Some(desc) = description {
             feature_set = feature_set.with_description(desc);
         }
@@ -79,8 +79,8 @@ impl PermissionAppService {
         );
 
         // Parse space_id to UUID
-        let space_uuid = Uuid::parse_str(space_id)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_id).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         // Emit event
         self.event_sender.emit(DomainEvent::FeatureSetCreated {
@@ -103,7 +103,10 @@ impl PermissionAppService {
         description: Option<String>,
         icon: Option<String>,
     ) -> Result<FeatureSet> {
-        let mut feature_set = self.feature_set_repo.get(id).await?
+        let mut feature_set = self
+            .feature_set_repo
+            .get(id)
+            .await?
             .ok_or_else(|| anyhow!("Feature set not found"))?;
 
         if let Some(name) = name {
@@ -120,10 +123,12 @@ impl PermissionAppService {
         self.feature_set_repo.update(&feature_set).await?;
 
         // Parse space_id to UUID (feature_set.space_id is Option<String>)
-        let space_uuid = feature_set.space_id.as_ref()
+        let space_uuid = feature_set
+            .space_id
+            .as_ref()
             .ok_or_else(|| anyhow!("Feature set has no space_id"))?;
-        let space_uuid = Uuid::parse_str(space_uuid)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_uuid).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         info!(
             feature_set_id = %feature_set.id,
@@ -144,7 +149,10 @@ impl PermissionAppService {
     ///
     /// Emits: `FeatureSetDeleted`
     pub async fn delete_feature_set(&self, id: &str) -> Result<()> {
-        let feature_set = self.feature_set_repo.get(id).await?
+        let feature_set = self
+            .feature_set_repo
+            .get(id)
+            .await?
             .ok_or_else(|| anyhow!("Feature set not found"))?;
 
         // Don't allow deleting builtin sets
@@ -153,10 +161,12 @@ impl PermissionAppService {
         }
 
         // Parse space_id to UUID
-        let space_uuid = feature_set.space_id.as_ref()
+        let space_uuid = feature_set
+            .space_id
+            .as_ref()
             .ok_or_else(|| anyhow!("Feature set has no space_id"))?;
-        let space_uuid = Uuid::parse_str(space_uuid)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_uuid).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         self.feature_set_repo.delete(id).await?;
 
@@ -187,16 +197,23 @@ impl PermissionAppService {
         feature_id: &str,
         mode: MemberMode,
     ) -> Result<()> {
-        let feature_set = self.feature_set_repo.get(feature_set_id).await?
+        let feature_set = self
+            .feature_set_repo
+            .get(feature_set_id)
+            .await?
             .ok_or_else(|| anyhow!("Feature set not found"))?;
 
-        self.feature_set_repo.add_feature_member(feature_set_id, feature_id, mode).await?;
+        self.feature_set_repo
+            .add_feature_member(feature_set_id, feature_id, mode)
+            .await?;
 
         // Parse space_id to UUID
-        let space_uuid = feature_set.space_id.as_ref()
+        let space_uuid = feature_set
+            .space_id
+            .as_ref()
             .ok_or_else(|| anyhow!("Feature set has no space_id"))?;
-        let space_uuid = Uuid::parse_str(space_uuid)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_uuid).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         info!(
             feature_set_id = feature_set_id,
@@ -205,12 +222,13 @@ impl PermissionAppService {
         );
 
         // Emit event
-        self.event_sender.emit(DomainEvent::FeatureSetMembersChanged {
-            space_id: space_uuid,
-            feature_set_id: feature_set_id.to_string(),
-            added_count: 1,
-            removed_count: 0,
-        });
+        self.event_sender
+            .emit(DomainEvent::FeatureSetMembersChanged {
+                space_id: space_uuid,
+                feature_set_id: feature_set_id.to_string(),
+                added_count: 1,
+                removed_count: 0,
+            });
 
         Ok(())
     }
@@ -223,16 +241,23 @@ impl PermissionAppService {
         feature_set_id: &str,
         feature_id: &str,
     ) -> Result<()> {
-        let feature_set = self.feature_set_repo.get(feature_set_id).await?
+        let feature_set = self
+            .feature_set_repo
+            .get(feature_set_id)
+            .await?
             .ok_or_else(|| anyhow!("Feature set not found"))?;
 
-        self.feature_set_repo.remove_feature_member(feature_set_id, feature_id).await?;
+        self.feature_set_repo
+            .remove_feature_member(feature_set_id, feature_id)
+            .await?;
 
         // Parse space_id to UUID
-        let space_uuid = feature_set.space_id.as_ref()
+        let space_uuid = feature_set
+            .space_id
+            .as_ref()
             .ok_or_else(|| anyhow!("Feature set has no space_id"))?;
-        let space_uuid = Uuid::parse_str(space_uuid)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_uuid).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         info!(
             feature_set_id = feature_set_id,
@@ -241,19 +266,22 @@ impl PermissionAppService {
         );
 
         // Emit event
-        self.event_sender.emit(DomainEvent::FeatureSetMembersChanged {
-            space_id: space_uuid,
-            feature_set_id: feature_set_id.to_string(),
-            added_count: 0,
-            removed_count: 1,
-        });
+        self.event_sender
+            .emit(DomainEvent::FeatureSetMembersChanged {
+                space_id: space_uuid,
+                feature_set_id: feature_set_id.to_string(),
+                added_count: 0,
+                removed_count: 1,
+            });
 
         Ok(())
     }
 
     /// Get members of a feature set
     pub async fn get_feature_members(&self, feature_set_id: &str) -> Result<Vec<FeatureSetMember>> {
-        self.feature_set_repo.get_feature_members(feature_set_id).await
+        self.feature_set_repo
+            .get_feature_members(feature_set_id)
+            .await
     }
 
     // ========================================================================
@@ -269,22 +297,30 @@ impl PermissionAppService {
         space_id: &str,
         feature_set_id: &str,
     ) -> Result<()> {
-        let client_repo = self.client_repo.as_ref()
+        let client_repo = self
+            .client_repo
+            .as_ref()
             .ok_or_else(|| anyhow!("Client repository not configured"))?;
 
         // Verify client exists
-        client_repo.get(&client_id).await?
+        client_repo
+            .get(&client_id)
+            .await?
             .ok_or_else(|| anyhow!("Client not found"))?;
 
         // Verify feature set exists
-        self.feature_set_repo.get(feature_set_id).await?
+        self.feature_set_repo
+            .get(feature_set_id)
+            .await?
             .ok_or_else(|| anyhow!("Feature set not found"))?;
 
-        client_repo.grant_feature_set(&client_id, space_id, feature_set_id).await?;
+        client_repo
+            .grant_feature_set(&client_id, space_id, feature_set_id)
+            .await?;
 
         // Parse space_id to UUID
-        let space_uuid = Uuid::parse_str(space_id)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_id).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         info!(
             client_id = %client_id,
@@ -312,14 +348,18 @@ impl PermissionAppService {
         space_id: &str,
         feature_set_id: &str,
     ) -> Result<()> {
-        let client_repo = self.client_repo.as_ref()
+        let client_repo = self
+            .client_repo
+            .as_ref()
             .ok_or_else(|| anyhow!("Client repository not configured"))?;
 
-        client_repo.revoke_feature_set(&client_id, space_id, feature_set_id).await?;
+        client_repo
+            .revoke_feature_set(&client_id, space_id, feature_set_id)
+            .await?;
 
         // Parse space_id to UUID
-        let space_uuid = Uuid::parse_str(space_id)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_id).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         info!(
             client_id = %client_id,
@@ -339,8 +379,14 @@ impl PermissionAppService {
     }
 
     /// Get all grants for a client in a space
-    pub async fn get_grants_for_space(&self, client_id: Uuid, space_id: &str) -> Result<Vec<String>> {
-        let client_repo = self.client_repo.as_ref()
+    pub async fn get_grants_for_space(
+        &self,
+        client_id: Uuid,
+        space_id: &str,
+    ) -> Result<Vec<String>> {
+        let client_repo = self
+            .client_repo
+            .as_ref()
             .ok_or_else(|| anyhow!("Client repository not configured"))?;
 
         client_repo.get_grants_for_space(&client_id, space_id).await
@@ -355,14 +401,18 @@ impl PermissionAppService {
         space_id: &str,
         feature_set_ids: Vec<String>,
     ) -> Result<()> {
-        let client_repo = self.client_repo.as_ref()
+        let client_repo = self
+            .client_repo
+            .as_ref()
             .ok_or_else(|| anyhow!("Client repository not configured"))?;
 
-        client_repo.set_grants_for_space(&client_id, space_id, &feature_set_ids).await?;
+        client_repo
+            .set_grants_for_space(&client_id, space_id, &feature_set_ids)
+            .await?;
 
         // Parse space_id to UUID
-        let space_uuid = Uuid::parse_str(space_id)
-            .map_err(|e| anyhow!("Invalid space ID: {}", e))?;
+        let space_uuid =
+            Uuid::parse_str(space_id).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
 
         info!(
             client_id = %client_id,
@@ -381,4 +431,3 @@ impl PermissionAppService {
         Ok(())
     }
 }
-

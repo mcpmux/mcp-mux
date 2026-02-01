@@ -18,16 +18,14 @@ mod server_log;
 mod space;
 
 // Export event types first (ConnectionStatus is defined here)
-pub use event::{
-    ConnectionStatus, DiscoveredCapabilities, DomainEvent, DomainEventEnvelope,
-};
+pub use event::{ConnectionStatus, DiscoveredCapabilities, DomainEvent, DomainEventEnvelope};
 
 // Export entities (installed_server re-exports ConnectionStatus from event)
 pub use client::*;
 pub use config::*;
 pub use credential::*;
 pub use feature_set::*;
-pub use installed_server::{InstalledServer, InstallationSource};
+pub use installed_server::{InstallationSource, InstalledServer};
 pub use outbound_oauth_registration::*;
 pub use server::*;
 pub use server_feature::*;

@@ -10,8 +10,8 @@ use tauri::State;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::state::AppState;
 use crate::commands::gateway::GatewayAppState;
+use crate::state::AppState;
 
 /// Response for client listing
 #[derive(Debug, Serialize)]
@@ -28,7 +28,9 @@ pub struct ClientResponse {
 impl From<Client> for ClientResponse {
     fn from(c: Client) -> Self {
         let (mode, locked_id) = match &c.connection_mode {
-            ConnectionMode::Locked { space_id } => ("locked".to_string(), Some(space_id.to_string())),
+            ConnectionMode::Locked { space_id } => {
+                ("locked".to_string(), Some(space_id.to_string()))
+            }
             ConnectionMode::FollowActive => ("follow_active".to_string(), None),
             ConnectionMode::AskOnChange { .. } => ("ask_on_change".to_string(), None),
         };

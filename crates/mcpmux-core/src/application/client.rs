@@ -2,12 +2,12 @@
 //!
 //! Manages inbound MCP clients with automatic event emission.
 
-use std::sync::Arc;
 use anyhow::{anyhow, Result};
+use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::domain::{DomainEvent, Client};
+use crate::domain::{Client, DomainEvent};
 use crate::event_bus::EventSender;
 use crate::repository::InboundMcpClientRepository;
 
@@ -78,8 +78,7 @@ impl ClientAppService {
         client_type: &str,
     ) -> Result<Client> {
         // Parse client_id to UUID (OAuth client ID is UUID based)
-        let id = Uuid::parse_str(client_id)
-            .map_err(|e| anyhow!("Invalid client ID: {}", e))?;
+        let id = Uuid::parse_str(client_id).map_err(|e| anyhow!("Invalid client ID: {}", e))?;
 
         let mut client = Client::new(name, client_type);
         // Override auto-generated ID with OAuth client ID
@@ -112,7 +111,10 @@ impl ClientAppService {
         name: Option<String>,
         client_type: Option<String>,
     ) -> Result<Client> {
-        let mut client = self.client_repo.get(&id).await?
+        let mut client = self
+            .client_repo
+            .get(&id)
+            .await?
             .ok_or_else(|| anyhow!("Client not found"))?;
 
         if let Some(name) = name {
@@ -176,4 +178,3 @@ impl ClientAppService {
         &self.event_sender
     }
 }
-

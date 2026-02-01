@@ -35,9 +35,13 @@ impl ServerLogManager {
     }
 
     /// Get or create a log writer for a server
-    async fn get_writer(&self, space_id: &str, server_id: &str) -> Result<Arc<Mutex<ServerLogWriter>>> {
+    async fn get_writer(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> Result<Arc<Mutex<ServerLogWriter>>> {
         let key = format!("{}/{}", space_id, server_id);
-        
+
         // Fast path: writer exists
         {
             let readers = self.writers.read().await;
@@ -45,25 +49,26 @@ impl ServerLogManager {
                 return Ok(writer.clone());
             }
         }
-        
+
         // Slow path: create new writer
         let mut writers = self.writers.write().await;
-        
+
         // Double-check (another thread might have created it)
         if let Some(writer) = writers.get(&key) {
             return Ok(writer.clone());
         }
-        
+
         // Create log directory with sanitized server ID
         let safe_server_id = Self::sanitize_server_id(server_id);
         let log_dir = self.config.base_dir.join(space_id).join(safe_server_id);
-        let _: () = tokio::fs::create_dir_all(&log_dir).await
+        let _: () = tokio::fs::create_dir_all(&log_dir)
+            .await
             .context("Failed to create log directory")?;
-        
+
         let writer = Arc::new(Mutex::new(
-            ServerLogWriter::new(log_dir, &self.config).await?
+            ServerLogWriter::new(log_dir, &self.config).await?,
         ));
-        
+
         writers.insert(key, writer.clone());
         Ok(writer)
     }
@@ -86,11 +91,11 @@ impl ServerLogManager {
         let safe_server_id = Self::sanitize_server_id(server_id);
         let log_dir = self.config.base_dir.join(space_id).join(safe_server_id);
         let current_log = log_dir.join("current.log");
-        
+
         if !current_log.exists() {
             return Ok(vec![]);
         }
-        
+
         // Read file and parse JSON lines
         let content: String = tokio::fs::read_to_string(&current_log).await?;
         let mut logs: Vec<ServerLog> = content
@@ -105,12 +110,10 @@ impl ServerLogManager {
                     })
                     .ok()
             })
-            .filter(|log: &ServerLog| {
-                level_filter.is_none_or(|lvl| log.level >= lvl)
-            })
+            .filter(|log: &ServerLog| level_filter.is_none_or(|lvl| log.level >= lvl))
             .take(limit)
             .collect();
-        
+
         logs.reverse(); // Return in chronological order
         Ok(logs)
     }
@@ -118,29 +121,34 @@ impl ServerLogManager {
     /// Clear logs for a server
     pub async fn clear_logs(&self, space_id: &str, server_id: &str) -> Result<()> {
         let key = format!("{}/{}", space_id, server_id);
-        
+
         // Close writer if open
         {
             let mut writers = self.writers.write().await;
             writers.remove(&key);
         }
-        
+
         // Remove log directory
         let safe_server_id = Self::sanitize_server_id(server_id);
         let log_dir = self.config.base_dir.join(space_id).join(safe_server_id);
         if log_dir.exists() {
-            let _: () = tokio::fs::remove_dir_all(&log_dir).await
+            let _: () = tokio::fs::remove_dir_all(&log_dir)
+                .await
                 .context("Failed to remove log directory")?;
             info!("Cleared logs for server {}/{}", space_id, server_id);
         }
-        
+
         Ok(())
     }
 
     /// Get log file path for a server
     pub fn get_log_file(&self, space_id: &str, server_id: &str) -> PathBuf {
         let safe_server_id = Self::sanitize_server_id(server_id);
-        self.config.base_dir.join(space_id).join(safe_server_id).join("current.log")
+        self.config
+            .base_dir
+            .join(space_id)
+            .join(safe_server_id)
+            .join("current.log")
     }
 }
 
@@ -163,9 +171,9 @@ impl ServerLogWriter {
             .open(&current_path)
             .await
             .context("Failed to open log file")?;
-        
+
         let current_size = file.metadata().await?.len();
-        
+
         Ok(Self {
             log_dir,
             current_file: file,
@@ -178,38 +186,37 @@ impl ServerLogWriter {
 
     async fn write(&mut self, log: ServerLog) -> Result<()> {
         // Serialize to JSON line
-        let mut line = serde_json::to_string(&log)
-            .context("Failed to serialize log entry")?;
+        let mut line = serde_json::to_string(&log).context("Failed to serialize log entry")?;
         line.push('\n');
-        
+
         let line_len = line.len() as u64;
-        
+
         // Check if we need to rotate
         if self.current_size + line_len > self.max_file_size {
             self.rotate().await?;
         }
-        
+
         // Write line
         self.current_file.write_all(line.as_bytes()).await?;
         self.current_file.flush().await?;
         self.current_size += line_len;
-        
+
         Ok(())
     }
 
     async fn rotate(&mut self) -> Result<()> {
         info!("Rotating log file in {:?}", self.log_dir);
-        
+
         // Close current file
         self.current_file.shutdown().await?;
-        
+
         // Rename current.log to timestamped file
         let current_path = self.log_dir.join("current.log");
         let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M%S");
         let rotated_path = self.log_dir.join(format!("{}.log", timestamp));
-        
+
         tokio::fs::rename(&current_path, &rotated_path).await?;
-        
+
         // Compress in background
         if self.compress {
             let rotated_path_clone = rotated_path.clone();
@@ -219,26 +226,26 @@ impl ServerLogWriter {
                 }
             });
         }
-        
+
         // Cleanup old files
         self.cleanup_old_files().await?;
-        
+
         // Create new current.log
         self.current_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&current_path)
             .await?;
-        
+
         self.current_size = 0;
-        
+
         Ok(())
     }
 
     async fn cleanup_old_files(&self) -> Result<()> {
         let mut entries = tokio::fs::read_dir(&self.log_dir).await?;
         let mut log_files = Vec::new();
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -251,10 +258,10 @@ impl ServerLogWriter {
                 }
             }
         }
-        
+
         // Sort by modification time (oldest first)
         log_files.sort_by_key(|(_, modified)| *modified);
-        
+
         // Remove oldest files if we exceed max_files
         if log_files.len() > self.max_files {
             let to_remove = log_files.len() - self.max_files;
@@ -266,7 +273,7 @@ impl ServerLogWriter {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -274,10 +281,10 @@ impl ServerLogWriter {
 /// Compress a log file using gzip
 async fn compress_log_file(path: &Path) -> Result<()> {
     let gz_path = path.with_extension("log.gz");
-    
+
     // Read original file
     let content = tokio::fs::read(path).await?;
-    
+
     // Compress using blocking IO in a separate task
     let gz_path_clone = gz_path.clone();
     tokio::task::spawn_blocking(move || {
@@ -288,10 +295,10 @@ async fn compress_log_file(path: &Path) -> Result<()> {
         Ok::<_, anyhow::Error>(())
     })
     .await??;
-    
+
     // Remove original file
     tokio::fs::remove_file(path).await?;
-    
+
     info!("Compressed log file: {:?} -> {:?}", path, gz_path);
     Ok(())
 }
@@ -310,9 +317,9 @@ mod tests {
             max_files: 5,
             compress: false,
         };
-        
+
         let manager = ServerLogManager::new(config);
-        
+
         // Write some logs
         for i in 0..10 {
             let log = ServerLog::new(
@@ -322,9 +329,12 @@ mod tests {
             );
             manager.append("space1", "server1", log).await.unwrap();
         }
-        
+
         // Read logs
-        let logs = manager.read_logs("space1", "server1", 5, None).await.unwrap();
+        let logs = manager
+            .read_logs("space1", "server1", 5, None)
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 5);
         assert_eq!(logs[0].message, "Test message 5");
         assert_eq!(logs[4].message, "Test message 9");
@@ -339,24 +349,50 @@ mod tests {
             max_files: 5,
             compress: false,
         };
-        
+
         let manager = ServerLogManager::new(config);
-        
+
         // Write logs with different levels
-        manager.append("space1", "server1", 
-            ServerLog::new(LogLevel::Debug, LogSource::App, "Debug msg")).await.unwrap();
-        manager.append("space1", "server1", 
-            ServerLog::new(LogLevel::Info, LogSource::App, "Info msg")).await.unwrap();
-        manager.append("space1", "server1", 
-            ServerLog::new(LogLevel::Warn, LogSource::App, "Warn msg")).await.unwrap();
-        manager.append("space1", "server1", 
-            ServerLog::new(LogLevel::Error, LogSource::App, "Error msg")).await.unwrap();
-        
+        manager
+            .append(
+                "space1",
+                "server1",
+                ServerLog::new(LogLevel::Debug, LogSource::App, "Debug msg"),
+            )
+            .await
+            .unwrap();
+        manager
+            .append(
+                "space1",
+                "server1",
+                ServerLog::new(LogLevel::Info, LogSource::App, "Info msg"),
+            )
+            .await
+            .unwrap();
+        manager
+            .append(
+                "space1",
+                "server1",
+                ServerLog::new(LogLevel::Warn, LogSource::App, "Warn msg"),
+            )
+            .await
+            .unwrap();
+        manager
+            .append(
+                "space1",
+                "server1",
+                ServerLog::new(LogLevel::Error, LogSource::App, "Error msg"),
+            )
+            .await
+            .unwrap();
+
         // Filter by warn and above
-        let logs = manager.read_logs("space1", "server1", 10, Some(LogLevel::Warn)).await.unwrap();
+        let logs = manager
+            .read_logs("space1", "server1", 10, Some(LogLevel::Warn))
+            .await
+            .unwrap();
         assert_eq!(logs.len(), 2);
         assert_eq!(logs[0].message, "Warn msg");
         assert_eq!(logs[1].message, "Error msg");
     }
 }
-

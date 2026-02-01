@@ -3,14 +3,17 @@
 //! Tests for OUTBOUND flow: McpMux connecting TO backend MCP servers.
 //! Handles OAuth client registrations (DCR with servers) and token storage.
 
+use chrono::{Duration, Utc};
+use mcpmux_core::domain::{Credential, CredentialValue, OutboundOAuthRegistration};
+use mcpmux_core::repository::{CredentialRepository, OutboundOAuthRepository, SpaceRepository};
+use mcpmux_storage::{
+    generate_master_key, FieldEncryptor, SqliteCredentialRepository, SqliteOutboundOAuthRepository,
+    SqliteSpaceRepository,
+};
 use std::sync::Arc;
+use tests::{db::TestDatabase, fixtures};
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use chrono::{Duration, Utc};
-use tests::{db::TestDatabase, fixtures};
-use mcpmux_storage::{SqliteOutboundOAuthRepository, SqliteCredentialRepository, SqliteSpaceRepository, FieldEncryptor, generate_master_key};
-use mcpmux_core::repository::{OutboundOAuthRepository, CredentialRepository, SpaceRepository};
-use mcpmux_core::domain::{OutboundOAuthRegistration, Credential, CredentialValue};
 
 /// Create a test encryptor for credential encryption
 fn test_encryptor() -> Arc<FieldEncryptor> {
@@ -43,7 +46,9 @@ async fn test_save_and_get_registration() {
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
     let reg = create_test_registration(space.id, "atlassian-mcp");
-    OutboundOAuthRepository::save(&oauth_repo, &reg).await.expect("Failed to save");
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .expect("Failed to save");
 
     let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "atlassian-mcp")
         .await
@@ -77,14 +82,24 @@ async fn test_update_registration() {
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
     let mut reg = create_test_registration(space.id, "github-mcp");
-    OutboundOAuthRepository::save(&oauth_repo, &reg).await.unwrap();
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .unwrap();
 
     // Update redirect_uri
     reg.redirect_uri = Some("http://127.0.0.1:9999/callback".to_string());
-    OutboundOAuthRepository::save(&oauth_repo, &reg).await.unwrap();
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .unwrap();
 
-    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "github-mcp").await.unwrap().unwrap();
-    assert_eq!(loaded.redirect_uri, Some("http://127.0.0.1:9999/callback".to_string()));
+    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "github-mcp")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        loaded.redirect_uri,
+        Some("http://127.0.0.1:9999/callback".to_string())
+    );
 }
 
 #[tokio::test]
@@ -98,11 +113,17 @@ async fn test_delete_registration() {
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
     let reg = create_test_registration(space.id, "to-delete");
-    OutboundOAuthRepository::save(&oauth_repo, &reg).await.unwrap();
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .unwrap();
 
-    OutboundOAuthRepository::delete(&oauth_repo, &space.id, "to-delete").await.unwrap();
+    OutboundOAuthRepository::delete(&oauth_repo, &space.id, "to-delete")
+        .await
+        .unwrap();
 
-    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "to-delete").await.unwrap();
+    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "to-delete")
+        .await
+        .unwrap();
     assert!(loaded.is_none());
 }
 
@@ -118,8 +139,12 @@ async fn test_list_registrations_for_space() {
 
     let reg1 = create_test_registration(space.id, "server-1");
     let reg2 = create_test_registration(space.id, "server-2");
-    OutboundOAuthRepository::save(&oauth_repo, &reg1).await.unwrap();
-    OutboundOAuthRepository::save(&oauth_repo, &reg2).await.unwrap();
+    OutboundOAuthRepository::save(&oauth_repo, &reg1)
+        .await
+        .unwrap();
+    OutboundOAuthRepository::save(&oauth_repo, &reg2)
+        .await
+        .unwrap();
 
     let list = oauth_repo.list_for_space(&space.id).await.unwrap();
     assert_eq!(list.len(), 2);
@@ -134,13 +159,21 @@ async fn test_registrations_isolated_by_space() {
 
     let space_a = fixtures::test_space("Space A");
     let space_b = fixtures::test_space("Space B");
-    SpaceRepository::create(&space_repo, &space_a).await.unwrap();
-    SpaceRepository::create(&space_repo, &space_b).await.unwrap();
+    SpaceRepository::create(&space_repo, &space_a)
+        .await
+        .unwrap();
+    SpaceRepository::create(&space_repo, &space_b)
+        .await
+        .unwrap();
 
     let reg_a = create_test_registration(space_a.id, "shared-server");
     let reg_b = create_test_registration(space_b.id, "shared-server");
-    OutboundOAuthRepository::save(&oauth_repo, &reg_a).await.unwrap();
-    OutboundOAuthRepository::save(&oauth_repo, &reg_b).await.unwrap();
+    OutboundOAuthRepository::save(&oauth_repo, &reg_a)
+        .await
+        .unwrap();
+    OutboundOAuthRepository::save(&oauth_repo, &reg_b)
+        .await
+        .unwrap();
 
     let list_a = oauth_repo.list_for_space(&space_a.id).await.unwrap();
     let list_b = oauth_repo.list_for_space(&space_b.id).await.unwrap();
@@ -179,16 +212,22 @@ async fn test_save_and_get_credential() {
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
     let cred = create_oauth_credential(space.id, "server-oauth");
-    CredentialRepository::save(&cred_repo, &cred).await.expect("Failed to save");
+    CredentialRepository::save(&cred_repo, &cred)
+        .await
+        .expect("Failed to save");
 
     let loaded = CredentialRepository::get(&cred_repo, &space.id, "server-oauth")
         .await
         .expect("Failed to get");
     assert!(loaded.is_some());
     let loaded = loaded.unwrap();
-    
+
     match &loaded.value {
-        CredentialValue::OAuth { access_token, refresh_token, .. } => {
+        CredentialValue::OAuth {
+            access_token,
+            refresh_token,
+            ..
+        } => {
             assert_eq!(access_token, "access_token_xyz");
             assert_eq!(refresh_token.as_deref(), Some("refresh_token_abc"));
         }
@@ -227,7 +266,7 @@ async fn test_save_api_key_credential() {
         .await
         .unwrap()
         .unwrap();
-    
+
     match &loaded.value {
         CredentialValue::ApiKey { key } => {
             assert_eq!(key, "my_secret_api_key");
@@ -264,7 +303,7 @@ async fn test_update_credential() {
         .await
         .unwrap()
         .unwrap();
-    
+
     match &loaded.value {
         CredentialValue::OAuth { access_token, .. } => {
             assert_eq!(access_token, "new_access_token");
@@ -287,9 +326,13 @@ async fn test_delete_credential() {
     let cred = create_oauth_credential(space.id, "to-delete");
     CredentialRepository::save(&cred_repo, &cred).await.unwrap();
 
-    CredentialRepository::delete(&cred_repo, &space.id, "to-delete").await.unwrap();
+    CredentialRepository::delete(&cred_repo, &space.id, "to-delete")
+        .await
+        .unwrap();
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "to-delete").await.unwrap();
+    let loaded = CredentialRepository::get(&cred_repo, &space.id, "to-delete")
+        .await
+        .unwrap();
     assert!(loaded.is_none());
 }
 
@@ -306,8 +349,12 @@ async fn test_list_credentials_for_space() {
 
     let cred1 = create_oauth_credential(space.id, "server-1");
     let cred2 = create_oauth_credential(space.id, "server-2");
-    CredentialRepository::save(&cred_repo, &cred1).await.unwrap();
-    CredentialRepository::save(&cred_repo, &cred2).await.unwrap();
+    CredentialRepository::save(&cred_repo, &cred1)
+        .await
+        .unwrap();
+    CredentialRepository::save(&cred_repo, &cred2)
+        .await
+        .unwrap();
 
     let list = cred_repo.list_for_space(&space.id).await.unwrap();
     assert_eq!(list.len(), 2);
@@ -323,13 +370,21 @@ async fn test_credentials_isolated_by_space() {
 
     let space_a = fixtures::test_space("Space A");
     let space_b = fixtures::test_space("Space B");
-    SpaceRepository::create(&space_repo, &space_a).await.unwrap();
-    SpaceRepository::create(&space_repo, &space_b).await.unwrap();
+    SpaceRepository::create(&space_repo, &space_a)
+        .await
+        .unwrap();
+    SpaceRepository::create(&space_repo, &space_b)
+        .await
+        .unwrap();
 
     let cred_a = create_oauth_credential(space_a.id, "shared-server");
     let cred_b = create_oauth_credential(space_b.id, "shared-server");
-    CredentialRepository::save(&cred_repo, &cred_a).await.unwrap();
-    CredentialRepository::save(&cred_repo, &cred_b).await.unwrap();
+    CredentialRepository::save(&cred_repo, &cred_a)
+        .await
+        .unwrap();
+    CredentialRepository::save(&cred_repo, &cred_b)
+        .await
+        .unwrap();
 
     let list_a = cred_repo.list_for_space(&space_a.id).await.unwrap();
     let list_b = cred_repo.list_for_space(&space_b.id).await.unwrap();
@@ -354,10 +409,21 @@ async fn test_credential_expiration() {
 
     // Create credential that expires in the future
     let future_expiry = Some(Utc::now() + Duration::hours(2));
-    let not_expired = Credential::oauth(space.id, "valid-server", "access_token", Some("refresh".to_string()), future_expiry);
-    CredentialRepository::save(&cred_repo, &not_expired).await.unwrap();
+    let not_expired = Credential::oauth(
+        space.id,
+        "valid-server",
+        "access_token",
+        Some("refresh".to_string()),
+        future_expiry,
+    );
+    CredentialRepository::save(&cred_repo, &not_expired)
+        .await
+        .unwrap();
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "valid-server").await.unwrap().unwrap();
+    let loaded = CredentialRepository::get(&cred_repo, &space.id, "valid-server")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!loaded.is_expired());
     assert!(loaded.can_refresh());
 }
@@ -375,9 +441,14 @@ async fn test_credential_without_refresh_token() {
 
     // Create credential without refresh token
     let no_refresh = Credential::oauth(space.id, "no-refresh-server", "access_token", None, None);
-    CredentialRepository::save(&cred_repo, &no_refresh).await.unwrap();
+    CredentialRepository::save(&cred_repo, &no_refresh)
+        .await
+        .unwrap();
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "no-refresh-server").await.unwrap().unwrap();
+    let loaded = CredentialRepository::get(&cred_repo, &space.id, "no-refresh-server")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!loaded.can_refresh());
 }
 
@@ -397,7 +468,9 @@ async fn test_different_encryptors_cannot_read_each_others_data() {
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
     let cred = create_api_key_credential(space.id, "encrypted-server", "my_secret");
-    CredentialRepository::save(&cred_repo1, &cred).await.unwrap();
+    CredentialRepository::save(&cred_repo1, &cred)
+        .await
+        .unwrap();
 
     // Create new encryptor with different key
     let encryptor2 = test_encryptor();
@@ -405,5 +478,8 @@ async fn test_different_encryptors_cannot_read_each_others_data() {
 
     // Reading with wrong key should fail
     let result = CredentialRepository::get(&cred_repo2, &space.id, "encrypted-server").await;
-    assert!(result.is_err() || result.unwrap().is_none(), "Should fail to decrypt with wrong key");
+    assert!(
+        result.is_err() || result.unwrap().is_none(),
+        "Should fail to decrypt with wrong key"
+    );
 }

@@ -169,7 +169,6 @@ pub enum DomainEvent {
     // ════════════════════════════════════════════════════════════════════════
     // SPACE MANAGEMENT
     // ════════════════════════════════════════════════════════════════════════
-    
     /// A new space was created
     SpaceCreated {
         space_id: Uuid,
@@ -179,15 +178,10 @@ pub enum DomainEvent {
     },
 
     /// A space was updated (name, icon, description)
-    SpaceUpdated {
-        space_id: Uuid,
-        name: String,
-    },
+    SpaceUpdated { space_id: Uuid, name: String },
 
     /// A space was deleted
-    SpaceDeleted {
-        space_id: Uuid,
-    },
+    SpaceDeleted { space_id: Uuid },
 
     /// Active space changed
     SpaceActivated {
@@ -200,7 +194,6 @@ pub enum DomainEvent {
     // ════════════════════════════════════════════════════════════════════════
     // SERVER LIFECYCLE (Configuration)
     // ════════════════════════════════════════════════════════════════════════
-
     /// A server was installed from registry into a space
     ServerInstalled {
         space_id: Uuid,
@@ -209,33 +202,20 @@ pub enum DomainEvent {
     },
 
     /// A server was uninstalled from a space
-    ServerUninstalled {
-        space_id: Uuid,
-        server_id: String,
-    },
+    ServerUninstalled { space_id: Uuid, server_id: String },
 
     /// Server configuration was updated (inputs, env, etc.)
-    ServerConfigUpdated {
-        space_id: Uuid,
-        server_id: String,
-    },
+    ServerConfigUpdated { space_id: Uuid, server_id: String },
 
     /// Server was enabled (will auto-connect)
-    ServerEnabled {
-        space_id: Uuid,
-        server_id: String,
-    },
+    ServerEnabled { space_id: Uuid, server_id: String },
 
     /// Server was disabled (will disconnect)
-    ServerDisabled {
-        space_id: Uuid,
-        server_id: String,
-    },
+    ServerDisabled { space_id: Uuid, server_id: String },
 
     // ════════════════════════════════════════════════════════════════════════
     // SERVER CONNECTION STATE (Runtime)
     // ════════════════════════════════════════════════════════════════════════
-
     /// Server connection status changed
     ServerStatusChanged {
         space_id: Uuid,
@@ -277,7 +257,6 @@ pub enum DomainEvent {
     // ════════════════════════════════════════════════════════════════════════
     // FEATURE SETS
     // ════════════════════════════════════════════════════════════════════════
-
     /// A new feature set was created
     FeatureSetCreated {
         space_id: Uuid,
@@ -313,7 +292,6 @@ pub enum DomainEvent {
     // ════════════════════════════════════════════════════════════════════════
     // CLIENT & GRANTS
     // ════════════════════════════════════════════════════════════════════════
-
     /// An MCP client was registered (Cursor, VS Code, etc.)
     ClientRegistered {
         client_id: String,
@@ -329,19 +307,13 @@ pub enum DomainEvent {
     },
 
     /// A client's settings were updated
-    ClientUpdated {
-        client_id: String,
-    },
+    ClientUpdated { client_id: String },
 
     /// A client was deleted
-    ClientDeleted {
-        client_id: String,
-    },
+    ClientDeleted { client_id: String },
 
     /// A client was issued an access token
-    ClientTokenIssued {
-        client_id: String,
-    },
+    ClientTokenIssued { client_id: String },
 
     /// A feature set was granted to a client in a space
     GrantIssued {
@@ -367,12 +339,8 @@ pub enum DomainEvent {
     // ════════════════════════════════════════════════════════════════════════
     // GATEWAY
     // ════════════════════════════════════════════════════════════════════════
-
     /// Gateway server started
-    GatewayStarted {
-        url: String,
-        port: u16,
-    },
+    GatewayStarted { url: String, port: u16 },
 
     /// Gateway server stopped
     GatewayStopped,
@@ -380,24 +348,14 @@ pub enum DomainEvent {
     // ════════════════════════════════════════════════════════════════════════
     // MCP CAPABILITY CHANGES (pass-through from backend servers)
     // ════════════════════════════════════════════════════════════════════════
-
     /// Backend server notified that its tools changed
-    ToolsChanged {
-        space_id: Uuid,
-        server_id: String,
-    },
+    ToolsChanged { space_id: Uuid, server_id: String },
 
     /// Backend server notified that its prompts changed
-    PromptsChanged {
-        space_id: Uuid,
-        server_id: String,
-    },
+    PromptsChanged { space_id: Uuid, server_id: String },
 
     /// Backend server notified that its resources changed
-    ResourcesChanged {
-        space_id: Uuid,
-        server_id: String,
-    },
+    ResourcesChanged { space_id: Uuid, server_id: String },
 }
 
 // ============================================================================
@@ -455,7 +413,9 @@ impl DomainEvent {
             // Feature refresh directly affects capabilities
             Self::ServerFeaturesRefreshed { .. } => true,
             // Grant changes affect what client can access
-            Self::GrantIssued { .. } | Self::GrantRevoked { .. } | Self::ClientGrantsUpdated { .. } => true,
+            Self::GrantIssued { .. }
+            | Self::GrantRevoked { .. }
+            | Self::ClientGrantsUpdated { .. } => true,
             // Feature set member changes affect granted capabilities
             Self::FeatureSetMembersChanged { .. } => true,
             // Backend server notifications
@@ -491,9 +451,9 @@ impl DomainEvent {
             | Self::ToolsChanged { space_id, .. }
             | Self::PromptsChanged { space_id, .. }
             | Self::ResourcesChanged { space_id, .. } => Some(*space_id),
-            
+
             Self::SpaceActivated { to_space_id, .. } => Some(*to_space_id),
-            
+
             Self::ClientRegistered { .. }
             | Self::ClientReconnected { .. }
             | Self::ClientUpdated { .. }
@@ -656,10 +616,10 @@ mod tests {
             url: "http://localhost:3100".to_string(),
             port: 3100,
         };
-        
+
         let envelope = DomainEventEnvelope::new(event);
         assert!(envelope.correlation_id.is_none());
-        
+
         let with_correlation = envelope.with_correlation_id(Uuid::new_v4());
         assert!(with_correlation.correlation_id.is_some());
     }
@@ -669,9 +629,8 @@ mod tests {
         assert!(ConnectionStatus::Connected.is_connected());
         assert!(ConnectionStatus::Refreshing.is_connected());
         assert!(!ConnectionStatus::Disconnected.is_connected());
-        
+
         assert!(ConnectionStatus::Connected.is_terminal());
         assert!(!ConnectionStatus::Connecting.is_terminal());
     }
 }
-

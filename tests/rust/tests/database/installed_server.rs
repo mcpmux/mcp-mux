@@ -1,12 +1,12 @@
 //! InstalledServerRepository integration tests
 
+use mcpmux_core::repository::{InstalledServerRepository, SpaceRepository};
+use mcpmux_storage::{SqliteInstalledServerRepository, SqliteSpaceRepository};
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tests::{db::TestDatabase, fixtures};
-use mcpmux_storage::{SqliteInstalledServerRepository, SqliteSpaceRepository};
-use mcpmux_core::repository::{InstalledServerRepository, SpaceRepository};
+use tokio::sync::Mutex;
 
 #[tokio::test]
 async fn test_installed_server_install_and_get() {
@@ -17,9 +17,7 @@ async fn test_installed_server_install_and_get() {
 
     // First create a space (needed for foreign key)
     let space = fixtures::test_space("Test Space");
-    SpaceRepository::create(&space_repo, &space)
-        .await
-        .unwrap();
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
 
     // Install server
     let server = fixtures::test_installed_server(&space.id.to_string(), "test-server-1");
@@ -50,19 +48,29 @@ async fn test_installed_server_get_by_server_id() {
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
     let server = fixtures::test_installed_server(&space.id.to_string(), "my-mcp-server");
-    InstalledServerRepository::install(&server_repo, &server).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
 
     // Get by space_id + server_id
-    let loaded = InstalledServerRepository::get_by_server_id(&server_repo, &space.id.to_string(), "my-mcp-server")
-        .await
-        .expect("Failed to get server by server_id");
+    let loaded = InstalledServerRepository::get_by_server_id(
+        &server_repo,
+        &space.id.to_string(),
+        "my-mcp-server",
+    )
+    .await
+    .expect("Failed to get server by server_id");
     assert!(loaded.is_some());
     assert_eq!(loaded.unwrap().server_id, "my-mcp-server");
 
     // Try non-existent
-    let not_found = InstalledServerRepository::get_by_server_id(&server_repo, &space.id.to_string(), "nonexistent")
-        .await
-        .expect("Failed to query");
+    let not_found = InstalledServerRepository::get_by_server_id(
+        &server_repo,
+        &space.id.to_string(),
+        "nonexistent",
+    )
+    .await
+    .expect("Failed to query");
     assert!(not_found.is_none());
 }
 
@@ -84,20 +92,28 @@ async fn test_installed_server_list_for_space() {
     let server1b = fixtures::test_installed_server(&space1.id.to_string(), "server-b");
     let server2a = fixtures::test_installed_server(&space2.id.to_string(), "server-a");
 
-    InstalledServerRepository::install(&server_repo, &server1a).await.unwrap();
-    InstalledServerRepository::install(&server_repo, &server1b).await.unwrap();
-    InstalledServerRepository::install(&server_repo, &server2a).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server1a)
+        .await
+        .unwrap();
+    InstalledServerRepository::install(&server_repo, &server1b)
+        .await
+        .unwrap();
+    InstalledServerRepository::install(&server_repo, &server2a)
+        .await
+        .unwrap();
 
     // List for space1
-    let space1_servers = InstalledServerRepository::list_for_space(&server_repo, &space1.id.to_string())
-        .await
-        .expect("Failed to list servers");
+    let space1_servers =
+        InstalledServerRepository::list_for_space(&server_repo, &space1.id.to_string())
+            .await
+            .expect("Failed to list servers");
     assert_eq!(space1_servers.len(), 2);
 
     // List for space2
-    let space2_servers = InstalledServerRepository::list_for_space(&server_repo, &space2.id.to_string())
-        .await
-        .expect("Failed to list servers");
+    let space2_servers =
+        InstalledServerRepository::list_for_space(&server_repo, &space2.id.to_string())
+            .await
+            .expect("Failed to list servers");
     assert_eq!(space2_servers.len(), 1);
 }
 
@@ -113,7 +129,9 @@ async fn test_installed_server_uninstall() {
 
     let server = fixtures::test_installed_server(&space.id.to_string(), "to-uninstall");
     let server_id = server.id;
-    InstalledServerRepository::install(&server_repo, &server).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
 
     // Uninstall
     InstalledServerRepository::uninstall(&server_repo, &server_id)
@@ -139,24 +157,35 @@ async fn test_installed_server_set_enabled() {
 
     let server = fixtures::test_installed_server(&space.id.to_string(), "toggle-server");
     let server_id = server.id;
-    InstalledServerRepository::install(&server_repo, &server).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
 
     // Initially enabled
-    let loaded = InstalledServerRepository::get(&server_repo, &server_id).await.unwrap().unwrap();
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(loaded.enabled);
 
     // Disable
     InstalledServerRepository::set_enabled(&server_repo, &server_id, false)
         .await
         .expect("Failed to disable");
-    let disabled = InstalledServerRepository::get(&server_repo, &server_id).await.unwrap().unwrap();
+    let disabled = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!disabled.enabled);
 
     // Re-enable
     InstalledServerRepository::set_enabled(&server_repo, &server_id, true)
         .await
         .expect("Failed to re-enable");
-    let enabled = InstalledServerRepository::get(&server_repo, &server_id).await.unwrap().unwrap();
+    let enabled = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(enabled.enabled);
 }
 
@@ -176,9 +205,15 @@ async fn test_installed_server_list_enabled() {
     let mut server3 = fixtures::test_installed_server(&space.id.to_string(), "disabled-1");
     server3.enabled = false;
 
-    InstalledServerRepository::install(&server_repo, &server1).await.unwrap();
-    InstalledServerRepository::install(&server_repo, &server2).await.unwrap();
-    InstalledServerRepository::install(&server_repo, &server3).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server1)
+        .await
+        .unwrap();
+    InstalledServerRepository::install(&server_repo, &server2)
+        .await
+        .unwrap();
+    InstalledServerRepository::install(&server_repo, &server3)
+        .await
+        .unwrap();
 
     // List enabled only
     let enabled = InstalledServerRepository::list_enabled(&server_repo, &space.id.to_string())
@@ -200,17 +235,25 @@ async fn test_installed_server_set_oauth_connected() {
 
     let server = fixtures::test_installed_server(&space.id.to_string(), "oauth-server");
     let server_id = server.id;
-    InstalledServerRepository::install(&server_repo, &server).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
 
     // Initially not connected
-    let loaded = InstalledServerRepository::get(&server_repo, &server_id).await.unwrap().unwrap();
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!loaded.oauth_connected);
 
     // Mark as OAuth connected
     InstalledServerRepository::set_oauth_connected(&server_repo, &server_id, true)
         .await
         .expect("Failed to set oauth_connected");
-    let connected = InstalledServerRepository::get(&server_repo, &server_id).await.unwrap().unwrap();
+    let connected = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(connected.oauth_connected);
 }
 
@@ -226,7 +269,9 @@ async fn test_installed_server_update_inputs() {
 
     let server = fixtures::test_installed_server(&space.id.to_string(), "input-server");
     let server_id = server.id;
-    InstalledServerRepository::install(&server_repo, &server).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
 
     // Update inputs
     let mut inputs = HashMap::new();
@@ -238,9 +283,18 @@ async fn test_installed_server_update_inputs() {
         .expect("Failed to update inputs");
 
     // Verify
-    let updated = InstalledServerRepository::get(&server_repo, &server_id).await.unwrap().unwrap();
-    assert_eq!(updated.input_values.get("api_key"), Some(&"secret123".to_string()));
-    assert_eq!(updated.input_values.get("region"), Some(&"us-west-2".to_string()));
+    let updated = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        updated.input_values.get("api_key"),
+        Some(&"secret123".to_string())
+    );
+    assert_eq!(
+        updated.input_values.get("region"),
+        Some(&"us-west-2".to_string())
+    );
 }
 
 #[tokio::test]
@@ -255,7 +309,9 @@ async fn test_installed_server_update_cached_definition() {
 
     let server = fixtures::test_installed_server(&space.id.to_string(), "cache-server");
     let server_id = server.id;
-    InstalledServerRepository::install(&server_repo, &server).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
 
     // Update cached definition
     let cached_def = r#"{"name": "Test Server", "version": "1.0"}"#;
@@ -269,7 +325,10 @@ async fn test_installed_server_update_cached_definition() {
     .expect("Failed to update cached definition");
 
     // Verify
-    let updated = InstalledServerRepository::get(&server_repo, &server_id).await.unwrap().unwrap();
+    let updated = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(updated.server_name, Some("Test Server".to_string()));
     assert_eq!(updated.cached_definition, Some(cached_def.to_string()));
 }
@@ -289,8 +348,12 @@ async fn test_installed_server_list_all() {
 
     let server1 = fixtures::test_installed_server(&space1.id.to_string(), "server-1");
     let server2 = fixtures::test_installed_server(&space2.id.to_string(), "server-2");
-    InstalledServerRepository::install(&server_repo, &server1).await.unwrap();
-    InstalledServerRepository::install(&server_repo, &server2).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server1)
+        .await
+        .unwrap();
+    InstalledServerRepository::install(&server_repo, &server2)
+        .await
+        .unwrap();
 
     // List all
     let all = InstalledServerRepository::list(&server_repo)
@@ -317,9 +380,15 @@ async fn test_installed_server_list_enabled_all() {
     let mut server3 = fixtures::test_installed_server(&space1.id.to_string(), "disabled");
     server3.enabled = false;
 
-    InstalledServerRepository::install(&server_repo, &server1).await.unwrap();
-    InstalledServerRepository::install(&server_repo, &server2).await.unwrap();
-    InstalledServerRepository::install(&server_repo, &server3).await.unwrap();
+    InstalledServerRepository::install(&server_repo, &server1)
+        .await
+        .unwrap();
+    InstalledServerRepository::install(&server_repo, &server2)
+        .await
+        .unwrap();
+    InstalledServerRepository::install(&server_repo, &server3)
+        .await
+        .unwrap();
 
     // List all enabled across all spaces
     let enabled_all = InstalledServerRepository::list_enabled_all(&server_repo)

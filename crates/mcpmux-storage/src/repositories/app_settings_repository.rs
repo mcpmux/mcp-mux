@@ -15,7 +15,7 @@ use crate::Database;
 /// SQLite-backed app settings repository.
 ///
 /// Stores application settings as key-value pairs with dot-notation namespacing.
-/// 
+///
 /// # Example Keys
 /// - `gateway.port` - Gateway server port (u16)
 /// - `gateway.auto_start` - Auto-start gateway (bool)
@@ -93,9 +93,9 @@ impl AppSettingsRepository for SqliteAppSettingsRepository {
 
         // Use LIKE with escaped prefix for prefix matching
         let pattern = format!("{}%", prefix.replace('%', "\\%").replace('_', "\\_"));
-        
+
         let mut stmt = conn.prepare(
-            "SELECT key, value FROM app_settings WHERE key LIKE ? ESCAPE '\\' ORDER BY key"
+            "SELECT key, value FROM app_settings WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
         )?;
 
         let rows = stmt
@@ -126,11 +126,17 @@ mod tests {
 
         // Set a value
         repo.set("test.key", "test_value").await.unwrap();
-        assert_eq!(repo.get("test.key").await.unwrap(), Some("test_value".to_string()));
+        assert_eq!(
+            repo.get("test.key").await.unwrap(),
+            Some("test_value".to_string())
+        );
 
         // Update the value
         repo.set("test.key", "updated_value").await.unwrap();
-        assert_eq!(repo.get("test.key").await.unwrap(), Some("updated_value".to_string()));
+        assert_eq!(
+            repo.get("test.key").await.unwrap(),
+            Some("updated_value".to_string())
+        );
 
         // Delete
         repo.delete("test.key").await.unwrap();
@@ -147,7 +153,7 @@ mod tests {
         repo.set("c.key", "c_value").await.unwrap();
 
         let all = repo.list().await.unwrap();
-        
+
         // Should be sorted by key (plus the default auto_start from migration)
         assert!(all.iter().any(|(k, v)| k == "a.key" && v == "a_value"));
         assert!(all.iter().any(|(k, v)| k == "b.key" && v == "b_value"));
@@ -166,7 +172,9 @@ mod tests {
         let gateway_settings = repo.list_by_prefix("gateway.").await.unwrap();
         assert_eq!(gateway_settings.len(), 2);
         assert!(gateway_settings.iter().any(|(k, _)| k == "gateway.port"));
-        assert!(gateway_settings.iter().any(|(k, _)| k == "gateway.auto_start"));
+        assert!(gateway_settings
+            .iter()
+            .any(|(k, _)| k == "gateway.auto_start"));
 
         let ui_settings = repo.list_by_prefix("ui.").await.unwrap();
         assert_eq!(ui_settings.len(), 1);

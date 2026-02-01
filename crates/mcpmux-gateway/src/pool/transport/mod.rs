@@ -5,8 +5,8 @@
 //! modifying existing code.
 
 mod http;
-mod stdio;
-pub mod resolution; // Expose resolution module
+pub mod resolution;
+mod stdio; // Expose resolution module
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,16 +41,16 @@ pub enum TransportConnectResult {
 pub trait Transport: Send + Sync {
     /// Attempt to connect to the MCP server
     async fn connect(&self) -> TransportConnectResult;
-    
+
     /// Get the transport type
     fn transport_type(&self) -> TransportType;
-    
+
     /// Get a description for logging
     fn description(&self) -> String;
 }
 
 /// Resolved transport configuration ready for connection.
-/// 
+///
 /// All placeholders like `${input:API_KEY}` have been replaced with actual values.
 /// This is the runtime representation, distinct from `mcpmux_core::TransportConfig`
 /// which is the registry/template format.
@@ -75,7 +75,7 @@ impl ResolvedTransport {
             ResolvedTransport::Http { .. } => TransportType::Http,
         }
     }
-    
+
     /// Get URL for HTTP transports
     pub fn url(&self) -> Option<&str> {
         match self {
@@ -83,12 +83,12 @@ impl ResolvedTransport {
             ResolvedTransport::Stdio { .. } => None,
         }
     }
-    
+
     /// Generate a config hash for instance keying (excludes auth tokens)
     pub fn config_hash(&self) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         match self {
             ResolvedTransport::Stdio { command, args, env } => {
@@ -140,31 +140,27 @@ impl TransportFactory {
         event_tx: Option<tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>>,
     ) -> Box<dyn Transport> {
         match config {
-            ResolvedTransport::Stdio { command, args, env } => {
-                Box::new(StdioTransport::new(
-                    command.clone(),
-                    args.clone(),
-                    env.clone(),
-                    space_id,
-                    server_id,
-                    log_manager,
-                    connect_timeout,
-                    event_tx,
-                ))
-            }
-            ResolvedTransport::Http { url, headers } => {
-                Box::new(HttpTransport::new(
-                    url.clone(),
-                    headers.clone(),
-                    space_id,
-                    server_id,
-                    credential_repo,
-                    backend_oauth_repo,
-                    log_manager,
-                    connect_timeout,
-                    event_tx,
-                ))
-            }
+            ResolvedTransport::Stdio { command, args, env } => Box::new(StdioTransport::new(
+                command.clone(),
+                args.clone(),
+                env.clone(),
+                space_id,
+                server_id,
+                log_manager,
+                connect_timeout,
+                event_tx,
+            )),
+            ResolvedTransport::Http { url, headers } => Box::new(HttpTransport::new(
+                url.clone(),
+                headers.clone(),
+                space_id,
+                server_id,
+                credential_repo,
+                backend_oauth_repo,
+                log_manager,
+                connect_timeout,
+                event_tx,
+            )),
         }
     }
 }

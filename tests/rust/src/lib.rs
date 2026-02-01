@@ -1,7 +1,11 @@
 //! Shared test utilities and fixtures for McpMux integration tests.
 
-pub use mcpmux_core::domain::{InstalledServer, Space, FeatureSet, FeatureSetType, Client, Credential};
-pub use mcpmux_core::{DomainEvent, ConnectionStatus, DiscoveredCapabilities, ServerFeature, FeatureType};
+pub use mcpmux_core::domain::{
+    Client, Credential, FeatureSet, FeatureSetType, InstalledServer, Space,
+};
+pub use mcpmux_core::{
+    ConnectionStatus, DiscoveredCapabilities, DomainEvent, FeatureType, ServerFeature,
+};
 
 /// Mock repository implementations
 pub mod mocks;
@@ -14,11 +18,14 @@ pub use services::ServerManagerTestHarness;
 /// Event testing utilities
 pub mod events {
     use mcpmux_core::DomainEvent;
-    use tokio::sync::broadcast;
     use std::time::Duration;
+    use tokio::sync::broadcast;
 
     /// Create a test event channel with sufficient capacity
-    pub fn test_event_channel() -> (broadcast::Sender<DomainEvent>, broadcast::Receiver<DomainEvent>) {
+    pub fn test_event_channel() -> (
+        broadcast::Sender<DomainEvent>,
+        broadcast::Receiver<DomainEvent>,
+    ) {
         broadcast::channel(100)
     }
 
@@ -29,20 +36,20 @@ pub mod events {
     ) -> Vec<DomainEvent> {
         let mut events = Vec::new();
         let deadline = tokio::time::Instant::now() + timeout;
-        
+
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 break;
             }
-            
+
             match tokio::time::timeout(remaining, rx.recv()).await {
                 Ok(Ok(event)) => events.push(event),
                 Ok(Err(_)) => break, // Channel closed or lagged
-                Err(_) => break, // Timeout
+                Err(_) => break,     // Timeout
             }
         }
-        
+
         events
     }
 
@@ -56,18 +63,18 @@ pub mod events {
         F: Fn(&DomainEvent) -> bool,
     {
         let deadline = tokio::time::Instant::now() + timeout;
-        
+
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 return None;
             }
-            
+
             match tokio::time::timeout(remaining, rx.recv()).await {
                 Ok(Ok(event)) if predicate(&event) => return Some(event),
-                Ok(Ok(_)) => continue, // Not the event we want
+                Ok(Ok(_)) => continue,     // Not the event we want
                 Ok(Err(_)) => return None, // Channel closed
-                Err(_) => return None, // Timeout
+                Err(_) => return None,     // Timeout
             }
         }
     }
@@ -79,7 +86,10 @@ pub mod events {
         expected_status: mcpmux_core::ConnectionStatus,
     ) -> bool {
         events.iter().any(|e| {
-            if let DomainEvent::ServerStatusChanged { server_id, status, .. } = e {
+            if let DomainEvent::ServerStatusChanged {
+                server_id, status, ..
+            } = e
+            {
                 server_id == expected_server_id && *status == expected_status
             } else {
                 false
@@ -142,8 +152,7 @@ pub mod fixtures {
 
     /// Create a test installed server
     pub fn test_installed_server(space_id: &str, server_id: &str) -> InstalledServer {
-        InstalledServer::new(space_id, server_id)
-            .with_enabled(true)
+        InstalledServer::new(space_id, server_id).with_enabled(true)
     }
 
     /// Create a test feature set
@@ -164,7 +173,11 @@ pub mod fixtures {
     }
 
     /// Create a server-all feature set
-    pub fn server_all_feature_set(space_id: &str, server_id: &str, server_name: &str) -> FeatureSet {
+    pub fn server_all_feature_set(
+        space_id: &str,
+        server_id: &str,
+        server_name: &str,
+    ) -> FeatureSet {
         FeatureSet::new_server_all(space_id, server_id, server_name)
     }
 
@@ -195,8 +208,7 @@ pub mod db {
         pub fn new() -> Self {
             let temp_dir = TempDir::new().expect("Failed to create temp dir");
             let db_path = temp_dir.path().join(DB_FILE);
-            let db = Database::open(&db_path)
-                .expect("Failed to open test database");
+            let db = Database::open(&db_path).expect("Failed to open test database");
             Self {
                 db,
                 db_path,
@@ -207,8 +219,7 @@ pub mod db {
         /// Create an in-memory database for fast tests
         pub fn in_memory() -> Self {
             let temp_dir = TempDir::new().expect("Failed to create temp dir");
-            let db = Database::open_in_memory()
-                .expect("Failed to open in-memory database");
+            let db = Database::open_in_memory().expect("Failed to open in-memory database");
             Self {
                 db,
                 db_path: PathBuf::new(),
@@ -244,9 +255,7 @@ pub mod async_helpers {
     where
         F: std::future::Future<Output = T>,
     {
-        timeout(duration, f)
-            .await
-            .expect("Operation timed out")
+        timeout(duration, f).await.expect("Operation timed out")
     }
 
     /// Default test timeout (5 seconds)

@@ -5,17 +5,14 @@
 mod dcr;
 mod discovery;
 mod flow;
-mod token;
 mod pkce;
+mod token;
 
-pub use dcr::{
-    DcrError, DcrRequest, DcrResponse,
-    process_dcr_request, validate_redirect_uris,
-};
+pub use dcr::{process_dcr_request, validate_redirect_uris, DcrError, DcrRequest, DcrResponse};
 pub use discovery::{OAuthDiscovery, OAuthMetadata};
-pub use flow::{OAuthFlow, AuthorizationRequest, AuthorizationCallback};
-pub use token::{OAuthToken, TokenManager};
+pub use flow::{AuthorizationCallback, AuthorizationRequest, OAuthFlow};
 pub use pkce::PkceChallenge;
+pub use token::{OAuthToken, TokenManager};
 
 use serde::{Deserialize, Serialize};
 
@@ -96,22 +93,20 @@ impl OAuthManager {
         redirect_uri: &str,
     ) -> anyhow::Result<AuthorizationRequest> {
         self.discover().await?;
-        let metadata = self.metadata.clone()
+        let metadata = self
+            .metadata
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("OAuth metadata not available"))?;
-        
-        let client_id = self.config.client_id.clone()
+
+        let client_id = self
+            .config
+            .client_id
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("Client ID required for authorization"))?;
 
-        let flow = OAuthFlow::new(
-            metadata,
-            client_id,
-            self.config.client_secret.clone(),
-        );
+        let flow = OAuthFlow::new(metadata, client_id, self.config.client_secret.clone());
 
-        flow.create_authorization_request(
-            redirect_uri,
-            &self.config.scopes,
-        )
+        flow.create_authorization_request(redirect_uri, &self.config.scopes)
     }
 
     /// Exchange authorization code for tokens
@@ -121,10 +116,15 @@ impl OAuthManager {
         redirect_uri: &str,
         pkce_verifier: &str,
     ) -> anyhow::Result<OAuthToken> {
-        let metadata = self.metadata.as_ref()
+        let metadata = self
+            .metadata
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("OAuth metadata not discovered"))?;
 
-        let client_id = self.config.client_id.as_ref()
+        let client_id = self
+            .config
+            .client_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Client ID required"))?;
 
         let flow = OAuthFlow::new(
@@ -133,15 +133,21 @@ impl OAuthManager {
             self.config.client_secret.clone(),
         );
 
-        flow.exchange_code(&self.http_client, code, redirect_uri, pkce_verifier).await
+        flow.exchange_code(&self.http_client, code, redirect_uri, pkce_verifier)
+            .await
     }
 
     /// Refresh an access token
     pub async fn refresh_token(&self, refresh_token: &str) -> anyhow::Result<OAuthToken> {
-        let metadata = self.metadata.as_ref()
+        let metadata = self
+            .metadata
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("OAuth metadata not discovered"))?;
 
-        let client_id = self.config.client_id.as_ref()
+        let client_id = self
+            .config
+            .client_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Client ID required"))?;
 
         let flow = OAuthFlow::new(

@@ -34,7 +34,7 @@ pub enum InstallationSource {
 ///
 /// The server definition is cached at install time for offline operation.
 /// This entity stores both the cached definition and user-specific configuration.
-/// 
+///
 /// Note: Connection status is NOT stored here - it's runtime-only state
 /// managed by ServerManager and communicated via events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,10 +47,10 @@ pub struct InstalledServer {
 
     /// Server ID (e.g., "com.cloudflare/bindings-mcp" or "my-custom-server")
     pub server_id: String,
-    
+
     /// Server display name (cached from definition for offline display)
     pub server_name: Option<String>,
-    
+
     /// Cached server definition (JSON) for offline operation
     /// Contains transport config, auth requirements, etc.
     pub cached_definition: Option<String>,
@@ -90,7 +90,7 @@ pub struct InstalledServer {
 
 impl InstalledServer {
     /// Create a new installed server
-    /// 
+    ///
     /// Servers are disabled by default and must be explicitly enabled by the user.
     pub fn new(space_id: impl Into<String>, server_id: impl Into<String>) -> Self {
         let now = Utc::now();
@@ -101,7 +101,7 @@ impl InstalledServer {
             server_name: None,
             cached_definition: None,
             input_values: HashMap::new(),
-            enabled: false,  // Disabled by default - user must explicitly enable
+            enabled: false, // Disabled by default - user must explicitly enable
             env_overrides: HashMap::new(),
             args_append: Vec::new(),
             extra_headers: HashMap::new(),
@@ -111,24 +111,29 @@ impl InstalledServer {
             updated_at: now,
         }
     }
-    
+
     /// Create with a cached server definition (for offline operation)
     pub fn with_definition(mut self, definition: &ServerDefinition) -> Self {
         self.server_name = Some(definition.name.clone());
         self.cached_definition = serde_json::to_string(definition).ok();
         self
     }
-    
+
     /// Get the cached server definition (deserialized)
     pub fn get_definition(&self) -> Option<ServerDefinition> {
-        self.cached_definition.as_ref()
+        self.cached_definition
+            .as_ref()
             .and_then(|json| serde_json::from_str(json).ok())
     }
-    
+
     /// Get display name (from cached definition or server_id fallback)
     pub fn display_name(&self) -> &str {
-        self.server_name.as_deref()
-            .unwrap_or_else(|| self.server_id.split('/').next_back().unwrap_or(&self.server_id))
+        self.server_name.as_deref().unwrap_or_else(|| {
+            self.server_id
+                .split('/')
+                .next_back()
+                .unwrap_or(&self.server_id)
+        })
     }
 
     /// Set input values
@@ -182,25 +187,30 @@ mod tests {
     #[test]
     fn test_new_installed_server() {
         let server = InstalledServer::new("space_default", "com.cloudflare/docs-mcp");
-        
+
         assert_eq!(server.space_id, "space_default");
         assert_eq!(server.server_id, "com.cloudflare/docs-mcp");
         assert!(!server.enabled, "New servers should be disabled by default");
     }
-    
+
     #[test]
     fn test_with_enabled() {
-        let server = InstalledServer::new("space_default", "test.server")
-            .with_enabled(true);
-        
-        assert!(server.enabled, "Server should be enabled after calling with_enabled(true)");
+        let server = InstalledServer::new("space_default", "test.server").with_enabled(true);
+
+        assert!(
+            server.enabled,
+            "Server should be enabled after calling with_enabled(true)"
+        );
     }
 
     #[test]
     fn test_with_inputs() {
         let server = InstalledServer::new("space_default", "io.github.github/github-mcp-server")
             .with_input("GITHUB_TOKEN", "ghp_xxxxx");
-        
-        assert_eq!(server.input_values.get("GITHUB_TOKEN"), Some(&"ghp_xxxxx".to_string()));
+
+        assert_eq!(
+            server.input_values.get("GITHUB_TOKEN"),
+            Some(&"ghp_xxxxx".to_string())
+        );
     }
 }

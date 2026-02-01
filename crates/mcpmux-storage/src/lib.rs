@@ -59,8 +59,8 @@ mod repositories;
 pub use crypto::{generate_master_key, FieldEncryptor, KEY_SIZE};
 pub use database::Database;
 pub use keychain::{
-    KeychainKeyProvider, MasterKeyProvider,
-    KeychainJwtSecretProvider, JwtSecretProvider, JWT_SECRET_SIZE, generate_jwt_secret,
+    generate_jwt_secret, JwtSecretProvider, KeychainJwtSecretProvider, KeychainKeyProvider,
+    MasterKeyProvider, JWT_SECRET_SIZE,
 };
 pub use repositories::*;
 

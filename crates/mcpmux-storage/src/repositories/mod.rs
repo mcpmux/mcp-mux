@@ -14,8 +14,8 @@ pub use app_settings_repository::SqliteAppSettingsRepository;
 pub use credential_repository::SqliteCredentialRepository;
 pub use feature_set_repository::SqliteFeatureSetRepository;
 pub use inbound_client_repository::{
-    InboundClientRepository, InboundClient, RegistrationType,
-    AuthorizationCode, TokenRecord, TokenType,
+    AuthorizationCode, InboundClient, InboundClientRepository, RegistrationType, TokenRecord,
+    TokenType,
 };
 pub use inbound_mcp_client_repository::SqliteInboundMcpClientRepository;
 pub use installed_server_repository::SqliteInstalledServerRepository;

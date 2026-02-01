@@ -54,10 +54,10 @@ fn test_token_no_expiry_never_expires() {
 #[test]
 fn test_token_expires_soon() {
     let token = create_token(60, false); // expires in 60 seconds
-    
+
     // With 30 second buffer, not expiring soon
     assert!(!token.expires_soon(30));
-    
+
     // With 120 second buffer, expiring soon
     assert!(token.expires_soon(120));
 }
@@ -90,7 +90,7 @@ fn test_authorization_header_bearer() {
         scope: None,
         id_token: None,
     };
-    
+
     assert_eq!(token.authorization_header(), "Bearer abc123");
 }
 
@@ -104,7 +104,7 @@ fn test_authorization_header_custom_type() {
         scope: None,
         id_token: None,
     };
-    
+
     assert_eq!(token.authorization_header(), "MAC xyz789");
 }
 
@@ -118,7 +118,7 @@ fn test_scopes_parsing() {
         scope: Some("openid profile email offline_access".to_string()),
         id_token: None,
     };
-    
+
     let scopes = token.scopes();
     assert_eq!(scopes.len(), 4);
     assert!(scopes.contains(&"openid".to_string()));
@@ -137,7 +137,7 @@ fn test_scopes_empty_when_none() {
         scope: None,
         id_token: None,
     };
-    
+
     assert!(token.scopes().is_empty());
 }
 
@@ -151,7 +151,7 @@ fn test_scopes_empty_string() {
         scope: Some("".to_string()),
         id_token: None,
     };
-    
+
     // Empty string split returns empty vec
     assert!(token.scopes().is_empty());
 }
@@ -164,7 +164,7 @@ fn test_scopes_empty_string() {
 fn test_token_manager_default() {
     let manager = TokenManager::new();
     let token = create_token(3600, true);
-    
+
     // Token valid for 1 hour, default buffer is 5 minutes
     assert!(!manager.needs_refresh(&token));
     assert!(manager.is_usable(&token));
@@ -173,7 +173,7 @@ fn test_token_manager_default() {
 #[test]
 fn test_token_manager_needs_refresh() {
     let manager = TokenManager::new(); // 5 minute buffer
-    
+
     // Token expires in 4 minutes - should need refresh
     let token = create_token(240, true);
     assert!(manager.needs_refresh(&token));
@@ -182,7 +182,7 @@ fn test_token_manager_needs_refresh() {
 #[test]
 fn test_token_manager_no_refresh_without_refresh_token() {
     let manager = TokenManager::new();
-    
+
     // Token expiring soon but has no refresh token
     let token = create_token(60, false);
     assert!(!manager.needs_refresh(&token)); // can_refresh() is false
@@ -191,11 +191,11 @@ fn test_token_manager_no_refresh_without_refresh_token() {
 #[test]
 fn test_token_manager_custom_buffer() {
     let manager = TokenManager::new().with_refresh_buffer(600); // 10 minute buffer
-    
+
     // Token expires in 8 minutes - with 10 min buffer, needs refresh
     let token = create_token(480, true);
     assert!(manager.needs_refresh(&token));
-    
+
     // Token expires in 15 minutes - doesn't need refresh yet
     let token2 = create_token(900, true);
     assert!(!manager.needs_refresh(&token2));
@@ -204,11 +204,11 @@ fn test_token_manager_custom_buffer() {
 #[test]
 fn test_token_manager_usable_check() {
     let manager = TokenManager::new();
-    
+
     // Valid token
     let valid_token = create_token(3600, false);
     assert!(manager.is_usable(&valid_token));
-    
+
     // Expired token
     let expired_token = OAuthToken {
         access_token: "old".to_string(),
@@ -225,7 +225,7 @@ fn test_token_manager_usable_check() {
 fn test_token_manager_no_expiry_always_usable() {
     let manager = TokenManager::new();
     let token = create_token(0, false); // no expiry
-    
+
     assert!(manager.is_usable(&token));
     assert!(!manager.needs_refresh(&token)); // no refresh token anyway
 }
@@ -233,10 +233,10 @@ fn test_token_manager_no_expiry_always_usable() {
 #[test]
 fn test_token_manager_zero_buffer() {
     let manager = TokenManager::new().with_refresh_buffer(0);
-    
+
     // Token expires in 1 second
     let token = create_token(1, true);
-    
+
     // With 0 buffer, only needs refresh when actually expired
     assert!(!manager.needs_refresh(&token));
 }
@@ -249,7 +249,7 @@ fn test_token_manager_zero_buffer() {
 fn test_token_lifecycle_fresh() {
     let manager = TokenManager::new();
     let token = create_token(7200, true); // 2 hours
-    
+
     assert!(manager.is_usable(&token));
     assert!(!manager.needs_refresh(&token));
     assert!(token.can_refresh());
@@ -259,7 +259,7 @@ fn test_token_lifecycle_fresh() {
 fn test_token_lifecycle_approaching_expiry() {
     let manager = TokenManager::new();
     let token = create_token(200, true); // ~3 minutes
-    
+
     assert!(manager.is_usable(&token)); // still valid
     assert!(manager.needs_refresh(&token)); // but should refresh soon
 }
@@ -275,7 +275,7 @@ fn test_token_lifecycle_expired_but_refreshable() {
         scope: None,
         id_token: None,
     };
-    
+
     assert!(!manager.is_usable(&token)); // expired
     assert!(token.can_refresh()); // but can get new token
 }
@@ -291,7 +291,7 @@ fn test_token_lifecycle_expired_not_refreshable() {
         scope: None,
         id_token: None,
     };
-    
+
     assert!(!manager.is_usable(&token));
     assert!(!token.can_refresh());
     // Need to re-authenticate

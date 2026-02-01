@@ -131,10 +131,7 @@ impl EventSender {
             }
             Err(_) => {
                 // No receivers - this is okay, just means no one is listening
-                debug!(
-                    event_type = type_name,
-                    "[EventBus] No receivers for event"
-                );
+                debug!(event_type = type_name, "[EventBus] No receivers for event");
                 0
             }
         }
@@ -181,8 +178,7 @@ impl EventReceiver {
                 Err(broadcast::error::RecvError::Lagged(skipped)) => {
                     warn!(
                         skipped_events = skipped,
-                        "[EventBus] Receiver lagged, skipped {} events",
-                        skipped
+                        "[EventBus] Receiver lagged, skipped {} events", skipped
                     );
                     // Continue to receive next available event
                 }
@@ -292,4 +288,3 @@ mod tests {
         assert_eq!(count, 0);
     }
 }
-

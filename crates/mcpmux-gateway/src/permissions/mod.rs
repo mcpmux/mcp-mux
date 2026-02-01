@@ -90,7 +90,11 @@ impl PermissionFilter {
 
     /// Set permissions for a client
     pub fn set_client_permissions(&mut self, client_id: Uuid, permissions: Vec<PermissionSet>) {
-        debug!("Setting {} permission sets for client {}", permissions.len(), client_id);
+        debug!(
+            "Setting {} permission sets for client {}",
+            permissions.len(),
+            client_id
+        );
         self.client_permissions.insert(client_id, permissions);
     }
 
@@ -110,7 +114,10 @@ impl PermissionFilter {
         // Any matching permission set grants access
         for perm in permissions {
             if perm.allows_tool(tool_name) {
-                debug!("Tool {} allowed for client {} by permission set {}", tool_name, client_id, perm.id);
+                debug!(
+                    "Tool {} allowed for client {} by permission set {}",
+                    tool_name, client_id, perm.id
+                );
                 return true;
             }
         }
@@ -149,21 +156,24 @@ impl PermissionFilter {
 
     /// Filter a list of tools based on client permissions
     pub fn filter_tools<T: HasName>(&self, client_id: &Uuid, tools: Vec<T>) -> Vec<T> {
-        tools.into_iter()
+        tools
+            .into_iter()
             .filter(|t| self.can_access_tool(client_id, t.name()))
             .collect()
     }
 
     /// Filter a list of prompts based on client permissions
     pub fn filter_prompts<T: HasName>(&self, client_id: &Uuid, prompts: Vec<T>) -> Vec<T> {
-        prompts.into_iter()
+        prompts
+            .into_iter()
             .filter(|p| self.can_access_prompt(client_id, p.name()))
             .collect()
     }
 
     /// Filter a list of resources based on client permissions
     pub fn filter_resources<T: HasUri>(&self, client_id: &Uuid, resources: Vec<T>) -> Vec<T> {
-        resources.into_iter()
+        resources
+            .into_iter()
             .filter(|r| self.can_access_resource(client_id, r.uri()))
             .collect()
     }

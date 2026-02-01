@@ -14,10 +14,10 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use super::handlers::PendingAuthorization;
-use mcpmux_storage::{Database, JWT_SECRET_SIZE, InboundClientRepository};
 use crate::services::ClientMetadataService;
-use tokio::sync::broadcast;
 use mcpmux_core::DomainEvent;
+use mcpmux_storage::{Database, InboundClientRepository, JWT_SECRET_SIZE};
+use tokio::sync::broadcast;
 
 /// Client session in the gateway
 #[derive(Debug, Clone)]
@@ -83,23 +83,22 @@ impl GatewayState {
         }
     }
 
-    
     /// Set the base URL
     pub fn set_base_url(&mut self, base_url: String) {
         info!("[State] Base URL configured: {}", base_url);
         self.base_url = base_url;
     }
-    
+
     /// Subscribe to domain events (new unified channel)
     pub fn subscribe_domain_events(&self) -> broadcast::Receiver<DomainEvent> {
         self.domain_event_tx.subscribe()
     }
-    
+
     /// Get a clone of the domain event sender
     pub fn domain_event_sender(&self) -> broadcast::Sender<DomainEvent> {
         self.domain_event_tx.clone()
     }
-    
+
     /// Emit a domain event (new unified emission point)
     pub fn emit_domain_event(&self, event: DomainEvent) {
         if let Err(e) = self.domain_event_tx.send(event) {
@@ -153,7 +152,10 @@ impl GatewayState {
 
     /// Store a pending authorization (for code -> token exchange)
     pub fn store_pending_authorization(&mut self, code: &str, auth: PendingAuthorization) {
-        debug!("[State] Storing pending authorization for code: {}...", &code[..code.len().min(16)]);
+        debug!(
+            "[State] Storing pending authorization for code: {}...",
+            &code[..code.len().min(16)]
+        );
         self.pending_authorizations.insert(code.to_string(), auth);
     }
 
@@ -161,7 +163,10 @@ impl GatewayState {
     pub fn consume_pending_authorization(&mut self, code: &str) -> Option<PendingAuthorization> {
         let result = self.pending_authorizations.remove(code);
         if result.is_some() {
-            debug!("[State] Consumed pending authorization for code: {}...", &code[..code.len().min(16)]);
+            debug!(
+                "[State] Consumed pending authorization for code: {}...",
+                &code[..code.len().min(16)]
+            );
         }
         result
     }
@@ -198,8 +203,10 @@ impl GatewayState {
             connected_backends: vec![],
             started_at: chrono::Utc::now(),
         };
-        info!("[State] Created session: {} for client: {} in space: {}", 
-            session.id, client_id, space_id);
+        info!(
+            "[State] Created session: {} for client: {} in space: {}",
+            session.id, client_id, space_id
+        );
         self.sessions.insert(session.id, session.clone());
         session
     }
@@ -212,9 +219,12 @@ impl GatewayState {
     /// Remove a session
     pub fn remove_session(&mut self, session_id: &Uuid) -> Option<ClientSession> {
         if let Some(session) = self.sessions.remove(session_id) {
-            info!("[State] Removed session: {} (client: {}, duration: {}s)", 
-                session.id, session.client_id, 
-                (chrono::Utc::now() - session.started_at).num_seconds());
+            info!(
+                "[State] Removed session: {} (client: {}, duration: {}s)",
+                session.id,
+                session.client_id,
+                (chrono::Utc::now() - session.started_at).num_seconds()
+            );
             Some(session)
         } else {
             None
@@ -227,7 +237,10 @@ impl GatewayState {
             Some(dt) => format!("expires at {}", dt.format("%Y-%m-%d %H:%M:%S UTC")),
             None => "no expiry".to_string(),
         };
-        info!("[State] Stored OAuth token for server: {} ({})", server_id, expires_info);
+        info!(
+            "[State] Stored OAuth token for server: {} ({})",
+            server_id, expires_info
+        );
         self.oauth_tokens.insert(server_id, token);
     }
 

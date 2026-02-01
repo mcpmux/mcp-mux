@@ -40,10 +40,7 @@ pub async fn discover_metadata_with_fallback(
     // First try the direct URL
     match manager.discover_metadata().await {
         Ok(metadata) => {
-            info!(
-                "[OAuth] Metadata discovered at endpoint: {}",
-                server_url
-            );
+            info!("[OAuth] Metadata discovered at endpoint: {}", server_url);
             Ok(metadata)
         }
         Err(AuthError::NoAuthorizationSupport) => {
@@ -61,10 +58,7 @@ pub async fn discover_metadata_with_fallback(
 
             let metadata = origin_manager.discover_metadata().await?;
 
-            info!(
-                "[OAuth] Metadata discovered at origin: {}",
-                origin_url
-            );
+            info!("[OAuth] Metadata discovered at origin: {}", origin_url);
 
             Ok(metadata)
         }

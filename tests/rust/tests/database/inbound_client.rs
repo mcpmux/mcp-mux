@@ -3,15 +3,14 @@
 //! Tests for DCR registration, OAuth authorization codes, tokens, and client grants.
 //! These test the INBOUND flow: AI clients (Cursor, Claude) connecting TO McpMux.
 
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tests::{db::TestDatabase, fixtures};
-use mcpmux_storage::{
-    InboundClientRepository, InboundClient, RegistrationType,
-    AuthorizationCode, TokenRecord, TokenType,
-    SqliteSpaceRepository,
-};
 use mcpmux_core::repository::SpaceRepository;
+use mcpmux_storage::{
+    AuthorizationCode, InboundClient, InboundClientRepository, RegistrationType,
+    SqliteSpaceRepository, TokenRecord, TokenType,
+};
+use std::sync::Arc;
+use tests::{db::TestDatabase, fixtures};
+use tokio::sync::Mutex;
 
 fn create_test_client(name: &str) -> InboundClient {
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -21,7 +20,10 @@ fn create_test_client(name: &str) -> InboundClient {
         client_name: name.to_string(),
         client_alias: None,
         redirect_uris: vec!["http://127.0.0.1:8080/callback".to_string()],
-        grant_types: vec!["authorization_code".to_string(), "refresh_token".to_string()],
+        grant_types: vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ],
         response_types: vec!["code".to_string()],
         token_endpoint_auth_method: "none".to_string(),
         scope: Some("openid mcp".to_string()),
@@ -54,9 +56,14 @@ async fn test_save_and_get_client() {
     let client = create_test_client("Test Client");
     let client_id = client.client_id.clone();
 
-    repo.save_client(&client).await.expect("Failed to save client");
+    repo.save_client(&client)
+        .await
+        .expect("Failed to save client");
 
-    let loaded = repo.get_client(&client_id).await.expect("Failed to get client");
+    let loaded = repo
+        .get_client(&client_id)
+        .await
+        .expect("Failed to get client");
     assert!(loaded.is_some());
     let loaded = loaded.unwrap();
     assert_eq!(loaded.client_name, "Test Client");
@@ -74,12 +81,18 @@ async fn test_find_client_by_name() {
     repo.save_client(&client).await.unwrap();
 
     // Find by name
-    let found = repo.find_client_by_name("Cursor IDE").await.expect("Failed to find");
+    let found = repo
+        .find_client_by_name("Cursor IDE")
+        .await
+        .expect("Failed to find");
     assert!(found.is_some());
     assert_eq!(found.unwrap().client_id, client.client_id);
 
     // Non-existent name
-    let not_found = repo.find_client_by_name("NonExistent").await.expect("Failed to query");
+    let not_found = repo
+        .find_client_by_name("NonExistent")
+        .await
+        .expect("Failed to query");
     assert!(not_found.is_none());
 }
 
@@ -115,7 +128,9 @@ async fn test_approve_client() {
     assert!(!repo.is_client_approved(&client.client_id).await.unwrap());
 
     // Approve
-    repo.approve_client(&client.client_id).await.expect("Failed to approve");
+    repo.approve_client(&client.client_id)
+        .await
+        .expect("Failed to approve");
 
     // Now approved
     assert!(repo.is_client_approved(&client.client_id).await.unwrap());
@@ -151,7 +166,10 @@ async fn test_delete_client() {
     repo.save_client(&client).await.unwrap();
 
     // Delete
-    let deleted = repo.delete_client(&client_id).await.expect("Failed to delete");
+    let deleted = repo
+        .delete_client(&client_id)
+        .await
+        .expect("Failed to delete");
     assert!(deleted);
 
     // Verify gone
@@ -177,11 +195,20 @@ async fn test_validate_redirect_uri() {
     repo.save_client(&client).await.unwrap();
 
     // Valid URIs
-    assert!(repo.validate_redirect_uri(&client.client_id, "http://127.0.0.1:8080/callback").await.unwrap());
-    assert!(repo.validate_redirect_uri(&client.client_id, "cursor://callback").await.unwrap());
+    assert!(repo
+        .validate_redirect_uri(&client.client_id, "http://127.0.0.1:8080/callback")
+        .await
+        .unwrap());
+    assert!(repo
+        .validate_redirect_uri(&client.client_id, "cursor://callback")
+        .await
+        .unwrap());
 
     // Invalid URI
-    assert!(!repo.validate_redirect_uri(&client.client_id, "https://evil.com").await.unwrap());
+    assert!(!repo
+        .validate_redirect_uri(&client.client_id, "https://evil.com")
+        .await
+        .unwrap());
 }
 
 #[tokio::test]
@@ -195,13 +222,16 @@ async fn test_merge_redirect_uris() {
     repo.save_client(&client).await.unwrap();
 
     // Merge new URIs
-    let merged = repo.merge_redirect_uris(
-        &client.client_id,
-        vec![
-            "cursor://callback".to_string(),
-            "http://127.0.0.1:8080/callback".to_string(), // duplicate
-        ],
-    ).await.expect("Failed to merge");
+    let merged = repo
+        .merge_redirect_uris(
+            &client.client_id,
+            vec![
+                "cursor://callback".to_string(),
+                "http://127.0.0.1:8080/callback".to_string(), // duplicate
+            ],
+        )
+        .await
+        .expect("Failed to merge");
 
     // Should have 2 (duplicate removed)
     assert_eq!(merged.len(), 2);
@@ -234,17 +264,25 @@ async fn test_authorization_code_save_and_consume() {
         created_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
     };
 
-    repo.save_authorization_code(&code).await.expect("Failed to save code");
+    repo.save_authorization_code(&code)
+        .await
+        .expect("Failed to save code");
 
     // Consume (one-time use)
-    let consumed = repo.consume_authorization_code("auth_code_123").await.expect("Failed to consume");
+    let consumed = repo
+        .consume_authorization_code("auth_code_123")
+        .await
+        .expect("Failed to consume");
     assert!(consumed.is_some());
     let consumed = consumed.unwrap();
     assert_eq!(consumed.client_id, client.client_id);
     assert_eq!(consumed.code_challenge, Some("challenge_abc".to_string()));
 
     // Second consume should return None
-    let consumed_again = repo.consume_authorization_code("auth_code_123").await.unwrap();
+    let consumed_again = repo
+        .consume_authorization_code("auth_code_123")
+        .await
+        .unwrap();
     assert!(consumed_again.is_none());
 }
 
@@ -254,7 +292,10 @@ async fn test_authorization_code_not_found() {
     let db = Arc::new(Mutex::new(test_db.db));
     let repo = InboundClientRepository::new(db);
 
-    let consumed = repo.consume_authorization_code("nonexistent").await.unwrap();
+    let consumed = repo
+        .consume_authorization_code("nonexistent")
+        .await
+        .unwrap();
     assert!(consumed.is_none());
 }
 
@@ -297,10 +338,15 @@ async fn test_save_and_find_token() {
         parent_token_id: None,
     };
 
-    repo.save_token(&record).await.expect("Failed to save token");
+    repo.save_token(&record)
+        .await
+        .expect("Failed to save token");
 
     // Find by hash
-    let found = repo.find_token_by_hash(&token_hash).await.expect("Failed to find");
+    let found = repo
+        .find_token_by_hash(&token_hash)
+        .await
+        .expect("Failed to find");
     assert!(found.is_some());
     let found = found.unwrap();
     assert_eq!(found.client_id, client.client_id);
@@ -332,7 +378,10 @@ async fn test_validate_token() {
     repo.save_token(&record).await.unwrap();
 
     // Valid token
-    let validated = repo.validate_token(token_value).await.expect("Failed to validate");
+    let validated = repo
+        .validate_token(token_value)
+        .await
+        .expect("Failed to validate");
     assert!(validated.is_some());
 
     // Invalid token
@@ -437,11 +486,21 @@ async fn test_revoke_token_and_children() {
     repo.save_token(&access).await.unwrap();
 
     // Revoke refresh token (should also revoke child access token)
-    repo.revoke_token(&refresh_id).await.expect("Failed to revoke");
+    repo.revoke_token(&refresh_id)
+        .await
+        .expect("Failed to revoke");
 
     // Both should be revoked
-    let refresh_check = repo.find_token_by_hash(&InboundClientRepository::hash_token("refresh_token")).await.unwrap().unwrap();
-    let access_check = repo.find_token_by_hash(&InboundClientRepository::hash_token("access_token")).await.unwrap().unwrap();
+    let refresh_check = repo
+        .find_token_by_hash(&InboundClientRepository::hash_token("refresh_token"))
+        .await
+        .unwrap()
+        .unwrap();
+    let access_check = repo
+        .find_token_by_hash(&InboundClientRepository::hash_token("access_token"))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(refresh_check.revoked);
     assert!(access_check.revoked);
 }
@@ -472,7 +531,10 @@ async fn test_revoke_client_tokens() {
     }
 
     // Revoke all for client
-    let count = repo.revoke_client_tokens(&client.client_id).await.expect("Failed to revoke all");
+    let count = repo
+        .revoke_client_tokens(&client.client_id)
+        .await
+        .expect("Failed to revoke all");
     assert_eq!(count, 3);
 
     // Verify all revoked
@@ -507,7 +569,10 @@ async fn test_grant_feature_set() {
         .expect("Failed to grant");
 
     // Check grants
-    let grants = repo.get_grants_for_space(&client.client_id, &space.id.to_string()).await.unwrap();
+    let grants = repo
+        .get_grants_for_space(&client.client_id, &space.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(grants.len(), 1);
     assert!(grants.contains(&all_fs_id));
 }
@@ -533,16 +598,28 @@ async fn test_grant_multiple_feature_sets() {
     let space1_default = format!("fs_default_{}", space1.id);
     let space2_all = format!("fs_all_{}", space2.id);
 
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_all).await.unwrap();
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_default).await.unwrap();
-    repo.grant_feature_set(&client.client_id, &space2.id.to_string(), &space2_all).await.unwrap();
+    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_all)
+        .await
+        .unwrap();
+    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_default)
+        .await
+        .unwrap();
+    repo.grant_feature_set(&client.client_id, &space2.id.to_string(), &space2_all)
+        .await
+        .unwrap();
 
     // Space 1 should have 2
-    let grants1 = repo.get_grants_for_space(&client.client_id, &space1.id.to_string()).await.unwrap();
+    let grants1 = repo
+        .get_grants_for_space(&client.client_id, &space1.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(grants1.len(), 2);
 
     // Space 2 should have 1
-    let grants2 = repo.get_grants_for_space(&client.client_id, &space2.id.to_string()).await.unwrap();
+    let grants2 = repo
+        .get_grants_for_space(&client.client_id, &space2.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(grants2.len(), 1);
 }
 
@@ -562,11 +639,18 @@ async fn test_grant_idempotent() {
     let all_fs_id = format!("fs_all_{}", space.id);
 
     // Grant same thing twice
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id).await.unwrap();
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id).await.unwrap();
+    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
+        .await
+        .unwrap();
+    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
+        .await
+        .unwrap();
 
     // Should still be 1
-    let grants = repo.get_grants_for_space(&client.client_id, &space.id.to_string()).await.unwrap();
+    let grants = repo
+        .get_grants_for_space(&client.client_id, &space.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(grants.len(), 1);
 }
 
@@ -586,14 +670,23 @@ async fn test_revoke_feature_set() {
     let all_fs_id = format!("fs_all_{}", space.id);
     let default_fs_id = format!("fs_default_{}", space.id);
 
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id).await.unwrap();
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &default_fs_id).await.unwrap();
+    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
+        .await
+        .unwrap();
+    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &default_fs_id)
+        .await
+        .unwrap();
 
     // Revoke one
-    repo.revoke_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id).await.expect("Failed to revoke");
+    repo.revoke_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
+        .await
+        .expect("Failed to revoke");
 
     // Only default remains
-    let grants = repo.get_grants_for_space(&client.client_id, &space.id.to_string()).await.unwrap();
+    let grants = repo
+        .get_grants_for_space(&client.client_id, &space.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(grants.len(), 1);
     assert!(grants.contains(&default_fs_id));
 }
@@ -617,11 +710,20 @@ async fn test_get_all_grants() {
     let space1_default = format!("fs_default_{}", space1.id);
     let space2_all = format!("fs_all_{}", space2.id);
 
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_all).await.unwrap();
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_default).await.unwrap();
-    repo.grant_feature_set(&client.client_id, &space2.id.to_string(), &space2_all).await.unwrap();
+    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_all)
+        .await
+        .unwrap();
+    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_default)
+        .await
+        .unwrap();
+    repo.grant_feature_set(&client.client_id, &space2.id.to_string(), &space2_all)
+        .await
+        .unwrap();
 
-    let all_grants = repo.get_all_grants(&client.client_id).await.expect("Failed to get all");
+    let all_grants = repo
+        .get_all_grants(&client.client_id)
+        .await
+        .expect("Failed to get all");
     assert_eq!(all_grants.len(), 2); // 2 spaces
 
     assert_eq!(all_grants.get(&space1.id.to_string()).unwrap().len(), 2);
@@ -638,7 +740,9 @@ async fn test_grants_per_space_isolation() {
     let work = fixtures::test_space("Work");
     let personal = fixtures::test_space("Personal");
     SpaceRepository::create(&space_repo, &work).await.unwrap();
-    SpaceRepository::create(&space_repo, &personal).await.unwrap();
+    SpaceRepository::create(&space_repo, &personal)
+        .await
+        .unwrap();
 
     let client = create_test_client("Space Isolation");
     repo.save_client(&client).await.unwrap();
@@ -647,18 +751,30 @@ async fn test_grants_per_space_isolation() {
     let personal_all = format!("fs_all_{}", personal.id);
 
     // Grant "All" in different spaces
-    repo.grant_feature_set(&client.client_id, &work.id.to_string(), &work_all).await.unwrap();
-    repo.grant_feature_set(&client.client_id, &personal.id.to_string(), &personal_all).await.unwrap();
+    repo.grant_feature_set(&client.client_id, &work.id.to_string(), &work_all)
+        .await
+        .unwrap();
+    repo.grant_feature_set(&client.client_id, &personal.id.to_string(), &personal_all)
+        .await
+        .unwrap();
 
     // Revoke from work only
-    repo.revoke_feature_set(&client.client_id, &work.id.to_string(), &work_all).await.unwrap();
+    repo.revoke_feature_set(&client.client_id, &work.id.to_string(), &work_all)
+        .await
+        .unwrap();
 
     // Work should be empty
-    let work_grants = repo.get_grants_for_space(&client.client_id, &work.id.to_string()).await.unwrap();
+    let work_grants = repo
+        .get_grants_for_space(&client.client_id, &work.id.to_string())
+        .await
+        .unwrap();
     assert!(work_grants.is_empty());
 
     // Personal still has grant
-    let personal_grants = repo.get_grants_for_space(&client.client_id, &personal.id.to_string()).await.unwrap();
+    let personal_grants = repo
+        .get_grants_for_space(&client.client_id, &personal.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(personal_grants.len(), 1);
 }
 
@@ -681,12 +797,15 @@ async fn test_update_client_settings() {
     repo.save_client(&client).await.unwrap();
 
     // Update settings
-    let updated = repo.update_client_settings(
-        &client.client_id,
-        Some("My Cursor".to_string()),      // alias
-        Some("locked".to_string()),         // connection_mode
-        Some(Some(space.id.to_string())),   // locked_space_id
-    ).await.expect("Failed to update settings");
+    let updated = repo
+        .update_client_settings(
+            &client.client_id,
+            Some("My Cursor".to_string()),    // alias
+            Some("locked".to_string()),       // connection_mode
+            Some(Some(space.id.to_string())), // locked_space_id
+        )
+        .await
+        .expect("Failed to update settings");
 
     assert!(updated.is_some());
     let updated = updated.unwrap();
@@ -709,7 +828,9 @@ async fn test_update_last_seen() {
     assert!(loaded.last_seen.is_none());
 
     // Update last seen
-    repo.update_client_last_seen(&client.client_id).await.expect("Failed to update last_seen");
+    repo.update_client_last_seen(&client.client_id)
+        .await
+        .expect("Failed to update last_seen");
 
     // Now has last_seen
     let updated = repo.get_client(&client.client_id).await.unwrap().unwrap();

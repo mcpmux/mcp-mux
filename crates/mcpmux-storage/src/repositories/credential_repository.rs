@@ -144,7 +144,7 @@ impl CredentialRepository for SqliteCredentialRepository {
     async fn clear_tokens(&self, space_id: &Uuid, server_id: &str) -> Result<bool> {
         // For OAuth, client registration is in oauth_clients table, so just delete tokens
         let existing = self.get(space_id, server_id).await?;
-        
+
         match existing {
             Some(credential) if credential.is_oauth() => {
                 // Delete OAuth tokens - client registration is preserved in oauth_clients
@@ -364,4 +364,3 @@ mod tests {
         assert!(hex::decode(&raw_value).is_ok());
     }
 }
-

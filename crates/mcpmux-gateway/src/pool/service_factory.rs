@@ -9,8 +9,8 @@ use crate::server::GatewayDependencies;
 use mcpmux_core::DomainEvent;
 
 use super::{
-    OutboundOAuthManager, ConnectionService, FeatureService, PoolService, RoutingService, ServerManager,
-    TokenService,
+    ConnectionService, FeatureService, OutboundOAuthManager, PoolService, RoutingService,
+    ServerManager, TokenService,
 };
 
 /// Bundle of all pool services - follows DRY principle
@@ -56,7 +56,7 @@ impl ServiceFactory {
         let mut oauth_manager = OutboundOAuthManager::new()
             .with_log_manager(deps.log_manager.clone())
             .with_space_repo(deps.space_repo.clone());
-        
+
         // Add settings repo for port persistence if available
         if let Some(ref settings_repo) = deps.settings_repo {
             oauth_manager = oauth_manager.with_settings_repo(settings_repo.clone());

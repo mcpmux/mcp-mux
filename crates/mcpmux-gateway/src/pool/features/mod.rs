@@ -4,16 +4,16 @@
 
 mod conversion;
 mod discovery;
+mod facade;
 mod resolution;
 mod routing;
-mod facade;
 
 // Re-export public types
 pub use conversion::{convert_to_feature, resource_to_feature};
 pub use discovery::FeatureDiscoveryService;
+pub use facade::FeatureService;
 pub use resolution::FeatureResolutionService;
 pub use routing::FeatureRoutingService;
-pub use facade::FeatureService;
 
 use mcpmux_core::ServerFeature;
 
@@ -29,7 +29,7 @@ impl CachedFeatures {
     pub fn total_count(&self) -> usize {
         self.tools.len() + self.prompts.len() + self.resources.len()
     }
-    
+
     pub fn all_features(&self) -> Vec<ServerFeature> {
         let mut all = Vec::with_capacity(self.total_count());
         all.extend(self.tools.iter().cloned());
@@ -38,5 +38,3 @@ impl CachedFeatures {
         all
     }
 }
-
-

@@ -6,15 +6,20 @@
 use std::sync::Arc;
 use uuid::Uuid;
 
-use tests::mocks::{MockFeatureSetRepository, MockServerFeatureRepository};
 use mcpmux_core::{
     FeatureSet, FeatureSetMember, FeatureSetRepository, FeatureType, MemberMode, MemberType,
     ServerFeature, ServerFeatureRepository,
 };
 use mcpmux_gateway::{FeatureService, PrefixCacheService};
+use tests::mocks::{MockFeatureSetRepository, MockServerFeatureRepository};
 
 // Helper to create test features
-fn create_test_feature(space_id: &str, server_id: &str, name: &str, feature_type: FeatureType) -> ServerFeature {
+fn create_test_feature(
+    space_id: &str,
+    server_id: &str,
+    name: &str,
+    feature_type: FeatureType,
+) -> ServerFeature {
     let mut feature = match feature_type {
         FeatureType::Tool => ServerFeature::tool(space_id, server_id, name),
         FeatureType::Prompt => ServerFeature::prompt(space_id, server_id, name),
@@ -50,9 +55,33 @@ async fn test_all_featureset_grants_all_features() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create features
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "tool_a", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "tool_b", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "prompt_a", FeatureType::Prompt)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "tool_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "tool_b",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "prompt_a",
+            FeatureType::Prompt,
+        ))
+        .await
+        .unwrap();
 
     // Create "All" feature set
     let all_fs = FeatureSet::new_all(&space_id);
@@ -83,7 +112,8 @@ async fn test_all_featureset_excludes_unavailable() {
 
     // Create available and unavailable features
     let available = create_test_feature(&space_id, server_id, "available_tool", FeatureType::Tool);
-    let mut unavailable = create_test_feature(&space_id, server_id, "unavailable_tool", FeatureType::Tool);
+    let mut unavailable =
+        create_test_feature(&space_id, server_id, "unavailable_tool", FeatureType::Tool);
     unavailable.is_available = false;
 
     feature_repo.upsert(&available).await.unwrap();
@@ -100,7 +130,11 @@ async fn test_all_featureset_excludes_unavailable() {
         .await
         .unwrap();
 
-    assert_eq!(resolved.len(), 1, "Only available feature should be resolved");
+    assert_eq!(
+        resolved.len(),
+        1,
+        "Only available feature should be resolved"
+    );
     assert_eq!(resolved[0].feature_name, "available_tool");
 }
 
@@ -119,9 +153,33 @@ async fn test_server_all_grants_only_server_features() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create features for both servers
-    feature_repo.upsert(&create_test_feature(&space_id, server_a, "tool_a1", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_a, "tool_a2", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_b, "tool_b1", FeatureType::Tool)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_a,
+            "tool_a1",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_a,
+            "tool_a2",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_b,
+            "tool_b1",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
 
     // Create ServerAll for server_a only
     let server_all = FeatureSet::new_server_all(&space_id, server_a, "Server A");
@@ -136,7 +194,11 @@ async fn test_server_all_grants_only_server_features() {
         .unwrap();
 
     // Should only include server_a features
-    assert_eq!(resolved.len(), 2, "Only server_a features should be resolved");
+    assert_eq!(
+        resolved.len(),
+        2,
+        "Only server_a features should be resolved"
+    );
     assert!(resolved.iter().all(|f| f.server_id == server_a));
     assert!(resolved.iter().any(|f| f.feature_name == "tool_a1"));
     assert!(resolved.iter().any(|f| f.feature_name == "tool_a2"));
@@ -156,7 +218,15 @@ async fn test_default_featureset_empty_grants_nothing() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create features
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "tool_a", FeatureType::Tool)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "tool_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
 
     // Create empty Default feature set (secure by default)
     let default_fs = FeatureSet::new_default(&space_id);
@@ -222,7 +292,11 @@ async fn test_custom_featureset_with_include_members() {
         .await
         .unwrap();
 
-    assert_eq!(resolved.len(), 2, "Only included features should be resolved");
+    assert_eq!(
+        resolved.len(),
+        2,
+        "Only included features should be resolved"
+    );
     assert!(resolved.iter().any(|f| f.feature_name == "tool_a"));
     assert!(resolved.iter().any(|f| f.feature_name == "tool_b"));
     assert!(!resolved.iter().any(|f| f.feature_name == "tool_c"));
@@ -243,8 +317,24 @@ async fn test_nested_featureset_composition() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create features
-    feature_repo.upsert(&create_test_feature(&space_id, server_a, "tool_a", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_b, "tool_b", FeatureType::Tool)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_a,
+            "tool_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_b,
+            "tool_b",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
 
     // Create ServerAll for each server
     let server_all_a = FeatureSet::new_server_all(&space_id, server_a, "Server A");
@@ -281,8 +371,12 @@ async fn test_nested_featureset_composition() {
         .unwrap();
 
     assert_eq!(resolved.len(), 2, "Both server features should be resolved");
-    assert!(resolved.iter().any(|f| f.feature_name == "tool_a" && f.server_id == server_a));
-    assert!(resolved.iter().any(|f| f.feature_name == "tool_b" && f.server_id == server_b));
+    assert!(resolved
+        .iter()
+        .any(|f| f.feature_name == "tool_a" && f.server_id == server_a));
+    assert!(resolved
+        .iter()
+        .any(|f| f.feature_name == "tool_b" && f.server_id == server_b));
 }
 
 // ============================================================================
@@ -299,9 +393,33 @@ async fn test_get_tools_for_grants() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create mixed features
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "tool_a", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "prompt_a", FeatureType::Prompt)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "resource://test", FeatureType::Resource)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "tool_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "prompt_a",
+            FeatureType::Prompt,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "resource://test",
+            FeatureType::Resource,
+        ))
+        .await
+        .unwrap();
 
     let all_fs = FeatureSet::new_all(&space_id);
     let all_fs_id = all_fs.id.clone();
@@ -328,9 +446,33 @@ async fn test_get_prompts_for_grants() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create mixed features
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "tool_a", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "prompt_a", FeatureType::Prompt)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "prompt_b", FeatureType::Prompt)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "tool_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "prompt_a",
+            FeatureType::Prompt,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "prompt_b",
+            FeatureType::Prompt,
+        ))
+        .await
+        .unwrap();
 
     let all_fs = FeatureSet::new_all(&space_id);
     let all_fs_id = all_fs.id.clone();
@@ -344,7 +486,9 @@ async fn test_get_prompts_for_grants() {
         .unwrap();
 
     assert_eq!(prompts.len(), 2, "Only prompts should be returned");
-    assert!(prompts.iter().all(|f| f.feature_type == FeatureType::Prompt));
+    assert!(prompts
+        .iter()
+        .all(|f| f.feature_type == FeatureType::Prompt));
 }
 
 #[tokio::test]
@@ -357,8 +501,24 @@ async fn test_get_resources_for_grants() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create mixed features
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "tool_a", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "resource://test", FeatureType::Resource)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "tool_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "resource://test",
+            FeatureType::Resource,
+        ))
+        .await
+        .unwrap();
 
     let all_fs = FeatureSet::new_all(&space_id);
     let all_fs_id = all_fs.id.clone();
@@ -390,8 +550,24 @@ async fn test_features_isolated_by_space() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create features in different spaces
-    feature_repo.upsert(&create_test_feature(&space_a, server_id, "tool_in_space_a", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_b, server_id, "tool_in_space_b", FeatureType::Tool)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_a,
+            server_id,
+            "tool_in_space_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_b,
+            server_id,
+            "tool_in_space_b",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
 
     // Create All feature set for space_a
     let all_fs = FeatureSet::new_all(&space_a);
@@ -427,8 +603,24 @@ async fn test_multiple_grants_union() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Create features
-    feature_repo.upsert(&create_test_feature(&space_id, server_a, "tool_a", FeatureType::Tool)).await.unwrap();
-    feature_repo.upsert(&create_test_feature(&space_id, server_b, "tool_b", FeatureType::Tool)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_a,
+            "tool_a",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_b,
+            "tool_b",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
 
     // Create ServerAll for each server
     let server_all_a = FeatureSet::new_server_all(&space_id, server_a, "Server A");
@@ -462,10 +654,20 @@ async fn test_prefix_enrichment() {
     let prefix_cache = Arc::new(PrefixCacheService::new());
 
     // Register server prefix
-    prefix_cache.assign_prefix_runtime(&space_id, server_id, Some("myalias")).await;
+    prefix_cache
+        .assign_prefix_runtime(&space_id, server_id, Some("myalias"))
+        .await;
 
     // Create feature
-    feature_repo.upsert(&create_test_feature(&space_id, server_id, "my_tool", FeatureType::Tool)).await.unwrap();
+    feature_repo
+        .upsert(&create_test_feature(
+            &space_id,
+            server_id,
+            "my_tool",
+            FeatureType::Tool,
+        ))
+        .await
+        .unwrap();
 
     let all_fs = FeatureSet::new_all(&space_id);
     let all_fs_id = all_fs.id.clone();

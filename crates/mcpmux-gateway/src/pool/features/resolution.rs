@@ -1,15 +1,15 @@
 //! Feature Resolution Service - SRP: Feature set resolution & permissions
 
+use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
-use anyhow::Result;
 use tracing::debug;
 
+use crate::services::PrefixCacheService;
 use mcpmux_core::{
     FeatureSet, FeatureSetRepository, FeatureSetType, FeatureType, MemberMode, MemberType,
     ServerFeature, ServerFeatureRepository,
 };
-use crate::services::PrefixCacheService;
 
 /// Helper to apply include/exclude mode (DRY)
 fn apply_mode_to_set(
@@ -43,7 +43,7 @@ impl FeatureResolutionService {
             prefix_cache,
         }
     }
-    
+
     /// Get all available features for a space (optionally filtered by type)
     pub async fn get_all_features_for_space(
         &self,
@@ -51,27 +51,28 @@ impl FeatureResolutionService {
         filter_type: Option<FeatureType>,
     ) -> Result<Vec<ServerFeature>> {
         let all_features = self.feature_repo.list_for_space(space_id).await?;
-        
+
         let mut result: Vec<ServerFeature> = all_features
             .into_iter()
             .filter(|f| f.is_available)
             .collect();
-            
+
         if let Some(feature_type) = filter_type {
             result.retain(|f| f.feature_type == feature_type);
         }
-        
+
         // Enrich with prefixes
         for feature in &mut result {
-            let prefix = self.prefix_cache
+            let prefix = self
+                .prefix_cache
                 .get_prefix_for_server(space_id, &feature.server_id)
                 .await;
             feature.server_alias = Some(prefix);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Resolve feature set IDs to actual features (with optional type filter)
     pub async fn resolve_feature_sets(
         &self,
@@ -82,11 +83,15 @@ impl FeatureResolutionService {
         let mut allowed_feature_ids: HashSet<String> = HashSet::new();
         let mut excluded_feature_ids: HashSet<String> = HashSet::new();
         let mut has_all_grant = false;
-        
+
         let all_features = self.feature_repo.list_for_space(space_id).await?;
-        
-        debug!("[FeatureResolution] Resolving {} feature sets for space {}", feature_set_ids.len(), space_id);
-        
+
+        debug!(
+            "[FeatureResolution] Resolving {} feature sets for space {}",
+            feature_set_ids.len(),
+            space_id
+        );
+
         for fs_id in feature_set_ids {
             let feature_set = match self.feature_set_repo.get_with_members(fs_id).await? {
                 Some(fs) => {
@@ -101,7 +106,7 @@ impl FeatureResolutionService {
                     continue;
                 }
             };
-            
+
             match feature_set.feature_set_type {
                 FeatureSetType::All => {
                     has_all_grant = true;
@@ -114,7 +119,8 @@ impl FeatureResolutionService {
                         &all_features,
                         &mut allowed_feature_ids,
                         &mut excluded_feature_ids,
-                    ).await?;
+                    )
+                    .await?;
                 }
                 FeatureSetType::ServerAll => {
                     if let Some(ref server_id) = feature_set.server_id {
@@ -122,12 +128,14 @@ impl FeatureResolutionService {
                             "[FeatureResolution] ServerAll: querying features for server_id={} in space={}",
                             server_id, space_id
                         );
-                        let server_features = self.feature_repo
+                        let server_features = self
+                            .feature_repo
                             .list_for_server(space_id, server_id)
                             .await?;
                         debug!(
                             "[FeatureResolution] ServerAll: found {} features for server {}",
-                            server_features.len(), server_id
+                            server_features.len(),
+                            server_id
                         );
                         for f in &server_features {
                             debug!(
@@ -146,17 +154,18 @@ impl FeatureResolutionService {
                         &all_features,
                         &mut allowed_feature_ids,
                         &mut excluded_feature_ids,
-                    ).await?;
+                    )
+                    .await?;
                 }
             }
         }
-        
+
         // Apply filters
         debug!(
             "[FeatureResolution] Filtering: has_all_grant={}, all_features={}, allowed_ids={}, excluded_ids={}",
             has_all_grant, all_features.len(), allowed_feature_ids.len(), excluded_feature_ids.len()
         );
-        
+
         let mut result: Vec<ServerFeature> = if has_all_grant {
             all_features
                 .into_iter()
@@ -179,25 +188,29 @@ impl FeatureResolutionService {
                 })
                 .collect()
         };
-        
-        debug!("[FeatureResolution] After filter: {} features", result.len());
-        
+
+        debug!(
+            "[FeatureResolution] After filter: {} features",
+            result.len()
+        );
+
         // Apply type filter if specified (OCP)
         if let Some(feature_type) = filter_type {
             result.retain(|f| f.feature_type == feature_type);
         }
-        
+
         // Enrich with prefixes
         for feature in &mut result {
-            let prefix = self.prefix_cache
+            let prefix = self
+                .prefix_cache
                 .get_prefix_for_server(space_id, &feature.server_id)
                 .await;
             feature.server_alias = Some(prefix);
         }
-        
+
         Ok(result)
     }
-    
+
     async fn resolve_members(
         &self,
         feature_set: &FeatureSet,
@@ -216,9 +229,10 @@ impl FeatureResolutionService {
                     );
                 }
                 MemberType::FeatureSet => {
-                    if let Some(nested_fs) = self.feature_set_repo
+                    if let Some(nested_fs) = self
+                        .feature_set_repo
                         .get_with_members(&member.member_id)
-                        .await? 
+                        .await?
                     {
                         match nested_fs.feature_set_type {
                             FeatureSetType::All => {
@@ -243,7 +257,8 @@ impl FeatureResolutionService {
                                     all_features,
                                     allowed,
                                     excluded,
-                                )).await?;
+                                ))
+                                .await?;
                             }
                         }
                     }
@@ -253,5 +268,3 @@ impl FeatureResolutionService {
         Ok(())
     }
 }
-
-

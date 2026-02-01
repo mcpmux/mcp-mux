@@ -18,32 +18,60 @@ pub mod pool;
 pub mod server;
 pub mod services;
 
-pub use oauth::{OAuthConfig, OAuthManager, OAuthToken};
-pub use server::{
-    AutoConnectResult, GatewayConfig, GatewayServer, GatewayState, StartupOrchestrator,
-    GatewayDependencies, DependenciesBuilder, PendingAuthorization,
-};
 pub use auth::AccessKeyAuth;
+pub use oauth::{OAuthConfig, OAuthManager, OAuthToken};
 pub use permissions::{PermissionFilter, PermissionSet};
+pub use server::{
+    AutoConnectResult, DependenciesBuilder, GatewayConfig, GatewayDependencies, GatewayServer,
+    GatewayState, PendingAuthorization, StartupOrchestrator,
+};
 
 // Pool module - SOLID architecture
 pub use pool::{
-    // Services
-    ConnectionService, FeatureService, PoolService, RoutingService, TokenService,
-    // Service Factory (DRY)
-    PoolServices, ServiceFactory,
     // Types
-    CachedFeatures, ConnectionContext, ConnectionResult, InstalledServerInfo, PoolStats, ReconnectResult,
-    ResolvedTransport, TransportConnectResult, TransportFactory,
-    // Instance types
-    DiscoveredFeatures, InstanceKey, InstanceState, McpClient, McpClientConnection,
-    McpClientHandler, ServerInstance, TransportType,
-    // OAuth
-    OutboundOAuthManager, DatabaseCredentialStore, OAuthCallback, OAuthInitResult, OAuthTokenInfo,
-    // Routing types
-    RoutedPrompt, RoutedResource, RoutedTool,
+    CachedFeatures,
     // Server Manager (event-driven orchestrator)
-    ConnectResult, ConnectionStatus, ServerKey, ServerManager, ServerState,
+    ConnectResult,
+    ConnectionContext,
+    ConnectionResult,
+    // Services
+    ConnectionService,
+    ConnectionStatus,
+    DatabaseCredentialStore,
+    // Instance types
+    DiscoveredFeatures,
+    FeatureService,
+    InstalledServerInfo,
+    InstanceKey,
+    InstanceState,
+    McpClient,
+    McpClientConnection,
+    McpClientHandler,
+    OAuthCallback,
+    OAuthInitResult,
+    OAuthTokenInfo,
+    // OAuth
+    OutboundOAuthManager,
+    PoolService,
+    // Service Factory (DRY)
+    PoolServices,
+    PoolStats,
+    ReconnectResult,
+    ResolvedTransport,
+    // Routing types
+    RoutedPrompt,
+    RoutedResource,
+    RoutedTool,
+    RoutingService,
+    ServerInstance,
+    ServerKey,
+    ServerManager,
+    ServerState,
+    ServiceFactory,
+    TokenService,
+    TransportConnectResult,
+    TransportFactory,
+    TransportType,
 };
 
 // Services module

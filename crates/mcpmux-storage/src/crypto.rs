@@ -149,4 +149,3 @@ mod tests {
         assert_eq!(encryptor.decrypt(&ciphertext2).unwrap(), plaintext);
     }
 }
-

@@ -15,8 +15,6 @@ pub enum TransportType {
     Http,
 }
 
-
-
 /// Authentication type for the server
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -69,7 +67,6 @@ pub enum InputType {
     /// URL input with validation
     Url,
 }
-
 
 /// Select option for dropdown inputs
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

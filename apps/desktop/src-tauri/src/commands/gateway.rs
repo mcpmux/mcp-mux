@@ -2,19 +2,19 @@
 //!
 //! IPC commands for controlling the local MCP gateway server.
 
-use crate::AppState;
-use mcpmux_gateway::{
-    ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, PoolService, ServerKey,
-    ResolvedTransport,
-};
 use crate::commands::server_manager::ServerManagerState;
-use mcpmux_storage::{JwtSecretProvider, KeychainJwtSecretProvider};
+use crate::AppState;
 use mcpmux_core::DomainEvent;
+use mcpmux_gateway::{
+    ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, PoolService,
+    ResolvedTransport, ServerKey,
+};
+use mcpmux_storage::{JwtSecretProvider, KeychainJwtSecretProvider};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
-use tracing::{error, info, warn, trace};
+use tracing::{error, info, trace, warn};
 use uuid::Uuid;
 
 /// Gateway status response
@@ -59,9 +59,8 @@ pub struct GatewayAppState {
     pub grant_service: Option<Arc<mcpmux_gateway::GrantService>>,
 }
 
-
 /// Start domain event bridge from Gateway to Tauri
-/// 
+///
 /// Routes all DomainEvents to appropriate frontend channels.
 /// This replaces the old GatewayEvent bridge with a unified DomainEvent system.
 pub fn start_domain_event_bridge(
@@ -69,32 +68,32 @@ pub fn start_domain_event_bridge(
     gateway_state: Arc<RwLock<mcpmux_gateway::GatewayState>>,
 ) {
     let app_handle_clone = app_handle.clone();
-    
+
     tokio::spawn(async move {
         let mut event_rx = {
             let state = gateway_state.read().await;
             state.subscribe_domain_events()
         };
-        
+
         info!("[Gateway] Domain event bridge started");
-        
+
         while let Ok(event) = event_rx.recv().await {
             let event_type = event.type_name();
-            
+
             // Map domain events to UI channels
             let (channel, payload) = map_domain_event_to_ui(&event);
-            
+
             trace!(
                 event_type = event_type,
                 channel = channel,
                 "[Gateway] Forwarding domain event to UI"
             );
-            
+
             if let Err(e) = app_handle_clone.emit(channel, payload) {
                 error!("[Gateway] Failed to emit {} event: {}", channel, e);
             }
         }
-        
+
         info!("[Gateway] Domain event bridge stopped");
     });
 }
@@ -103,7 +102,11 @@ pub fn start_domain_event_bridge(
 fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Value) {
     match event {
         // Space events
-        DomainEvent::SpaceCreated { space_id, name, icon } => (
+        DomainEvent::SpaceCreated {
+            space_id,
+            name,
+            icon,
+        } => (
             "space-changed",
             serde_json::json!({
                 "action": "created",
@@ -127,7 +130,11 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "space_id": space_id,
             }),
         ),
-        DomainEvent::SpaceActivated { from_space_id, to_space_id, to_space_name } => (
+        DomainEvent::SpaceActivated {
+            from_space_id,
+            to_space_id,
+            to_space_name,
+        } => (
             "space-changed",
             serde_json::json!({
                 "action": "activated",
@@ -138,7 +145,11 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
         ),
 
         // Server lifecycle events
-        DomainEvent::ServerInstalled { space_id, server_id, server_name } => (
+        DomainEvent::ServerInstalled {
+            space_id,
+            server_id,
+            server_name,
+        } => (
             "server-changed",
             serde_json::json!({
                 "action": "installed",
@@ -147,7 +158,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "server_name": server_name,
             }),
         ),
-        DomainEvent::ServerUninstalled { space_id, server_id } => (
+        DomainEvent::ServerUninstalled {
+            space_id,
+            server_id,
+        } => (
             "server-changed",
             serde_json::json!({
                 "action": "uninstalled",
@@ -155,7 +169,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "server_id": server_id,
             }),
         ),
-        DomainEvent::ServerConfigUpdated { space_id, server_id } => (
+        DomainEvent::ServerConfigUpdated {
+            space_id,
+            server_id,
+        } => (
             "server-changed",
             serde_json::json!({
                 "action": "config_updated",
@@ -163,7 +180,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "server_id": server_id,
             }),
         ),
-        DomainEvent::ServerEnabled { space_id, server_id } => (
+        DomainEvent::ServerEnabled {
+            space_id,
+            server_id,
+        } => (
             "server-changed",
             serde_json::json!({
                 "action": "enabled",
@@ -171,7 +191,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "server_id": server_id,
             }),
         ),
-        DomainEvent::ServerDisabled { space_id, server_id } => (
+        DomainEvent::ServerDisabled {
+            space_id,
+            server_id,
+        } => (
             "server-changed",
             serde_json::json!({
                 "action": "disabled",
@@ -181,7 +204,15 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
         ),
 
         // Server status events
-        DomainEvent::ServerStatusChanged { space_id, server_id, status, flow_id, has_connected_before, message, features } => (
+        DomainEvent::ServerStatusChanged {
+            space_id,
+            server_id,
+            status,
+            flow_id,
+            has_connected_before,
+            message,
+            features,
+        } => (
             "server-status-changed",
             serde_json::json!({
                 "space_id": space_id,
@@ -197,7 +228,12 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 })),
             }),
         ),
-        DomainEvent::ServerAuthProgress { space_id, server_id, remaining_seconds, flow_id } => (
+        DomainEvent::ServerAuthProgress {
+            space_id,
+            server_id,
+            remaining_seconds,
+            flow_id,
+        } => (
             "server-auth-progress",
             serde_json::json!({
                 "space_id": space_id,
@@ -206,7 +242,13 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "flow_id": flow_id,
             }),
         ),
-        DomainEvent::ServerFeaturesRefreshed { space_id, server_id, features, added, removed } => (
+        DomainEvent::ServerFeaturesRefreshed {
+            space_id,
+            server_id,
+            features,
+            added,
+            removed,
+        } => (
             "server-features-refreshed",
             serde_json::json!({
                 "space_id": space_id,
@@ -220,7 +262,12 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
         ),
 
         // Feature set events
-        DomainEvent::FeatureSetCreated { space_id, feature_set_id, name, feature_set_type } => (
+        DomainEvent::FeatureSetCreated {
+            space_id,
+            feature_set_id,
+            name,
+            feature_set_type,
+        } => (
             "feature-set-changed",
             serde_json::json!({
                 "action": "created",
@@ -230,7 +277,11 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "feature_set_type": feature_set_type,
             }),
         ),
-        DomainEvent::FeatureSetUpdated { space_id, feature_set_id, name } => (
+        DomainEvent::FeatureSetUpdated {
+            space_id,
+            feature_set_id,
+            name,
+        } => (
             "feature-set-changed",
             serde_json::json!({
                 "action": "updated",
@@ -239,7 +290,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "name": name,
             }),
         ),
-        DomainEvent::FeatureSetDeleted { space_id, feature_set_id } => (
+        DomainEvent::FeatureSetDeleted {
+            space_id,
+            feature_set_id,
+        } => (
             "feature-set-changed",
             serde_json::json!({
                 "action": "deleted",
@@ -247,7 +301,12 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "feature_set_id": feature_set_id,
             }),
         ),
-        DomainEvent::FeatureSetMembersChanged { space_id, feature_set_id, added_count, removed_count } => (
+        DomainEvent::FeatureSetMembersChanged {
+            space_id,
+            feature_set_id,
+            added_count,
+            removed_count,
+        } => (
             "feature-set-changed",
             serde_json::json!({
                 "action": "members_changed",
@@ -259,7 +318,11 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
         ),
 
         // Client events
-        DomainEvent::ClientRegistered { client_id, client_name, registration_type } => (
+        DomainEvent::ClientRegistered {
+            client_id,
+            client_name,
+            registration_type,
+        } => (
             "client-changed",
             serde_json::json!({
                 "action": "registered",
@@ -268,7 +331,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "registration_type": registration_type,
             }),
         ),
-        DomainEvent::ClientReconnected { client_id, client_name } => (
+        DomainEvent::ClientReconnected {
+            client_id,
+            client_name,
+        } => (
             "client-changed",
             serde_json::json!({
                 "action": "reconnected",
@@ -299,7 +365,11 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
         ),
 
         // Grant events
-        DomainEvent::GrantIssued { client_id, space_id, feature_set_id } => (
+        DomainEvent::GrantIssued {
+            client_id,
+            space_id,
+            feature_set_id,
+        } => (
             "grants-changed",
             serde_json::json!({
                 "action": "granted",
@@ -308,7 +378,11 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "feature_set_id": feature_set_id,
             }),
         ),
-        DomainEvent::GrantRevoked { client_id, space_id, feature_set_id } => (
+        DomainEvent::GrantRevoked {
+            client_id,
+            space_id,
+            feature_set_id,
+        } => (
             "grants-changed",
             serde_json::json!({
                 "action": "revoked",
@@ -317,7 +391,11 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "feature_set_id": feature_set_id,
             }),
         ),
-        DomainEvent::ClientGrantsUpdated { client_id, space_id, feature_set_ids } => (
+        DomainEvent::ClientGrantsUpdated {
+            client_id,
+            space_id,
+            feature_set_ids,
+        } => (
             "grants-changed",
             serde_json::json!({
                 "action": "batch_updated",
@@ -344,7 +422,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
         ),
 
         // MCP capability notifications (informational)
-        DomainEvent::ToolsChanged { space_id, server_id } => (
+        DomainEvent::ToolsChanged {
+            space_id,
+            server_id,
+        } => (
             "mcp-notification",
             serde_json::json!({
                 "type": "tools_changed",
@@ -352,7 +433,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "server_id": server_id,
             }),
         ),
-        DomainEvent::PromptsChanged { space_id, server_id } => (
+        DomainEvent::PromptsChanged {
+            space_id,
+            server_id,
+        } => (
             "mcp-notification",
             serde_json::json!({
                 "type": "prompts_changed",
@@ -360,7 +444,10 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "server_id": server_id,
             }),
         ),
-        DomainEvent::ResourcesChanged { space_id, server_id } => (
+        DomainEvent::ResourcesChanged {
+            space_id,
+            server_id,
+        } => (
             "mcp-notification",
             serde_json::json!({
                 "type": "resources_changed",
@@ -396,7 +483,7 @@ fn create_gateway_dependencies(
             None
         }
     };
-    
+
     // Build dependencies using builder pattern (DI)
     let mut builder = mcpmux_gateway::DependenciesBuilder::new()
         .with_installed_server_repo(app_state.installed_server_repository.clone())
@@ -409,11 +496,11 @@ fn create_gateway_dependencies(
         .with_database(app_state.database())
         .with_state_dir(app_state.data_dir().to_path_buf())
         .with_settings_repo(app_state.settings_repository.clone());
-    
+
     if let Some(secret) = jwt_secret {
         builder = builder.with_jwt_secret(secret);
     }
-    
+
     builder.build().map_err(|e: String| e)
 }
 
@@ -424,7 +511,7 @@ pub async fn get_gateway_status(
     server_manager_state: State<'_, Arc<RwLock<ServerManagerState>>>,
 ) -> Result<GatewayStatus, String> {
     let state = gateway_state.read().await;
-    
+
     let active_sessions = if let Some(ref gw_state) = state.gateway_state {
         let gw = gw_state.read().await;
         gw.sessions.len()
@@ -441,12 +528,12 @@ pub async fn get_gateway_status(
             0
         }
     };
-    
+
     info!(
         "[Gateway] get_gateway_status: running={}, url={:?}, sessions={}, backends={}",
         state.running, state.url, active_sessions, connected_backends
     );
-    
+
     Ok(GatewayStatus {
         running: state.running,
         url: state.url.clone(),
@@ -464,51 +551,52 @@ pub async fn start_gateway(
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let mut state = gateway_state.write().await;
-    
+
     if state.running {
         return Err("Gateway is already running".to_string());
     }
-    
+
     // Single Responsibility: Delegate port resolution to GatewayPortService
-    let final_port = app_state.gateway_port_service
+    let final_port = app_state
+        .gateway_port_service
         .resolve_with_override(port)
         .await
         .map_err(|e| e.to_string())?;
-    
+
     let url = format!("http://localhost:{}", final_port);
-    
+
     info!("Starting gateway on {}", url);
-    
+
     // Create dependencies using DI builder pattern
     let dependencies = create_gateway_dependencies(&app_state, app_handle.clone())?;
-    
+
     // Create gateway config
     let config = mcpmux_gateway::GatewayConfig {
-        host: "127.0.0.1".to_string(),  // Bind address must be IP
+        host: "127.0.0.1".to_string(), // Bind address must be IP
         port: final_port,
         enable_cors: true,
     };
-    
+
     // Create self-contained gateway server with DI
     // Gateway will auto-initialize all services and auto-connect enabled servers
     let server = mcpmux_gateway::GatewayServer::new(config, dependencies);
-    
+
     // Get references to services before spawning
     let gw_state = server.state();
     let pool_service = server.pool_service();
     let feature_service = server.feature_service();
     let event_emitter = server.event_emitter();
-    
+
     info!("[Gateway] Getting grant_service from server...");
     let grant_service = server.grant_service();
     info!("[Gateway] Got grant_service: {:p}", &*grant_service);
-    
+
     // Start domain event bridge (clean architecture)
     start_domain_event_bridge(&app_handle, gw_state.clone());
-    
+
     // Spawn gateway (runs in background, auto-connects servers)
     let handle = server.spawn();
-    
+
     info!("[Gateway] Setting state fields...");
     state.running = true;
     state.url = Some(url.clone());
@@ -517,17 +605,23 @@ pub async fn start_gateway(
     state.pool_service = Some(pool_service);
     state.feature_service = Some(feature_service);
     state.event_emitter = Some(event_emitter);
-    info!("[Gateway] About to set grant_service: {:p}", &*grant_service);
+    info!(
+        "[Gateway] About to set grant_service: {:p}",
+        &*grant_service
+    );
     state.grant_service = Some(grant_service);
-    info!("[Gateway] grant_service set! Checking: {}", state.grant_service.is_some());
-    
+    info!(
+        "[Gateway] grant_service set! Checking: {}",
+        state.grant_service.is_some()
+    );
+
     info!(
         "[Gateway] Started successfully - EventEmitter initialized: {}, GrantService initialized: {}",
         state.event_emitter.is_some(),
         state.grant_service.is_some()
     );
     info!("[Gateway] Auto-connect will run in background");
-    
+
     Ok(url)
 }
 
@@ -537,19 +631,19 @@ pub async fn stop_gateway(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<(), String> {
     let mut state = gateway_state.write().await;
-    
+
     if !state.running {
         return Err("Gateway is not running".to_string());
     }
-    
+
     if let Some(handle) = state.handle.take() {
         handle.abort();
         info!("Gateway stopped");
     }
-    
+
     state.running = false;
     state.url = None;
-    
+
     Ok(())
 }
 
@@ -570,7 +664,7 @@ pub async fn restart_gateway(
         state.running = false;
         state.url = None;
     }
-    
+
     // Start with new config
     start_gateway(port, gateway_state, app_state, app_handle).await
 }
@@ -582,13 +676,12 @@ pub async fn generate_gateway_config(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<String, String> {
     let state = gateway_state.read().await;
-    
-    let url = state.url.as_ref()
-        .ok_or("Gateway is not running")?;
-    
+
+    let url = state.url.as_ref().ok_or("Gateway is not running")?;
+
     // Use branding constant for MCP config key
     let config_key = mcpmux_core::branding::MCP_CONFIG_KEY;
-    
+
     let config = match client_type.as_str() {
         "cursor" => {
             serde_json::json!({
@@ -620,7 +713,7 @@ pub async fn generate_gateway_config(
             })
         }
     };
-    
+
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
 }
 
@@ -644,88 +737,98 @@ pub async fn connect_server(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<(), String> {
     info!("[Gateway] Connecting server: {}", server_id);
-    
+
     // Get space ID
     let space_id_str = match space_id {
         Some(sid) => sid,
         None => get_default_space_id(&app_state).await?,
     };
-    
+
     let space_uuid = Uuid::parse_str(&space_id_str).map_err(|e| e.to_string())?;
-    
+
     // Get the installed server from the database
     let installed = app_state
         .installed_server_repository
         .get_by_server_id(&space_id_str, &server_id)
         .await
         .map_err(|e| {
-            error!("[Gateway] Failed to get installed server {}: {}", server_id, e);
+            error!(
+                "[Gateway] Failed to get installed server {}: {}",
+                server_id, e
+            );
             e.to_string()
         })?
         .ok_or_else(|| {
             warn!("[Gateway] Server not installed: {}", server_id);
             format!("Server not installed: {}", server_id)
         })?;
-    
+
     // Use cached definition (offline-first)
-    let server_definition = installed.get_definition()
-        .ok_or_else(|| {
-            warn!("[Gateway] Server has no cached definition: {}", server_id);
-            format!("Server has no cached definition: {}", server_id)
-        })?;
-    
+    let server_definition = installed.get_definition().ok_or_else(|| {
+        warn!("[Gateway] Server has no cached definition: {}", server_id);
+        format!("Server has no cached definition: {}", server_id)
+    })?;
+
     // Get pool service
     let state = gateway_state.read().await;
     if !state.running {
         return Err("Gateway is not running".to_string());
     }
-    let pool_service = state.pool_service.clone()
+    let pool_service = state
+        .pool_service
+        .clone()
         .ok_or("Pool service not initialized")?;
     drop(state); // Release lock before async work
-    
+
     // Build transport config from cached definition + input values
     let transport = mcpmux_gateway::pool::transport::resolution::build_transport_config(
         &server_definition.transport,
         &installed,
         Some(app_state.data_dir()),
     );
-    
+
     // Connect using pool service (manual connect from API)
     let ctx = ConnectionContext::new(space_uuid, server_id.clone(), transport);
     let result = pool_service.connect_server(&ctx).await;
-    
+
     match result {
         ConnectionResult::Connected { reused, features } => {
             info!(
                 "[Gateway] Server {} connected (reused: {}, features: {})",
-                server_id, reused, features.total_count()
+                server_id,
+                reused,
+                features.total_count()
             );
-            
+
             // Ensure server-all featureset exists
-            ensure_server_featureset(
-                &app_state,
-                &server_id,
-                &server_definition,
-                &installed,
-            ).await;
-            
+            ensure_server_featureset(&app_state, &server_id, &server_definition, &installed).await;
+
             Ok(())
         }
         ConnectionResult::Failed { error } => {
-            error!("[Gateway] Failed to connect server {}: {}", server_id, error);
-            
+            error!(
+                "[Gateway] Failed to connect server {}: {}",
+                server_id, error
+            );
+
             Err(error)
         }
         ConnectionResult::OAuthRequired { auth_url } => {
-            warn!("[Gateway] Server {} requires OAuth authentication", server_id);
-            
-            Err(format!("OAuth required. Please authenticate at: {}", auth_url))
+            warn!(
+                "[Gateway] Server {} requires OAuth authentication",
+                server_id
+            );
+
+            Err(format!(
+                "OAuth required. Please authenticate at: {}",
+                auth_url
+            ))
         }
     }
 }
 
 /// Ensure server-all featureset exists after connection
-/// 
+///
 /// Note: Server state is now managed by ServerManager/PoolService, not GatewayState
 async fn ensure_server_featureset(
     app_state: &AppState,
@@ -753,24 +856,27 @@ pub async fn disconnect_server(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
     server_manager_state: State<'_, Arc<RwLock<ServerManagerState>>>,
 ) -> Result<(), String> {
-    info!("[Gateway] Disconnecting server: {} from space: {} (logout: {:?})", server_id, space_id, logout);
-    
+    info!(
+        "[Gateway] Disconnecting server: {} from space: {} (logout: {:?})",
+        server_id, space_id, logout
+    );
+
     let space_uuid = Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
-    
+
     // Get pool service
     let state = gateway_state.read().await;
     let pool_service = state.pool_service.clone();
-    
+
     // Note: Server state is managed by ServerManager, not GatewayState
     drop(state);
-    
+
     // Disconnect from pool (clears tokens, marks features unavailable)
     if let Some(pool) = pool_service {
         pool.disconnect_server(space_uuid, &server_id)
             .await
             .map_err(|e| e.to_string())?;
     }
-    
+
     // If logout requested, ensure OAuth tokens are cleared
     // (PoolService.disconnect_server already does this, but be explicit for logout)
     if logout.unwrap_or(false) {
@@ -780,18 +886,23 @@ pub async fn disconnect_server(
             .await
         {
             Ok(true) => {
-                info!("[Gateway] Cleared OAuth tokens for server: {} (client registration preserved)", server_id);
+                info!(
+                    "[Gateway] Cleared OAuth tokens for server: {} (client registration preserved)",
+                    server_id
+                );
             }
             Ok(false) => {
-                info!("[Gateway] No credentials to clear for server: {}", server_id);
+                info!(
+                    "[Gateway] No credentials to clear for server: {}",
+                    server_id
+                );
             }
             Err(e) => {
                 warn!("[Gateway] Failed to clear tokens for {}: {}", server_id, e);
             }
         }
     }
-    
-    
+
     // Update ServerManager state and emit event
     let sm_state = server_manager_state.read().await;
     if let Some(manager) = sm_state.manager.as_ref() {
@@ -804,20 +915,20 @@ pub async fn disconnect_server(
         }
     }
     drop(sm_state);
-    
+
     info!("[Gateway] Server {} disconnected successfully", server_id);
     Ok(())
 }
 
 /// List connected backend servers
-/// 
+///
 /// Note: Server state is now tracked by ServerManager, accessed via server_manager commands
 #[tauri::command]
 pub async fn list_connected_servers(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<Vec<BackendStatusResponse>, String> {
     let state = gateway_state.read().await;
-    
+
     // Return empty list - ServerManager now handles server state
     // Use server_manager::get_all_server_statuses for actual status
     let _ = state; // Suppress warning
@@ -847,36 +958,43 @@ pub async fn connect_all_enabled_servers(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<BulkConnectResult, String> {
     info!("[Gateway] Connecting all enabled servers from all spaces");
-    
+
     // Check if gateway is running
     let state = gateway_state.read().await;
     if !state.running {
         return Err("Gateway is not running".to_string());
     }
-    let pool_service = state.pool_service.clone()
+    let pool_service = state
+        .pool_service
+        .clone()
         .ok_or("Pool service not initialized")?;
     drop(state);
-    
+
     // Get all spaces
     let spaces = app_state
         .space_service
         .list()
         .await
         .map_err(|e: anyhow::Error| e.to_string())?;
-    
+
     // Build list of servers to connect
-    let mut servers_to_connect: Vec<(InstalledServerInfo, ResolvedTransport, mcpmux_core::ServerDefinition, mcpmux_core::InstalledServer)> = vec![];
-    
+    let mut servers_to_connect: Vec<(
+        InstalledServerInfo,
+        ResolvedTransport,
+        mcpmux_core::ServerDefinition,
+        mcpmux_core::InstalledServer,
+    )> = vec![];
+
     for space in &spaces {
         let space_id_str = space.id.to_string();
-        
+
         // Get enabled servers for this space
         let installed_servers = app_state
             .installed_server_repository
             .list_enabled(&space_id_str)
             .await
             .map_err(|e| e.to_string())?;
-        
+
         for installed in installed_servers {
             // Use cached definition from InstalledServer (offline-first approach)
             // No need to hit registry API - everything is stored locally at install time
@@ -896,39 +1014,45 @@ pub async fn connect_all_enabled_servers(
                     }
                 }
             };
-            
+
             // Check if has OAuth credentials
             let has_credentials = matches!(
-                app_state.credential_repository.get(&space.id, &installed.server_id).await,
+                app_state
+                    .credential_repository
+                    .get(&space.id, &installed.server_id)
+                    .await,
                 Ok(Some(_))
             );
-            
+
             // Determine if server requires OAuth
-            let requires_oauth = matches!(server_definition.auth, Some(mcpmux_core::domain::AuthConfig::Oauth));
-            
+            let requires_oauth = matches!(
+                server_definition.auth,
+                Some(mcpmux_core::domain::AuthConfig::Oauth)
+            );
+
             let server_info = InstalledServerInfo {
                 space_id: space.id,
                 server_id: installed.server_id.clone(),
                 requires_oauth,
                 has_credentials,
             };
-            
+
             let transport = mcpmux_gateway::pool::transport::resolution::build_transport_config(
                 &server_definition.transport,
                 &installed,
                 Some(app_state.data_dir()),
             );
-            
+
             servers_to_connect.push((server_info, transport, server_definition, installed));
         }
     }
-    
+
     info!(
         "[Gateway] Prepared {} server connection requests across {} spaces",
         servers_to_connect.len(),
         spaces.len()
     );
-    
+
     // Connect servers one by one and track results
     let mut result = BulkConnectResult {
         connected: 0,
@@ -937,11 +1061,11 @@ pub async fn connect_all_enabled_servers(
         oauth_required: 0,
         errors: vec![],
     };
-    
+
     for (server_info, transport, server_definition, installed) in servers_to_connect {
         let space_uuid = server_info.space_id;
         let server_id = server_info.server_id.clone();
-        
+
         let ctx = ConnectionContext::new(space_uuid, server_id.clone(), transport);
         match pool_service.connect_server(&ctx).await {
             ConnectionResult::Connected { reused, features } => {
@@ -950,19 +1074,17 @@ pub async fn connect_all_enabled_servers(
                 } else {
                     result.connected += 1;
                 }
-                
+
                 info!(
                     "[Gateway] Connected {} (reused: {}, features: {})",
-                    server_id, reused, features.total_count()
+                    server_id,
+                    reused,
+                    features.total_count()
                 );
-                
+
                 // Ensure server-all featureset exists
-                ensure_server_featureset(
-                    &app_state,
-                    &server_id,
-                    &server_definition,
-                    &installed,
-                ).await;
+                ensure_server_featureset(&app_state, &server_id, &server_definition, &installed)
+                    .await;
             }
             ConnectionResult::OAuthRequired { auth_url: _ } => {
                 result.oauth_required += 1;
@@ -973,15 +1095,12 @@ pub async fn connect_all_enabled_servers(
             }
         }
     }
-    
+
     info!(
         "[Gateway] Bulk connect complete: {} connected, {} reused, {} failed, {} need OAuth",
-        result.connected,
-        result.reused,
-        result.failed,
-        result.oauth_required
+        result.connected, result.reused, result.failed, result.oauth_required
     );
-    
+
     Ok(result)
 }
 
@@ -991,21 +1110,23 @@ pub async fn get_pool_stats(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<PoolStatsResponse, String> {
     let state = gateway_state.read().await;
-    
+
     let stats = match &state.pool_service {
         Some(pool) => pool.stats(),
         None => mcpmux_gateway::PoolStats::default(),
     };
-    
+
     Ok(PoolStatsResponse {
         total_instances: stats.total_instances,
         connected_instances: stats.connected_instances,
-        total_space_server_mappings: stats.connecting_instances + stats.failed_instances + stats.oauth_pending_instances,
+        total_space_server_mappings: stats.connecting_instances
+            + stats.failed_instances
+            + stats.oauth_pending_instances,
     })
 }
 
 /// Refresh OAuth tokens on startup for all installed HTTP servers.
-/// 
+///
 /// NOTE: This is now a no-op. RMCP's AuthClient handles token refresh automatically
 /// per-request via DatabaseCredentialStore. Keeping this command for API compatibility.
 #[tauri::command]
@@ -1013,7 +1134,7 @@ pub async fn refresh_oauth_tokens_on_startup(
     _app_state: State<'_, AppState>,
 ) -> Result<RefreshResult, String> {
     info!("[OAuth] Token refresh handled automatically by RMCP per-request. No startup refresh needed.");
-    
+
     Ok(RefreshResult {
         servers_checked: 0,
         tokens_refreshed: 0,

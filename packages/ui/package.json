@@ -16,7 +16,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "eslint src --ext ts,tsx",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
     "test": "echo \"No tests yet\""
   },
   "peerDependencies": {
@@ -24,9 +25,15 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "typescript": "^5.3.0"
+    "eslint": "^9.39.2",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "typescript": "^5.3.0",
+    "typescript-eslint": "^8.49.0"
   },
   "dependencies": {
     "clsx": "^2.1.1",

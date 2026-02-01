@@ -23,7 +23,10 @@
 ### Development
 
 ```bash
-# Install dependencies
+# First time setup (installs deps, Playwright browsers, etc.)
+pnpm setup
+
+# Or manually:
 pnpm install
 
 # Start development

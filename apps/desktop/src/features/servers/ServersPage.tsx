@@ -964,6 +964,7 @@ export function ServersPage() {
                           onClick={() => handleEnableClick(server)}
                           disabled={enableLoading}
                           className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] transition-colors disabled:opacity-50"
+                          data-testid={`enable-server-${server.id}`}
                         >
                           {enableLoading ? 'Enabling...' : 'Enable'}
                         </button>
@@ -1048,6 +1049,7 @@ export function ServersPage() {
                           onClick={() => handleDisableClick(server)}
                           disabled={disableLoading}
                           className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-50"
+                          data-testid={`disable-server-${server.id}`}
                         >
                           {disableLoading ? '...' : 'Disable'}
                         </button>
@@ -1190,9 +1192,9 @@ export function ServersPage() {
 
       {/* Configuration Modal */}
       {configModal.open && configModal.server && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="dropdown-menu w-full max-w-md p-6 animate-in fade-in scale-in duration-150 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold text-[rgb(var(--foreground))] mb-2">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" data-testid="config-modal-overlay">
+          <div className="dropdown-menu w-full max-w-md p-6 animate-in fade-in scale-in duration-150 max-h-[80vh] overflow-y-auto" data-testid="config-modal">
+            <h3 className="text-lg font-semibold text-[rgb(var(--foreground))] mb-2" data-testid="config-modal-title">
               Configure {configModal.server.name}
             </h3>
             <p className="text-sm text-[rgb(var(--muted))] mb-4">
@@ -1257,6 +1259,7 @@ export function ServersPage() {
                           onChange={(e) => handleChange(e.target.value)}
                           placeholder={input.placeholder || `Enter ${input.label.toLowerCase()}...`}
                           className="input w-full"
+                          data-testid={`config-input-${input.id}`}
                         />
                       );
                     case 'text':
@@ -1268,6 +1271,7 @@ export function ServersPage() {
                           onChange={(e) => handleChange(e.target.value)}
                           placeholder={input.placeholder || `Enter ${input.label.toLowerCase()}...`}
                           className="input w-full"
+                          data-testid={`config-input-${input.id}`}
                         />
                       );
                   }
@@ -1301,6 +1305,7 @@ export function ServersPage() {
                 <button
                   onClick={handleCancelConfig}
                   className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                  data-testid="config-cancel-btn"
                 >
                   Cancel
                 </button>
@@ -1311,6 +1316,7 @@ export function ServersPage() {
                       .some((i: any) => i.required && !configModal.inputValues[i.id])
                   }
                   className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50 transition-colors"
+                  data-testid="config-save-btn"
                 >
                   {configModal.enableOnSave && !configModal.server.enabled 
                     ? 'Save & Enable' 

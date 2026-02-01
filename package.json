@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "pnpm --filter @mcpmux/desktop dev",
     "build": "pnpm --filter @mcpmux/desktop build",
+    "changeset": "changeset",
+    "version": "changeset version",
     "test": "pnpm test:rust && pnpm test:ts",
     "test:rust": "cargo nextest run --workspace",
     "test:rust:unit": "cargo nextest run --workspace --lib",
@@ -25,6 +27,7 @@
     "clean": "pnpm -r clean && cargo clean"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.27.0",
     "@playwright/test": "^1.50.0",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",

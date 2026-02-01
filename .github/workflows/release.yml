@@ -1,117 +1,124 @@
-name: CI
+name: Release
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
 
 jobs:
   # ─────────────────────────────────────────────────────────────
-  # Rust Checks (fast, single platform)
+  # Changesets: Version management and release PR
   # ─────────────────────────────────────────────────────────────
-  rust-check:
+  changesets:
     runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          fetch-depth: 0
 
-      - name: Install Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
-
-      - name: Format check
-        run: cargo fmt --all --check
-
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
-
-      - name: Check (no features)
-        run: cargo check --workspace
-
-  # ─────────────────────────────────────────────────────────────
-  # TypeScript Checks (fast)
-  # ─────────────────────────────────────────────────────────────
-  ts-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'pnpm'
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - name: TypeScript tests
-        run: pnpm test:ts
+
+      - name: Create Release PR or Publish
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+          version: pnpm changeset version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ─────────────────────────────────────────────────────────────
-  # Rust Tests (cross-platform matrix)
+  # Build and Release: Triggered when changesets publishes
   # ─────────────────────────────────────────────────────────────
-  rust-test:
-    needs: rust-check
+  build-release:
+    needs: changesets
+    if: needs.changesets.outputs.published == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            artifact: linux
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            artifact: windows
           - os: macos-latest
             target: aarch64-apple-darwin
+            artifact: macos-arm
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: macos-intel
 
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}-release
 
-      # Linux dependencies for Tauri
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsecret-1-dev
 
-      # Install cargo-nextest
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
+      - run: pnpm install --frozen-lockfile
 
-      # Run unit tests (fast, no external deps)
-      - name: Unit tests
-        run: cargo nextest run --workspace --lib --profile ci
-
-      # Run doc tests (nextest doesn't support)
-      - name: Doc tests
-        run: cargo test --workspace --doc
-
-      # Run integration tests
-      - name: Integration tests
-        run: cargo nextest run -p tests --profile ci
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'McpMux v__VERSION__'
+          releaseBody: 'See the changelog for details.'
+          releaseDraft: false
+          prerelease: false
 
   # ─────────────────────────────────────────────────────────────
-  # Build Verification (ensures app compiles on all platforms)
+  # Nightly: Build on every push (no release)
   # ─────────────────────────────────────────────────────────────
-  build:
-    needs: [rust-check, ts-check]
+  nightly:
+    if: github.event_name == 'push' && !contains(github.event.head_commit.message, 'chore: version packages')
     strategy:
       fail-fast: false
       matrix:
@@ -126,15 +133,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}-build
+          key: ${{ matrix.target }}-nightly
+
       - uses: pnpm/action-setup@v4
         with:
           version: 9
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -151,33 +162,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
-  # ─────────────────────────────────────────────────────────────
-  # E2E Tests (Playwright)
-  # ─────────────────────────────────────────────────────────────
-  e2e:
-    needs: [rust-check, ts-check]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps
-
-      - name: Run E2E tests
-        run: pnpm test:e2e
-
-      - name: Upload test results
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
-        if: failure()
         with:
-          name: playwright-report
-          path: tests/e2e/playwright-report/
+          name: build-${{ matrix.target }}
+          path: |
+            target/release/bundle/**/*
           retention-days: 7

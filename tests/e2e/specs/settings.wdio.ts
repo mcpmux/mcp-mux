@@ -1,30 +1,13 @@
 /**
  * E2E Tests: Settings
- * 
- * Test Cases Covered:
- * - TC-ST-001: Navigate to Settings Page
- * - TC-ST-002: Change Theme to Dark
- * - TC-ST-003: Change Theme to Light
- * - TC-ST-004: System Theme Option
- * - TC-ST-006: Theme Toggle Buttons
- * - TC-ST-007: Open Logs Folder Button
- * - TC-ST-008: Display Logs Location
+ * Uses data-testid only (ADR-003).
  */
 
-// Helper to find element by test ID or fallback
-async function findElement(testId: string, fallbackSelector: string) {
-  const byTestId = await $(`[data-testid="${testId}"]`);
-  const testIdExists = await byTestId.isExisting().catch(() => false);
-  if (testIdExists) {
-    return byTestId;
-  }
-  return $(fallbackSelector);
-}
+import { byTestId } from '../helpers/selectors';
 
 describe('Settings Page', () => {
   before(async () => {
-    // Navigate to Settings
-    const settingsBtn = await findElement('nav-settings', 'button*=Settings');
+    const settingsBtn = await byTestId('nav-settings');
     await settingsBtn.click();
     await browser.pause(2000);
   });
@@ -48,15 +31,15 @@ describe('Settings Page', () => {
   });
 
   it('TC-ST-006: Theme buttons are displayed', async () => {
-    const themeButtons = await findElement('theme-buttons', '.flex.gap-2');
+    const themeButtons = await byTestId('theme-buttons');
     const isDisplayed = await themeButtons.isDisplayed().catch(() => false);
     
     expect(isDisplayed).toBe(true);
     
     // Check individual theme buttons
-    const lightBtn = await findElement('theme-light-btn', 'button*=Light');
-    const darkBtn = await findElement('theme-dark-btn', 'button*=Dark');
-    const systemBtn = await findElement('theme-system-btn', 'button*=System');
+    const lightBtn = await byTestId('theme-light-btn');
+    const darkBtn = await byTestId('theme-dark-btn');
+    const systemBtn = await byTestId('theme-system-btn');
     
     const lightDisplayed = await lightBtn.isDisplayed().catch(() => false);
     const darkDisplayed = await darkBtn.isDisplayed().catch(() => false);
@@ -70,7 +53,7 @@ describe('Settings Page', () => {
   it('TC-ST-002: Can click Dark theme button', async () => {
     await browser.saveScreenshot('./tests/e2e/screenshots/st-02a-before-dark.png');
     
-    const darkBtn = await findElement('theme-dark-btn', 'button*=Dark');
+    const darkBtn = await byTestId('theme-dark-btn');
     await darkBtn.click();
     await browser.pause(500);
     
@@ -85,7 +68,7 @@ describe('Settings Page', () => {
   });
 
   it('TC-ST-003: Can click Light theme button', async () => {
-    const lightBtn = await findElement('theme-light-btn', 'button*=Light');
+    const lightBtn = await byTestId('theme-light-btn');
     await lightBtn.click();
     await browser.pause(500);
     
@@ -96,7 +79,7 @@ describe('Settings Page', () => {
   });
 
   it('TC-ST-004: Can click System theme button', async () => {
-    const systemBtn = await findElement('theme-system-btn', 'button*=System');
+    const systemBtn = await byTestId('theme-system-btn');
     await systemBtn.click();
     await browser.pause(500);
     
@@ -107,7 +90,7 @@ describe('Settings Page', () => {
   });
 
   it('TC-ST-008: Logs path is displayed', async () => {
-    const logsPath = await findElement('logs-path', 'p.font-mono');
+    const logsPath = await byTestId('logs-path');
     const isDisplayed = await logsPath.isDisplayed().catch(() => false);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/st-08-logs-path.png');
@@ -133,7 +116,7 @@ describe('Settings Page', () => {
   });
 
   it('TC-ST-007: Open Logs Folder button exists', async () => {
-    const openLogsBtn = await findElement('open-logs-btn', 'button*=Open Logs');
+    const openLogsBtn = await byTestId('open-logs-btn');
     const isDisplayed = await openLogsBtn.isDisplayed().catch(() => false);
     
     expect(isDisplayed).toBe(true);

@@ -1,23 +1,17 @@
 /**
  * E2E Tests: Server Installation & Lifecycle
- * 
- * Test Cases Covered:
- * - TC-SD-004: Install Server (No Inputs)
- * - TC-SD-005: Uninstall Server
- * - TC-SL-001: Enable Server (No Inputs)
- * - TC-SL-002: Verify Connected Server Shows Features
- * - TC-SL-003: Disable Connected Server
+ * Uses data-testid only (ADR-003).
  */
+
+import { byTestId } from '../helpers/selectors';
 
 describe('Server Installation - Echo Server (No Inputs)', () => {
   it('TC-SD-004: Install Echo Server from Discover page', async () => {
-    // Navigate to Discover
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    // Search for Echo Server
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Echo');
@@ -25,25 +19,20 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sl-01-search-echo.png');
     
-    // Install Echo Server
-    const installButton = await $('button=Install');
-    const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
+    const installButton = await byTestId('install-btn-echo-server');
+    await installButton.waitForDisplayed({ timeout: 5000 });
+    await installButton.waitForClickable({ timeout: 5000 });
+    await installButton.click();
+    await browser.pause(3000);
     
-    if (isInstallDisplayed) {
-      await installButton.click();
-      await browser.pause(3000);
-    }
-    
-    // Verify installed - Uninstall button should appear
-    const uninstallButton = await $('button=Uninstall');
+    const uninstallButton = await byTestId('uninstall-btn-echo-server');
     await expect(uninstallButton).toBeDisplayed();
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sl-02-installed.png');
   });
 
   it('TC-SL-001: Enable Echo Server (verify server appears in My Servers)', async () => {
-    // Navigate to My Servers
-    const myServersButton = await $('button*=My Servers');
+    const myServersButton = await byTestId('nav-my-servers');
     await myServersButton.click();
     await browser.pause(2000);
     
@@ -53,8 +42,7 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
     const pageSource = await browser.getPageSource();
     expect(pageSource.includes('Echo Server')).toBe(true);
     
-    // Click Enable button
-    const enableButton = await $('button=Enable');
+    const enableButton = await byTestId('enable-server-echo-server');
     const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
     
     if (isEnableDisplayed) {
@@ -84,53 +72,42 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
   });
 
   it('TC-SL-003: Disable connected server', async () => {
-    // Find and click Disable button
-    const disableButton = await $('button=Disable');
+    const disableButton = await byTestId('disable-server-echo-server');
     const isDisableDisplayed = await disableButton.isDisplayed().catch(() => false);
     
     if (isDisableDisplayed) {
       await disableButton.click();
       await browser.pause(2000);
-      
       await browser.saveScreenshot('./tests/e2e/screenshots/sl-06-disabled.png');
-      
-      // Should now show Enable button
-      const enableButton = await $('button=Enable');
+      const enableButton = await byTestId('enable-server-echo-server');
       await expect(enableButton).toBeDisplayed();
     } else {
-      // Server might already be disabled - that's ok
-      const enableButton = await $('button=Enable');
+      const enableButton = await byTestId('enable-server-echo-server');
       const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
       expect(isEnableDisplayed).toBe(true);
     }
   });
 
   it('TC-SD-005: Uninstall Echo Server', async () => {
-    // Navigate to Discover
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    // Search for Echo Server
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Echo');
     await browser.pause(1000);
     
-    // Uninstall
-    const uninstallButton = await $('button=Uninstall');
-    const isUninstallDisplayed = await uninstallButton.isDisplayed().catch(() => false);
+    const uninstallButton = await byTestId('uninstall-btn-echo-server');
+    await uninstallButton.waitForDisplayed({ timeout: 5000 });
+    await uninstallButton.waitForClickable({ timeout: 5000 });
+    await uninstallButton.click();
+    await browser.pause(3000);
     
-    if (isUninstallDisplayed) {
-      await uninstallButton.click();
-      await browser.pause(3000);
-      
-      await browser.saveScreenshot('./tests/e2e/screenshots/sl-07-uninstalled.png');
-      
-      // Should now show Install button
-      const installButton = await $('button=Install');
-      await expect(installButton).toBeDisplayed();
-    }
+    await browser.saveScreenshot('./tests/e2e/screenshots/sl-07-uninstalled.png');
+    
+    const installButton = await byTestId('install-btn-echo-server');
+    await expect(installButton).toBeDisplayed();
   });
 });

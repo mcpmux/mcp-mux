@@ -101,7 +101,7 @@ export function SpacesPage() {
   });
 
   return (
-    <div className="h-full flex flex-col relative">
+    <div className="h-full flex flex-col relative" data-testid="spaces-page">
       {/* Header */}
       <div className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">
         <div className="max-w-[2000px] mx-auto">

@@ -120,7 +120,9 @@ export async function deleteFeatureSet(id: string): Promise<void> {
 export interface InstalledServer {
   id: string;
   space_id: string;
-  is_enabled: boolean;
+  server_id: string; // Definition ID (e.g. "echo-server")
+  is_enabled?: boolean;
+  enabled?: boolean;
   input_values: Record<string, string>;
 }
 

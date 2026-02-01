@@ -1,27 +1,13 @@
 /**
  * E2E Tests: Space Management
- * 
- * Test Cases Covered:
- * - TC-SP-001: Default Space Exists
- * - TC-SP-002: Create New Space
- * - TC-SP-003: Set Active Space
- * - TC-SP-011: Space Switcher Shows All Spaces
+ * Uses data-testid only (ADR-003).
  */
 
-// Helper to find element by test ID or fallback to text
-async function findElement(testId: string, fallbackSelector: string) {
-  const byTestId = await $(`[data-testid="${testId}"]`);
-  const testIdExists = await byTestId.isExisting().catch(() => false);
-  if (testIdExists) {
-    return byTestId;
-  }
-  return $(fallbackSelector);
-}
+import { byTestId } from '../helpers/selectors';
 
 describe('Space Management - Default Space', () => {
   it('TC-SP-001: Navigate to Spaces page and verify default space exists', async () => {
-    // Navigate to Spaces - try test ID first, fallback to text
-    const spacesButton = await findElement('nav-spaces', 'button*=Spaces');
+    const spacesButton = await byTestId('nav-spaces');
     await spacesButton.click();
     await browser.pause(2000);
     
@@ -48,13 +34,12 @@ describe('Space Management - Create and Delete', () => {
   const createdSpaceName = 'Test Space E2E';
   
   it('TC-SP-002: Create a new space', async () => {
-    // Navigate to Spaces
-    const spacesButton = await findElement('nav-spaces', 'button*=Spaces');
+    const spacesButton = await byTestId('nav-spaces');
     await spacesButton.click();
     await browser.pause(2000);
     
     // Click Create Space button
-    const createButton = await findElement('create-space-btn', 'button*=Create Space');
+    const createButton = await byTestId('create-space-btn');
     const isCreateDisplayed = await createButton.isDisplayed().catch(() => false);
     
     if (isCreateDisplayed) {
@@ -64,7 +49,7 @@ describe('Space Management - Create and Delete', () => {
       await browser.saveScreenshot('./tests/e2e/screenshots/sp-02-create-modal.png');
       
       // Find name input and enter space name
-      const nameInput = await findElement('create-space-name-input', 'input[placeholder*="Personal"]');
+      const nameInput = await byTestId('create-space-name-input');
       const isInputDisplayed = await nameInput.isDisplayed().catch(() => false);
       
       if (isInputDisplayed) {
@@ -108,22 +93,11 @@ describe('Space Management - Create and Delete', () => {
     if (setActiveButtons.length > 0) {
       const firstButton = setActiveButtons[0];
       const isDisplayed = await firstButton.isDisplayed().catch(() => false);
-      
       if (isDisplayed) {
         await browser.saveScreenshot('./tests/e2e/screenshots/sp-04-before-set-active.png');
         await firstButton.click();
         await browser.pause(2000);
         await browser.saveScreenshot('./tests/e2e/screenshots/sp-05-after-set-active.png');
-      }
-    } else {
-      // Fallback to text-based selector
-      const fallbackButtons = await $$('button*=Set Active');
-      if (fallbackButtons.length > 0) {
-        const isDisplayed = await fallbackButtons[0].isDisplayed().catch(() => false);
-        if (isDisplayed) {
-          await fallbackButtons[0].click();
-          await browser.pause(2000);
-        }
       }
     }
     
@@ -137,8 +111,7 @@ describe('Space Management - Create and Delete', () => {
   });
 
   it('TC-SP-011: Verify spaces are listed on page', async () => {
-    // Make sure we're on Spaces page
-    const spacesButton = await findElement('nav-spaces', 'button*=Spaces');
+    const spacesButton = await byTestId('nav-spaces');
     await spacesButton.click();
     await browser.pause(2000);
     
@@ -156,12 +129,7 @@ describe('Space Management - Create and Delete', () => {
 
   it('TC-SP-005: Cleanup - Delete test space if exists', async () => {
     // Look for delete button - try test ID first
-    let deleteButtons = await $$('[data-testid^="delete-space-"]');
-    
-    if (deleteButtons.length === 0) {
-      // Fallback to icon-based approach - look for trash icon buttons
-      deleteButtons = await $$('button[title="Delete Space"]');
-    }
+    const deleteButtons = await $$('[data-testid^="delete-space-"]');
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sp-07-before-delete.png');
     

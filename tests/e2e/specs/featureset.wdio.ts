@@ -1,17 +1,13 @@
 /**
  * E2E Tests: FeatureSet Management
- * 
- * Test Cases Covered:
- * - TC-FS-001: Builtin FeatureSets Exist
- * - TC-FS-002: Server-All FeatureSet Created on Enable
- * - TC-FS-003: Server-All FeatureSet Contains Server Features
- * - TC-FS-004: Server-All FeatureSet Hidden When Server Disabled
+ * Uses data-testid only (ADR-003).
  */
+
+import { byTestId } from '../helpers/selectors';
 
 describe('FeatureSet - Builtin Sets', () => {
   it('TC-FS-001: Navigate to FeatureSets page and verify builtin sets exist', async () => {
-    // Navigate to FeatureSets
-    const featureSetsButton = await $('button*=FeatureSets');
+    const featureSetsButton = await byTestId('nav-featuresets');
     await featureSetsButton.click();
     await browser.pause(2000);
     
@@ -39,33 +35,30 @@ describe('FeatureSet - Builtin Sets', () => {
 
 describe('FeatureSet - Server-All Auto Creation', () => {
   it('Setup: Install and Enable Echo Server', async () => {
-    // Navigate to Discover
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    // Search for Echo Server
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Echo');
     await browser.pause(1000);
     
-    // Install if needed
-    const installButton = await $('button=Install');
+    const installButton = await byTestId('install-btn-echo-server');
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
+      await installButton.waitForClickable({ timeout: 5000 });
       await installButton.click();
       await browser.pause(3000);
     }
     
-    // Navigate to My Servers and Enable
-    const myServersButton = await $('button*=My Servers');
+    const myServersButton = await byTestId('nav-my-servers');
     await myServersButton.click();
     await browser.pause(2000);
     
-    const enableButton = await $('button=Enable');
+    const enableButton = await byTestId('enable-server-echo-server');
     const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
     
     if (isEnableDisplayed) {
@@ -86,8 +79,7 @@ describe('FeatureSet - Server-All Auto Creation', () => {
   });
 
   it('TC-FS-002: Verify server-all FeatureSet is created for Echo Server', async () => {
-    // Navigate to FeatureSets
-    const featureSetsButton = await $('button*=FeatureSets');
+    const featureSetsButton = await byTestId('nav-featuresets');
     await featureSetsButton.click();
     await browser.pause(2000);
     
@@ -106,12 +98,20 @@ describe('FeatureSet - Server-All Auto Creation', () => {
   });
 
   it('TC-FS-003: Click on Echo Server FeatureSet to see its features', async () => {
-    // Try to click on Echo-related card/item
-    const echoItem = await $('*=Echo');
-    const isDisplayed = await echoItem.isDisplayed().catch(() => false);
+    const cards = await $$('[data-testid^="featureset-card-"]');
+    let targetCard = null;
+    for (const card of cards) {
+      const text = await card.getText();
+      if (text.includes('Echo')) {
+        targetCard = card;
+        break;
+      }
+    }
+    targetCard = targetCard || cards[0];
+    const isDisplayed = targetCard ? await targetCard.isDisplayed().catch(() => false) : false;
     
-    if (isDisplayed) {
-      await echoItem.click();
+    if (isDisplayed && targetCard) {
+      await targetCard.click();
       await browser.pause(2000);
       
       await browser.saveScreenshot('./tests/e2e/screenshots/fs-04-featureset-details.png');
@@ -135,13 +135,11 @@ describe('FeatureSet - Server-All Auto Creation', () => {
   });
 
   it('TC-FS-004: Disable server and verify FeatureSet is hidden', async () => {
-    // Navigate to My Servers
-    const myServersButton = await $('button*=My Servers');
+    const myServersButton = await byTestId('nav-my-servers');
     await myServersButton.click();
     await browser.pause(2000);
     
-    // Disable the server
-    const disableButton = await $('button=Disable');
+    const disableButton = await byTestId('disable-server-echo-server');
     const isDisableDisplayed = await disableButton.isDisplayed().catch(() => false);
     
     if (isDisableDisplayed) {
@@ -149,8 +147,7 @@ describe('FeatureSet - Server-All Auto Creation', () => {
       await browser.pause(2000);
     }
     
-    // Navigate back to FeatureSets
-    const featureSetsButton = await $('button*=FeatureSets');
+    const featureSetsButton = await byTestId('nav-featuresets');
     await featureSetsButton.click();
     await browser.pause(2000);
     
@@ -164,21 +161,21 @@ describe('FeatureSet - Server-All Auto Creation', () => {
   });
 
   it('Cleanup: Uninstall Echo Server', async () => {
-    // Navigate to Discover
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Echo');
     await browser.pause(1000);
     
-    const uninstallButton = await $('button=Uninstall');
+    const uninstallButton = await byTestId('uninstall-btn-echo-server');
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {
+      await uninstallButton.waitForClickable({ timeout: 5000 });
       await uninstallButton.click();
       await browser.pause(2000);
     }

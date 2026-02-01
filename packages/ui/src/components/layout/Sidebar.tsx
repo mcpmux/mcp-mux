@@ -9,7 +9,7 @@ interface SidebarProps {
 
 export function Sidebar({ children, header, footer }: SidebarProps) {
   return (
-    <nav className="flex h-full flex-col bg-[rgb(var(--surface))]">
+    <nav className="flex h-full flex-col bg-[rgb(var(--surface))]" data-testid="sidebar">
       {header && (
         <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border-subtle))]">
           {header}

@@ -1,29 +1,13 @@
 /**
  * E2E Tests: Gateway Control
- * 
- * Test Cases Covered:
- * - TC-GW-001: Gateway Status Display
- * - TC-GW-002: Gateway Running on Startup
- * - TC-GW-003: Dashboard Shows Gateway Status
- * - TC-GW-006: Gateway URL Display
- * - TC-GW-007: Copy Client Config
- * - TC-GW-008: Dashboard Statistics
+ * Uses data-testid only (ADR-003).
  */
 
-// Helper to find element by test ID or fallback
-async function findElement(testId: string, fallbackSelector: string) {
-  const byTestId = await $(`[data-testid="${testId}"]`);
-  const testIdExists = await byTestId.isExisting().catch(() => false);
-  if (testIdExists) {
-    return byTestId;
-  }
-  return $(fallbackSelector);
-}
+import { byTestId } from '../helpers/selectors';
 
 describe('Gateway Status - Dashboard', () => {
   before(async () => {
-    // Navigate to Dashboard
-    const dashboardBtn = await findElement('nav-dashboard', 'button*=Dashboard');
+    const dashboardBtn = await byTestId('nav-dashboard');
     await dashboardBtn.click();
     await browser.pause(2000);
   });
@@ -44,7 +28,7 @@ describe('Gateway Status - Dashboard', () => {
 
   it('TC-GW-002: Gateway is running on startup', async () => {
     // Check gateway status card
-    const statusCard = await findElement('gateway-status-card', '.border-green-500');
+    const statusCard = await byTestId('gateway-status-card');
     const isDisplayed = await statusCard.isDisplayed().catch(() => false);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/gw-02-gateway-running.png');
@@ -93,7 +77,7 @@ describe('Gateway Status - Dashboard', () => {
   });
 
   it('TC-GW-007: Copy client config button exists', async () => {
-    const copyBtn = await findElement('copy-config-btn', 'button*=Copy');
+    const copyBtn = await byTestId('copy-config-btn');
     const isDisplayed = await copyBtn.isDisplayed().catch(() => false);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/gw-07-copy-config.png');
@@ -103,7 +87,7 @@ describe('Gateway Status - Dashboard', () => {
 
   it('TC-GW-008: Dashboard statistics are displayed', async () => {
     // Check stats grid exists
-    const statsGrid = await findElement('dashboard-stats-grid', '.grid');
+    const statsGrid = await byTestId('dashboard-stats-grid');
     const gridDisplayed = await statsGrid.isDisplayed().catch(() => false);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/gw-08-dashboard-stats.png');
@@ -130,19 +114,18 @@ describe('Gateway Status - Dashboard', () => {
 
 describe('Gateway Toggle', () => {
   before(async () => {
-    // Navigate to Dashboard
-    const dashboardBtn = await findElement('nav-dashboard', 'button*=Dashboard');
+    const dashboardBtn = await byTestId('nav-dashboard');
     await dashboardBtn.click();
     await browser.pause(2000);
   });
 
   it('TC-GW-004/005: Toggle gateway button exists and is clickable', async () => {
-    const toggleBtn = await findElement('gateway-toggle-btn', 'button*=Stop');
+    const toggleBtn = await byTestId('gateway-toggle-btn');
     const isDisplayed = await toggleBtn.isDisplayed().catch(() => false);
     
     if (!isDisplayed) {
       // Try finding Start button instead
-      const startBtn = await findElement('gateway-toggle-btn', 'button*=Start');
+      const startBtn = await byTestId('gateway-toggle-btn');
       const startDisplayed = await startBtn.isDisplayed().catch(() => false);
       expect(startDisplayed).toBe(true);
     } else {

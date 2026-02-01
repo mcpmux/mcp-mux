@@ -1,17 +1,13 @@
 /**
  * E2E Tests: Client Management
- * 
- * Test Cases Covered:
- * - TC-CL-001: Display Registered Clients
- * - TC-CL-002: Open Client Detail Panel
- * - TC-CL-009: Default FeatureSet Always Granted
- * - TC-CL-010: View Effective Features
+ * Uses data-testid only (ADR-003).
  */
+
+import { byTestId } from '../helpers/selectors';
 
 describe('Client Management - View Clients', () => {
   it('TC-CL-001: Navigate to Clients page and display registered clients', async () => {
-    // Navigate to Clients
-    const clientsButton = await $('button*=Clients');
+    const clientsButton = await byTestId('nav-clients');
     await clientsButton.click();
     await browser.pause(2000);
     
@@ -38,12 +34,12 @@ describe('Client Management - View Clients', () => {
   });
 
   it('TC-CL-002: Click on a client to open detail panel', async () => {
-    // Try to click on Cursor client (most common)
-    const cursorClient = await $('*=Cursor');
-    const isCursorDisplayed = await cursorClient.isDisplayed().catch(() => false);
+    const clientCards = await $$('[data-testid^="client-card-"]');
+    const firstCard = clientCards[0];
+    const isDisplayed = firstCard ? await firstCard.isDisplayed().catch(() => false) : false;
     
-    if (isCursorDisplayed) {
-      await cursorClient.click();
+    if (isDisplayed && firstCard) {
+      await firstCard.click();
       await browser.pause(1500);
       
       await browser.saveScreenshot('./tests/e2e/screenshots/cl-02-client-panel.png');
@@ -58,15 +54,8 @@ describe('Client Management - View Clients', () => {
       
       expect(hasPanelContent).toBe(true);
     } else {
-      // Try any client card
-      const clientCards = await $$('[class*="rounded"][class*="border"]');
-      if (clientCards.length > 0) {
-        await clientCards[0].click();
-        await browser.pause(1500);
-        
-        const pageSource = await browser.getPageSource();
-        expect(pageSource.includes('Client') || pageSource.includes('Permissions')).toBe(true);
-      }
+      const pageSource = await browser.getPageSource();
+      expect(pageSource.includes('Client') || pageSource.includes('Permissions') || pageSource.includes('Clients')).toBe(true);
     }
   });
 
@@ -107,17 +96,14 @@ describe('Client Management - View Clients', () => {
 
 describe('Client Management - Connection Modes', () => {
   it('TC-CL-004: Verify connection mode options exist', async () => {
-    // Navigate to Clients page first
-    const clientsButton = await $('button*=Clients');
+    const clientsButton = await byTestId('nav-clients');
     await clientsButton.click();
     await browser.pause(2000);
     
-    // Click on a client
-    const cursorClient = await $('*=Cursor');
-    const isCursorDisplayed = await cursorClient.isDisplayed().catch(() => false);
-    
-    if (isCursorDisplayed) {
-      await cursorClient.click();
+    const clientCards = await $$('[data-testid^="client-card-"]');
+    const firstCard = clientCards[0];
+    if (firstCard && await firstCard.isDisplayed().catch(() => false)) {
+      await firstCard.click();
       await browser.pause(1500);
     }
     

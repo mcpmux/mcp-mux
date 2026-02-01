@@ -1,21 +1,17 @@
 /**
  * E2E Tests: Server Configuration with Inputs
- * 
- * Test Cases Covered:
- * - TC-SC-001: Enable Server with Required Input Shows Modal
- * - TC-SC-002: Configure API Key (Password Input)
- * - TC-SC-003: Configure Directory Path (Text Input)
+ * Uses data-testid only (ADR-003).
  */
+
+import { byTestId } from '../helpers/selectors';
 
 describe('Server Configuration - API Key Server', () => {
   it('TC-SC-001: Install API Key Server and click Enable shows config modal', async () => {
-    // Navigate to Discover
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    // Search for API Key Server
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('API Key');
@@ -23,25 +19,23 @@ describe('Server Configuration - API Key Server', () => {
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-01-search-apikey.png');
     
-    // Install if not installed
-    const installButton = await $('button=Install');
+    const installButton = await byTestId('install-btn-api-key-server');
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
+      await installButton.waitForClickable({ timeout: 5000 });
       await installButton.click();
       await browser.pause(3000);
     }
     
-    // Verify installed
-    const uninstallButton = await $('button=Uninstall');
+    const uninstallButton = await byTestId('uninstall-btn-api-key-server');
     await expect(uninstallButton).toBeDisplayed();
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-02-apikey-installed.png');
   });
 
   it('TC-SC-002: Enable shows configuration modal with API Key input', async () => {
-    // Navigate to My Servers
-    const myServersButton = await $('button*=My Servers');
+    const myServersButton = await byTestId('nav-my-servers');
     await myServersButton.click();
     await browser.pause(2000);
     
@@ -49,8 +43,7 @@ describe('Server Configuration - API Key Server', () => {
     const pageSource = await browser.getPageSource();
     expect(pageSource.includes('API Key Server')).toBe(true);
     
-    // Click Enable button
-    const enableButton = await $('button=Enable');
+    const enableButton = await byTestId('enable-server-api-key-server');
     await enableButton.click();
     await browser.pause(1000);
     
@@ -67,8 +60,7 @@ describe('Server Configuration - API Key Server', () => {
   });
 
   it('TC-SC-002b: Enter API Key and save configuration', async () => {
-    // Find the password input for API Key
-    const apiKeyInput = await $('input[type="password"]');
+    const apiKeyInput = await byTestId('config-input-API_KEY');
     const isInputDisplayed = await apiKeyInput.isDisplayed().catch(() => false);
     
     if (isInputDisplayed) {
@@ -77,8 +69,7 @@ describe('Server Configuration - API Key Server', () => {
       
       await browser.saveScreenshot('./tests/e2e/screenshots/sc-04-entered-key.png');
       
-      // Click Save & Enable button
-      const saveButton = await $('button*=Save');
+      const saveButton = await byTestId('config-save-btn');
       const isSaveDisplayed = await saveButton.isDisplayed().catch(() => false);
       
       if (isSaveDisplayed) {
@@ -101,22 +92,21 @@ describe('Server Configuration - API Key Server', () => {
   });
 
   it('Cleanup: Uninstall API Key Server', async () => {
-    // Navigate to Discover
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    // Search and uninstall
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('API Key');
     await browser.pause(1000);
     
-    const uninstallButton = await $('button=Uninstall');
+    const uninstallButton = await byTestId('uninstall-btn-api-key-server');
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {
+      await uninstallButton.waitForClickable({ timeout: 5000 });
       await uninstallButton.click();
       await browser.pause(2000);
     }
@@ -127,13 +117,11 @@ describe('Server Configuration - API Key Server', () => {
 
 describe('Server Configuration - Directory Server', () => {
   it('TC-SC-003: Install Directory Server', async () => {
-    // Navigate to Discover
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    // Search for Directory Server
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Directory');
@@ -141,28 +129,25 @@ describe('Server Configuration - Directory Server', () => {
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-07-search-dir.png');
     
-    // Install if not installed
-    const installButton = await $('button=Install');
+    const installButton = await byTestId('install-btn-directory-server');
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
+      await installButton.waitForClickable({ timeout: 5000 });
       await installButton.click();
       await browser.pause(3000);
     }
     
-    // Verify installed
-    const uninstallButton = await $('button=Uninstall');
+    const uninstallButton = await byTestId('uninstall-btn-directory-server');
     await expect(uninstallButton).toBeDisplayed();
   });
 
   it('TC-SC-003b: Enable shows config modal with directory path input', async () => {
-    // Navigate to My Servers
-    const myServersButton = await $('button*=My Servers');
+    const myServersButton = await byTestId('nav-my-servers');
     await myServersButton.click();
     await browser.pause(2000);
     
-    // Click Enable button
-    const enableButton = await $('button=Enable');
+    const enableButton = await byTestId('enable-server-directory-server');
     const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
     
     if (isEnableDisplayed) {
@@ -171,8 +156,7 @@ describe('Server Configuration - Directory Server', () => {
       
       await browser.saveScreenshot('./tests/e2e/screenshots/sc-08-dir-modal.png');
       
-      // Find text input for directory path
-      const dirInput = await $('input[type="text"]');
+      const dirInput = await byTestId('config-input-DIRECTORY');
       const isInputDisplayed = await dirInput.isDisplayed().catch(() => false);
       
       if (isInputDisplayed) {
@@ -182,8 +166,7 @@ describe('Server Configuration - Directory Server', () => {
         
         await browser.saveScreenshot('./tests/e2e/screenshots/sc-09-dir-entered.png');
         
-        // Click Save
-        const saveButton = await $('button*=Save');
+        const saveButton = await byTestId('config-save-btn');
         if (await saveButton.isDisplayed().catch(() => false)) {
           await saveButton.click();
           await browser.pause(3000);
@@ -195,20 +178,21 @@ describe('Server Configuration - Directory Server', () => {
   });
 
   it('Cleanup: Uninstall Directory Server', async () => {
-    const discoverButton = await $('button*=Discover');
+    const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
     
-    const searchInput = await $('input[placeholder*="Search"]');
+    const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Directory');
     await browser.pause(1000);
     
-    const uninstallButton = await $('button=Uninstall');
+    const uninstallButton = await byTestId('uninstall-btn-directory-server');
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {
+      await uninstallButton.waitForClickable({ timeout: 5000 });
       await uninstallButton.click();
       await browser.pause(2000);
     }

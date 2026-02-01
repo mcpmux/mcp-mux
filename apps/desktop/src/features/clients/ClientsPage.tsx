@@ -491,13 +491,13 @@ export default function ClientsPage() {
     : 0;
 
   return (
-    <div className="h-full flex flex-col relative">
+    <div className="h-full flex flex-col relative" data-testid="clients-page">
       {/* Header */}
       <div className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">
         <div className="max-w-[2000px] mx-auto">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold">Connected Clients</h1>
+              <h1 className="text-3xl font-bold" data-testid="clients-title">Connected Clients</h1>
               <p className="text-base text-[rgb(var(--muted))] mt-2">
                 Manage OAuth clients and their permissions
               </p>
@@ -573,6 +573,7 @@ export default function ClientsPage() {
                       isSelected ? 'ring-2 ring-primary-500 shadow-lg' : ''
                     }`}
                     onClick={() => openPanel(client)}
+                    data-testid={`client-card-${client.client_id.replace(/[^a-zA-Z0-9-_]/g, '_')}`}
                   >
                     <CardContent className="p-6">
                       {/* Client Header */}

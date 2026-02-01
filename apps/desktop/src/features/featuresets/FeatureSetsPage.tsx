@@ -181,7 +181,7 @@ export function FeatureSetsPage() {
   });
 
   return (
-    <div className="h-full flex flex-col relative">
+    <div className="h-full flex flex-col relative" data-testid="featuresets-page">
       {/* Header */}
       <div className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">
         <div className="max-w-[2000px] mx-auto">
@@ -281,6 +281,7 @@ export function FeatureSetsPage() {
                       isSelected ? 'ring-2 ring-primary-500 shadow-lg' : ''
                     }`}
                     onClick={() => handleOpenPanel(fs)}
+                    data-testid={`featureset-card-${fs.id}`}
                   >
                     <CardContent className="p-6">
                       {/* Header */}

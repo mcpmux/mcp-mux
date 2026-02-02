@@ -245,7 +245,9 @@ export const config: Options.Testrunner = {
   afterTest: async function(test, context, { error }) {
     if (error) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `./tests/e2e/screenshots/FAIL-${test.title.replace(/\s+/g, '_')}-${timestamp}.png`;
+      // Sanitize test title: replace invalid filename chars (NTFS: " : < > | * ? \r \n) and spaces
+      const safeTitle = test.title.replace(/[":*?<>|\r\n\\\/]+/g, '-').replace(/\s+/g, '_');
+      const filename = `./tests/e2e/screenshots/FAIL-${safeTitle}-${timestamp}.png`;
       await browser.saveScreenshot(filename);
       console.log(`[e2e] Screenshot saved: ${filename}`);
     }

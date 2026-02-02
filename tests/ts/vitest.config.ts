@@ -11,6 +11,10 @@ export default defineConfig({
     include: ['**/*.test.{ts,tsx}'],
     exclude: ['**/node_modules/**'],
     root: __dirname,
+    reporters: ['default', 'junit'],
+    outputFile: {
+      junit: './test-results/vitest-junit.xml',
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],

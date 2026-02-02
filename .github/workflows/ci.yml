@@ -11,6 +11,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Permissions needed for test reporting and PR comments
+permissions:
+  contents: read
+  actions: read
+  checks: write
+  pull-requests: write
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -77,8 +84,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
-      - name: TypeScript tests
-        run: pnpm test:ts
+
+      - name: TypeScript tests with coverage
+        run: pnpm exec vitest run -c tests/ts/vitest.config.ts --coverage
+
+      - name: Upload TS test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-typescript
+          path: tests/ts/test-results/
+          retention-days: 7
+
+      - name: Upload TS coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-typescript
+          path: tests/ts/coverage/
+          retention-days: 7
 
   # ─────────────────────────────────────────────────────────────
   # Rust Tests (cross-platform matrix)
@@ -124,9 +148,18 @@ jobs:
       - name: Doc tests
         run: cargo test --workspace --doc
 
-      # Run integration tests
+      # Run integration tests (outputs JUnit XML)
       - name: Integration tests
         run: cargo nextest run -p tests --profile ci
+
+      # Upload test results for reporting
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.os }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   # ─────────────────────────────────────────────────────────────
   # Build Verification (ensures app compiles on all platforms)
@@ -176,6 +209,59 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
   # ─────────────────────────────────────────────────────────────
+  # Test Results Report (aggregates all test results)
+  # ─────────────────────────────────────────────────────────────
+  test-report:
+    needs: [rust-test, ts-check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: test-results
+          merge-multiple: true
+
+      - name: Publish Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            test-results/**/*.xml
+          check_name: 'Test Results'
+          comment_title: 'Test Results'
+          comment_mode: always
+
+  # ─────────────────────────────────────────────────────────────
+  # Coverage Report (uploads to Codecov)
+  # ─────────────────────────────────────────────────────────────
+  coverage-report:
+    needs: [ts-check]
+    if: always() && needs.ts-check.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          flags: typescript
+          name: mcpmux-ts-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────
   # E2E Tests (Web-only Playwright for UI smoke tests)
   # Skip with [skip e2e] in commit message for faster PR iteration
   # ─────────────────────────────────────────────────────────────
@@ -221,9 +307,6 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   e2e-trigger-check:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-      contents: read
     outputs:
       run_e2e: ${{ steps.check.outputs.should_run }}
     steps:

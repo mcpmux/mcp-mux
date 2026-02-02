@@ -223,6 +223,12 @@ export const config: Options.Testrunner = {
   framework: 'mocha',
   reporters: [
     'spec',
+    ['junit', {
+      outputDir: './tests/e2e/reports/',
+      outputFileFormat: function(options) {
+        return `wdio-junit-${options.cid}.xml`;
+      },
+    }],
     [video, {
       saveAllVideos: process.env.SAVE_ALL_VIDEOS === 'true', // Save all videos when env var is set
       videoSlowdownMultiplier: 1, // Normal speed
@@ -250,8 +256,10 @@ export const config: Options.Testrunner = {
     // Create output directories (gitignored; needed for CI and fresh clones)
     const screenshotsDir = path.resolve('./tests/e2e/screenshots');
     const videosDir = path.resolve('./tests/e2e/videos');
+    const reportsDir = path.resolve('./tests/e2e/reports');
     fs.mkdirSync(screenshotsDir, { recursive: true });
     fs.mkdirSync(videosDir, { recursive: true });
+    fs.mkdirSync(reportsDir, { recursive: true });
 
     // Verify tauri-driver is installed
     const hasTauriDriver = checkTauriDriver();

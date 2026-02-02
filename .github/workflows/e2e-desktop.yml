@@ -88,3 +88,43 @@ jobs:
       - name: Run desktop E2E tests (Windows)
         if: matrix.os == 'windows-latest'
         run: pnpm test:e2e
+
+      # Upload test results and artifacts
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-desktop-results-${{ matrix.os }}
+          path: |
+            tests/e2e/reports/
+            tests/e2e/screenshots/
+            tests/e2e/videos/
+          retention-days: 7
+
+  # Publish aggregated E2E test results
+  e2e-report:
+    needs: [e2e-desktop]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
+    steps:
+      - name: Download all E2E test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: e2e-desktop-results-*
+          path: test-results
+          merge-multiple: true
+
+      - name: Publish E2E Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: |
+            test-results/**/*.xml
+          check_name: 'E2E Desktop Test Results'
+          comment_title: 'E2E Desktop Test Results'
+          comment_mode: always

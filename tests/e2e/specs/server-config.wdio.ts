@@ -3,12 +3,12 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId } from '../helpers/selectors';
+import { byTestId, TIMEOUT, waitForModalClose, safeClick } from '../helpers/selectors';
 
 describe('Server Configuration - API Key Server', () => {
   it('TC-SC-001: Install API Key Server and click Enable shows config modal', async () => {
     const discoverButton = await byTestId('nav-discover');
-    await discoverButton.click();
+    await safeClick(discoverButton);
     await browser.pause(2000);
     
     const searchInput = await byTestId('search-input');
@@ -23,9 +23,10 @@ describe('Server Configuration - API Key Server', () => {
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
-      await installButton.waitForClickable({ timeout: 5000 });
-      await installButton.click();
+      await installButton.waitForClickable({ timeout: TIMEOUT.medium });
+      await safeClick(installButton);
       await browser.pause(3000);
+      await waitForModalClose();
     }
     
     const uninstallButton = await byTestId('uninstall-btn-api-key-server');
@@ -36,7 +37,7 @@ describe('Server Configuration - API Key Server', () => {
 
   it('TC-SC-002: Enable shows configuration modal with API Key input', async () => {
     const myServersButton = await byTestId('nav-my-servers');
-    await myServersButton.click();
+    await safeClick(myServersButton);
     await browser.pause(2000);
     
     // Verify API Key Server is in the list
@@ -44,7 +45,7 @@ describe('Server Configuration - API Key Server', () => {
     expect(pageSource.includes('API Key Server')).toBe(true);
     
     const enableButton = await byTestId('enable-server-api-key-server');
-    await enableButton.click();
+    await safeClick(enableButton);
     await browser.pause(1000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-03-config-modal.png');
@@ -73,8 +74,9 @@ describe('Server Configuration - API Key Server', () => {
       const isSaveDisplayed = await saveButton.isDisplayed().catch(() => false);
       
       if (isSaveDisplayed) {
-        await saveButton.click();
+        await safeClick(saveButton);
         await browser.pause(3000);
+        await waitForModalClose();
         
         await browser.saveScreenshot('./tests/e2e/screenshots/sc-05-saved.png');
       }
@@ -93,7 +95,7 @@ describe('Server Configuration - API Key Server', () => {
 
   it('Cleanup: Uninstall API Key Server', async () => {
     const discoverButton = await byTestId('nav-discover');
-    await discoverButton.click();
+    await safeClick(discoverButton);
     await browser.pause(2000);
     
     const searchInput = await byTestId('search-input');
@@ -106,9 +108,10 @@ describe('Server Configuration - API Key Server', () => {
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {
-      await uninstallButton.waitForClickable({ timeout: 5000 });
-      await uninstallButton.click();
+      await uninstallButton.waitForClickable({ timeout: TIMEOUT.medium });
+      await safeClick(uninstallButton);
       await browser.pause(2000);
+      await waitForModalClose();
     }
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-06-apikey-cleanup.png');
@@ -118,7 +121,7 @@ describe('Server Configuration - API Key Server', () => {
 describe('Server Configuration - Directory Server', () => {
   it('TC-SC-003: Install Directory Server', async () => {
     const discoverButton = await byTestId('nav-discover');
-    await discoverButton.click();
+    await safeClick(discoverButton);
     await browser.pause(2000);
     
     const searchInput = await byTestId('search-input');
@@ -133,9 +136,10 @@ describe('Server Configuration - Directory Server', () => {
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
-      await installButton.waitForClickable({ timeout: 5000 });
-      await installButton.click();
+      await installButton.waitForClickable({ timeout: TIMEOUT.medium });
+      await safeClick(installButton);
       await browser.pause(3000);
+      await waitForModalClose();
     }
     
     const uninstallButton = await byTestId('uninstall-btn-directory-server');
@@ -144,14 +148,14 @@ describe('Server Configuration - Directory Server', () => {
 
   it('TC-SC-003b: Enable shows config modal with directory path input', async () => {
     const myServersButton = await byTestId('nav-my-servers');
-    await myServersButton.click();
+    await safeClick(myServersButton);
     await browser.pause(2000);
     
     const enableButton = await byTestId('enable-server-directory-server');
     const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
     
     if (isEnableDisplayed) {
-      await enableButton.click();
+      await safeClick(enableButton);
       await browser.pause(1000);
       
       await browser.saveScreenshot('./tests/e2e/screenshots/sc-08-dir-modal.png');
@@ -168,8 +172,9 @@ describe('Server Configuration - Directory Server', () => {
         
         const saveButton = await byTestId('config-save-btn');
         if (await saveButton.isDisplayed().catch(() => false)) {
-          await saveButton.click();
+          await safeClick(saveButton);
           await browser.pause(3000);
+          await waitForModalClose();
         }
       }
     }
@@ -179,7 +184,7 @@ describe('Server Configuration - Directory Server', () => {
 
   it('Cleanup: Uninstall Directory Server', async () => {
     const discoverButton = await byTestId('nav-discover');
-    await discoverButton.click();
+    await safeClick(discoverButton);
     await browser.pause(2000);
     
     const searchInput = await byTestId('search-input');
@@ -192,9 +197,10 @@ describe('Server Configuration - Directory Server', () => {
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {
-      await uninstallButton.waitForClickable({ timeout: 5000 });
-      await uninstallButton.click();
+      await uninstallButton.waitForClickable({ timeout: TIMEOUT.medium });
+      await safeClick(uninstallButton);
       await browser.pause(2000);
+      await waitForModalClose();
     }
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-11-dir-cleanup.png');

@@ -3,12 +3,12 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId } from '../helpers/selectors';
+import { byTestId, TIMEOUT, waitForModalClose, safeClick } from '../helpers/selectors';
 
 describe('Space Management - Default Space', () => {
   it('TC-SP-001: Navigate to Spaces page and verify default space exists', async () => {
     const spacesButton = await byTestId('nav-spaces');
-    await spacesButton.click();
+    await safeClick(spacesButton);
     await browser.pause(2000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sp-01-spaces-page.png');
@@ -50,7 +50,7 @@ describe('Space Management - Create and Delete', () => {
 
   it('TC-SP-002: Create a new space', async () => {
     const spacesButton = await byTestId('nav-spaces');
-    await spacesButton.click();
+    await safeClick(spacesButton);
     await browser.pause(2000);
     
     // Click Create Space button
@@ -58,7 +58,7 @@ describe('Space Management - Create and Delete', () => {
     const isCreateDisplayed = await createButton.isDisplayed().catch(() => false);
     
     if (isCreateDisplayed) {
-      await createButton.click();
+      await safeClick(createButton);
       await browser.pause(1000);
       
       await browser.saveScreenshot('./tests/e2e/screenshots/sp-02-create-modal.png');
@@ -80,9 +80,10 @@ describe('Space Management - Create and Delete', () => {
         console.log('[DEBUG] Submit button displayed:', isSubmitDisplayed);
         
         if (isSubmitDisplayed) {
-          await submitButton.waitForClickable({ timeout: 5000 });
-          await submitButton.click();
+          await submitButton.waitForClickable({ timeout: TIMEOUT.medium });
+          await safeClick(submitButton);
           await browser.pause(2000);
+          await waitForModalClose();
         }
       } else {
         console.log('[DEBUG] Name input not found');
@@ -129,7 +130,7 @@ describe('Space Management - Create and Delete', () => {
   it('TC-SP-011: Verify spaces are listed on page', async () => {
     await dismissCreateModalIfOpen();
     const spacesButton = await byTestId('nav-spaces');
-    await spacesButton.click();
+    await safeClick(spacesButton);
     await browser.pause(2000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sp-06-spaces-list.png');

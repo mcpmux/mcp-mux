@@ -3,12 +3,12 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId } from '../helpers/selectors';
+import { byTestId, TIMEOUT, waitForModalClose, safeClick } from '../helpers/selectors';
 
 describe('FeatureSet - Builtin Sets', () => {
   it('TC-FS-001: Navigate to FeatureSets page and verify builtin sets exist', async () => {
     const featureSetsButton = await byTestId('nav-featuresets');
-    await featureSetsButton.click();
+    await safeClick(featureSetsButton);
     await browser.pause(2000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-01-page.png');
@@ -36,7 +36,7 @@ describe('FeatureSet - Builtin Sets', () => {
 describe('FeatureSet - Server-All Auto Creation', () => {
   it('Setup: Install and Enable Echo Server', async () => {
     const discoverButton = await byTestId('nav-discover');
-    await discoverButton.click();
+    await safeClick(discoverButton);
     await browser.pause(2000);
     
     const searchInput = await byTestId('search-input');
@@ -49,21 +49,22 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
-      await installButton.waitForClickable({ timeout: 5000 });
-      await installButton.click();
+      await installButton.waitForClickable({ timeout: TIMEOUT.medium });
+      await safeClick(installButton);
       await browser.pause(3000);
+      await waitForModalClose();
     }
     
     const myServersButton = await byTestId('nav-my-servers');
-    await myServersButton.click();
+    await safeClick(myServersButton);
     await browser.pause(2000);
     
     const enableButton = await byTestId('enable-server-echo-server');
     const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
     
     if (isEnableDisplayed) {
-      await enableButton.click();
-      await browser.pause(5000); // Wait for connection
+      await safeClick(enableButton);
+      await browser.pause(TIMEOUT.medium); // Wait for MCP connection on slow CI
     }
     
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-02-server-enabled.png');
@@ -80,7 +81,7 @@ describe('FeatureSet - Server-All Auto Creation', () => {
 
   it('TC-FS-002: Verify server-all FeatureSet is created for Echo Server', async () => {
     const featureSetsButton = await byTestId('nav-featuresets');
-    await featureSetsButton.click();
+    await safeClick(featureSetsButton);
     await browser.pause(2000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-03-featuresets-with-server.png');
@@ -136,19 +137,19 @@ describe('FeatureSet - Server-All Auto Creation', () => {
 
   it('TC-FS-004: Disable server and verify FeatureSet is hidden', async () => {
     const myServersButton = await byTestId('nav-my-servers');
-    await myServersButton.click();
+    await safeClick(myServersButton);
     await browser.pause(2000);
     
     const disableButton = await byTestId('disable-server-echo-server');
     const isDisableDisplayed = await disableButton.isDisplayed().catch(() => false);
     
     if (isDisableDisplayed) {
-      await disableButton.click();
+      await safeClick(disableButton);
       await browser.pause(2000);
     }
     
     const featureSetsButton = await byTestId('nav-featuresets');
-    await featureSetsButton.click();
+    await safeClick(featureSetsButton);
     await browser.pause(2000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-05-after-disable.png');
@@ -162,7 +163,7 @@ describe('FeatureSet - Server-All Auto Creation', () => {
 
   it('Cleanup: Uninstall Echo Server', async () => {
     const discoverButton = await byTestId('nav-discover');
-    await discoverButton.click();
+    await safeClick(discoverButton);
     await browser.pause(2000);
     
     const searchInput = await byTestId('search-input');
@@ -175,9 +176,10 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {
-      await uninstallButton.waitForClickable({ timeout: 5000 });
-      await uninstallButton.click();
+      await uninstallButton.waitForClickable({ timeout: TIMEOUT.medium });
+      await safeClick(uninstallButton);
       await browser.pause(2000);
+      await waitForModalClose();
     }
     
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-06-cleanup.png');

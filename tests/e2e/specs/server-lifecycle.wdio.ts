@@ -3,7 +3,7 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId } from '../helpers/selectors';
+import { byTestId, TIMEOUT, waitForModalClose } from '../helpers/selectors';
 
 describe('Server Installation - Echo Server (No Inputs)', () => {
   it('TC-SD-004: Install Echo Server from Discover page', async () => {
@@ -15,13 +15,13 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Echo');
-    await browser.pause(1000);
+    await browser.pause(2000); // Allow search results to load
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sl-01-search-echo.png');
     
     const installButton = await byTestId('install-btn-echo-server');
-    await installButton.waitForDisplayed({ timeout: 5000 });
-    await installButton.waitForClickable({ timeout: 5000 });
+    await installButton.waitForDisplayed({ timeout: TIMEOUT.medium });
+    await installButton.waitForClickable({ timeout: TIMEOUT.medium });
     await installButton.click();
     await browser.pause(3000);
     
@@ -32,6 +32,7 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
   });
 
   it('TC-SL-001: Enable Echo Server (verify server appears in My Servers)', async () => {
+    await waitForModalClose();
     const myServersButton = await byTestId('nav-my-servers');
     await myServersButton.click();
     await browser.pause(2000);
@@ -47,7 +48,7 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
     
     if (isEnableDisplayed) {
       await enableButton.click();
-      await browser.pause(5000); // Wait for connection
+      await browser.pause(TIMEOUT.medium); // Wait for MCP connection (longer for CI)
     }
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sl-04-enabled.png');
@@ -55,7 +56,7 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
 
   it('TC-SL-002: Verify connected server shows features (tools, prompts)', async () => {
     // Wait for connection to fully establish
-    await browser.pause(3000);
+    await browser.pause(5000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sl-05-connected.png');
     
@@ -72,6 +73,7 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
   });
 
   it('TC-SL-003: Disable connected server', async () => {
+    await waitForModalClose();
     const disableButton = await byTestId('disable-server-echo-server');
     const isDisableDisplayed = await disableButton.isDisplayed().catch(() => false);
     
@@ -89,6 +91,7 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
   });
 
   it('TC-SD-005: Uninstall Echo Server', async () => {
+    await waitForModalClose();
     const discoverButton = await byTestId('nav-discover');
     await discoverButton.click();
     await browser.pause(2000);
@@ -97,11 +100,11 @@ describe('Server Installation - Echo Server (No Inputs)', () => {
     await searchInput.clearValue();
     await browser.pause(300);
     await searchInput.setValue('Echo');
-    await browser.pause(1000);
+    await browser.pause(2000);
     
     const uninstallButton = await byTestId('uninstall-btn-echo-server');
-    await uninstallButton.waitForDisplayed({ timeout: 5000 });
-    await uninstallButton.waitForClickable({ timeout: 5000 });
+    await uninstallButton.waitForDisplayed({ timeout: TIMEOUT.medium });
+    await uninstallButton.waitForClickable({ timeout: TIMEOUT.medium });
     await uninstallButton.click();
     await browser.pause(3000);
     

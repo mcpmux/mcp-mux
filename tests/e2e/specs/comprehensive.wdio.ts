@@ -3,7 +3,7 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId } from '../helpers/selectors';
+import { byTestId, safeClick } from '../helpers/selectors';
 import {
   createSpace,
   deleteSpace,
@@ -94,7 +94,7 @@ describe('Comprehensive: Space Isolation', () => {
     await browser.pause(2000);
 
     const serversBtn = await byTestId('nav-my-servers');
-    await serversBtn.click();
+    await safeClick(serversBtn);
     await browser.pause(2000);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-01-work-servers.png');
@@ -188,7 +188,7 @@ describe('Comprehensive: Client Grants', () => {
 
   it('TC-COMP-CL-002: Verify Clients page loads', async () => {
     const clientsBtn = await byTestId('nav-clients');
-    await clientsBtn.click();
+    await safeClick(clientsBtn);
     await browser.pause(2000);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-03-clients.png');
@@ -238,7 +238,7 @@ describe('Comprehensive: Server Lifecycle with API', () => {
 
   it('TC-COMP-SV-002: Verify server in UI after API install', async () => {
     const serversBtn = await byTestId('nav-my-servers');
-    await serversBtn.click();
+    await safeClick(serversBtn);
     await browser.pause(2000);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-04-server-installed.png');
@@ -339,7 +339,7 @@ describe('Comprehensive: Custom FeatureSet', () => {
 
   it('TC-COMP-FS-002: Verify FeatureSet in UI', async () => {
     const featureSetsBtn = await byTestId('nav-featuresets');
-    await featureSetsBtn.click();
+    await safeClick(featureSetsBtn);
     await browser.pause(2000);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-07-featureset.png');
@@ -412,7 +412,7 @@ describe('Comprehensive: Multi-Space Server Management', () => {
 
   it('TC-COMP-MS-003: Verify space switcher shows all spaces', async () => {
     const spacesBtn = await byTestId('nav-spaces');
-    await spacesBtn.click();
+    await safeClick(spacesBtn);
     await browser.pause(2000);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-08-all-spaces.png');

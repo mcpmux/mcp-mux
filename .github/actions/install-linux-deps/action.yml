@@ -24,8 +24,8 @@ runs:
       if: ${{ inputs.e2e == 'true' }}
       uses: awalsh128/cache-apt-pkgs-action@latest
       with:
-        packages: webkit2gtk-driver xvfb gnome-keyring
-        version: 1.0
+        packages: webkit2gtk-driver xvfb gnome-keyring gsettings-desktop-schemas dbus-x11 at-spi2-core
+        version: 1.1
 
     - name: Verify glib installation
       if: ${{ inputs.verify_glib == 'true' }}

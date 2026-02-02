@@ -263,19 +263,6 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
-      # Upload build artifacts for e2e-desktop to reuse (Linux/Windows only)
-      - name: Upload build artifacts
-        if: matrix.os != 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tauri-build-${{ matrix.os }}
-          path: |
-            target/release/bundle/
-            target/release/mcpmux*
-            target/release/*.exe
-          retention-days: 1
-          if-no-files-found: ignore
-
   # ─────────────────────────────────────────────────────────────
   # Test Results Report (separate checks per test type and OS)
   # Uses dorny/test-reporter for granular GitHub Check Runs
@@ -457,10 +444,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   # E2E Tests (Desktop app with WebDriver - Linux/Windows only)
   # Runs when: main branch, [e2e] in commit, or /e2e-desktop comment on PR
-  # Depends on build to reuse artifacts (avoids rebuilding Tauri ~5-10 min)
+  # Runs in parallel with build for faster CI (cache helps on subsequent runs)
   # ─────────────────────────────────────────────────────────────
   e2e-desktop:
-    needs: [e2e-trigger-check, build]
+    needs: [e2e-trigger-check]
     if: needs.e2e-trigger-check.outputs.run_e2e == 'true'
     uses: ./.github/workflows/e2e-desktop.yml
     with:

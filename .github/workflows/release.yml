@@ -18,6 +18,9 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   changesets:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       published: ${{ steps.changesets.outputs.published }}
       publishedPackages: ${{ steps.changesets.outputs.publishedPackages }}

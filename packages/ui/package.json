@@ -1,6 +1,6 @@
 {
   "name": "@mcpmux/ui",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "private": true,
   "description": "Shared UI components for McpMux",
   "type": "module",

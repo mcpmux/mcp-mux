@@ -63,11 +63,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Debug release-plz output
-        run: |
-          echo "releases_created: ${{ steps.release-plz.outputs.releases_created }}"
-          echo "releases: ${{ steps.release-plz.outputs.releases }}"
-
       - name: Extract version from releases output
         id: get-version
         if: steps.release-plz.outputs.releases_created == 'true'

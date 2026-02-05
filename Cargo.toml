@@ -73,10 +73,10 @@ axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 
 # Internal crates
-mcpmux-core = { path = "crates/mcpmux-core" }
-mcpmux-gateway = { path = "crates/mcpmux-gateway" }
-mcpmux-mcp = { path = "crates/mcpmux-mcp" }
-mcpmux-storage = { path = "crates/mcpmux-storage" }
+mcpmux-core = { version = "0.0.1", path = "crates/mcpmux-core" }
+mcpmux-gateway = { version = "0.0.1", path = "crates/mcpmux-gateway" }
+mcpmux-mcp = { version = "0.0.1", path = "crates/mcpmux-mcp" }
+mcpmux-storage = { version = "0.0.1", path = "crates/mcpmux-storage" }
 
 [profile.release]
 lto = true

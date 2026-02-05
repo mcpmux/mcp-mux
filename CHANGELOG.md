@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.4](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.3...v0.0.4) (2026-02-05)
+
+
+### Bug Fixes
+
+* enable createUpdaterArtifacts for updater signatures ([c620e56](https://github.com/MCP-Mux/mcp-mux/commit/c620e56f9cae7cea4b7682ff49be37da3d1f670e))
+
 ## [0.0.3](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.2...v0.0.3) (2026-02-05)
 
 

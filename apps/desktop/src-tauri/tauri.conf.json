@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "McpMux",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "identifier": "com.mcpmux.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
@@ -13,7 +13,9 @@
     "deep-link": {
       "mobile": [],
       "desktop": {
-        "schemes": ["mcpmux"]
+        "schemes": [
+          "mcpmux"
+        ]
       }
     },
     "updater": {
@@ -73,7 +75,9 @@
         "headerImage": null,
         "sidebarImage": null,
         "installMode": "currentUser",
-        "languages": ["English"],
+        "languages": [
+          "English"
+        ],
         "displayLanguageSelector": false
       }
     },
@@ -82,11 +86,19 @@
         "bundleMediaFramework": false
       },
       "deb": {
-        "depends": ["libsecret-1-0", "gnome-keyring", "librsvg2-2"],
+        "depends": [
+          "libsecret-1-0",
+          "gnome-keyring",
+          "librsvg2-2"
+        ],
         "desktopTemplate": "linux/mcpmux.desktop"
       },
       "rpm": {
-        "depends": ["libsecret", "gnome-keyring", "librsvg2"]
+        "depends": [
+          "libsecret",
+          "gnome-keyring",
+          "librsvg2"
+        ]
       }
     }
   }

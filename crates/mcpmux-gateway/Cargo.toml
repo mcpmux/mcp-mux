@@ -3,6 +3,7 @@ name = "mcpmux-gateway"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "McpMux Gateway - MCP proxy server with OAuth and aggregation"
 
 [dependencies]

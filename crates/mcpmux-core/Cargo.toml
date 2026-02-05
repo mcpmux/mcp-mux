@@ -3,6 +3,7 @@ name = "mcpmux-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "McpMux core domain logic, entities, and business rules"
 
 [dependencies]

@@ -42,7 +42,7 @@ notify = { version = "7", default-features = false, features = ["macos_fsevent"]
 notify-debouncer-mini = "0.5"
 
 # Internal crates
-mcpmux-core.workspace = true
-mcpmux-gateway.workspace = true
-mcpmux-storage.workspace = true
+mcpmux-core = { version = "0.0.1", path = "../../../crates/mcpmux-core" }
+mcpmux-gateway = { version = "0.0.1", path = "../../../crates/mcpmux-gateway" }
+mcpmux-storage = { version = "0.0.1", path = "../../../crates/mcpmux-storage" }
 

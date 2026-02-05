@@ -46,6 +46,7 @@ jobs:
     outputs:
       releases_created: ${{ steps.release-plz.outputs.releases_created }}
       version: ${{ steps.get-version.outputs.version }}
+      tag: ${{ steps.get-version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,14 +63,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag
+      - name: Extract version from releases output
         id: get-version
         if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
         run: |
-          TAG="${{ steps.release-plz.outputs.tag }}"
-          VERSION="${TAG#v}"
+          # Parse the releases JSON to get tag and version
+          # Example: [{"package_name":"mcpmux","tag":"v0.1.0","version":"0.1.0"}]
+          TAG=$(echo "$RELEASES" | jq -r '.[0].tag')
+          VERSION=$(echo "$RELEASES" | jq -r '.[0].version')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Released version: $VERSION"
+          echo "Released tag: $TAG, version: $VERSION"
 
   # ─────────────────────────────────────────────────────────────
   # Build Release: Build Tauri app when release is created
@@ -90,7 +96,7 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: macos-arm
-          - os: macos-13
+          - os: macos-15
             target: x86_64-apple-darwin
             artifact: macos-intel
 
@@ -128,7 +134,7 @@ jobs:
 
       # Import Apple certificate for macOS signing
       - name: Import Apple certificate
-        if: matrix.os == 'macos-latest' || matrix.os == 'macos-13'
+        if: matrix.os == 'macos-latest' || matrix.os == 'macos-15'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -160,7 +166,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: v${{ needs.release.outputs.version }}
+          # Use tagName to find and upload to the existing release created by release-plz
+          tagName: ${{ needs.release.outputs.tag }}
           releaseName: 'McpMux v${{ needs.release.outputs.version }}'
           releaseBody: ''  # Release notes already created by release-plz
           releaseDraft: false

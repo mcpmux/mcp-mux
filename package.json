@@ -6,7 +6,9 @@
   "scripts": {
     "setup": "pwsh -ExecutionPolicy Bypass -File scripts/setup-dev.ps1",
     "dev": "pnpm --filter @mcpmux/desktop dev",
+    "dev:web": "pnpm --filter @mcpmux/desktop dev:web",
     "build": "pnpm --filter @mcpmux/desktop build",
+    "build:web": "pnpm --filter @mcpmux/desktop build:web",
     "release:key": "pnpm --filter @mcpmux/desktop tauri signer generate -w ~/.tauri/mcpmux.key",
     "test": "pnpm test:rust && pnpm test:ts",
     "test:rust": "cargo nextest run --workspace",

@@ -54,7 +54,7 @@ body = """
 trim = true
 protect_breaking_commits = true
 
-# Conventional commit parsing
+# Conventional commit parsing - ORDER MATTERS! Specific patterns must come before generic ones
 commit_parsers = [
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
@@ -65,9 +65,10 @@ commit_parsers = [
     { message = "^test", group = "Testing" },
     { message = "^chore\\(deps\\)", group = "Dependencies" },
     { message = "^chore\\(release\\)", skip = true },
-    { message = "^chore", skip = true },
-    { message = "^ci", skip = true },
-    { message = "^build", skip = true },
+    { message = "^ci", group = "CI/CD" },
+    { message = "^build", group = "Build" },
+    { message = "^chore", group = "Chores" },
+    { message = "^.*", group = "Other" },
 ]
 
 # Convert issue/PR references to links
@@ -78,8 +79,11 @@ commit_preprocessors = [
 # Only release the main desktop app, not the library crates
 [[package]]
 name = "mcpmux"
+# Path relative to workspace root (not package root)
 changelog_path = "CHANGELOG.md"
 release = true
+# Include commits from internal crates in the main changelog
+changelog_include = ["mcpmux-core", "mcpmux-gateway", "mcpmux-mcp", "mcpmux-storage"]
 
 # Disable release for library crates (they're internal, not published)
 [[package]]

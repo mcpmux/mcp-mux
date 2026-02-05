@@ -36,6 +36,7 @@ import { FeatureSetsPage } from '@/features/featuresets';
 import { ClientsPage } from '@/features/clients';
 import { ServersPage } from '@/features/servers';
 import { SpacesPage } from '@/features/spaces';
+import { SettingsPage } from '@/features/settings';
 import { useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
 
 type NavItem = 'home' | 'registry' | 'servers' | 'spaces' | 'featuresets' | 'clients' | 'settings';
@@ -45,6 +46,25 @@ function AppContent() {
   useDataSync();
 
   const [activeNav, setActiveNav] = useState<NavItem>('home');
+
+  // Auto-check for updates on startup (silent check after 5 seconds)
+  useEffect(() => {
+    const checkForUpdates = async () => {
+      try {
+        const { check } = await import('@tauri-apps/plugin-updater');
+        const update = await check();
+        if (update) {
+          console.log(`[Auto-Update] Update available: ${update.version}`);
+          // User can check Settings page to see the update
+        }
+      } catch (error) {
+        console.error('[Auto-Update] Failed to check for updates:', error);
+      }
+    };
+
+    const timer = setTimeout(checkForUpdates, 5000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Get state from store
   const theme = useTheme();
@@ -171,7 +191,7 @@ function AppContent() {
         {activeNav === 'spaces' && <SpacesPage />}
         {activeNav === 'featuresets' && <FeatureSetsPage />}
         {activeNav === 'clients' && <ClientsPage />}
-        {activeNav === 'settings' && <SettingsView />}
+        {activeNav === 'settings' && <SettingsPage />}
       </div>
     </AppShell>
   );
@@ -418,130 +438,6 @@ function DashboardView() {
                 {exportSuccess}
               </div>
             )}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function SettingsView() {
-  const theme = useTheme();
-  const setTheme = useAppStore((state) => state.setTheme);
-  const [logsPath, setLogsPath] = useState<string>('');
-  const [openingLogs, setOpeningLogs] = useState(false);
-
-  // Load logs path on mount
-  useEffect(() => {
-    const loadLogsPath = async () => {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const path = await invoke<string>('get_logs_path');
-        setLogsPath(path);
-      } catch (error) {
-        console.error('Failed to get logs path:', error);
-      }
-    };
-    loadLogsPath();
-  }, []);
-
-  const handleOpenLogs = async () => {
-    setOpeningLogs(true);
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_logs_folder');
-    } catch (error) {
-      console.error('Failed to open logs folder:', error);
-    } finally {
-      setOpeningLogs(false);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-[rgb(var(--muted))]">Configure McpMux preferences.</p>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Appearance</CardTitle>
-          <CardDescription>Customize the look and feel of McpMux.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">Theme</label>
-              <div className="flex gap-2 mt-2" data-testid="theme-buttons">
-                <Button
-                  variant={theme === 'light' ? 'primary' : 'secondary'}
-                  size="sm"
-                  onClick={() => setTheme('light')}
-                  data-testid="theme-light-btn"
-                >
-                  <Sun className="h-4 w-4 mr-2" />
-                  Light
-                </Button>
-                <Button
-                  variant={theme === 'dark' ? 'primary' : 'secondary'}
-                  size="sm"
-                  onClick={() => setTheme('dark')}
-                  data-testid="theme-dark-btn"
-                >
-                  <Moon className="h-4 w-4 mr-2" />
-                  Dark
-                </Button>
-                <Button
-                  variant={theme === 'system' ? 'primary' : 'secondary'}
-                  size="sm"
-                  onClick={() => setTheme('system')}
-                  data-testid="theme-system-btn"
-                >
-                  <Monitor className="h-4 w-4 mr-2" />
-                  System
-                </Button>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Logs
-          </CardTitle>
-          <CardDescription>View application logs for debugging and troubleshooting.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">Log Files Location</label>
-              <p className="text-sm text-[rgb(var(--muted))] mt-1 font-mono bg-surface-secondary rounded px-2 py-1" data-testid="logs-path">
-                {logsPath || 'Loading...'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleOpenLogs}
-                disabled={openingLogs}
-                data-testid="open-logs-btn"
-              >
-                {openingLogs ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <FolderOpen className="h-4 w-4 mr-2" />
-                )}
-                Open Logs Folder
-              </Button>
-            </div>
-            <p className="text-xs text-[rgb(var(--muted))]">
-              Logs are rotated daily. Each file contains detailed debug information including thread IDs and source locations.
-            </p>
           </div>
         </CardContent>
       </Card>

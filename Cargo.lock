@@ -2498,7 +2498,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcpmux"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2533,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-core"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-gateway"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-mcp"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-storage"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",

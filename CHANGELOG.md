@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.4...v0.0.5) (2026-02-05)
+
+
+### Bug Fixes
+
+* **oauth:** remove credential caching to enable automatic token refresh ([#33](https://github.com/MCP-Mux/mcp-mux/issues/33)) ([f398cfa](https://github.com/MCP-Mux/mcp-mux/commit/f398cfad7f1f92956f528b5e4640049de77b5ac3))
+
 ## [0.0.4](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.3...v0.0.4) (2026-02-05)
 
 

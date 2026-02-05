@@ -7,7 +7,7 @@ publish = false
 description = "MCP protocol implementation and client management"
 
 [dependencies]
-mcpmux-core = { version = "0.0.1", path = "../mcpmux-core" }
+mcpmux-core = { version = "0.0.2", path = "../mcpmux-core" }
 rmcp.workspace = true
 
 serde.workspace = true

@@ -60,8 +60,8 @@ rmcp.workspace = true
 oauth2 = "5"
 
 # Internal crates
-mcpmux-core = { version = "0.0.1", path = "../mcpmux-core" }
-mcpmux-storage = { version = "0.0.1", path = "../mcpmux-storage" }
+mcpmux-core = { version = "0.0.2", path = "../mcpmux-core" }
+mcpmux-storage = { version = "0.0.2", path = "../mcpmux-storage" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

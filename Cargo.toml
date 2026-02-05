@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/mcpmux/mcpmux"
@@ -73,10 +73,10 @@ axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 
 # Internal crates
-mcpmux-core = { version = "0.0.1", path = "crates/mcpmux-core" }
-mcpmux-gateway = { version = "0.0.1", path = "crates/mcpmux-gateway" }
-mcpmux-mcp = { version = "0.0.1", path = "crates/mcpmux-mcp" }
-mcpmux-storage = { version = "0.0.1", path = "crates/mcpmux-storage" }
+mcpmux-core = { version = "0.0.2", path = "crates/mcpmux-core" }
+mcpmux-gateway = { version = "0.0.2", path = "crates/mcpmux-gateway" }
+mcpmux-mcp = { version = "0.0.2", path = "crates/mcpmux-mcp" }
+mcpmux-storage = { version = "0.0.2", path = "crates/mcpmux-storage" }
 
 [profile.release]
 lto = true

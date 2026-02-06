@@ -77,17 +77,24 @@ export function SettingsPage() {
     key: keyof StartupSettings,
     value: boolean
   ) => {
+    console.log(`[Settings] Updating ${key} to ${value}`);
+    
+    // Save old state for rollback
+    const oldSettings = { ...startupSettings };
     const newSettings = { ...startupSettings, [key]: value };
+    
+    // Update UI immediately for better UX
     setStartupSettings(newSettings);
-
     setSavingSettings(true);
+    
     try {
+      console.log('[Settings] Invoking update_startup_settings:', newSettings);
       await invoke('update_startup_settings', { settings: newSettings });
-      console.log('Startup settings saved:', newSettings);
+      console.log('[Settings] Successfully saved:', newSettings);
     } catch (error) {
-      console.error('Failed to save startup settings:', error);
+      console.error('[Settings] Failed to save:', error);
       // Revert on error
-      setStartupSettings(startupSettings);
+      setStartupSettings(oldSettings);
     } finally {
       setSavingSettings(false);
     }
@@ -144,7 +151,10 @@ export function SettingsPage() {
                 </div>
                 <Switch
                   checked={startupSettings.autoLaunch}
-                  onCheckedChange={(checked) => updateStartupSetting('autoLaunch', checked)}
+                  onCheckedChange={(checked) => {
+                    console.log('Auto-launch toggled:', checked);
+                    updateStartupSetting('autoLaunch', checked);
+                  }}
                   disabled={savingSettings}
                   data-testid="auto-launch-switch"
                 />
@@ -162,7 +172,10 @@ export function SettingsPage() {
                 </div>
                 <Switch
                   checked={startupSettings.startMinimized}
-                  onCheckedChange={(checked) => updateStartupSetting('startMinimized', checked)}
+                  onCheckedChange={(checked) => {
+                    console.log('Start minimized toggled:', checked);
+                    updateStartupSetting('startMinimized', checked);
+                  }}
                   disabled={savingSettings || !startupSettings.autoLaunch}
                   data-testid="start-minimized-switch"
                 />
@@ -180,7 +193,10 @@ export function SettingsPage() {
                 </div>
                 <Switch
                   checked={startupSettings.closeToTray}
-                  onCheckedChange={(checked) => updateStartupSetting('closeToTray', checked)}
+                  onCheckedChange={(checked) => {
+                    console.log('Close to tray toggled:', checked);
+                    updateStartupSetting('closeToTray', checked);
+                  }}
                   disabled={savingSettings}
                   data-testid="close-to-tray-switch"
                 />

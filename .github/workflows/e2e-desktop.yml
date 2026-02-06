@@ -99,7 +99,7 @@ jobs:
 
       - name: Build app (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: pnpm exec tauri build --bundles deb,rpm,updater
+        run: pnpm --filter @mcpmux/desktop exec tauri build --bundles deb,rpm,updater
         env:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

@@ -4,6 +4,7 @@ import { readSpaceConfig, saveSpaceConfig } from '@/lib/api/spaces';
 import { refreshRegistry } from '@/lib/api/registry';
 import Editor, { type Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
+import { useToast, ToastContainer } from '@mcpmux/ui';
 import USER_SPACE_CONFIG_SCHEMA from '../../../../schemas/user-space.schema.json';
 
 interface ConfigEditorModalProps {
@@ -23,6 +24,7 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
   const [editorReady, setEditorReady] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
+  const { toasts, success, error: showError } = useToast();
 
   // Delay editor mount to avoid glitch during modal open
   useEffect(() => {
@@ -61,6 +63,7 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
       } catch (e) {
         setIsValidJson(false);
         setError(`Invalid JSON: ${(e as Error).message}`);
+        showError('Invalid JSON', (e as Error).message);
         return;
       }
 
@@ -69,10 +72,14 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
       await saveSpaceConfig(spaceId, content);
       // Refresh server discovery to pick up new/changed servers
       await refreshRegistry();
+      
+      success('Configuration saved', 'Space configuration updated successfully');
       onSaved();
       onClose();
     } catch (e) {
-      setError(String(e));
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setError(errorMsg);
+      showError('Failed to save configuration', errorMsg);
     } finally {
       setIsSaving(false);
     }
@@ -150,7 +157,9 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
   }, [handleFormat, onClose]);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+    <>
+      <ToastContainer toasts={toasts} onClose={(id) => toasts.find(t => t.id === id)?.onClose(id)} />
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-[rgb(var(--surface))] w-full max-w-4xl h-[80vh] rounded-xl shadow-2xl flex flex-col border border-[rgb(var(--border))]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[rgb(var(--border))]">
@@ -256,5 +265,6 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
         )}
       </div>
     </div>
+    </>
   );
 }

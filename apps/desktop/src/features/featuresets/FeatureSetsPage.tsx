@@ -18,6 +18,8 @@ import {
   CardTitle,
   CardContent,
   Button,
+  useToast,
+  ToastContainer,
 } from '@mcpmux/ui';
 import type { FeatureSet, CreateFeatureSetInput } from '@/lib/api/featureSets';
 import {
@@ -67,6 +69,7 @@ export function FeatureSetsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const { toasts, success, error: showError } = useToast();
   
   // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -122,10 +125,14 @@ export function FeatureSetsPage() {
       setCreateIcon('');
       setShowCreateModal(false);
       
+      success('Feature set created', `"${newFs.name}" has been created successfully`);
+      
       // Automatically open the new feature set
       handleOpenPanel(newFs);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setError(errorMsg);
+      showError('Failed to create feature set', errorMsg);
     } finally {
       setIsCreating(false);
     }
@@ -134,13 +141,18 @@ export function FeatureSetsPage() {
   const handleDelete = async (id: string) => {
     // Confirmation handled by caller if needed, but we do it here too just in case called directly
     try {
+      const deletedSet = featureSets.find(fs => fs.id === id);
       await deleteFeatureSet(id);
       setFeatureSets((prev) => prev.filter((fs) => fs.id !== id));
       if (selectedFeatureSet?.id === id) {
         setSelectedFeatureSet(null);
       }
+      
+      success('Feature set deleted', `"${deletedSet?.name || 'Feature set'}" has been deleted`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setError(errorMsg);
+      showError('Failed to delete feature set', errorMsg);
     }
   };
 
@@ -176,7 +188,9 @@ export function FeatureSetsPage() {
   });
 
   return (
-    <div className="h-full flex flex-col relative" data-testid="featuresets-page">
+    <>
+      <ToastContainer toasts={toasts} onClose={(id) => toasts.find(t => t.id === id)?.onClose(id)} />
+      <div className="h-full flex flex-col relative" data-testid="featuresets-page">
       {/* Header */}
       <div className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">
         <div className="max-w-[2000px] mx-auto">
@@ -422,6 +436,7 @@ export function FeatureSetsPage() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

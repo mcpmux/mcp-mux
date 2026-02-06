@@ -1,0 +1,285 @@
+import { useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  Button,
+  Switch,
+} from '@mcpmux/ui';
+import {
+  Sun,
+  Moon,
+  Monitor,
+  FileText,
+  FolderOpen,
+  Loader2,
+  Power,
+  Minimize2,
+  XCircle,
+} from 'lucide-react';
+import { useAppStore, useTheme } from '@/stores';
+import { UpdateChecker } from './UpdateChecker';
+
+interface StartupSettings {
+  autoLaunch: boolean;
+  startMinimized: boolean;
+  closeToTray: boolean;
+}
+
+export function SettingsPage() {
+  const theme = useTheme();
+  const setTheme = useAppStore((state) => state.setTheme);
+  const [logsPath, setLogsPath] = useState<string>('');
+  const [openingLogs, setOpeningLogs] = useState(false);
+  
+  // Startup settings state
+  const [startupSettings, setStartupSettings] = useState<StartupSettings>({
+    autoLaunch: false,
+    startMinimized: false,
+    closeToTray: true,
+  });
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  // Load logs path on mount
+  useEffect(() => {
+    const loadLogsPath = async () => {
+      try {
+        const path = await invoke<string>('get_logs_path');
+        setLogsPath(path);
+      } catch (error) {
+        console.error('Failed to get logs path:', error);
+      }
+    };
+    loadLogsPath();
+  }, []);
+
+  // Load startup settings on mount
+  useEffect(() => {
+    const loadStartupSettings = async () => {
+      try {
+        const settings = await invoke<StartupSettings>('get_startup_settings');
+        setStartupSettings(settings);
+      } catch (error) {
+        console.error('Failed to load startup settings:', error);
+      } finally {
+        setLoadingSettings(false);
+      }
+    };
+    loadStartupSettings();
+  }, []);
+
+  // Save startup settings when they change
+  const updateStartupSetting = async (
+    key: keyof StartupSettings,
+    value: boolean
+  ) => {
+    const newSettings = { ...startupSettings, [key]: value };
+    setStartupSettings(newSettings);
+    
+    setSavingSettings(true);
+    try {
+      await invoke('update_startup_settings', { settings: newSettings });
+      console.log('Startup settings saved:', newSettings);
+    } catch (error) {
+      console.error('Failed to save startup settings:', error);
+      // Revert on error
+      setStartupSettings(startupSettings);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleOpenLogs = async () => {
+    setOpeningLogs(true);
+    try {
+      await invoke('open_logs_folder');
+    } catch (error) {
+      console.error('Failed to open logs folder:', error);
+    } finally {
+      setOpeningLogs(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Settings</h1>
+        <p className="text-[rgb(var(--muted))]">Configure McpMux preferences.</p>
+      </div>
+
+      {/* Updates Section */}
+      <UpdateChecker />
+
+      {/* Startup & System Tray Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Power className="h-5 w-5" />
+            Startup & System Tray
+          </CardTitle>
+          <CardDescription>
+            Control how McpMux starts and behaves with the system tray.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loadingSettings ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-[rgb(var(--muted))]" />
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-start gap-3 flex-1">
+                  <Power className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))]" />
+                  <div>
+                    <label className="text-sm font-medium">Launch at Startup</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      Start McpMux automatically when you log in to your system
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={startupSettings.autoLaunch}
+                  onCheckedChange={(checked) => updateStartupSetting('autoLaunch', checked)}
+                  disabled={savingSettings}
+                  data-testid="auto-launch-switch"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-start gap-3 flex-1">
+                  <Minimize2 className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))]" />
+                  <div>
+                    <label className="text-sm font-medium">Start Minimized</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      Launch in background to system tray (requires auto-launch enabled)
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={startupSettings.startMinimized}
+                  onCheckedChange={(checked) => updateStartupSetting('startMinimized', checked)}
+                  disabled={savingSettings || !startupSettings.autoLaunch}
+                  data-testid="start-minimized-switch"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-start gap-3 flex-1">
+                  <XCircle className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))]" />
+                  <div>
+                    <label className="text-sm font-medium">Close to Tray</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      Keep running in system tray when window is closed (use "Quit" from tray to exit)
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={startupSettings.closeToTray}
+                  onCheckedChange={(checked) => updateStartupSetting('closeToTray', checked)}
+                  disabled={savingSettings}
+                  data-testid="close-to-tray-switch"
+                />
+              </div>
+
+              {savingSettings && (
+                <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving settings...
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Appearance Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Appearance</CardTitle>
+          <CardDescription>Customize the look and feel of McpMux.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">Theme</label>
+              <div className="flex gap-2 mt-2" data-testid="theme-buttons">
+                <Button
+                  variant={theme === 'light' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setTheme('light')}
+                  data-testid="theme-light-btn"
+                >
+                  <Sun className="h-4 w-4 mr-2" />
+                  Light
+                </Button>
+                <Button
+                  variant={theme === 'dark' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setTheme('dark')}
+                  data-testid="theme-dark-btn"
+                >
+                  <Moon className="h-4 w-4 mr-2" />
+                  Dark
+                </Button>
+                <Button
+                  variant={theme === 'system' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setTheme('system')}
+                  data-testid="theme-system-btn"
+                >
+                  <Monitor className="h-4 w-4 mr-2" />
+                  System
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Logs Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5" />
+            Logs
+          </CardTitle>
+          <CardDescription>View application logs for debugging and troubleshooting.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">Log Files Location</label>
+              <p className="text-sm text-[rgb(var(--muted))] mt-1 font-mono bg-surface-secondary rounded px-2 py-1" data-testid="logs-path">
+                {logsPath || 'Loading...'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleOpenLogs}
+                disabled={openingLogs}
+                data-testid="open-logs-btn"
+              >
+                {openingLogs ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                )}
+                Open Logs Folder
+              </Button>
+            </div>
+            <p className="text-xs text-[rgb(var(--muted))]">
+              Logs are rotated daily. Each file contains detailed debug information including thread IDs and source locations.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

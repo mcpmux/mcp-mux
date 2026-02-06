@@ -60,6 +60,16 @@ export interface ServerDefinition {
   categories: string[];
   publisher: PublisherInfo | null;
   source: ServerSource;
+  // Schema v2.1 additions
+  badges?: Badge[];
+  hosting_type?: HostingType;
+  license?: string;
+  license_url?: string;
+  installation?: Installation;
+  capabilities?: Capabilities;
+  sponsored?: Sponsored;
+  media?: Media;
+  changelog_url?: string;
 }
 
 /** Auth configuration - matches backend snake_case serialization */
@@ -166,4 +176,45 @@ export interface SortRule {
 /** Home configuration */
 export interface HomeConfig {
   featured_server_ids: string[];
+}
+
+// ============================================
+// Schema v2.1 Additions
+// ============================================
+
+/** Visual badge indicators */
+export type Badge = 'official' | 'verified' | 'featured' | 'sponsored' | 'popular';
+
+/** Server hosting type */
+export type HostingType = 'local' | 'remote' | 'hybrid';
+
+/** Installation metadata */
+export interface Installation {
+  difficulty?: 'easy' | 'moderate' | 'advanced';
+  prerequisites?: string[];
+  estimated_time?: string;
+}
+
+/** MCP capabilities with read-only support */
+export interface Capabilities {
+  tools?: boolean;
+  resources?: boolean;
+  prompts?: boolean;
+  read_only_mode?: boolean;
+}
+
+/** Sponsorship information */
+export interface Sponsored {
+  enabled?: boolean;
+  sponsor_name?: string;
+  sponsor_url?: string;
+  sponsor_logo?: string;
+  campaign_id?: string;
+}
+
+/** Rich media content */
+export interface Media {
+  screenshots?: string[];
+  demo_video?: string;
+  banner?: string;
 }

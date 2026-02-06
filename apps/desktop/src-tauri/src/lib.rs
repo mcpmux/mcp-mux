@@ -189,6 +189,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]), // Start minimized to tray
+        ))
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             // This callback is called when a second instance is launched
             info!("Second instance detected, focusing existing window");
@@ -517,6 +521,53 @@ pub fn run() {
             // Setup system tray
             tray::setup_tray(app.handle())?;
 
+            // Setup window close event handler for close-to-tray behavior
+            if let Some(main_window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                let settings_repo = app_state.settings_repository.clone();
+                
+                main_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        // Check if close-to-tray is enabled
+                        let app_handle_clone = app_handle.clone();
+                        let settings_clone = settings_repo.clone();
+                        
+                        tauri::async_runtime::spawn(async move {
+                            match settings_clone.get("ui.close_to_tray").await {
+                                Ok(Some(value)) if value == "true" => {
+                                    // Close to tray - hide window instead of closing
+                                    info!("[Window] Close requested, hiding to tray");
+                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
+                                        let _ = window.hide();
+                                    }
+                                }
+                                Ok(Some(value)) if value == "false" => {
+                                    // Actually close the app
+                                    info!("[Window] Close requested, exiting app");
+                                    app_handle_clone.exit(0);
+                                }
+                                _ => {
+                                    // Default behavior: close to tray
+                                    info!("[Window] Close requested (default), hiding to tray");
+                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
+                                        let _ = window.hide();
+                                    }
+                                }
+                            }
+                        });
+                        
+                        // Always prevent default close to handle it asynchronously
+                        api.prevent_close();
+                    }
+                });
+
+                // Check if app should start hidden (auto-launch with --hidden flag)
+                if commands::should_start_hidden() {
+                    info!("[Window] Starting hidden (--hidden flag present)");
+                    let _ = main_window.hide();
+                }
+            }
+
             // Register deep link handler for when app receives URLs
             #[cfg(desktop)]
             {
@@ -644,6 +695,9 @@ pub fn run() {
             // App log commands
             get_logs_path,
             open_logs_folder,
+            // Startup settings commands
+            commands::get_startup_settings,
+            commands::update_startup_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running McpMux application");

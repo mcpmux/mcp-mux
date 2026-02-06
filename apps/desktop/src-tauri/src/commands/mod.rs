@@ -16,6 +16,7 @@ pub mod server;
 pub mod server_discovery;
 pub mod server_feature;
 pub mod server_manager;
+pub mod settings;
 pub mod space;
 
 // Re-export commands for convenience
@@ -31,4 +32,5 @@ pub use server::*;
 pub use server_discovery::*;
 pub use server_feature::*;
 pub use server_manager::*;
+pub use settings::*;
 pub use space::*;

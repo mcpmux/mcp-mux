@@ -36,6 +36,35 @@ pub struct ServerDefinition {
     /// Where this server came from
     #[serde(default)]
     pub source: ServerSource,
+
+    /// Visual badges for trust and discovery (v2.1)
+    #[serde(default)]
+    pub badges: Vec<Badge>,
+
+    /// Where the server runs: local, remote, or hybrid (v2.1)
+    #[serde(default)]
+    pub hosting_type: HostingType,
+
+    /// SPDX license identifier (v2.1)
+    pub license: Option<String>,
+
+    /// URL to full license text (v2.1)
+    pub license_url: Option<String>,
+
+    /// Installation metadata (v2.1)
+    pub installation: Option<Installation>,
+
+    /// MCP capabilities (v2.1)
+    pub capabilities: Option<Capabilities>,
+
+    /// Sponsorship information (v2.1)
+    pub sponsored: Option<Sponsored>,
+
+    /// Rich media content (v2.1)
+    pub media: Option<Media>,
+
+    /// Changelog URL (v2.1)
+    pub changelog_url: Option<String>,
     // NOTE: Runtime state like 'enabled' is NOT stored here.
     // It is injected at the application layer by merging with DB state.
 }
@@ -145,4 +174,85 @@ pub struct PublisherInfo {
     pub verified: bool,
     #[serde(default)]
     pub official: bool,
+}
+
+// ============================================
+// Schema v2.1 Additions
+// ============================================
+
+/// Visual badge indicators for server listings
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Badge {
+    Official,
+    Verified,
+    Featured,
+    Sponsored,
+    Popular,
+}
+
+/// Where the server runs
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HostingType {
+    Local,
+    Remote,
+    Hybrid,
+}
+
+impl Default for HostingType {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
+/// Installation complexity level
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallDifficulty {
+    Easy,
+    Moderate,
+    Advanced,
+}
+
+/// Installation metadata for user guidance
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Installation {
+    pub difficulty: Option<InstallDifficulty>,
+    #[serde(default)]
+    pub prerequisites: Vec<String>,
+    pub estimated_time: Option<String>,
+}
+
+/// MCP capabilities with read-only mode support
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Capabilities {
+    #[serde(default)]
+    pub tools: bool,
+    #[serde(default)]
+    pub resources: bool,
+    #[serde(default)]
+    pub prompts: bool,
+    #[serde(default)]
+    pub read_only_mode: bool,
+}
+
+/// Sponsorship information for commercial listings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sponsored {
+    #[serde(default)]
+    pub enabled: bool,
+    pub sponsor_name: Option<String>,
+    pub sponsor_url: Option<String>,
+    pub sponsor_logo: Option<String>,
+    pub campaign_id: Option<String>,
+}
+
+/// Rich media content for enhanced discovery
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Media {
+    #[serde(default)]
+    pub screenshots: Vec<String>,
+    pub demo_video: Option<String>,
+    pub banner: Option<String>,
 }

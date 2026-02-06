@@ -50,15 +50,45 @@ export function ServerCard({
   };
 
   const getTransportBadge = () => {
+    // Use hosting_type if available, otherwise infer from transport
+    const hostingType = server.hosting_type || (server.transport.type === 'stdio' ? 'local' : 'remote');
+    
     const config = {
-      stdio: { bg: 'bg-purple-500/20', text: 'text-purple-600 dark:text-purple-400', label: 'Local' },
-      http: { bg: 'bg-[rgb(var(--primary))]/20', text: 'text-[rgb(var(--primary))]', label: 'HTTP' },
-    }[server.transport.type];
+      local: { icon: '💻', label: 'Local', bg: 'bg-purple-500/20', text: 'text-purple-600 dark:text-purple-400' },
+      remote: { icon: '☁️', label: 'Cloud', bg: 'bg-blue-500/20', text: 'text-blue-600 dark:text-blue-400' },
+      hybrid: { icon: '🔄', label: 'Hybrid', bg: 'bg-indigo-500/20', text: 'text-indigo-600 dark:text-indigo-400' },
+    }[hostingType];
 
     return (
       <span className={`px-2 py-0.5 text-xs rounded-full ${config.bg} ${config.text}`}>
-        {config.label}
+        {config.icon} {config.label}
       </span>
+    );
+  };
+
+  const getBadges = () => {
+    if (!server.badges || server.badges.length === 0) return null;
+    
+    const badgeConfig: Record<string, { label: string; bg: string; text: string }> = {
+      official: { label: 'Official', bg: 'bg-blue-500/20', text: 'text-blue-600 dark:text-blue-400' },
+      verified: { label: '✓ Verified', bg: 'bg-green-500/20', text: 'text-green-600 dark:text-green-400' },
+      featured: { label: '⭐ Featured', bg: 'bg-amber-500/20', text: 'text-amber-600 dark:text-amber-400' },
+      sponsored: { label: 'Sponsored', bg: 'bg-yellow-500/20', text: 'text-yellow-600 dark:text-yellow-400' },
+      popular: { label: '🔥 Popular', bg: 'bg-red-500/20', text: 'text-red-600 dark:text-red-400' },
+    };
+
+    return (
+      <>
+        {server.badges.slice(0, 2).map((badge) => {
+          const config = badgeConfig[badge];
+          if (!config) return null;
+          return (
+            <span key={badge} className={`px-2 py-0.5 text-xs rounded-full ${config.bg} ${config.text}`}>
+              {config.label}
+            </span>
+          );
+        })}
+      </>
     );
   };
 
@@ -99,8 +129,14 @@ export function ServerCard({
 
       {/* Badges */}
       <div className="flex flex-wrap gap-2 mb-4">
+        {getBadges()}
         {getTransportBadge()}
         {getAuthBadge()}
+        {server.capabilities?.read_only_mode && (
+          <span className="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-600 dark:text-green-400">
+            🛡️ Read-Only
+          </span>
+        )}
       </div>
 
       {/* Categories */}

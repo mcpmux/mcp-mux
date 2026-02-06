@@ -13,6 +13,7 @@ export { StatusBar, StatusBarItem } from './components/layout/StatusBar';
 export { Button } from './components/common/Button';
 export { Input } from './components/common/Input';
 export { Card, CardHeader, CardTitle, CardDescription, CardContent } from './components/common/Card';
+export { Switch } from './components/common/Switch';
 
 // Utilities
 export { cn } from './lib/cn';

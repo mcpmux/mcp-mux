@@ -33,7 +33,7 @@ export function ServerDetailModal({
         <div className="flex items-start gap-4 p-6 border-b border-[rgb(var(--border))]">
           <div className="text-5xl">{server.icon || '📦'}</div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-xl font-bold">
                 {server.name}
               </h2>
@@ -41,6 +41,36 @@ export function ServerDetailModal({
                 <span className="text-[rgb(var(--info))]" title="Verified Publisher">
                   ✓
                 </span>
+              )}
+              {/* Badges */}
+              {server.badges && server.badges.length > 0 && (
+                <div className="flex gap-1.5">
+                  {server.badges.includes('official') && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-600 dark:text-blue-400">
+                      Official
+                    </span>
+                  )}
+                  {server.badges.includes('verified') && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-600 dark:text-green-400">
+                      ✓ Verified
+                    </span>
+                  )}
+                  {server.badges.includes('featured') && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                      ⭐ Featured
+                    </span>
+                  )}
+                  {server.badges.includes('sponsored') && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-500/20 text-yellow-600 dark:text-yellow-400">
+                      Sponsored
+                    </span>
+                  )}
+                  {server.badges.includes('popular') && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-600 dark:text-red-400">
+                      🔥 Popular
+                    </span>
+                  )}
+                </div>
               )}
             </div>
             {server.publisher?.name && (
@@ -61,6 +91,30 @@ export function ServerDetailModal({
 
         {/* Content */}
         <div className="p-6 overflow-y-auto max-h-[60vh] space-y-6">
+          {/* Sponsored Banner */}
+          {server.sponsored?.enabled && (
+            <div className="flex items-center gap-3 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+              {server.sponsored.sponsor_logo && (
+                <img src={server.sponsored.sponsor_logo} alt="Sponsor" className="w-8 h-8 rounded" />
+              )}
+              <div className="flex-1 text-sm">
+                <span className="text-[rgb(var(--muted))]">Sponsored by </span>
+                {server.sponsored.sponsor_url ? (
+                  <a
+                    href={server.sponsored.sponsor_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium hover:underline text-[rgb(var(--foreground))]"
+                  >
+                    {server.sponsored.sponsor_name}
+                  </a>
+                ) : (
+                  <span className="font-medium">{server.sponsored.sponsor_name}</span>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Description */}
           <div>
             <h3 className="text-sm font-semibold mb-2">
@@ -74,19 +128,26 @@ export function ServerDetailModal({
           {/* Transport */}
           <div>
             <h3 className="text-sm font-semibold mb-2">
-              Transport
+              Hosting
             </h3>
             <div className="flex items-center gap-2">
               <span
                 className={`px-3 py-1 text-sm rounded-lg ${
-                  server.transport.type === 'stdio'
+                  (server.hosting_type || (server.transport.type === 'stdio' ? 'local' : 'remote')) === 'local'
                     ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400'
-                    : 'bg-[rgb(var(--primary))]/20 text-[rgb(var(--primary))]'
+                    : (server.hosting_type || 'remote') === 'remote'
+                    ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                    : 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400'
                 }`}
               >
-                {server.transport.type === 'stdio' 
-                  ? '🖥️ Local Process (stdio)' 
-                  : '🌐 Remote Server (HTTP)'}
+                {(server.hosting_type || (server.transport.type === 'stdio' ? 'local' : 'remote')) === 'local'
+                  ? '💻 Local Process'
+                  : (server.hosting_type || 'remote') === 'remote'
+                  ? '☁️ Remote Server'
+                  : '🔄 Hybrid'}
+              </span>
+              <span className="text-xs text-[rgb(var(--muted))]">
+                ({server.transport.type})
               </span>
             </div>
           </div>
@@ -140,6 +201,144 @@ export function ServerDetailModal({
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Capabilities */}
+          {server.capabilities && (
+            <div>
+              <h3 className="text-sm font-semibold mb-2">
+                Capabilities
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {server.capabilities.tools && (
+                  <span className="px-2 py-1 text-xs rounded-lg bg-[rgb(var(--surface-hover))] text-[rgb(var(--foreground))]">
+                    🛠️ Tools
+                  </span>
+                )}
+                {server.capabilities.resources && (
+                  <span className="px-2 py-1 text-xs rounded-lg bg-[rgb(var(--surface-hover))] text-[rgb(var(--foreground))]">
+                    📁 Resources
+                  </span>
+                )}
+                {server.capabilities.prompts && (
+                  <span className="px-2 py-1 text-xs rounded-lg bg-[rgb(var(--surface-hover))] text-[rgb(var(--foreground))]">
+                    💬 Prompts
+                  </span>
+                )}
+                {server.capabilities.read_only_mode && (
+                  <span className="px-2 py-1 text-xs rounded-lg bg-green-500/20 text-green-600 dark:text-green-400">
+                    🛡️ Read-Only (Safe)
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Installation Info */}
+          {server.installation && (
+            <div className="bg-[rgb(var(--surface-hover))] rounded-lg p-4">
+              <h3 className="text-sm font-semibold mb-3">Installation Info</h3>
+              <div className="space-y-2 text-sm">
+                {server.installation.difficulty && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[rgb(var(--muted))]">Difficulty:</span>
+                    <span
+                      className={`px-2 py-0.5 text-xs rounded-full ${
+                        server.installation.difficulty === 'easy'
+                          ? 'bg-green-500/20 text-green-600 dark:text-green-400'
+                          : server.installation.difficulty === 'moderate'
+                          ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400'
+                          : 'bg-red-500/20 text-red-600 dark:text-red-400'
+                      }`}
+                    >
+                      {server.installation.difficulty}
+                    </span>
+                  </div>
+                )}
+                {server.installation.estimated_time && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[rgb(var(--muted))]">Time:</span>
+                    <span>{server.installation.estimated_time}</span>
+                  </div>
+                )}
+                {server.installation.prerequisites && server.installation.prerequisites.length > 0 && (
+                  <div>
+                    <span className="text-[rgb(var(--muted))]">Prerequisites:</span>
+                    <ul className="mt-1 ml-4 list-disc list-inside text-[rgb(var(--muted))]">
+                      {server.installation.prerequisites.map((prereq, i) => (
+                        <li key={i}>{prereq}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* License */}
+          {server.license && (
+            <div>
+              <h3 className="text-sm font-semibold mb-2">License</h3>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 text-sm rounded-lg bg-[rgb(var(--surface-hover))] text-[rgb(var(--foreground))]">
+                  {server.license}
+                </span>
+                {server.license_url && (
+                  <a
+                    href={server.license_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-[rgb(var(--primary))] hover:underline"
+                  >
+                    View License →
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Screenshots */}
+          {server.media?.screenshots && server.media.screenshots.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold mb-2">Screenshots</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {server.media.screenshots.map((url, i) => (
+                  <img
+                    key={i}
+                    src={url}
+                    alt={`Screenshot ${i + 1}`}
+                    className="w-full h-32 object-cover rounded-lg border border-[rgb(var(--border))]"
+                    loading="lazy"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Links */}
+          {(server.media?.demo_video || server.changelog_url) && (
+            <div className="flex flex-col gap-2">
+              {server.media?.demo_video && (
+                <a
+                  href={server.media.demo_video}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-[rgb(var(--primary))] hover:underline"
+                >
+                  🎥 Watch Demo Video →
+                </a>
+              )}
+              {server.changelog_url && (
+                <a
+                  href={server.changelog_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-[rgb(var(--primary))] hover:underline"
+                >
+                  📝 View Changelog →
+                </a>
+              )}
             </div>
           )}
 

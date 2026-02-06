@@ -192,8 +192,6 @@ test.describe('Config Editor Toast', () => {
       // This is tricky with Monaco editor, so we'll just test the error state
       const editor = page.locator('.monaco-editor');
       if (await editor.isVisible()) {
-        const saveButton = page.getByRole('button', { name: /Save/i });
-        
         // If save is disabled due to invalid JSON, that's the expected behavior
         // The toast would show if we could actually trigger a save with invalid JSON
       }

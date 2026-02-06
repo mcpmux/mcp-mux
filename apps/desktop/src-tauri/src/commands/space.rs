@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::commands::gateway::GatewayAppState;
 use crate::state::AppState;
+use crate::tray;
 
 /// Space change event payload
 #[derive(Debug, Clone, Serialize)]
@@ -76,6 +77,7 @@ const DEFAULT_SPACE_CONFIG: &str = r#"{
 pub async fn create_space(
     name: String,
     icon: Option<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<Space, String> {
@@ -109,6 +111,11 @@ pub async fn create_space(
         });
     }
 
+    // Update system tray menu
+    if let Err(e) = tray::update_tray_spaces(&app, &state).await {
+        warn!("Failed to update tray menu: {}", e);
+    }
+
     Ok(space)
 }
 
@@ -116,6 +123,7 @@ pub async fn create_space(
 #[tauri::command]
 pub async fn delete_space(
     id: String,
+    app: AppHandle,
     state: State<'_, AppState>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<(), String> {
@@ -132,6 +140,11 @@ pub async fn delete_space(
     if let Some(ref gw) = gw_state.gateway_state {
         let gw = gw.read().await;
         gw.emit_domain_event(mcpmux_core::DomainEvent::SpaceDeleted { space_id: uuid });
+    }
+
+    // Update system tray menu
+    if let Err(e) = tray::update_tray_spaces(&app, &state).await {
+        warn!("Failed to update tray menu: {}", e);
     }
 
     Ok(())
@@ -241,6 +254,11 @@ pub async fn set_active_space<R: tauri::Runtime>(
     // Note: MCP list_changed notifications for follow_active clients
     // will be emitted by the gateway when they make their next request
     // and the SpaceResolver returns the new active space.
+
+    // Update system tray menu to reflect new active space
+    if let Err(e) = tray::update_tray_spaces(&app_handle, &state).await {
+        warn!("Failed to update tray menu: {}", e);
+    }
 
     Ok(())
 }
@@ -371,4 +389,12 @@ pub async fn remove_server_from_config(
     }
 
     Ok(false)
+}
+
+/// Refresh the system tray menu to reflect current spaces
+#[tauri::command]
+pub async fn refresh_tray_menu(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    tray::update_tray_spaces(&app, &state)
+        .await
+        .map_err(|e| format!("Failed to update tray menu: {}", e))
 }

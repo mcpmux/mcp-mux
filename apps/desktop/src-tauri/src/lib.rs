@@ -600,6 +600,7 @@ pub fn run() {
             commands::read_space_config,
             commands::save_space_config,
             commands::remove_server_from_config,
+            commands::refresh_tray_menu,
             // Server Discovery commands (v2)
             commands::discover_servers,
             commands::get_server_definition,

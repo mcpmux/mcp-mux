@@ -132,7 +132,6 @@ fn handle_switch_space<R: Runtime>(app: &AppHandle<R>, space_id: &str) {
 }
 
 /// Update tray menu with current spaces
-#[allow(dead_code)]
 pub async fn update_tray_spaces<R: Runtime>(
     app: &AppHandle<R>,
     state: &AppState,

@@ -22,7 +22,6 @@ export function Switch({
 }: SwitchProps) {
   const handleClick = () => {
     if (!disabled) {
-      console.log('[Switch] Clicked, current:', checked, 'will become:', !checked);
       onCheckedChange(!checked);
     }
   };

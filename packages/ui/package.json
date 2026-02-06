@@ -18,7 +18,8 @@
     "dev": "tsc --watch",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
-    "test": "echo \"No tests yet\""
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "peerDependencies": {
     "react": "^19.0.0",

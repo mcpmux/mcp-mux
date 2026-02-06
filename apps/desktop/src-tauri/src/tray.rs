@@ -6,6 +6,7 @@
 //! - Quit application
 
 use tauri::{
+    image::Image,
     menu::{Menu, MenuBuilder, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, Runtime,
@@ -34,8 +35,19 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     let menu = build_tray_menu(app)?;
 
+    // Load tray icon - decode PNG and convert to RGBA
+    let icon_bytes = include_bytes!("../icons/32x32.png");
+    let img = image::load_from_memory(icon_bytes)
+        .map_err(|e| {
+            tauri::Error::InvalidIcon(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        })?
+        .to_rgba8();
+    let (width, height) = img.dimensions();
+    let icon = Image::new_owned(img.into_raw(), width, height);
+
     let _tray = TrayIconBuilder::with_id("mcpmux-tray")
         .tooltip("McpMux - MCP Server Manager")
+        .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| {

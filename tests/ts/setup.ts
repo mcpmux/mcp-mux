@@ -18,6 +18,17 @@ vi.mock('@tauri-apps/plugin-opener', () => ({
   open: vi.fn(),
 }));
 
+// Mock Tauri updater plugin
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: vi.fn(),
+  Update: vi.fn(),
+}));
+
+// Mock Tauri process plugin
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: vi.fn(),
+}));
+
 // Mock window.matchMedia for responsive components
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

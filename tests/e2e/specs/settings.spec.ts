@@ -208,4 +208,89 @@ test.describe('Settings', () => {
       await expect(mainContent).toBeVisible();
     });
   });
+
+  test.describe('Startup & System Tray Settings', () => {
+    test('should display startup settings section', async ({ page }) => {
+      const dashboard = new DashboardPage(page);
+      await dashboard.navigate();
+      
+      await page.locator('nav button:has-text("Settings")').click();
+
+      // Check for startup settings card
+      await expect(page.getByText('Startup & System Tray')).toBeVisible();
+      await expect(page.getByText(/Control how McpMux starts/)).toBeVisible();
+    });
+
+    test('should display all three startup toggles', async ({ page }) => {
+      const dashboard = new DashboardPage(page);
+      await dashboard.navigate();
+      
+      await page.locator('nav button:has-text("Settings")').click();
+
+      // Check all three settings exist
+      await expect(page.getByText('Launch at Startup')).toBeVisible();
+      await expect(page.getByText('Start Minimized')).toBeVisible();
+      await expect(page.getByText('Close to Tray')).toBeVisible();
+    });
+
+    test('should have functional toggle switches', async ({ page }) => {
+      const dashboard = new DashboardPage(page);
+      await dashboard.navigate();
+      
+      await page.locator('nav button:has-text("Settings")').click();
+
+      // Check switches are interactive
+      const autoLaunchSwitch = page.getByTestId('auto-launch-switch');
+      const startMinimizedSwitch = page.getByTestId('start-minimized-switch');
+      const closeToTraySwitch = page.getByTestId('close-to-tray-switch');
+
+      await expect(autoLaunchSwitch).toBeVisible();
+      await expect(startMinimizedSwitch).toBeVisible();
+      await expect(closeToTraySwitch).toBeVisible();
+
+      // All switches should be enabled (except start-minimized might be disabled if auto-launch is off)
+      await expect(autoLaunchSwitch).toBeEnabled();
+      await expect(closeToTraySwitch).toBeEnabled();
+    });
+
+    test('should toggle close to tray setting', async ({ page }) => {
+      const dashboard = new DashboardPage(page);
+      await dashboard.navigate();
+      
+      await page.locator('nav button:has-text("Settings")').click();
+
+      const closeToTraySwitch = page.getByTestId('close-to-tray-switch');
+      
+      // Get initial state
+      const initialState = await closeToTraySwitch.getAttribute('aria-checked');
+      
+      // Toggle the switch
+      await closeToTraySwitch.click();
+      await page.waitForTimeout(500); // Wait for state to update
+      
+      // Verify state changed
+      const newState = await closeToTraySwitch.getAttribute('aria-checked');
+      expect(newState).not.toBe(initialState);
+    });
+
+    test('start minimized should be disabled when auto-launch is off', async ({ page }) => {
+      const dashboard = new DashboardPage(page);
+      await dashboard.navigate();
+      
+      await page.locator('nav button:has-text("Settings")').click();
+
+      const autoLaunchSwitch = page.getByTestId('auto-launch-switch');
+      const startMinimizedSwitch = page.getByTestId('start-minimized-switch');
+      
+      // Ensure auto-launch is off
+      const autoLaunchState = await autoLaunchSwitch.getAttribute('aria-checked');
+      if (autoLaunchState === 'true') {
+        await autoLaunchSwitch.click();
+        await page.waitForTimeout(500);
+      }
+      
+      // Start minimized should be disabled
+      await expect(startMinimizedSwitch).toBeDisabled();
+    });
+  });
 });

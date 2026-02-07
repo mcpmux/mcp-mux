@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.7](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.6...v0.0.7) (2026-02-07)
+
+
+### Bug Fixes
+
+* ux improvements and fixes ([#42](https://github.com/MCP-Mux/mcp-mux/issues/42)) ([fa52576](https://github.com/MCP-Mux/mcp-mux/commit/fa52576fc79102af992f71ef059f8f7eb937a23d))
+
 ## [0.0.6](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.5...v0.0.6) (2026-02-06)
 
 

@@ -285,6 +285,7 @@ export function ServersPage() {
       const definitions = definitionsResult.status === 'fulfilled' 
         ? definitionsResult.value 
         : [];
+
       
       // Log if registry is offline but we have installed servers
       if (definitionsResult.status === 'rejected' && installed.length > 0) {
@@ -298,8 +299,17 @@ export function ServersPage() {
       
       if (definitions.length > 0) {
         // Normal case: merge definitions with states
-        mergedServers = mergeDefinitionsWithStates(definitions, installed)
-          .filter(s => s.is_installed);
+        const allMerged = mergeDefinitionsWithStates(definitions, installed);
+        mergedServers = allMerged.filter(s => s.is_installed);
+
+        // Handle installed servers not present in registry definitions
+        // (e.g., registry changed, using different registry, or servers installed from user config)
+        const matchedServerIds = new Set(mergedServers.map(s => s.id));
+        const unmatchedInstalled = installed.filter(s => !matchedServerIds.has(s.server_id));
+        if (unmatchedInstalled.length > 0) {
+          const offlineViewModels = unmatchedInstalled.map(state => createOfflineServerViewModel(state));
+          mergedServers = [...mergedServers, ...offlineViewModels];
+        }
       } else {
         // Offline case: create minimal view models from installed states only
         mergedServers = installed.map(state => createOfflineServerViewModel(state));

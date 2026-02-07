@@ -132,8 +132,8 @@ export function SettingsPage() {
       {/* Updates Section */}
       <UpdateChecker />
 
-      {/* Startup & System Tray Section */}
-      <Card>
+      {/* Startup & System Tray Section - always show toggles so e2e and slow backends see the section */}
+      <Card data-testid="settings-startup-section">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Power className="h-5 w-5" />
@@ -145,11 +145,12 @@ export function SettingsPage() {
         </CardHeader>
         <CardContent>
           {loadingSettings ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-[rgb(var(--muted))]" />
+            <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))] mb-4">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading…
             </div>
-          ) : (
-            <div className="space-y-6">
+          ) : null}
+          <div className="space-y-6">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-start gap-3 flex-1 min-w-0">
                   <Power className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
@@ -219,8 +220,7 @@ export function SettingsPage() {
                   Saving settings...
                 </div>
               )}
-            </div>
-          )}
+          </div>
         </CardContent>
       </Card>
 

@@ -44,20 +44,22 @@ pub async fn get_startup_settings(
         .is_enabled()
         .map_err(|e| format!("Failed to check auto-launch status: {}", e))?;
 
-    // Get other settings from database
+    // Get other settings from database; use defaults when key is missing or DB read fails (e.g. no settings yet)
     let start_minimized = settings_repo
         .get("startup.start_minimized")
         .await
-        .map_err(|e| format!("Failed to get start_minimized setting: {}", e))?
+        .ok()
+        .flatten()
         .map(|v| v == "true")
         .unwrap_or(true);
 
     let close_to_tray = settings_repo
         .get("ui.close_to_tray")
         .await
-        .map_err(|e| format!("Failed to get close_to_tray setting: {}", e))?
+        .ok()
+        .flatten()
         .map(|v| v == "true")
-        .unwrap_or(true); // Default to true
+        .unwrap_or(true);
 
     Ok(StartupSettings {
         auto_launch,

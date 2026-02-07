@@ -4,20 +4,29 @@
  */
 
 import { expect, browser } from '@wdio/globals';
+import { byTestId, TIMEOUT } from '../helpers/selectors';
 
 describe('Settings - Desktop Features', () => {
+    before(async () => {
+        // Let the app and WebView load (spec may run in isolation so no prior tests have warmed the UI)
+        await browser.pause(5000);
+        // Ensure app shell is ready before any test
+        const sidebar = await byTestId('sidebar');
+        await sidebar.waitForDisplayed({ timeout: TIMEOUT.veryLong });
+        const navSettings = await byTestId('nav-settings');
+        await navSettings.waitForClickable({ timeout: TIMEOUT.medium });
+    });
+
     beforeEach(async () => {
-        // Navigate to settings page
-        const dashboardBtn = await $('nav button[data-testid="nav-dashboard"]');
-        await dashboardBtn.waitForClickable();
-        await dashboardBtn.click();
-
-        const settingsBtn = await $('nav button[data-testid="nav-settings"]');
-        await settingsBtn.waitForClickable();
+        // Go to Settings (same pattern as settings.wdio.ts)
+        const settingsBtn = await byTestId('nav-settings');
         await settingsBtn.click();
-
-        // Wait for settings page to load
-        await browser.pause(500);
+        // Wait for desktop Startup section to be present (section is always rendered; toggles may still be loading)
+        const startupSection = await byTestId('settings-startup-section');
+        await startupSection.waitForDisplayed({ timeout: TIMEOUT.medium });
+        // Wait for toggles to be interactive (get_startup_settings has resolved)
+        const autoLaunchSwitch = await byTestId('auto-launch-switch');
+        await autoLaunchSwitch.waitForDisplayed({ timeout: TIMEOUT.medium });
     });
 
     describe('Startup & System Tray Settings', () => {
@@ -175,20 +184,20 @@ describe('Settings - Desktop Features', () => {
 
             // Reload the page
             await browser.refresh();
-            await browser.pause(1000);
 
-            // Navigate to settings again
+            // Navigate to settings again and wait for section to load
             const settingsBtn = await $('nav button[data-testid="nav-settings"]');
             await settingsBtn.waitForClickable();
             await settingsBtn.click();
-            await browser.pause(500);
+            const switchAfterReload = await $('[data-testid="close-to-tray-switch"]');
+            await switchAfterReload.waitForDisplayed({ timeout: TIMEOUT.medium });
 
             // Verify state persisted
-            const persistedState = await closeToTraySwitch.getAttribute('aria-checked');
+            const persistedState = await switchAfterReload.getAttribute('aria-checked');
             expect(persistedState).not.toBe(initialState);
 
             // Restore original state
-            await closeToTraySwitch.click();
+            await switchAfterReload.click();
             await browser.pause(500);
         });
 

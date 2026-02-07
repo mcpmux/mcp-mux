@@ -49,9 +49,9 @@ export function Toast({
   return (
     <div
       className={cn(
-        'flex items-start gap-3 p-4 rounded-lg border shadow-lg',
-        'bg-surface border-[rgb(var(--border))]',
-        'animate-in slide-in-from-right-full duration-300'
+        'flex items-start gap-3 p-4 rounded-lg border shadow-lg backdrop-blur-sm',
+        'bg-[rgb(var(--surface)/0.95)] border-[rgb(var(--border))]',
+        'animate-in slide-in-from-bottom-4 fade-in duration-300'
       )}
       role="alert"
       data-testid={`toast-${type}`}
@@ -84,7 +84,7 @@ export function ToastContainer({
 }) {
   return (
     <div
-      className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full"
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col-reverse gap-2 max-w-md w-full pointer-events-none [&>*]:pointer-events-auto"
       data-testid="toast-container"
     >
       {toasts.map((toast) => (

@@ -310,8 +310,53 @@ function buildMockHandler() {
   const page = await ctx.newPage();
   await page.addInitScript(buildMockHandler());
 
+  // Logo mapping: emoji → local SVG path served by Vite
+  const LOGO_MAP = {
+    '🐙': '/logos/github.svg',
+    '🔷': '/logos/atlassian.svg',
+    '☁️': '/logos/cloudflare.svg',
+    '🐘': '/logos/postgresql.svg',
+    '🔵': '/logos/azure.svg',
+    '📂': '/logos/filesystem.svg',
+    '💬': '/logos/slack.svg',
+    '📁': '/logos/gdrive.svg',
+    '💳': '/logos/stripe.svg',
+    '📐': '/logos/linear.svg',
+    '🔥': '/logos/sentry.svg',
+    '📝': '/logos/notion.svg',
+    '🐶': '/logos/datadog.svg',
+    '🍃': '/logos/mongodb.svg',
+    '🎭': '/logos/puppeteer.svg',
+    '🧠': '/logos/memory.svg',
+    '🔍': '/logos/filesystem.svg',
+  };
+
+  async function injectLogos() {
+    await page.evaluate((logoMap) => {
+      const allDivs = document.querySelectorAll('div');
+      for (const div of allDivs) {
+        const text = div.textContent?.trim();
+        if (!text || !logoMap[text]) continue;
+        // Only target leaf divs (no child elements, just text)
+        if (div.children.length > 0) continue;
+        const rect = div.getBoundingClientRect();
+        // Icon containers are small: Servers page ~40px, Discover page ~30px
+        if (rect.width < 10 || rect.width > 55) continue;
+        const logoUrl = logoMap[text];
+        const size = Math.min(rect.width, rect.height) * 0.7;
+        div.innerHTML = `<img src="${logoUrl}" style="width:${size}px;height:${size}px;object-fit:contain;" />`;
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.justifyContent = 'center';
+        div.style.overflow = 'hidden';
+      }
+    }, LOGO_MAP);
+    await page.waitForTimeout(500);
+  }
+
   async function shot(name) {
     await page.waitForTimeout(800);
+    await injectLogos();
     await page.screenshot({ path: `${DIR}/${name}.png` });
     console.log(`  ok  ${name}`);
   }

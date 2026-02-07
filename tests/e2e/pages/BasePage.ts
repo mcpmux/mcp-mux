@@ -61,4 +61,33 @@ export abstract class BasePage {
   async screenshot(name: string) {
     await this.page.screenshot({ path: `./reports/screenshots/${name}.png` });
   }
+
+  /**
+   * Wait for a toast notification of the given type to appear
+   */
+  async waitForToast(type: 'success' | 'error' | 'warning' | 'info', timeout = 5000) {
+    await this.page.getByTestId(`toast-${type}`).first().waitFor({ timeout });
+  }
+
+  /**
+   * Get text content of the first visible toast
+   */
+  async getToastText(): Promise<string | null> {
+    const toast = this.page.getByTestId('toast-container').locator('[role="alert"]').first();
+    return toast.textContent();
+  }
+
+  /**
+   * Dismiss the first visible toast
+   */
+  async dismissToast() {
+    await this.page.getByTestId('toast-close').first().click();
+  }
+
+  /**
+   * Assert that a toast container is present in the DOM
+   */
+  get toastContainer(): Locator {
+    return this.page.getByTestId('toast-container');
+  }
 }

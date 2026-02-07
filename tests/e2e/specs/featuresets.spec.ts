@@ -72,6 +72,18 @@ test.describe('FeatureSet Details', () => {
   });
 });
 
+test.describe('Feature Set Toast Container', () => {
+  test('should have toast container on feature sets page', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await expect(page.getByRole('heading', { name: 'Feature Sets' }).first()).toBeVisible();
+    
+    await expect(page.getByTestId('toast-container')).toBeAttached();
+  });
+});
+
 test.describe('Feature Set Operations with Toast', () => {
   // Skip in web mode - requires Tauri API
   test.skip('should show toast when creating feature set', async ({ page }) => {
@@ -141,6 +153,59 @@ test.describe('Feature Set Operations with Toast', () => {
     // Button should be disabled or show validation error
     const createButton = page.getByRole('button', { name: /Create/i });
     await expect(createButton).toBeDisabled();
+  });
+});
+
+test.describe('Feature Set Panel Save Toast', () => {
+  // Skip in web mode - requires Tauri API
+  test.skip('should show success toast when saving feature set members', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    
+    // Click on a configurable feature set (Default or Custom)
+    const configurableSet = page.locator('[data-testid^="featureset-card-"]').first();
+    if (await configurableSet.isVisible()) {
+      await configurableSet.click();
+      
+      // Wait for panel to open
+      await expect(page.locator('text=Save Changes')).toBeVisible({ timeout: 5000 });
+      
+      // Click Save Changes
+      await page.getByRole('button', { name: /Save Changes/i }).click();
+      
+      // Wait for success toast
+      await expect(page.getByTestId('toast-success')).toBeVisible({ timeout: 5000 });
+      const toastText = await page.getByTestId('toast-container').locator('[role="alert"]').first().textContent();
+      expect(toastText).toContain('Changes saved');
+    }
+  });
+
+  // Skip in web mode - requires Tauri API
+  test.skip('should show error toast on failed save', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    
+    // Click on a feature set
+    const featureSetCard = page.locator('[data-testid^="featureset-card-"]').first();
+    if (await featureSetCard.isVisible()) {
+      await featureSetCard.click();
+      
+      // Simulate network error scenario - panel save should show error toast
+      await page.route('**/feature-sets/*/members', route => route.abort());
+      
+      const saveButton = page.getByRole('button', { name: /Save Changes/i });
+      if (await saveButton.isVisible()) {
+        await saveButton.click();
+        
+        await expect(page.getByTestId('toast-error')).toBeVisible({ timeout: 5000 });
+        const toastText = await page.getByTestId('toast-container').locator('[role="alert"]').first().textContent();
+        expect(toastText).toContain('Failed to save');
+      }
+    }
   });
 });
 

@@ -89,3 +89,70 @@ test.describe('Server Actions', () => {
     // If no server cards found, test passes (no servers installed)
   });
 });
+
+test.describe('Server Toast Notifications', () => {
+  // Skip in web mode - requires Tauri API for server enable/disable
+  test.skip('should show success toast on server enable', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("My Servers")').click();
+    
+    const enableBtn = page.getByRole('button', { name: /Enable/i }).first();
+    if (await enableBtn.isVisible()) {
+      await enableBtn.click();
+      
+      await expect(page.getByTestId('toast-success')).toBeVisible({ timeout: 5000 });
+    }
+  });
+
+  // Skip in web mode - requires Tauri API for log viewer
+  test.skip('should show toast when clearing server logs', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("My Servers")').click();
+    
+    // Open log viewer for first server (if available)
+    const logButton = page.getByRole('button', { name: /Logs/i }).first();
+    if (await logButton.isVisible()) {
+      await logButton.click();
+      
+      // Accept confirmation dialog
+      page.on('dialog', dialog => dialog.accept());
+      
+      // Click clear logs button
+      const clearBtn = page.locator('button[title="Clear all logs"]');
+      if (await clearBtn.isVisible()) {
+        await clearBtn.click();
+        
+        await expect(page.getByTestId('toast-success')).toBeVisible({ timeout: 5000 });
+        const toastText = await page.getByTestId('toast-container').locator('[role="alert"]').first().textContent();
+        expect(toastText).toContain('Logs cleared');
+      }
+    }
+  });
+
+  // Skip in web mode - requires Tauri API for log file path
+  test.skip('should show toast when copying log file path', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("My Servers")').click();
+    
+    const logButton = page.getByRole('button', { name: /Logs/i }).first();
+    if (await logButton.isVisible()) {
+      await logButton.click();
+      
+      // Click copy path button
+      const copyBtn = page.locator('button[title="Open log file in external editor"]');
+      if (await copyBtn.isVisible()) {
+        await copyBtn.click();
+        
+        await expect(page.getByTestId('toast-success')).toBeVisible({ timeout: 5000 });
+        const toastText = await page.getByTestId('toast-container').locator('[role="alert"]').first().textContent();
+        expect(toastText).toContain('Path copied');
+      }
+    }
+  });
+});

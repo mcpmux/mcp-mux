@@ -143,3 +143,56 @@ test.describe('Registry Pagination', () => {
     }
   });
 });
+
+test.describe('Registry Toast Notifications', () => {
+  test('should have toast container on registry page', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    const registry = new RegistryPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("Discover")').click();
+    await expect(registry.heading).toBeVisible();
+    
+    await expect(registry.toastContainer).toBeAttached();
+  });
+
+  // Skip in web mode - requires Tauri API for install
+  test.skip('should show success toast when installing a server', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    const registry = new RegistryPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("Discover")').click();
+    await expect(registry.heading).toBeVisible();
+    
+    // Find an uninstalled server's install button
+    const installBtn = page.getByRole('button', { name: /Install/i }).first();
+    if (await installBtn.isVisible()) {
+      await installBtn.click();
+      
+      await registry.waitForToast('success');
+      const toastText = await registry.getToastText();
+      expect(toastText).toContain('Server installed');
+    }
+  });
+
+  // Skip in web mode - requires Tauri API for uninstall
+  test.skip('should show success toast when uninstalling a server', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    const registry = new RegistryPage(page);
+    await dashboard.navigate();
+    
+    await page.locator('nav button:has-text("Discover")').click();
+    await expect(registry.heading).toBeVisible();
+    
+    // Find an installed server's uninstall button
+    const uninstallBtn = page.getByRole('button', { name: /Uninstall/i }).first();
+    if (await uninstallBtn.isVisible()) {
+      await uninstallBtn.click();
+      
+      await registry.waitForToast('success');
+      const toastText = await registry.getToastText();
+      expect(toastText).toContain('Server uninstalled');
+    }
+  });
+});

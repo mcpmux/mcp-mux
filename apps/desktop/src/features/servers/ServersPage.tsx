@@ -587,14 +587,17 @@ export function ServersPage() {
     try {
       const { saveServerInputs } = await import('@/lib/api/registry');
 
-      // Save input values with env overrides, args, and headers
+      // Save input values with env overrides, args, and headers.
+      // Always send the values (even if empty) so that clearing them works.
+      // Backend treats None as "keep existing", so we must send Some({}/[])
+      // to actually clear fields the user removed.
       await saveServerInputs(
         serverId,
         configModal.inputValues,
         viewSpace?.id ?? '',
-        Object.keys(configModal.envOverrides).length > 0 ? configModal.envOverrides : undefined,
-        configModal.argsAppend.length > 0 ? configModal.argsAppend : undefined,
-        Object.keys(configModal.extraHeaders).length > 0 ? configModal.extraHeaders : undefined,
+        configModal.envOverrides,
+        configModal.argsAppend,
+        configModal.extraHeaders,
       );
 
       setConfigModal({ open: false, server: null, inputValues: {}, envOverrides: {}, argsAppend: [], extraHeaders: {} });

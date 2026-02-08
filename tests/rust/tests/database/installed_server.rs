@@ -605,3 +605,112 @@ async fn test_installed_server_empty_custom_fields_by_default() {
     assert!(loaded.args_append.is_empty());
     assert!(loaded.extra_headers.is_empty());
 }
+
+#[tokio::test]
+async fn test_installed_server_clear_custom_fields_via_update() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    // Install server WITH custom fields
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "clearable-server");
+    server
+        .env_overrides
+        .insert("KEY".to_string(), "value".to_string());
+    server.args_append = vec!["--flag".to_string()];
+    server
+        .extra_headers
+        .insert("X-Test".to_string(), "test".to_string());
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    // Verify they're set
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.env_overrides.len(), 1);
+    assert_eq!(loaded.args_append.len(), 1);
+    assert_eq!(loaded.extra_headers.len(), 1);
+
+    // Clear all fields by updating with empty collections
+    let mut to_update = loaded;
+    to_update.env_overrides = HashMap::new();
+    to_update.args_append = Vec::new();
+    to_update.extra_headers = HashMap::new();
+
+    InstalledServerRepository::update(&server_repo, &to_update)
+        .await
+        .expect("Failed to update server");
+
+    // Verify they're cleared
+    let cleared = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        cleared.env_overrides.is_empty(),
+        "env_overrides should be empty after clearing"
+    );
+    assert!(
+        cleared.args_append.is_empty(),
+        "args_append should be empty after clearing"
+    );
+    assert!(
+        cleared.extra_headers.is_empty(),
+        "extra_headers should be empty after clearing"
+    );
+}
+
+#[tokio::test]
+async fn test_installed_server_special_characters_persist() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "special-server");
+    // Values with special characters
+    server.env_overrides.insert(
+        "PATH_WITH=EQUALS".to_string(),
+        "value with \"quotes\" and 'apostrophes'".to_string(),
+    );
+    server.args_append = vec![
+        "--config=/path/to/file with spaces".to_string(),
+        "unicode: 日本語".to_string(),
+    ];
+    server
+        .extra_headers
+        .insert("Authorization".to_string(), "Bearer tok3n+/=".to_string());
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        loaded.env_overrides.get("PATH_WITH=EQUALS"),
+        Some(&"value with \"quotes\" and 'apostrophes'".to_string())
+    );
+    assert_eq!(loaded.args_append[0], "--config=/path/to/file with spaces");
+    assert_eq!(loaded.args_append[1], "unicode: 日本語");
+    assert_eq!(
+        loaded.extra_headers.get("Authorization"),
+        Some(&"Bearer tok3n+/=".to_string())
+    );
+}

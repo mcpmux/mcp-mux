@@ -338,4 +338,116 @@ mod tests {
         assert!(server.args_append.is_empty());
         assert!(server.extra_headers.is_empty());
     }
+
+    #[test]
+    fn test_env_overrides_empty_key_allowed() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        server
+            .env_overrides
+            .insert("".to_string(), "value".to_string());
+
+        assert_eq!(server.env_overrides.get(""), Some(&"value".to_string()));
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&server).expect("serialize");
+        let deserialized: InstalledServer = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.env_overrides.get(""), Some(&"value".to_string()));
+    }
+
+    #[test]
+    fn test_env_overrides_overwrite_existing_key() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        server
+            .env_overrides
+            .insert("KEY".to_string(), "first".to_string());
+        server
+            .env_overrides
+            .insert("KEY".to_string(), "second".to_string());
+
+        assert_eq!(server.env_overrides.len(), 1);
+        assert_eq!(
+            server.env_overrides.get("KEY"),
+            Some(&"second".to_string())
+        );
+    }
+
+    #[test]
+    fn test_special_characters_in_values() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        // Env var with special chars
+        server.env_overrides.insert(
+            "PATH_WITH=EQUALS".to_string(),
+            "value with spaces & \"quotes\" and \nnewlines".to_string(),
+        );
+        // Args with special chars
+        server.args_append = vec![
+            "--config=/path/to/file".to_string(),
+            "arg with spaces".to_string(),
+            "unicode: 日本語".to_string(),
+        ];
+        // Header with special chars
+        server.extra_headers.insert(
+            "X-Special".to_string(),
+            "value/with:colons and;semicolons".to_string(),
+        );
+
+        let json = serde_json::to_string(&server).expect("serialize");
+        let deserialized: InstalledServer = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(
+            deserialized.env_overrides.get("PATH_WITH=EQUALS"),
+            Some(&"value with spaces & \"quotes\" and \nnewlines".to_string())
+        );
+        assert_eq!(deserialized.args_append[2], "unicode: 日本語");
+        assert_eq!(
+            deserialized.extra_headers.get("X-Special"),
+            Some(&"value/with:colons and;semicolons".to_string())
+        );
+    }
+
+    #[test]
+    fn test_clear_custom_fields_to_empty() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        // Set values
+        server
+            .env_overrides
+            .insert("KEY".to_string(), "value".to_string());
+        server.args_append = vec!["--flag".to_string()];
+        server
+            .extra_headers
+            .insert("X-Test".to_string(), "test".to_string());
+
+        assert!(!server.env_overrides.is_empty());
+        assert!(!server.args_append.is_empty());
+        assert!(!server.extra_headers.is_empty());
+
+        // Clear all fields
+        server.env_overrides = HashMap::new();
+        server.args_append = Vec::new();
+        server.extra_headers = HashMap::new();
+
+        assert!(server.env_overrides.is_empty());
+        assert!(server.args_append.is_empty());
+        assert!(server.extra_headers.is_empty());
+
+        // Verify empty fields serialize/deserialize correctly
+        let json = serde_json::to_string(&server).expect("serialize");
+        let deserialized: InstalledServer = serde_json::from_str(&json).expect("deserialize");
+        assert!(deserialized.env_overrides.is_empty());
+        assert!(deserialized.args_append.is_empty());
+        assert!(deserialized.extra_headers.is_empty());
+    }
+
+    #[test]
+    fn test_large_args_list() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        server.args_append = (0..100).map(|i| format!("--arg-{}", i)).collect();
+
+        assert_eq!(server.args_append.len(), 100);
+
+        let json = serde_json::to_string(&server).expect("serialize");
+        let deserialized: InstalledServer = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.args_append.len(), 100);
+        assert_eq!(deserialized.args_append[99], "--arg-99");
+    }
 }

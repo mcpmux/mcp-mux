@@ -84,7 +84,9 @@ export async function setServerOAuthConnected(
 export async function saveServerInputs(
   id: string,
   inputValues: Record<string, string>,
-  spaceId: string
+  spaceId: string,
+  envOverrides?: Record<string, string>,
+  argsAppend?: string[]
 ): Promise<void> {
-  return invoke<void>('save_server_inputs', { id, inputValues, spaceId });
+  return invoke<void>('save_server_inputs', { id, inputValues, spaceId, envOverrides, argsAppend });
 }

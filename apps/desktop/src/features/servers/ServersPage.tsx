@@ -65,6 +65,8 @@ function mergeDefinitionsWithStates(
       last_error: null, // Runtime-only, will be set by ServerManager events
       created_at: state?.created_at, // Include for sorting
       installation_source: state?.source, // Track how server was installed
+      env_overrides: state?.env_overrides ?? {},
+      args_append: state?.args_append ?? [],
     } as ServerViewModel;
   });
 }
@@ -96,6 +98,8 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
         last_error: null,
         created_at: state.created_at,
         installation_source: state.source,
+        env_overrides: state.env_overrides ?? {},
+        args_append: state.args_append ?? [],
       } as ServerViewModel;
     } catch (e) {
       console.warn('[ServersPage] Failed to parse cached_definition, using minimal fallback:', e);
@@ -129,6 +133,8 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
     last_error: null,
     created_at: state.created_at,
     installation_source: state.source,
+    env_overrides: state.env_overrides ?? {},
+    args_append: state.args_append ?? [],
   } as ServerViewModel;
 }
 
@@ -139,6 +145,10 @@ interface ConfigModalState {
   inputValues: Record<string, string>;
   /** If true, saving will also enable the server (from Enable flow) */
   enableOnSave?: boolean;
+  /** Additional environment variable overrides */
+  envOverrides: Record<string, string>;
+  /** Additional arguments to append (stdio only) */
+  argsAppend: string[];
 }
 
 export function ServersPage() {
@@ -153,6 +163,8 @@ export function ServersPage() {
     open: false,
     server: null,
     inputValues: {},
+    envOverrides: {},
+    argsAppend: [],
   });
 
   // Features state
@@ -488,6 +500,8 @@ export function ServersPage() {
         server,
         inputValues: initialValues,
         enableOnSave: true, // This is from Enable flow
+        envOverrides: { ...(server.env_overrides ?? {}) },
+        argsAppend: [...(server.args_append ?? [])],
       });
       return;
     }
@@ -549,6 +563,8 @@ export function ServersPage() {
       server,
       inputValues: initialValues,
       enableOnSave: false, // Just configure, don't enable
+      envOverrides: { ...(server.env_overrides ?? {}) },
+      argsAppend: [...(server.args_append ?? [])],
     });
   };
 
@@ -562,11 +578,17 @@ export function ServersPage() {
     setActionLoading(`config-${serverId}`);
     try {
       const { saveServerInputs } = await import('@/lib/api/registry');
-      
-      // Save input values
-      await saveServerInputs(serverId, configModal.inputValues, viewSpace?.id ?? '');
-      
-      setConfigModal({ open: false, server: null, inputValues: {} });
+
+      // Save input values with env overrides and args
+      await saveServerInputs(
+        serverId,
+        configModal.inputValues,
+        viewSpace?.id ?? '',
+        Object.keys(configModal.envOverrides).length > 0 ? configModal.envOverrides : undefined,
+        configModal.argsAppend.length > 0 ? configModal.argsAppend : undefined,
+      );
+
+      setConfigModal({ open: false, server: null, inputValues: {}, envOverrides: {}, argsAppend: [] });
       
       // Only enable if requested (from Enable flow)
       if (shouldEnable && !server.enabled) {
@@ -604,7 +626,7 @@ export function ServersPage() {
       // Set the server to pending_config state by enabling but not connecting
       // Actually, we just close the modal - the UI already shows Configure button for missing inputs
     }
-    setConfigModal({ open: false, server: null, inputValues: {} });
+    setConfigModal({ open: false, server: null, inputValues: {}, envOverrides: {}, argsAppend: [] });
   };
 
   // Cancel OAuth flow - uses new ServerManager v2
@@ -1311,7 +1333,106 @@ export function ServersPage() {
                   </div>
                 );
               })}
-              
+
+              {/* Additional Arguments (stdio only) */}
+              {configModal.server.transport.type === 'stdio' && (
+                <div>
+                  <label className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+                    Additional Arguments
+                  </label>
+                  <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                    Extra command-line arguments (one per line)
+                  </p>
+                  <textarea
+                    value={configModal.argsAppend.join('\n')}
+                    onChange={(e) => {
+                      const lines = e.target.value.split('\n');
+                      setConfigModal({
+                        ...configModal,
+                        argsAppend: lines.filter((l) => l.length > 0 || e.target.value.endsWith('\n')),
+                      });
+                    }}
+                    onBlur={(e) => {
+                      // Clean up empty lines on blur
+                      setConfigModal({
+                        ...configModal,
+                        argsAppend: e.target.value.split('\n').filter((l) => l.trim().length > 0),
+                      });
+                    }}
+                    placeholder="--flag&#10;value"
+                    rows={3}
+                    className="input w-full font-mono text-sm resize-y"
+                    data-testid="config-args-append"
+                  />
+                </div>
+              )}
+
+              {/* Environment Variable Overrides */}
+              <div>
+                <label className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+                  Environment Variables
+                </label>
+                <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                  {configModal.server.transport.type === 'stdio'
+                    ? 'Additional environment variables for the server process'
+                    : 'Additional environment variables'}
+                </p>
+                <div className="space-y-2">
+                  {Object.entries(configModal.envOverrides).map(([key, value], idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <input
+                        type="text"
+                        value={key}
+                        onChange={(e) => {
+                          const entries = Object.entries(configModal.envOverrides);
+                          entries[idx] = [e.target.value, value];
+                          setConfigModal({
+                            ...configModal,
+                            envOverrides: Object.fromEntries(entries),
+                          });
+                        }}
+                        placeholder="KEY"
+                        className="input flex-1 font-mono text-sm"
+                      />
+                      <input
+                        type="text"
+                        value={value}
+                        onChange={(e) => {
+                          setConfigModal({
+                            ...configModal,
+                            envOverrides: { ...configModal.envOverrides, [key]: e.target.value },
+                          });
+                        }}
+                        placeholder="value"
+                        className="input flex-1 font-mono text-sm"
+                      />
+                      <button
+                        onClick={() => {
+                          const { [key]: _, ...rest } = configModal.envOverrides;
+                          setConfigModal({ ...configModal, envOverrides: rest });
+                        }}
+                        className="px-2 py-1 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--error))] transition-colors"
+                        title="Remove"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => {
+                      setConfigModal({
+                        ...configModal,
+                        envOverrides: { ...configModal.envOverrides, '': '' },
+                      });
+                    }}
+                    className="text-xs text-[rgb(var(--primary))] hover:underline"
+                    data-testid="config-add-env"
+                  >
+                    + Add variable
+                  </button>
+                </div>
+              </div>
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={handleCancelConfig}

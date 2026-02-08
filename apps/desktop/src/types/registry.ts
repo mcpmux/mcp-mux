@@ -115,6 +115,10 @@ export interface ServerViewModel extends ServerDefinition {
   created_at?: string;
   /** Installation source - only present for installed servers */
   installation_source?: InstallationSource;
+  /** Environment variable overrides */
+  env_overrides?: Record<string, string>;
+  /** Extra arguments to append to command (stdio only) */
+  args_append?: string[];
 }
 
 /** Registry category */

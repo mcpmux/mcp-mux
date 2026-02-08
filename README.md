@@ -49,7 +49,7 @@ Add a server in McpMux and every client has it instantly. No files to edit.
 {
   "mcpServers": {
     "mcpmux": {
-      "type": "streamable-http",
+      "type": "http",
       "url": "http://localhost:9315/mcp"
     }
   }

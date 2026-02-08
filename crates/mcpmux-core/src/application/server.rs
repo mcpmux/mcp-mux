@@ -237,7 +237,7 @@ impl ServerAppService {
         Ok(())
     }
 
-    /// Update server configuration (inputs, env overrides, args)
+    /// Update server configuration (inputs, env overrides, args, headers)
     ///
     /// Emits: `ServerConfigUpdated`
     pub async fn update_config(
@@ -247,6 +247,7 @@ impl ServerAppService {
         input_values: HashMap<String, String>,
         env_overrides: Option<HashMap<String, String>>,
         args_append: Option<Vec<String>>,
+        extra_headers: Option<HashMap<String, String>>,
     ) -> Result<InstalledServer> {
         let space_id_str = space_id.to_string();
 
@@ -262,6 +263,9 @@ impl ServerAppService {
         }
         if let Some(args) = args_append {
             server.args_append = args;
+        }
+        if let Some(headers) = extra_headers {
+            server.extra_headers = headers;
         }
         server.updated_at = chrono::Utc::now();
 

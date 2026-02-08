@@ -135,6 +135,7 @@ pub async fn save_server_inputs(
     space_id: String,
     env_overrides: Option<HashMap<String, String>>,
     args_append: Option<Vec<String>>,
+    extra_headers: Option<HashMap<String, String>>,
 ) -> Result<InstalledServer, String> {
     let service_lock = app_service.read().await;
     let service = service_lock
@@ -144,7 +145,7 @@ pub async fn save_server_inputs(
     let space_uuid = uuid::Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
 
     service
-        .update_config(space_uuid, &id, input_values, env_overrides, args_append)
+        .update_config(space_uuid, &id, input_values, env_overrides, args_append, extra_headers)
         .await
         .map_err(|e| e.to_string())
 }

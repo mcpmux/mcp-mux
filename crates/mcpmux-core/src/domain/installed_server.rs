@@ -213,4 +213,129 @@ mod tests {
             Some(&"ghp_xxxxx".to_string())
         );
     }
+
+    #[test]
+    fn test_new_server_has_empty_custom_fields() {
+        let server = InstalledServer::new("space_default", "test-server");
+
+        assert!(
+            server.env_overrides.is_empty(),
+            "New server should have empty env_overrides"
+        );
+        assert!(
+            server.args_append.is_empty(),
+            "New server should have empty args_append"
+        );
+        assert!(
+            server.extra_headers.is_empty(),
+            "New server should have empty extra_headers"
+        );
+    }
+
+    #[test]
+    fn test_env_overrides_can_be_set() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        server
+            .env_overrides
+            .insert("NODE_ENV".to_string(), "production".to_string());
+        server
+            .env_overrides
+            .insert("DEBUG".to_string(), "true".to_string());
+
+        assert_eq!(server.env_overrides.len(), 2);
+        assert_eq!(
+            server.env_overrides.get("NODE_ENV"),
+            Some(&"production".to_string())
+        );
+        assert_eq!(
+            server.env_overrides.get("DEBUG"),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn test_args_append_can_be_set() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        server.args_append = vec![
+            "--verbose".to_string(),
+            "--port".to_string(),
+            "8080".to_string(),
+        ];
+
+        assert_eq!(server.args_append.len(), 3);
+        assert_eq!(server.args_append[0], "--verbose");
+        assert_eq!(server.args_append[1], "--port");
+        assert_eq!(server.args_append[2], "8080");
+    }
+
+    #[test]
+    fn test_extra_headers_can_be_set() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        server
+            .extra_headers
+            .insert("Authorization".to_string(), "Bearer token123".to_string());
+        server
+            .extra_headers
+            .insert("X-Custom-Header".to_string(), "custom-value".to_string());
+
+        assert_eq!(server.extra_headers.len(), 2);
+        assert_eq!(
+            server.extra_headers.get("Authorization"),
+            Some(&"Bearer token123".to_string())
+        );
+        assert_eq!(
+            server.extra_headers.get("X-Custom-Header"),
+            Some(&"custom-value".to_string())
+        );
+    }
+
+    #[test]
+    fn test_custom_fields_serialize_deserialize() {
+        let mut server = InstalledServer::new("space_default", "test-server");
+        server
+            .env_overrides
+            .insert("KEY".to_string(), "value".to_string());
+        server.args_append = vec!["--flag".to_string()];
+        server
+            .extra_headers
+            .insert("X-Test".to_string(), "test".to_string());
+
+        // Serialize
+        let json = serde_json::to_string(&server).expect("Failed to serialize");
+
+        // Deserialize
+        let deserialized: InstalledServer =
+            serde_json::from_str(&json).expect("Failed to deserialize");
+
+        assert_eq!(deserialized.env_overrides.get("KEY"), Some(&"value".to_string()));
+        assert_eq!(deserialized.args_append, vec!["--flag".to_string()]);
+        assert_eq!(
+            deserialized.extra_headers.get("X-Test"),
+            Some(&"test".to_string())
+        );
+    }
+
+    #[test]
+    fn test_custom_fields_default_on_deserialize() {
+        // JSON without custom fields should deserialize with empty defaults
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "space_id": "space_default",
+            "server_id": "test-server",
+            "server_name": null,
+            "cached_definition": null,
+            "input_values": {},
+            "enabled": false,
+            "oauth_connected": false,
+            "source": {"type": "registry"},
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z"
+        }"#;
+
+        let server: InstalledServer = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(server.env_overrides.is_empty());
+        assert!(server.args_append.is_empty());
+        assert!(server.extra_headers.is_empty());
+    }
 }

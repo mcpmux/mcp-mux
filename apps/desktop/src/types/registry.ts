@@ -119,6 +119,8 @@ export interface ServerViewModel extends ServerDefinition {
   env_overrides?: Record<string, string>;
   /** Extra arguments to append to command (stdio only) */
   args_append?: string[];
+  /** Extra HTTP headers (http only) */
+  extra_headers?: Record<string, string>;
 }
 
 /** Registry category */

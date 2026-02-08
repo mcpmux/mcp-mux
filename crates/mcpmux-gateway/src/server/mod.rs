@@ -240,29 +240,27 @@ impl GatewayServer {
         let handler =
             McpMuxGatewayHandler::new(Arc::new(self.services.clone()), notification_bridge.clone());
 
-        // Create STATELESS MCP service
-        // stateful_mode: false means:
-        // - No Mcp-Session-Id header
-        // - GET/DELETE return 405 automatically (no notification streams)
-        // - Each POST is independent
-        // - Avoids the stream management issues that caused connection loops
-        // Trade-off: Cannot send list_changed notifications
+        // Create STATEFUL MCP service (full Streamable HTTP per spec 2025-11-25)
+        // stateful_mode: true means:
+        // - Mcp-Session-Id header for session management
+        // - GET endpoint for SSE streams (server-initiated notifications)
+        // - DELETE endpoint for session termination
+        // - list_changed notifications delivered via SSE
         let mcp_service = StreamableHttpService::new(
             move || {
-                debug!("[Gateway] Creating handler instance for MCP request");
+                debug!("[Gateway] Creating handler instance for MCP session");
                 Ok(handler.clone())
             },
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig {
-                stateful_mode: false,
+                stateful_mode: true,
                 sse_keep_alive: Some(std::time::Duration::from_secs(30)),
-                sse_retry: None,
+                sse_retry: Some(std::time::Duration::from_secs(3)),
                 cancellation_token: CancellationToken::new(),
             },
         );
 
         // Wrap MCP service with OAuth middleware
-        // In stateless mode, no session healing needed - rmcp handles 405 for GET/DELETE
         let mcp_routes =
             Router::new()
                 .nest_service("/mcp", mcp_service)

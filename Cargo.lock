@@ -2548,7 +2548,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcpmux"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-gateway"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-mcp"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2666,7 +2666,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-storage"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5319,6 +5319,7 @@ name = "tests"
 version = "0.0.2"
 dependencies = [
  "async-trait",
+ "axum",
  "chrono",
  "dashmap",
  "futures",
@@ -5330,10 +5331,12 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "reqwest 0.12.28",
+ "rmcp",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -5523,6 +5526,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

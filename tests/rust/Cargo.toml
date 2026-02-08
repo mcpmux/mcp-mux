@@ -49,6 +49,16 @@ url = "2.5"
 # Sync primitives for tests
 parking_lot = "0.12"
 
+# RMCP for streamable HTTP transport tests
+rmcp = { version = "0.14.0", features = [
+    "client",
+    "server",
+    "transport-streamable-http-server",
+    "transport-streamable-http-client-reqwest",
+] }
+tokio-util = { version = "0.7", features = ["rt"] }
+axum = "0.8"
+
 [lib]
 path = "src/lib.rs"
 
@@ -71,3 +81,7 @@ path = "tests/oauth/mod.rs"
 [[test]]
 name = "integration"
 path = "tests/integration/mod.rs"
+
+[[test]]
+name = "streamable_http"
+path = "tests/streamable_http/mod.rs"

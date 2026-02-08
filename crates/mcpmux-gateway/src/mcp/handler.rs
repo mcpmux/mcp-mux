@@ -102,14 +102,14 @@ impl ServerHandler for McpMuxGatewayHandler {
             protocol_version: Default::default(),
             capabilities: ServerCapabilities::builder()
                 .enable_tools_with(ToolsCapability {
-                    list_changed: Some(false), // Stateless mode - no notifications
+                    list_changed: Some(true),
                 })
                 .enable_prompts_with(PromptsCapability {
-                    list_changed: Some(false), // Stateless mode - no notifications
+                    list_changed: Some(true),
                 })
                 .enable_resources_with(ResourcesCapability {
                     subscribe: Some(false),
-                    list_changed: Some(false), // Stateless mode - no notifications
+                    list_changed: Some(true),
                 })
                 .build(),
             server_info: Implementation {
@@ -150,19 +150,34 @@ impl ServerHandler for McpMuxGatewayHandler {
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
-        // Silently process - entry already logged in oauth_middleware
-        let _oauth_ctx = match self.get_oauth_context(&context.extensions) {
+        let oauth_ctx = match self.get_oauth_context(&context.extensions) {
             Ok(ctx) => ctx,
             Err(e) => {
-                warn!("Failed to extract OAuth context: {}", e);
+                warn!("Failed to extract OAuth context on_initialized: {}", e);
                 return;
             }
         };
 
-        // In stateless mode:
-        // - No session tracking
-        // - No notification registration
-        // - Each request is independent
+        // Register peer with MCPNotifier for list_changed notification delivery
+        let peer = std::sync::Arc::new(context.peer);
+        self.notification_bridge
+            .register_peer(oauth_ctx.client_id.clone(), peer);
+
+        // Mark the client stream as active immediately - RMCP's session transport
+        // handles SSE streaming and message caching internally
+        self.notification_bridge
+            .mark_client_stream_active(&oauth_ctx.client_id);
+
+        // Pre-populate feature hashes to prevent spurious first notifications
+        self.notification_bridge
+            .prime_hashes_for_space(oauth_ctx.space_id)
+            .await;
+
+        info!(
+            client_id = %oauth_ctx.client_id,
+            space_id = %oauth_ctx.space_id,
+            "Client initialized - peer registered for notifications"
+        );
     }
 
     async fn list_tools(

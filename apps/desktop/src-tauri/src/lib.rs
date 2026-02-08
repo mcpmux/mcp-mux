@@ -6,7 +6,7 @@ use mcpmux_core::branding;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 mod commands;
 mod services;
@@ -519,6 +519,53 @@ pub fn run() {
                 });
             }
 
+            // Start periodic log cleanup task
+            {
+                let log_manager = app_state.server_log_manager.clone();
+                let settings_repo_for_cleanup = app_state.settings_repository.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    use mcpmux_core::AppSettingsService;
+
+                    let settings = AppSettingsService::new(settings_repo_for_cleanup);
+
+                    // Run cleanup once at startup
+                    let retention_days = settings.get_log_retention_days().await;
+                    if retention_days > 0 {
+                        info!(
+                            "[LogCleanup] Running startup cleanup (retention: {} days)",
+                            retention_days
+                        );
+                        match log_manager.cleanup_logs_older_than(retention_days).await {
+                            Ok(n) if n > 0 => {
+                                info!("[LogCleanup] Startup cleanup removed {} file(s)", n)
+                            }
+                            Ok(_) => debug!("[LogCleanup] No old log files to clean up"),
+                            Err(e) => warn!("[LogCleanup] Startup cleanup failed: {}", e),
+                        }
+                    }
+
+                    // Then run every 24 hours
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
+                    interval.tick().await; // skip the first immediate tick (already ran above)
+
+                    loop {
+                        interval.tick().await;
+                        let days = settings.get_log_retention_days().await;
+                        if days > 0 {
+                            match log_manager.cleanup_logs_older_than(days).await {
+                                Ok(n) if n > 0 => {
+                                    info!("[LogCleanup] Periodic cleanup removed {} file(s)", n)
+                                }
+                                Ok(_) => {}
+                                Err(e) => warn!("[LogCleanup] Periodic cleanup failed: {}", e),
+                            }
+                        }
+                    }
+                });
+            }
+
             // Setup system tray
             tray::setup_tray(app.handle())?;
 
@@ -749,6 +796,8 @@ pub fn run() {
             commands::get_server_logs,
             commands::clear_server_logs,
             commands::get_server_log_file,
+            commands::get_log_retention_days,
+            commands::set_log_retention_days,
             // App log commands
             get_logs_path,
             open_logs_folder,

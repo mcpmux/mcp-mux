@@ -38,6 +38,12 @@ pub mod keys {
         pub const WINDOW_STATE: &str = "ui.window_state";
     }
 
+    /// Logs settings namespace
+    pub mod logs {
+        /// Number of days to retain log files (u32, 0 = keep forever)
+        pub const RETENTION_DAYS: &str = "logs.retention_days";
+    }
+
     /// Registry settings namespace
     pub mod registry {
         /// Cached ETag from last bundle fetch
@@ -237,6 +243,28 @@ impl AppSettingsService {
     }
 
     // =========================================================================
+    // Logs settings
+    // =========================================================================
+
+    /// Default log retention period in days (30 days)
+    pub const DEFAULT_LOG_RETENTION_DAYS: u32 = 30;
+
+    /// Get the log retention period in days (0 = keep forever).
+    pub async fn get_log_retention_days(&self) -> u32 {
+        self.get_typed(keys::logs::RETENTION_DAYS)
+            .await
+            .unwrap_or(Self::DEFAULT_LOG_RETENTION_DAYS)
+    }
+
+    /// Set the log retention period in days.
+    pub async fn set_log_retention_days(&self, days: u32) -> anyhow::Result<()> {
+        info!("[Settings] Setting log retention to {} days", days);
+        self.repository
+            .set(keys::logs::RETENTION_DAYS, &days.to_string())
+            .await
+    }
+
+    // =========================================================================
     // Utility methods
     // =========================================================================
 
@@ -379,5 +407,22 @@ mod tests {
 
         let loaded: WindowState = service.get_window_state().await;
         assert_eq!(loaded, state);
+    }
+
+    #[tokio::test]
+    async fn test_log_retention_days() {
+        let repo = Arc::new(InMemorySettingsRepository::new());
+        let service = AppSettingsService::new(repo);
+
+        // Default is 30 days
+        assert_eq!(service.get_log_retention_days().await, 30);
+
+        // Set to 7 days
+        service.set_log_retention_days(7).await.unwrap();
+        assert_eq!(service.get_log_retention_days().await, 7);
+
+        // Set to 0 (keep forever)
+        service.set_log_retention_days(0).await.unwrap();
+        assert_eq!(service.get_log_retention_days().await, 0);
     }
 }

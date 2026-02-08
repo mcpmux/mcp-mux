@@ -787,7 +787,7 @@ export function ServersPage() {
             className="flex items-center gap-2 px-4 py-2 text-sm border border-[rgb(var(--border))] rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors"
           >
             <FileJson className="h-4 w-4" />
-            Add Server Manually
+            Add Custom Server
           </button>
         )}
       </div>

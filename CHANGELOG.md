@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.9](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.8...v0.0.9) (2026-02-09)
+
+
+### Bug Fixes
+
+* render server icon URLs as images instead of raw text ([#57](https://github.com/MCP-Mux/mcp-mux/issues/57)) ([5a94708](https://github.com/MCP-Mux/mcp-mux/commit/5a94708dcddd47c26183bd18c6abd348c91f976c))
+
 ## [0.0.8](https://github.com/MCP-Mux/mcp-mux/compare/v0.0.7...v0.0.8) (2026-02-09)
 
 

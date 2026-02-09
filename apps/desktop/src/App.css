@@ -64,19 +64,11 @@
   animation-name: scale-in;
 }
 
-/* Logo hover effects */
+/* Logo hover effects — McpMux brand */
 .logo {
   transition: filter 0.3s ease;
 }
 
-.logo.tauri:hover {
+.logo.mcpmux:hover {
   filter: drop-shadow(0 0 1.5em rgb(var(--primary)));
-}
-
-.logo.vite:hover {
-  filter: drop-shadow(0 0 1.5em #747bff);
-}
-
-.logo.react:hover {
-  filter: drop-shadow(0 0 1.5em #61dafb);
 }

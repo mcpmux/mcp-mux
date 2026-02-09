@@ -332,7 +332,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
               onClick={() => toggleSection('settings')}
               className={`w-full flex items-center justify-between p-4 transition-all ${
                 expandedSections.settings 
-                  ? 'bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-900/20 dark:to-slate-900/20' 
+                  ? 'bg-gradient-to-r from-primary-50 to-primary-100/50 dark:from-primary-900/10 dark:to-primary-800/10' 
                   : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]'
               }`}
             >

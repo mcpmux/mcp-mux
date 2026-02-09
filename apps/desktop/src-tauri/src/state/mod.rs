@@ -128,7 +128,7 @@ impl AppState {
         info!("Using spaces directory: {:?}", spaces_dir);
 
         let registry_url = std::env::var("MCPMUX_REGISTRY_URL")
-            .unwrap_or_else(|_| "http://localhost:8787".to_string());
+            .unwrap_or_else(|_| "https://api.mcpmux.com".to_string());
         info!("Using Registry API URL: {}", registry_url);
 
         let server_discovery = Arc::new(

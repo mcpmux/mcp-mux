@@ -4,93 +4,92 @@
 
 @layer base {
   :root {
-    /* Light theme - Material Design 3 inspired */
-    /* Surface tones for elevation */
-    --background: 250 250 250;           /* Slightly off-white */
+    /* Light theme — Neutral surfaces, terracotta accent */
+    --background: 249 249 249;           /* Clean off-white */
     --foreground: 28 28 30;              /* Near black */
-    
+
     --surface: 255 255 255;              /* Pure white for cards */
-    --surface-dim: 245 245 245;          /* Slightly dimmed surface */
-    --surface-hover: 240 240 243;
-    --surface-active: 230 230 235;
-    
+    --surface-dim: 244 244 245;          /* Slightly dimmed */
+    --surface-hover: 240 240 242;        /* Hover */
+    --surface-active: 232 232 235;       /* Active */
+
     /* Elevated surfaces (dropdowns, modals) */
     --surface-elevated: 255 255 255;
     --surface-overlay: 255 255 255;
-    
-    --border: 218 218 222;
-    --border-subtle: 235 235 238;
-    
-    --muted: 108 108 112;
-    --muted-foreground: 140 140 145;
-    
-    /* Primary - Cyan/Teal */
-    --primary: 6 182 212;
-    --primary-hover: 8 145 178;
+
+    --border: 225 220 216;              /* Very slight warm tint */
+    --border-subtle: 238 234 230;       /* Subtle warm tint */
+
+    --muted: 118 110 105;              /* Slightly warm gray */
+    --muted-foreground: 152 144 138;
+
+    /* Primary — Terracotta */
+    --primary: 218 119 86;              /* #DA7756 */
+    --primary-hover: 184 85 58;         /* #B8553A (sienna) */
     --primary-foreground: 255 255 255;
-    
+
     /* Semantic colors */
     --success: 34 197 94;
     --warning: 245 158 11;
     --error: 239 68 68;
     --info: 59 130 246;
-    
+
     /* Card specific */
     --card: 255 255 255;
     --card-foreground: 28 28 30;
-    
+
     /* Input */
     --input: 255 255 255;
-    --input-border: 209 213 219;
-    
-    /* Shadows - visible in light mode */
+    --input-border: 215 210 206;
+
+    /* Shadows — neutral with subtle warmth */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.06);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.06);
   }
 
   .dark {
-    /* Dark theme - Material Design 3 dark */
-    --background: 18 18 20;              /* Dark background */
-    --foreground: 245 245 247;           /* Light text */
-    
-    --surface: 28 28 32;                 /* Card surface */
-    --surface-dim: 22 22 26;
-    --surface-hover: 42 42 48;
-    --surface-active: 55 55 62;
-    
-    /* Elevated surfaces - slightly lighter in dark mode */
-    --surface-elevated: 38 38 44;
-    --surface-overlay: 45 45 52;
-    
-    --border: 55 55 62;
-    --border-subtle: 42 42 48;
-    
-    --muted: 156 156 162;
-    --muted-foreground: 120 120 128;
-    
-    /* Primary - brighter in dark */
-    --primary: 34 211 238;
-    --primary-hover: 6 182 212;
-    --primary-foreground: 18 18 20;
-    
-    /* Semantic colors - slightly brighter */
+    /* Dark theme — Neutral dark with warm accent */
+    --background: 20 20 22;              /* Dark neutral */
+    --foreground: 245 244 243;           /* Slightly warm white */
+
+    --surface: 30 30 33;                 /* Card surface */
+    --surface-dim: 24 24 27;
+    --surface-hover: 44 42 46;
+    --surface-active: 56 54 58;
+
+    /* Elevated surfaces */
+    --surface-elevated: 38 37 41;
+    --surface-overlay: 46 44 48;
+
+    --border: 56 53 50;                  /* Slight warm tint */
+    --border-subtle: 44 42 40;
+
+    --muted: 160 155 150;               /* Warm gray */
+    --muted-foreground: 125 120 115;
+
+    /* Primary — Warm Coral (brighter for dark mode readability) */
+    --primary: 232 149 106;             /* #E8956A */
+    --primary-hover: 218 119 86;        /* #DA7756 */
+    --primary-foreground: 20 20 22;
+
+    /* Semantic colors — slightly brighter */
     --success: 74 222 128;
     --warning: 251 191 36;
     --error: 248 113 113;
     --info: 96 165 250;
-    
+
     /* Card */
-    --card: 28 28 32;
-    --card-foreground: 245 245 247;
-    
+    --card: 30 30 33;
+    --card-foreground: 245 244 243;
+
     /* Input */
-    --input: 38 38 44;
-    --input-border: 55 55 62;
-    
-    /* Shadows - more subtle in dark mode */
+    --input: 38 37 41;
+    --input-border: 56 53 50;
+
+    /* Shadows */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
     --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.3);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);

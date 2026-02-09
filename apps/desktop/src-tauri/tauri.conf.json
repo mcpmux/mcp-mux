@@ -34,7 +34,8 @@
         "minWidth": 800,
         "minHeight": 600,
         "center": true,
-        "preventOverflow": true
+        "preventOverflow": true,
+        "decorations": false
       }
     ],
     "security": {

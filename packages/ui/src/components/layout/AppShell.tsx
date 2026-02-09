@@ -5,14 +5,25 @@ interface AppShellProps {
   sidebar: ReactNode;
   children: ReactNode;
   statusBar?: ReactNode;
+  titleBar?: ReactNode;
+  windowControls?: ReactNode;
   className?: string;
 }
 
-export function AppShell({ sidebar, children, statusBar, className }: AppShellProps) {
+export function AppShell({ sidebar, children, statusBar, titleBar, windowControls, className }: AppShellProps) {
   return (
     <div className={cn('flex h-screen flex-col overflow-hidden bg-[rgb(var(--background))]', className)}>
-      {/* Title bar (draggable) */}
-      <div className="drag-region h-8 flex-shrink-0 bg-[rgb(var(--surface))] border-b border-[rgb(var(--border-subtle))]" />
+      {/* Custom title bar */}
+      {titleBar && (
+        <div className="h-9 flex-shrink-0 bg-[rgb(var(--surface))] border-b border-[rgb(var(--border-subtle))] flex items-center">
+          {/* Draggable area — fills space between logo and window controls */}
+          <div className="drag-region flex-1 h-full flex items-center">
+            {titleBar}
+          </div>
+          {/* Window controls — outside drag region so clicks work */}
+          {windowControls}
+        </div>
+      )}
 
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
@@ -36,4 +47,3 @@ export function AppShell({ sidebar, children, statusBar, className }: AppShellPr
     </div>
   );
 }
-

@@ -22,7 +22,7 @@ const LEVEL_COLORS: Record<LogLevel, string> = {
 
 const SOURCE_COLORS: Record<string, string> = {
   app: 'text-purple-400',
-  stdout: 'text-cyan-400',
+  stdout: 'text-primary-400',
   stderr: 'text-orange-400',
   'http-request': 'text-blue-300',
   'http-response': 'text-blue-400',

@@ -219,8 +219,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_bundle_from_local() {
-        // Assumes local dev server is running: pnpm dev
-        let client = RegistryApiClient::new("http://localhost:8787".to_string());
+        // Uses deployed API by default, or MCPMUX_REGISTRY_URL env var
+        let client = RegistryApiClient::new(
+            std::env::var("MCPMUX_REGISTRY_URL")
+                .unwrap_or_else(|_| "https://api.mcpmux.com".to_string()),
+        );
 
         let result = client.fetch_bundle(None).await;
 
@@ -241,7 +244,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_bundle_with_etag() {
-        let client = RegistryApiClient::new("http://localhost:8787".to_string());
+        let client = RegistryApiClient::new(
+            std::env::var("MCPMUX_REGISTRY_URL")
+                .unwrap_or_else(|_| "https://api.mcpmux.com".to_string()),
+        );
 
         // First fetch to get ETag
         let first_result = client.fetch_bundle(None).await;

@@ -14,6 +14,16 @@ export async function invoke<T>(command: string, args?: Record<string, unknown>)
   }, command, args || {}) as Promise<T>;
 }
 
+// Emit a Tauri event (for simulating deep link events in tests)
+export async function emitEvent(event: string, payload: unknown): Promise<void> {
+  return browser.execute(async (evt: string, data: unknown) => {
+    if (!window.__TAURI_TEST_API__?.emit) {
+      throw new Error('Tauri Test API emit not available');
+    }
+    return window.__TAURI_TEST_API__.emit(evt, data);
+  }, event, payload) as Promise<void>;
+}
+
 // ============================================================================
 // Space API
 // ============================================================================

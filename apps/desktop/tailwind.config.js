@@ -9,19 +9,34 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Brand colors - using cyan/teal for McpMux identity
+        // McpMux brand colors — terracotta/warm palette
         primary: {
-          50: '#ecfeff',
-          100: '#cffafe',
-          200: '#a5f3fc',
-          300: '#67e8f9',
-          400: '#22d3ee',
-          500: '#06b6d4',
-          600: '#0891b2',
-          700: '#0e7490',
-          800: '#155e75',
-          900: '#164e63',
-          950: '#083344',
+          50: '#fef7f4',
+          100: '#fde8df',
+          200: '#fbd0be',
+          300: '#f6ab8a',
+          400: '#E8956A',
+          500: '#DA7756',
+          600: '#C96442',
+          700: '#B8553A',
+          800: '#8B3D20',
+          900: '#6B2E18',
+          950: '#3D1A0D',
+        },
+        // McpMux extended brand palette
+        mcpmux: {
+          terracotta: '#DA7756',
+          sienna: '#B8553A',
+          deep: '#C2593A',
+          warm: '#E8956A',
+          ember: '#C96442',
+          amber: '#D4945A',
+          cream: '#FDF2E9',
+          'cream-deep': '#F5E0D0',
+          dark: '#1A120E',
+          'dark-surface': '#2D1A12',
+          ochre: '#C68B59',
+          burnt: '#8B3D20',
         },
         // Surface colors (uses CSS variables)
         surface: {

@@ -1,7 +1,7 @@
 //! Tauri commands for server log management
 
 use crate::state::AppState;
-use mcpmux_core::{LogLevel, ServerLog};
+use mcpmux_core::{AppSettingsService, LogLevel, ServerLog};
 use serde::Serialize;
 use tauri::State;
 use tracing::{info, warn};
@@ -106,4 +106,34 @@ pub async fn get_server_log_file(
     let path = state.server_log_manager.get_log_file(&space_id, &server_id);
 
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Get log retention period in days (0 = keep forever)
+#[tauri::command]
+pub async fn get_log_retention_days(state: State<'_, AppState>) -> Result<u32, String> {
+    let settings = AppSettingsService::new(state.settings_repository.clone());
+    Ok(settings.get_log_retention_days().await)
+}
+
+/// Set log retention period in days (0 = keep forever)
+#[tauri::command]
+pub async fn set_log_retention_days(days: u32, state: State<'_, AppState>) -> Result<(), String> {
+    info!("[Logs] Setting log retention to {} days", days);
+
+    let settings = AppSettingsService::new(state.settings_repository.clone());
+    settings
+        .set_log_retention_days(days)
+        .await
+        .map_err(|e| format!("Failed to save log retention setting: {}", e))?;
+
+    // Run cleanup immediately with the new setting if retention is enabled
+    if days > 0 {
+        match state.server_log_manager.cleanup_logs_older_than(days).await {
+            Ok(n) if n > 0 => info!("[Logs] Cleaned up {} old log file(s)", n),
+            Ok(_) => {}
+            Err(e) => warn!("[Logs] Cleanup after setting change failed: {}", e),
+        }
+    }
+
+    Ok(())
 }

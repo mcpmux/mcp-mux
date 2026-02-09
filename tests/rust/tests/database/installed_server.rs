@@ -397,3 +397,317 @@ async fn test_installed_server_list_enabled_all() {
     assert_eq!(enabled_all.len(), 2);
     assert!(enabled_all.iter().all(|s| s.enabled));
 }
+
+#[tokio::test]
+async fn test_installed_server_env_overrides_persist() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "env-server");
+    server
+        .env_overrides
+        .insert("NODE_ENV".to_string(), "production".to_string());
+    server
+        .env_overrides
+        .insert("DEBUG".to_string(), "true".to_string());
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .expect("Failed to install server");
+
+    // Retrieve and verify env_overrides persisted
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.env_overrides.len(), 2);
+    assert_eq!(
+        loaded.env_overrides.get("NODE_ENV"),
+        Some(&"production".to_string())
+    );
+    assert_eq!(loaded.env_overrides.get("DEBUG"), Some(&"true".to_string()));
+}
+
+#[tokio::test]
+async fn test_installed_server_args_append_persist() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "args-server");
+    server.args_append = vec![
+        "--verbose".to_string(),
+        "--port".to_string(),
+        "8080".to_string(),
+    ];
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .expect("Failed to install server");
+
+    // Retrieve and verify args_append persisted
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.args_append.len(), 3);
+    assert_eq!(loaded.args_append[0], "--verbose");
+    assert_eq!(loaded.args_append[1], "--port");
+    assert_eq!(loaded.args_append[2], "8080");
+}
+
+#[tokio::test]
+async fn test_installed_server_extra_headers_persist() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "headers-server");
+    server
+        .extra_headers
+        .insert("Authorization".to_string(), "Bearer token123".to_string());
+    server
+        .extra_headers
+        .insert("X-Custom".to_string(), "value".to_string());
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .expect("Failed to install server");
+
+    // Retrieve and verify extra_headers persisted
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.extra_headers.len(), 2);
+    assert_eq!(
+        loaded.extra_headers.get("Authorization"),
+        Some(&"Bearer token123".to_string())
+    );
+    assert_eq!(
+        loaded.extra_headers.get("X-Custom"),
+        Some(&"value".to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_installed_server_update_preserves_custom_fields() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "update-server");
+    server
+        .env_overrides
+        .insert("KEY".to_string(), "value".to_string());
+    server.args_append = vec!["--flag".to_string()];
+    server
+        .extra_headers
+        .insert("X-Test".to_string(), "test".to_string());
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    // Update the server via the update method
+    let mut loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Modify custom fields
+    loaded
+        .env_overrides
+        .insert("KEY2".to_string(), "value2".to_string());
+    loaded.args_append.push("--extra".to_string());
+    loaded
+        .extra_headers
+        .insert("X-New".to_string(), "new".to_string());
+
+    InstalledServerRepository::update(&server_repo, &loaded)
+        .await
+        .expect("Failed to update server");
+
+    // Verify updated values persisted
+    let reloaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(reloaded.env_overrides.len(), 2);
+    assert_eq!(
+        reloaded.env_overrides.get("KEY"),
+        Some(&"value".to_string())
+    );
+    assert_eq!(
+        reloaded.env_overrides.get("KEY2"),
+        Some(&"value2".to_string())
+    );
+    assert_eq!(reloaded.args_append, vec!["--flag", "--extra"]);
+    assert_eq!(reloaded.extra_headers.len(), 2);
+    assert_eq!(
+        reloaded.extra_headers.get("X-Test"),
+        Some(&"test".to_string())
+    );
+    assert_eq!(
+        reloaded.extra_headers.get("X-New"),
+        Some(&"new".to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_installed_server_empty_custom_fields_by_default() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    // Install a server without setting any custom fields
+    let server = fixtures::test_installed_server(&space.id.to_string(), "default-server");
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    // Verify custom fields are empty by default
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(loaded.env_overrides.is_empty());
+    assert!(loaded.args_append.is_empty());
+    assert!(loaded.extra_headers.is_empty());
+}
+
+#[tokio::test]
+async fn test_installed_server_clear_custom_fields_via_update() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    // Install server WITH custom fields
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "clearable-server");
+    server
+        .env_overrides
+        .insert("KEY".to_string(), "value".to_string());
+    server.args_append = vec!["--flag".to_string()];
+    server
+        .extra_headers
+        .insert("X-Test".to_string(), "test".to_string());
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    // Verify they're set
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.env_overrides.len(), 1);
+    assert_eq!(loaded.args_append.len(), 1);
+    assert_eq!(loaded.extra_headers.len(), 1);
+
+    // Clear all fields by updating with empty collections
+    let mut to_update = loaded;
+    to_update.env_overrides = HashMap::new();
+    to_update.args_append = Vec::new();
+    to_update.extra_headers = HashMap::new();
+
+    InstalledServerRepository::update(&server_repo, &to_update)
+        .await
+        .expect("Failed to update server");
+
+    // Verify they're cleared
+    let cleared = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        cleared.env_overrides.is_empty(),
+        "env_overrides should be empty after clearing"
+    );
+    assert!(
+        cleared.args_append.is_empty(),
+        "args_append should be empty after clearing"
+    );
+    assert!(
+        cleared.extra_headers.is_empty(),
+        "extra_headers should be empty after clearing"
+    );
+}
+
+#[tokio::test]
+async fn test_installed_server_special_characters_persist() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "special-server");
+    // Values with special characters
+    server.env_overrides.insert(
+        "PATH_WITH=EQUALS".to_string(),
+        "value with \"quotes\" and 'apostrophes'".to_string(),
+    );
+    server.args_append = vec![
+        "--config=/path/to/file with spaces".to_string(),
+        "unicode: 日本語".to_string(),
+    ];
+    server
+        .extra_headers
+        .insert("Authorization".to_string(), "Bearer tok3n+/=".to_string());
+
+    let server_id = server.id;
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    let loaded = InstalledServerRepository::get(&server_repo, &server_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        loaded.env_overrides.get("PATH_WITH=EQUALS"),
+        Some(&"value with \"quotes\" and 'apostrophes'".to_string())
+    );
+    assert_eq!(loaded.args_append[0], "--config=/path/to/file with spaces");
+    assert_eq!(loaded.args_append[1], "unicode: 日本語");
+    assert_eq!(
+        loaded.extra_headers.get("Authorization"),
+        Some(&"Bearer tok3n+/=".to_string())
+    );
+}

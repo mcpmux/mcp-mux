@@ -465,6 +465,7 @@ function DashboardView() {
             <div className="relative">
               <pre className="bg-mcpmux-dark text-primary-100 p-4 rounded-lg text-sm overflow-x-auto font-mono">
 {`"mcpmux": {
+  "type": "http",
   "url": "${gatewayStatus.url || 'http://localhost:3100'}/mcp"
 }`}
               </pre>
@@ -473,7 +474,7 @@ function DashboardView() {
                 size="sm"
                 className="absolute top-2 right-2"
                 onClick={async () => {
-                  const config = `"mcpmux": {\n  "url": "${gatewayStatus.url || 'http://localhost:3100'}/mcp"\n}`;
+                  const config = `"mcpmux": {\n  "type": "http",\n  "url": "${gatewayStatus.url || 'http://localhost:3100'}/mcp"\n}`;
                   await navigator.clipboard.writeText(config);
                   setExportSuccess('Config copied to clipboard!');
                   setTimeout(() => setExportSuccess(null), 2000);

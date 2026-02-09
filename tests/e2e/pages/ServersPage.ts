@@ -15,7 +15,7 @@ export class ServersPage extends BasePage {
   constructor(page: Page) {
     super(page);
     this.heading = page.getByRole('heading', { name: 'My Servers' });
-    this.addServerButton = page.getByRole('button', { name: /Add Server Manually/i });
+    this.addServerButton = page.getByRole('button', { name: /Add Custom Server/i });
     this.gatewayStatus = page.locator('text=Gateway Running, text=Gateway Stopped').first();
     this.startGatewayButton = page.getByRole('button', { name: 'Start Gateway' });
     this.serverList = page.locator('.space-y-3');

@@ -33,6 +33,9 @@ export default defineConfig({
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    launchOptions: {
+      args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+    },
   },
   projects: [
     {

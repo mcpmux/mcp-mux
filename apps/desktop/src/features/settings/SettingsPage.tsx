@@ -21,6 +21,7 @@ import {
   Power,
   Minimize2,
   XCircle,
+  Trash2,
 } from 'lucide-react';
 import { useAppStore, useTheme } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
@@ -47,6 +48,10 @@ export function SettingsPage() {
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Log retention state
+  const [logRetentionDays, setLogRetentionDays] = useState<number>(30);
+  const [savingRetention, setSavingRetention] = useState(false);
+
   // Load logs path on mount
   useEffect(() => {
     const loadLogsPath = async () => {
@@ -58,6 +63,19 @@ export function SettingsPage() {
       }
     };
     loadLogsPath();
+  }, []);
+
+  // Load log retention setting on mount
+  useEffect(() => {
+    const loadRetention = async () => {
+      try {
+        const days = await invoke<number>('get_log_retention_days');
+        setLogRetentionDays(days);
+      } catch (err) {
+        console.error('Failed to load log retention setting:', err);
+      }
+    };
+    loadRetention();
   }, []);
 
   // Load startup settings on mount
@@ -106,6 +124,22 @@ export function SettingsPage() {
       setStartupSettings(oldSettings);
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleRetentionChange = async (days: number) => {
+    const oldDays = logRetentionDays;
+    setLogRetentionDays(days);
+    setSavingRetention(true);
+    try {
+      await invoke('set_log_retention_days', { days });
+      success('Settings saved', `Log retention set to ${days === 0 ? 'keep forever' : `${days} days`}`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      error('Failed to save setting', errorMessage);
+      setLogRetentionDays(oldDays);
+    } finally {
+      setSavingRetention(false);
     }
   };
 
@@ -300,6 +334,33 @@ export function SettingsPage() {
                 )}
                 Open Logs Folder
               </Button>
+            </div>
+            <div className="border-t border-[rgb(var(--border))] pt-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <Trash2 className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+                  <div>
+                    <label className="text-sm font-medium">Auto-Cleanup</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      Automatically delete log files older than the selected period
+                    </p>
+                  </div>
+                </div>
+                <select
+                  value={logRetentionDays}
+                  onChange={(e) => handleRetentionChange(Number(e.target.value))}
+                  disabled={savingRetention}
+                  className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))] text-[rgb(var(--foreground))]"
+                  data-testid="log-retention-select"
+                >
+                  <option value={7}>7 days</option>
+                  <option value={14}>14 days</option>
+                  <option value={30}>30 days</option>
+                  <option value={60}>60 days</option>
+                  <option value={90}>90 days</option>
+                  <option value={0}>Keep forever</option>
+                </select>
+              </div>
             </div>
             <p className="text-xs text-[rgb(var(--muted))]">
               Logs are rotated daily. Each file contains detailed debug information including thread IDs and source locations.

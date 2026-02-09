@@ -165,7 +165,7 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
         <div className="flex items-center justify-between p-4 border-b border-[rgb(var(--border))]">
           <div>
             <h3 className="text-lg font-semibold flex items-center gap-2">
-              Add Server Manually
+              Add Custom Server
             </h3>
             <p className="text-sm text-[rgb(var(--muted))]">
               Edit the JSON configuration for space: {spaceName}

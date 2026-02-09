@@ -33,7 +33,7 @@ describe('Comprehensive: Space Isolation', () => {
   let defaultSpaceId: string;
   let workSpaceId: string;
   let personalSpaceId: string;
-  const echoServerId = 'echo-server'; // From mock bundle
+  const githubServerId = 'github-server'; // From mock bundle
 
   before(async () => {
     // Get default space
@@ -52,15 +52,15 @@ describe('Comprehensive: Space Isolation', () => {
   });
 
   it('TC-COMP-SP-001: Install server only in Work space', async () => {
-    // Install Echo server in Work space only
-    await installServer(echoServerId, workSpaceId);
+    // Install GitHub server in Work space only
+    await installServer(githubServerId, workSpaceId);
 
     // Verify isolation
     const workServers = await listInstalledServers(workSpaceId);
     const personalServers = await listInstalledServers(personalSpaceId);
 
-    const hasInWork = workServers.some(s => s.server_id === echoServerId || s.id === echoServerId);
-    const notInPersonal = !personalServers.some(s => s.server_id === echoServerId || s.id === echoServerId);
+    const hasInWork = workServers.some(s => s.server_id === githubServerId || s.id === githubServerId);
+    const notInPersonal = !personalServers.some(s => s.server_id === githubServerId || s.id === githubServerId);
     expect(hasInWork).toBe(true);
     expect(notInPersonal).toBe(true);
 
@@ -75,7 +75,7 @@ describe('Comprehensive: Space Isolation', () => {
 
     // Enable server - MCP handshake can fail on CI, so wrap in try-catch
     try {
-      await enableServerV2(workSpaceId, echoServerId);
+      await enableServerV2(workSpaceId, githubServerId);
       await browser.pause(5000); // Wait for connection (longer for CI)
     } catch (e) {
       console.log('[test] Enable server failed (may be expected on CI):', e);
@@ -84,7 +84,7 @@ describe('Comprehensive: Space Isolation', () => {
     // Check for server-all FeatureSet (may or may not exist depending on connection success)
     const featureSets = await listFeatureSetsBySpace(workSpaceId);
     const serverAllFs = featureSets.find(
-      fs => fs.feature_set_type === 'server-all' && fs.server_id === echoServerId
+      fs => fs.feature_set_type === 'server-all' && fs.server_id === githubServerId
     );
 
     console.log('[test] FeatureSets in Work space:', featureSets.map(fs => fs.name));
@@ -105,10 +105,10 @@ describe('Comprehensive: Space Isolation', () => {
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-01-work-servers.png');
 
     const pageSource = await browser.getPageSource();
-    const hasEchoOrServer = pageSource.includes('Echo') || pageSource.includes('echo') ||
+    const hasGithubOrServer = pageSource.includes('GitHub') || pageSource.includes('github') ||
       pageSource.includes('Enable') || pageSource.includes('Disable') ||
       (pageSource.includes('My Servers') && pageSource.includes('installed-server'));
-    expect(hasEchoOrServer).toBe(true);
+    expect(hasGithubOrServer).toBe(true);
   });
 
   it('TC-COMP-SP-004: Switch space and verify server not visible', async () => {
@@ -122,18 +122,18 @@ describe('Comprehensive: Space Isolation', () => {
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-02-personal-servers.png');
 
-    // Personal space should not have Echo server
+    // Personal space should not have GitHub server
     const servers = await listInstalledServers(personalSpaceId);
-    expect(servers.some(s => s.server_id === echoServerId || s.id === echoServerId)).toBe(false);
+    expect(servers.some(s => s.server_id === githubServerId || s.id === githubServerId)).toBe(false);
   });
 
   after(async () => {
     // Cleanup
     try {
-      await disableServerV2(workSpaceId, echoServerId);
+      await disableServerV2(workSpaceId, githubServerId);
     } catch (e) { /* ignore */ }
     try {
-      await uninstallServer(echoServerId, workSpaceId);
+      await uninstallServer(githubServerId, workSpaceId);
     } catch (e) { /* ignore */ }
     try {
       await deleteSpace(workSpaceId);
@@ -218,7 +218,7 @@ describe('Comprehensive: Client Grants', () => {
 
 describe('Comprehensive: Server Lifecycle with API', () => {
   let defaultSpaceId: string;
-  const serverId = 'echo-server'; // From mock bundle
+  const serverId = 'github-server'; // From mock bundle
 
   before(async () => {
     const activeSpace = await getActiveSpace();
@@ -249,10 +249,10 @@ describe('Comprehensive: Server Lifecycle with API', () => {
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-04-server-installed.png');
 
     const pageSource = await browser.getPageSource();
-    // Check for Echo Server or related content
-    const hasServer = 
-      pageSource.includes('Echo') || 
-      pageSource.includes('echo') ||
+    // Check for GitHub Server or related content
+    const hasServer =
+      pageSource.includes('GitHub') ||
+      pageSource.includes('github') ||
       pageSource.includes('Server') ||
       pageSource.includes('Enable');
     
@@ -289,7 +289,7 @@ describe('Comprehensive: Server Lifecycle with API', () => {
       pageSource.includes('Connected') ||
       pageSource.includes('Disable') ||
       pageSource.includes('tools') ||
-      pageSource.includes('Echo') ||
+      pageSource.includes('GitHub') ||
       pageSource.includes('Enable')
     ).toBe(true);
   });
@@ -378,7 +378,7 @@ describe('Comprehensive: Custom FeatureSet', () => {
 describe('Comprehensive: Multi-Space Server Management', () => {
   let defaultSpaceId: string;
   const testSpaces: string[] = [];
-  const serverId = 'echo-server'; // From mock bundle
+  const serverId = 'github-server'; // From mock bundle
 
   before(async () => {
     const activeSpace = await getActiveSpace();

@@ -200,10 +200,10 @@ export function SpacesPage() {
                     }`}
                     data-testid={`space-card-${space.id}`}
                   >
-                    <CardContent className="p-5">
+                    <CardContent className="p-4">
                       {/* Header */}
-                      <div className="flex items-start gap-3 mb-4">
-                        <div className="w-11 h-11 flex items-center justify-center bg-[rgb(var(--surface))] rounded-lg text-2xl border border-[rgb(var(--border-subtle))] flex-shrink-0">
+                      <div className="flex items-start gap-2.5 mb-3">
+                        <div className="w-9 h-9 flex items-center justify-center bg-[rgb(var(--surface))] rounded-lg text-xl border border-[rgb(var(--border-subtle))] flex-shrink-0">
                           {space.icon || '🌐'}
                         </div>
                         <div className="flex-1 min-w-0">

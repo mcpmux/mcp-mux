@@ -12,7 +12,7 @@ import {
   uninstallServer,
 } from '../helpers/tauri-api';
 
-const ECHO_SERVER_ID = 'echo-server';
+const GITHUB_SERVER_ID = 'github-server';
 
 /** Simulate a deep link install event (as if mcpmux://install?server=xxx was received) */
 async function simulateInstallDeepLink(serverId: string) {
@@ -27,25 +27,25 @@ describe('Deep Link Install - Valid Server', () => {
     const space = await getActiveSpace();
     activeSpaceId = space?.id || '';
 
-    // Ensure echo-server is not installed (clean state)
+    // Ensure github-server is not installed (clean state)
     if (activeSpaceId) {
       const installed = await listInstalledServers(activeSpaceId);
-      const echoInstalled = installed.some(
-        (s) => s.server_id === ECHO_SERVER_ID
+      const githubInstalled = installed.some(
+        (s) => s.server_id === GITHUB_SERVER_ID
       );
-      if (echoInstalled) {
+      if (githubInstalled) {
         try {
-          await uninstallServer(ECHO_SERVER_ID, activeSpaceId);
+          await uninstallServer(GITHUB_SERVER_ID, activeSpaceId);
           await browser.pause(1000);
         } catch (e) {
-          console.log('[setup] Could not uninstall echo-server:', e);
+          console.log('[setup] Could not uninstall github-server:', e);
         }
       }
     }
   });
 
   it('TC-DL-001: Deep link shows install modal with server info', async () => {
-    await simulateInstallDeepLink(ECHO_SERVER_ID);
+    await simulateInstallDeepLink(GITHUB_SERVER_ID);
     await browser.pause(3000); // Wait for server definition lookup
 
     await browser.saveScreenshot(
@@ -66,7 +66,7 @@ describe('Deep Link Install - Valid Server', () => {
       const nameDisplayed = await serverName.isDisplayed().catch(() => false);
       if (nameDisplayed) {
         const text = await serverName.getText();
-        expect(text).toContain('Echo');
+        expect(text).toContain('GitHub');
       }
     }
   });
@@ -125,16 +125,16 @@ describe('Deep Link Install - Valid Server', () => {
     // Verify server is actually installed via API
     if (activeSpaceId) {
       const installed = await listInstalledServers(activeSpaceId);
-      const echoInstalled = installed.some(
-        (s) => s.server_id === ECHO_SERVER_ID
+      const githubInstalled = installed.some(
+        (s) => s.server_id === GITHUB_SERVER_ID
       );
-      expect(echoInstalled).toBe(true);
+      expect(githubInstalled).toBe(true);
     }
   });
 
   it('TC-DL-004: Deep link for already-installed server shows warning', async () => {
-    // Echo server was installed in TC-DL-003
-    await simulateInstallDeepLink(ECHO_SERVER_ID);
+    // GitHub server was installed in TC-DL-003
+    await simulateInstallDeepLink(GITHUB_SERVER_ID);
     await browser.pause(3000);
 
     await browser.saveScreenshot(
@@ -169,14 +169,14 @@ describe('Deep Link Install - Valid Server', () => {
     // First uninstall so we get a clean modal
     if (activeSpaceId) {
       try {
-        await uninstallServer(ECHO_SERVER_ID, activeSpaceId);
+        await uninstallServer(GITHUB_SERVER_ID, activeSpaceId);
         await browser.pause(1000);
       } catch (e) {
         /* ignore */
       }
     }
 
-    await simulateInstallDeepLink(ECHO_SERVER_ID);
+    await simulateInstallDeepLink(GITHUB_SERVER_ID);
     await browser.pause(3000);
 
     const modal = await byTestId('install-modal');
@@ -199,10 +199,10 @@ describe('Deep Link Install - Valid Server', () => {
   });
 
   after(async () => {
-    // Cleanup: uninstall echo-server if it was installed
+    // Cleanup: uninstall github-server if it was installed
     if (activeSpaceId) {
       try {
-        await uninstallServer(ECHO_SERVER_ID, activeSpaceId);
+        await uninstallServer(GITHUB_SERVER_ID, activeSpaceId);
       } catch (e) {
         /* ignore */
       }
@@ -214,16 +214,19 @@ describe('Deep Link Install - Valid Server', () => {
 describe('Deep Link Install - Invalid Server', () => {
   it('TC-DL-006: Deep link with unknown server ID shows error', async () => {
     await simulateInstallDeepLink('nonexistent-server-12345');
-    await browser.pause(3000);
+
+    // Wait for the error modal to appear (loading -> error can take time)
+    const errorModal = await byTestId('install-modal-error');
+    const appeared = await errorModal
+      .waitForDisplayed({ timeout: TIMEOUT.long })
+      .then(() => true)
+      .catch(() => false);
 
     await browser.saveScreenshot(
       './tests/e2e/screenshots/dl-06-not-found.png'
     );
 
-    const errorModal = await byTestId('install-modal-error');
-    const isDisplayed = await errorModal.isDisplayed().catch(() => false);
-
-    if (isDisplayed) {
+    if (appeared) {
       // Error message should mention the server was not found
       const errorMsg = await byTestId('install-modal-error-message');
       const text = await errorMsg.getText().catch(() => '');
@@ -235,7 +238,7 @@ describe('Deep Link Install - Invalid Server', () => {
       await browser.pause(1000);
       await waitForModalClose();
     } else {
-      // On slow CI, check page source
+      // Fallback: check page source for error text
       const pageSource = await browser.getPageSource();
       const hasError =
         pageSource.includes('not found') ||

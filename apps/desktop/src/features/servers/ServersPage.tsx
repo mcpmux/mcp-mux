@@ -899,6 +899,7 @@ export function ServersPage() {
                         <button
                           onClick={() => toggleExpanded(server.id)}
                           className="p-1 rounded hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                          data-testid={`expand-server-${server.id}`}
                         >
                           {isExpanded ? (
                             <ChevronDown className="h-5 w-5 text-[rgb(var(--muted))]" />
@@ -908,7 +909,13 @@ export function ServersPage() {
                         </button>
                       )}
                       
-                      <div className="text-3xl">{server.icon || '📦'}</div>
+                      <div className="text-3xl flex items-center justify-center">
+                        {server.icon?.startsWith('http') ? (
+                          <img src={server.icon} alt="" className="w-8 h-8 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.append(document.createTextNode('📦')); }} />
+                        ) : (
+                          server.icon || '📦'
+                        )}
+                      </div>
                       <div>
                         <div className="font-medium">{server.name}</div>
                         <div className="text-sm text-[rgb(var(--muted))] max-w-md truncate">

@@ -172,20 +172,28 @@ export function FeatureSetsPage() {
     loadData(viewSpace?.id); // Refresh list to get updated member counts etc.
   };
 
-  // Filter feature sets (backend already filters server-all for disabled servers)
-  const filteredSets = featureSets.filter(fs => {
-    // Hide implicit custom sets
-    if (fs.name.endsWith(' - Custom')) return false;
-    
-    // Apply search filter
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      fs.name.toLowerCase().includes(query) ||
-      fs.description?.toLowerCase().includes(query) ||
-      fs.feature_set_type.toLowerCase().includes(query)
-    );
-  });
+  // Filter and sort feature sets (backend already filters server-all for disabled servers)
+  const filteredSets = featureSets
+    .filter(fs => {
+      // Hide implicit custom sets
+      if (fs.name.endsWith(' - Custom')) return false;
+
+      // Apply search filter
+      if (!searchQuery) return true;
+      const query = searchQuery.toLowerCase();
+      return (
+        fs.name.toLowerCase().includes(query) ||
+        fs.description?.toLowerCase().includes(query) ||
+        fs.feature_set_type.toLowerCase().includes(query)
+      );
+    })
+    .sort((a, b) => {
+      // Sort order: all → default → custom → server-all
+      const order: Record<string, number> = { all: 0, default: 1, custom: 2, 'server-all': 3 };
+      const aOrder = order[a.feature_set_type] ?? 2;
+      const bOrder = order[b.feature_set_type] ?? 2;
+      return aOrder - bOrder;
+    });
 
   return (
     <>

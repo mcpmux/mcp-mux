@@ -102,7 +102,13 @@ export function ServerCard({
     >
       {/* Header */}
       <div className="flex items-start gap-3 mb-3">
-        <div className="text-3xl flex-shrink-0">{server.icon || '📦'}</div>
+        <div className="text-3xl flex-shrink-0 flex items-center justify-center">
+          {server.icon?.startsWith('http') ? (
+            <img src={server.icon} alt="" className="w-9 h-9 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.append(document.createTextNode('📦')); }} />
+          ) : (
+            server.icon || '📦'
+          )}
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <h3 className="font-semibold truncate" title={server.name} data-testid={`server-name-${server.id}`}>

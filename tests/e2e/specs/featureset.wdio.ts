@@ -34,7 +34,7 @@ describe('FeatureSet - Builtin Sets', () => {
 });
 
 describe('FeatureSet - Server-All Auto Creation', () => {
-  it('Setup: Install and Enable Echo Server', async () => {
+  it('Setup: Install and Enable GitHub Server', async () => {
     const discoverButton = await byTestId('nav-discover');
     await safeClick(discoverButton);
     await browser.pause(2000);
@@ -42,10 +42,10 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
-    await searchInput.setValue('Echo');
+    await searchInput.setValue('GitHub');
     await browser.pause(1000);
     
-    const installButton = await byTestId('install-btn-echo-server');
+    const installButton = await byTestId('install-btn-github-server');
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
@@ -59,7 +59,7 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     await safeClick(myServersButton);
     await browser.pause(2000);
     
-    const enableButton = await byTestId('enable-server-echo-server');
+    const enableButton = await byTestId('enable-server-github-server');
     const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
     
     if (isEnableDisplayed) {
@@ -79,31 +79,31 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     expect(isConnected).toBe(true);
   });
 
-  it('TC-FS-002: Verify server-all FeatureSet is created for Echo Server', async () => {
+  it('TC-FS-002: Verify server-all FeatureSet is created for GitHub Server', async () => {
     const featureSetsButton = await byTestId('nav-featuresets');
     await safeClick(featureSetsButton);
     await browser.pause(2000);
-    
+
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-03-featuresets-with-server.png');
-    
-    // Look for Echo Server's FeatureSet
+
+    // Look for GitHub Server's FeatureSet
     const pageSource = await browser.getPageSource();
-    const hasEchoFeatureSet = 
-      pageSource.includes('Echo Server') || 
-      pageSource.includes('Echo');
-    
-    console.log('[DEBUG] Has Echo FeatureSet:', hasEchoFeatureSet);
-    
-    // Echo Server feature set should appear when server is enabled
-    expect(hasEchoFeatureSet).toBe(true);
+    const hasGithubFeatureSet =
+      pageSource.includes('GitHub Server') ||
+      pageSource.includes('GitHub');
+
+    console.log('[DEBUG] Has GitHub FeatureSet:', hasGithubFeatureSet);
+
+    // GitHub Server feature set should appear when server is enabled
+    expect(hasGithubFeatureSet).toBe(true);
   });
 
-  it('TC-FS-003: Click on Echo Server FeatureSet to see its features', async () => {
+  it('TC-FS-003: Click on GitHub Server FeatureSet to see its features', async () => {
     const cards = await $$('[data-testid^="featureset-card-"]');
     let targetCard = null;
     for (const card of cards) {
       const text = await card.getText();
-      if (text.includes('Echo')) {
+      if (text.includes('GitHub')) {
         targetCard = card;
         break;
       }
@@ -117,10 +117,10 @@ describe('FeatureSet - Server-All Auto Creation', () => {
       
       await browser.saveScreenshot('./tests/e2e/screenshots/fs-04-featureset-details.png');
       
-      // Check for features (tools from Echo Server)
+      // Check for features (tools from GitHub Server)
       const pageSource = await browser.getPageSource();
       const hasFeatures = 
-        pageSource.includes('echo') || 
+        pageSource.includes('github') ||
         pageSource.includes('add') || 
         pageSource.includes('get_time') ||
         pageSource.includes('Tools') ||
@@ -158,7 +158,7 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     await myServersButton.click();
     await browser.pause(2000);
     
-    const disableButton = await byTestId('disable-server-echo-server');
+    const disableButton = await byTestId('disable-server-github-server');
     const isDisableDisplayed = await disableButton.isDisplayed().catch(() => false);
     
     if (isDisableDisplayed) {
@@ -173,14 +173,14 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-05-after-disable.png');
     
-    // Echo Server FeatureSet should be hidden (or less prominent)
+    // GitHub Server FeatureSet should be hidden (or less prominent)
     const pageSource = await browser.getPageSource();
     
     // The test passes if page loads - actual visibility depends on UI design
     expect(pageSource.includes('Feature')).toBe(true);
   });
 
-  it('Cleanup: Uninstall Echo Server', async () => {
+  it('Cleanup: Uninstall GitHub Server', async () => {
     // Close any open panel first
     const panelCloseBtn = await byTestId('featureset-panel-close');
     if (await panelCloseBtn.isDisplayed().catch(() => false)) {
@@ -196,10 +196,10 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
-    await searchInput.setValue('Echo');
+    await searchInput.setValue('GitHub');
     await browser.pause(1000);
     
-    const uninstallButton = await byTestId('uninstall-btn-echo-server');
+    const uninstallButton = await byTestId('uninstall-btn-github-server');
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {

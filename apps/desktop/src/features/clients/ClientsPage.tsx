@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import cursorIcon from '@/assets/client-icons/cursor.svg';
+import vscodeIcon from '@/assets/client-icons/vscode.png';
+import claudeIcon from '@/assets/client-icons/claude.svg';
+import windsurfIcon from '@/assets/client-icons/windsurf.svg';
 import {
   Laptop,
   Loader2,
@@ -75,17 +79,35 @@ const CONNECTION_MODES = [
   },
 ];
 
-// Client icon component
+// Bundled icons for well-known AI clients (matched by client_name)
+const KNOWN_CLIENT_ICONS: Record<string, string> = {
+  cursor: cursorIcon,
+  'vs code': vscodeIcon,
+  vscode: vscodeIcon,
+  'visual studio code': vscodeIcon,
+  'claude desktop': claudeIcon,
+  claude: claudeIcon,
+  windsurf: windsurfIcon,
+  codeium: windsurfIcon,
+};
+
+// Client icon component — uses bundled icon for known clients, falls back to logo_uri, then emoji
 function ClientIcon({ logo_uri, client_name }: { logo_uri?: string | null; client_name: string }) {
-  if (logo_uri) {
-    return <img src={logo_uri} alt={client_name} className="w-6 h-6 rounded" />;
+  const iconUrl = KNOWN_CLIENT_ICONS[client_name.toLowerCase()] || logo_uri;
+  if (iconUrl) {
+    return (
+      <img
+        src={iconUrl}
+        alt={client_name}
+        className="w-full h-full object-contain rounded"
+        onError={(e) => {
+          e.currentTarget.style.display = 'none';
+          e.currentTarget.parentElement!.append(document.createTextNode('🤖'));
+        }}
+      />
+    );
   }
-  
-  // Default icons based on client name
-  if (client_name.toLowerCase().includes('cursor')) return '⚡';
-  if (client_name.toLowerCase().includes('vscode')) return '💻';
-  if (client_name.toLowerCase().includes('code')) return '📝';
-  return '🤖';
+  return <span>🤖</span>;
 }
 
 export default function ClientsPage() {

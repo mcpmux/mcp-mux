@@ -656,6 +656,28 @@ pub async fn get_oauth_clients(
     Ok(client_infos)
 }
 
+/// Approve a registered OAuth client by ID (for E2E testing).
+/// In production, clients are approved via the consent flow.
+#[tauri::command]
+pub async fn approve_oauth_client(
+    client_id: String,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<(), String> {
+    let app_state = gateway_state.read().await;
+    let Some(ref gw_state) = app_state.gateway_state else {
+        return Err("Gateway not running".to_string());
+    };
+    let state = gw_state.read().await;
+    let Some(repo) = state.inbound_client_repository() else {
+        return Err("Database not available".to_string());
+    };
+    repo.approve_client(&client_id)
+        .await
+        .map_err(|e| format!("Failed to approve client: {}", e))?;
+    info!("[OAuth] Approved client via test command: {}", client_id);
+    Ok(())
+}
+
 /// Information about a connected OAuth client
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OAuthClientInfo {

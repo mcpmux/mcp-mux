@@ -1,8 +1,11 @@
 /**
  * Bundle Fixtures for E2E Testing
  *
- * These fixtures define test servers that point to our stub MCP servers,
+ * These fixtures define realistic MCP servers that point to our stub MCP servers,
  * covering all transport types, auth modes, and input configurations.
+ *
+ * For screenshots, the names/icons/descriptions are realistic (GitHub, Slack, etc.)
+ * but the actual transport commands/urls point to our local stub servers.
  */
 
 // Stub server ports
@@ -90,18 +93,18 @@ export interface RegistryBundle {
   };
 }
 
-// Test servers pointing to our stub MCP servers
+// Realistic MCP servers pointing to our stub servers for E2E
 const TEST_SERVERS: ServerDefinition[] = [
-  // 1. Stdio server with npx (no inputs, no auth) - simplest case
+  // 1. GitHub — stdio, no auth, official
   {
-    id: 'echo-server',
-    name: 'Echo Server',
-    alias: 'echo',
-    description: 'Simple echo server for testing - returns what you send',
-    icon: '🔊',
+    id: 'github-server',
+    name: 'GitHub',
+    alias: 'github',
+    description: 'Repository management, issues, pull requests, and code search via the GitHub API',
+    icon: 'https://cdn.simpleicons.org/github',
     schema_version: '2.0',
     categories: ['developer-tools'],
-    tags: ['test', 'echo', 'simple'],
+    tags: ['github', 'git', 'repository', 'issues'],
     transport: {
       type: 'stdio',
       command: 'node',
@@ -115,10 +118,14 @@ const TEST_SERVERS: ServerDefinition[] = [
       type: 'none',
     },
     publisher: {
-      name: 'McpMux Test',
+      name: 'Model Context Protocol',
+      domain: 'modelcontextprotocol.io',
       verified: true,
-      domain_verified: false,
-      official: false,
+      domain_verified: true,
+      official: true,
+    },
+    links: {
+      repository: 'https://github.com/modelcontextprotocol/servers',
     },
     platforms: ['all'],
     capabilities: {
@@ -128,70 +135,16 @@ const TEST_SERVERS: ServerDefinition[] = [
     },
   },
 
-  // 2. Stdio server with API key input
+  // 2. Filesystem — stdio, no auth, official
   {
-    id: 'api-key-server',
-    name: 'API Key Server',
-    alias: 'apikey',
-    description: 'Server requiring an API key input for testing input handling',
-    icon: '🔑',
-    schema_version: '2.0',
-    categories: ['developer-tools'],
-    tags: ['test', 'api-key', 'auth'],
-    transport: {
-      type: 'stdio',
-      command: 'node',
-      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
-      env: {
-        TEST_API_KEY: '${input:API_KEY}',
-      },
-      metadata: {
-        inputs: [
-          {
-            id: 'API_KEY',
-            label: 'Test API Key',
-            description: 'API key for testing (any value works)',
-            type: 'password',
-            required: true,
-            secret: true,
-            placeholder: 'test_key_xxx',
-            obtain: {
-              url: 'https://example.com/get-key',
-              instructions: 'For testing, enter any value',
-              button_label: 'Get Test Key',
-            },
-          },
-        ],
-      },
-    },
-    auth: {
-      type: 'api_key',
-      instructions: 'Enter any value for testing',
-    },
-    publisher: {
-      name: 'McpMux Test',
-      verified: true,
-      domain_verified: false,
-      official: false,
-    },
-    platforms: ['all'],
-    capabilities: {
-      tools: true,
-      resources: false,
-      prompts: false,
-    },
-  },
-
-  // 3. Stdio server with directory input (like Filesystem)
-  {
-    id: 'directory-server',
-    name: 'Directory Server',
-    alias: 'dir',
-    description: 'Server with directory path input for testing path inputs',
-    icon: '📂',
+    id: 'filesystem-server',
+    name: 'Filesystem',
+    alias: 'fs',
+    description: 'Secure file operations with configurable access controls and sandboxing',
+    icon: 'https://cdn.simpleicons.org/files/4285F4',
     schema_version: '2.0',
     categories: ['file-system'],
-    tags: ['test', 'directory', 'path'],
+    tags: ['filesystem', 'files', 'directory', 'local'],
     transport: {
       type: 'stdio',
       command: 'node',
@@ -201,12 +154,12 @@ const TEST_SERVERS: ServerDefinition[] = [
         inputs: [
           {
             id: 'DIRECTORY',
-            label: 'Target Directory',
-            description: 'Directory path to operate on',
+            label: 'Allowed Directory',
+            description: 'Directory the server can access',
             type: 'text',
             required: true,
             secret: false,
-            placeholder: 'C:\\Users\\test',
+            placeholder: 'C:\\Users\\Projects',
           },
         ],
       },
@@ -215,10 +168,11 @@ const TEST_SERVERS: ServerDefinition[] = [
       type: 'none',
     },
     publisher: {
-      name: 'McpMux Test',
+      name: 'Model Context Protocol',
+      domain: 'modelcontextprotocol.io',
       verified: true,
-      domain_verified: false,
-      official: false,
+      domain_verified: true,
+      official: true,
     },
     platforms: ['all'],
     capabilities: {
@@ -228,31 +182,47 @@ const TEST_SERVERS: ServerDefinition[] = [
     },
   },
 
-  // 4. HTTP server with no auth (like Cloudflare Docs)
+  // 3. PostgreSQL — stdio, api_key, official
   {
-    id: 'http-noauth-server',
-    name: 'HTTP Server (No Auth)',
-    alias: 'httptest',
-    description: 'HTTP server without authentication for testing remote connections',
-    icon: '🌐',
+    id: 'postgres-server',
+    name: 'PostgreSQL',
+    alias: 'postgres',
+    description: 'Query databases, manage schemas, inspect tables, and run migrations',
+    icon: 'https://cdn.simpleicons.org/postgresql',
     schema_version: '2.0',
-    categories: ['cloud'],
-    tags: ['test', 'http', 'remote'],
+    categories: ['database'],
+    tags: ['postgres', 'database', 'sql', 'schema'],
     transport: {
-      type: 'http',
-      url: `http://localhost:${STUB_HTTP_PORT}/mcp`,
+      type: 'stdio',
+      command: 'node',
+      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
+      env: {
+        DATABASE_URL: '${input:DATABASE_URL}',
+      },
       metadata: {
-        inputs: [],
+        inputs: [
+          {
+            id: 'DATABASE_URL',
+            label: 'Connection String',
+            description: 'PostgreSQL connection URL',
+            type: 'password',
+            required: true,
+            secret: true,
+            placeholder: 'postgresql://user:pass@localhost:5432/db',
+          },
+        ],
       },
     },
     auth: {
-      type: 'none',
+      type: 'api_key',
+      instructions: 'Provide your PostgreSQL connection string',
     },
     publisher: {
-      name: 'McpMux Test',
+      name: 'Model Context Protocol',
+      domain: 'modelcontextprotocol.io',
       verified: true,
-      domain_verified: false,
-      official: false,
+      domain_verified: true,
+      official: true,
     },
     platforms: ['all'],
     capabilities: {
@@ -262,16 +232,16 @@ const TEST_SERVERS: ServerDefinition[] = [
     },
   },
 
-  // 5. HTTP server with OAuth (like Atlassian)
+  // 4. Slack — http, oauth
   {
-    id: 'http-oauth-server',
-    name: 'HTTP Server (OAuth)',
-    alias: 'oauthtest',
-    description: 'HTTP server with OAuth authentication for testing auth flows',
-    icon: '🔐',
+    id: 'slack-server',
+    name: 'Slack',
+    alias: 'slack',
+    description: 'Send messages, manage channels, and search conversations across workspaces',
+    icon: 'https://github.com/slackapi.png?size=128',
     schema_version: '2.0',
     categories: ['productivity'],
-    tags: ['test', 'http', 'oauth'],
+    tags: ['slack', 'messaging', 'chat', 'team'],
     transport: {
       type: 'http',
       url: `http://localhost:${STUB_OAUTH_PORT}/mcp`,
@@ -283,9 +253,10 @@ const TEST_SERVERS: ServerDefinition[] = [
       type: 'oauth',
     },
     publisher: {
-      name: 'McpMux Test',
+      name: 'Slack',
+      domain: 'slack.com',
       verified: true,
-      domain_verified: false,
+      domain_verified: true,
       official: false,
     },
     platforms: ['all'],
@@ -296,16 +267,16 @@ const TEST_SERVERS: ServerDefinition[] = [
     },
   },
 
-  // 6. HTTP server with API key (header-based)
+  // 5. Brave Search — http, api_key
   {
-    id: 'http-apikey-server',
-    name: 'HTTP Server (API Key)',
-    alias: 'httpkey',
-    description: 'HTTP server requiring API key in header',
-    icon: '🔒',
+    id: 'brave-search',
+    name: 'Brave Search',
+    alias: 'brave',
+    description: 'Web search with privacy-focused results and AI-ready summaries',
+    icon: 'https://cdn.simpleicons.org/brave',
     schema_version: '2.0',
     categories: ['search'],
-    tags: ['test', 'http', 'api-key'],
+    tags: ['search', 'web', 'brave', 'privacy'],
     transport: {
       type: 'http',
       url: `http://localhost:${STUB_HTTP_PORT}/mcp`,
@@ -315,12 +286,13 @@ const TEST_SERVERS: ServerDefinition[] = [
     },
     auth: {
       type: 'api_key',
-      instructions: 'Enter any value for testing',
+      instructions: 'Get your API key from search.brave.com',
     },
     publisher: {
-      name: 'McpMux Test',
+      name: 'Brave',
+      domain: 'brave.com',
       verified: true,
-      domain_verified: false,
+      domain_verified: true,
       official: false,
     },
     platforms: ['all'],
@@ -330,11 +302,335 @@ const TEST_SERVERS: ServerDefinition[] = [
       prompts: false,
     },
   },
+
+  // 6. Docker — stdio, no auth
+  {
+    id: 'docker-server',
+    name: 'Docker',
+    alias: 'docker',
+    description: 'Manage containers, images, networks, and volumes from your AI client',
+    icon: 'https://cdn.simpleicons.org/docker',
+    schema_version: '2.0',
+    categories: ['developer-tools'],
+    tags: ['docker', 'containers', 'devops', 'infrastructure'],
+    transport: {
+      type: 'stdio',
+      command: 'node',
+      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
+      env: {},
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'none',
+    },
+    publisher: {
+      name: 'Docker',
+      domain: 'docker.com',
+      verified: true,
+      domain_verified: false,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: false,
+    },
+  },
+
+  // 7. Notion — http, oauth
+  {
+    id: 'notion-server',
+    name: 'Notion',
+    alias: 'notion',
+    description: 'Create pages, query databases, and manage workspaces programmatically',
+    icon: 'https://cdn.simpleicons.org/notion',
+    schema_version: '2.0',
+    categories: ['productivity'],
+    tags: ['notion', 'notes', 'wiki', 'database'],
+    transport: {
+      type: 'http',
+      url: `http://localhost:${STUB_OAUTH_PORT}/mcp`,
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'oauth',
+    },
+    publisher: {
+      name: 'Notion',
+      domain: 'notion.so',
+      verified: true,
+      domain_verified: true,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: false,
+    },
+  },
+
+  // 8. AWS — http, api_key
+  {
+    id: 'aws-server',
+    name: 'AWS',
+    alias: 'aws',
+    description: 'Interact with S3, Lambda, DynamoDB, and other AWS services',
+    icon: 'https://github.com/aws.png?size=128',
+    schema_version: '2.0',
+    categories: ['cloud'],
+    tags: ['aws', 'cloud', 's3', 'lambda'],
+    transport: {
+      type: 'http',
+      url: `http://localhost:${STUB_HTTP_PORT}/mcp`,
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'api_key',
+      instructions: 'Provide your AWS access key and secret',
+    },
+    publisher: {
+      name: 'Amazon Web Services',
+      domain: 'aws.amazon.com',
+      verified: true,
+      domain_verified: true,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: false,
+    },
+  },
+
+  // 9. SQLite — stdio, no auth
+  {
+    id: 'sqlite-server',
+    name: 'SQLite',
+    alias: 'sqlite',
+    description: 'Local database queries with read/write access control and schema inspection',
+    icon: 'https://cdn.simpleicons.org/sqlite',
+    schema_version: '2.0',
+    categories: ['database'],
+    tags: ['sqlite', 'database', 'local', 'sql'],
+    transport: {
+      type: 'stdio',
+      command: 'node',
+      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
+      env: {},
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'none',
+    },
+    publisher: {
+      name: 'Model Context Protocol',
+      domain: 'modelcontextprotocol.io',
+      verified: true,
+      domain_verified: true,
+      official: true,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: false,
+    },
+  },
+
+  // 10. Sentry — http, api_key
+  {
+    id: 'sentry-server',
+    name: 'Sentry',
+    alias: 'sentry',
+    description: 'Error tracking, performance monitoring, and release management',
+    icon: 'https://cdn.simpleicons.org/sentry',
+    schema_version: '2.0',
+    categories: ['developer-tools'],
+    tags: ['sentry', 'errors', 'monitoring', 'performance'],
+    transport: {
+      type: 'http',
+      url: `http://localhost:${STUB_HTTP_PORT}/mcp`,
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'api_key',
+      instructions: 'Get your auth token from sentry.io',
+    },
+    publisher: {
+      name: 'Sentry',
+      domain: 'sentry.io',
+      verified: true,
+      domain_verified: true,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: false,
+      prompts: false,
+    },
+  },
+
+  // 11. Linear — http, oauth
+  {
+    id: 'linear-server',
+    name: 'Linear',
+    alias: 'linear',
+    description: 'Issue tracking, project management, and sprint workflows',
+    icon: 'https://cdn.simpleicons.org/linear',
+    schema_version: '2.0',
+    categories: ['productivity'],
+    tags: ['linear', 'issues', 'project-management', 'sprints'],
+    transport: {
+      type: 'http',
+      url: `http://localhost:${STUB_OAUTH_PORT}/mcp`,
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'oauth',
+    },
+    publisher: {
+      name: 'Linear',
+      domain: 'linear.app',
+      verified: true,
+      domain_verified: true,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: false,
+      prompts: true,
+    },
+  },
+
+  // 12. Cloudflare — http, no auth
+  {
+    id: 'cloudflare-server',
+    name: 'Cloudflare',
+    alias: 'cf',
+    description: 'Search and browse Cloudflare documentation and API references',
+    icon: 'https://cdn.simpleicons.org/cloudflare',
+    schema_version: '2.0',
+    categories: ['cloud'],
+    tags: ['cloudflare', 'docs', 'cdn', 'workers'],
+    transport: {
+      type: 'http',
+      url: `http://localhost:${STUB_HTTP_PORT}/mcp`,
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'none',
+    },
+    publisher: {
+      name: 'Cloudflare',
+      domain: 'cloudflare.com',
+      verified: true,
+      domain_verified: true,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: false,
+    },
+  },
+
+  // 13. Cloudflare Workers — http, api_key
+  {
+    id: 'cloudflare-workers-server',
+    name: 'Cloudflare Workers',
+    alias: 'cf-workers',
+    description: 'Deploy, manage, and monitor Cloudflare Workers and KV namespaces',
+    icon: 'https://cdn.simpleicons.org/cloudflareworkers',
+    schema_version: '2.0',
+    categories: ['cloud'],
+    tags: ['cloudflare', 'workers', 'serverless', 'edge'],
+    transport: {
+      type: 'http',
+      url: `http://localhost:${STUB_HTTP_PORT}/mcp`,
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'api_key',
+      instructions: 'Provide your Cloudflare API token',
+    },
+    publisher: {
+      name: 'Cloudflare',
+      domain: 'cloudflare.com',
+      verified: true,
+      domain_verified: true,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: false,
+    },
+  },
+
+  // 14. Azure — http, api_key
+  {
+    id: 'azure-server',
+    name: 'Azure',
+    alias: 'azure',
+    description: 'Manage Azure resources, deploy services, and monitor infrastructure',
+    icon: 'https://github.com/azure.png?size=128',
+    schema_version: '2.0',
+    categories: ['cloud'],
+    tags: ['azure', 'cloud', 'microsoft', 'infrastructure'],
+    transport: {
+      type: 'http',
+      url: `http://localhost:${STUB_HTTP_PORT}/mcp`,
+      metadata: {
+        inputs: [],
+      },
+    },
+    auth: {
+      type: 'api_key',
+      instructions: 'Provide your Azure subscription credentials',
+    },
+    publisher: {
+      name: 'Microsoft',
+      domain: 'azure.microsoft.com',
+      verified: true,
+      domain_verified: true,
+      official: false,
+    },
+    platforms: ['all'],
+    capabilities: {
+      tools: true,
+      resources: true,
+      prompts: false,
+    },
+  },
 ];
 
 const TEST_CATEGORIES: Category[] = [
   { id: 'developer-tools', name: 'Developer Tools', icon: '💻' },
   { id: 'file-system', name: 'File System', icon: '📂' },
+  { id: 'database', name: 'Database', icon: '🗄️' },
   { id: 'cloud', name: 'Cloud', icon: '☁️' },
   { id: 'productivity', name: 'Productivity', icon: '⚡' },
   { id: 'search', name: 'Search', icon: '🔍' },
@@ -355,7 +651,10 @@ export const BUNDLE_DATA: RegistryBundle = {
           { id: 'all', label: 'All Categories' },
           { id: 'developer-tools', label: 'Developer Tools', icon: '💻', match: { field: 'categories', operator: 'contains', value: 'developer-tools' } },
           { id: 'file-system', label: 'File System', icon: '📂', match: { field: 'categories', operator: 'contains', value: 'file-system' } },
+          { id: 'database', label: 'Database', icon: '🗄️', match: { field: 'categories', operator: 'contains', value: 'database' } },
           { id: 'cloud', label: 'Cloud', icon: '☁️', match: { field: 'categories', operator: 'contains', value: 'cloud' } },
+          { id: 'productivity', label: 'Productivity', icon: '⚡', match: { field: 'categories', operator: 'contains', value: 'productivity' } },
+          { id: 'search', label: 'Search', icon: '🔍', match: { field: 'categories', operator: 'contains', value: 'search' } },
         ],
       },
       {
@@ -391,6 +690,6 @@ export const BUNDLE_DATA: RegistryBundle = {
     items_per_page: 24,
   },
   home: {
-    featured_server_ids: ['echo-server', 'http-noauth-server'],
+    featured_server_ids: ['github-server', 'postgres-server', 'slack-server'],
   },
 };

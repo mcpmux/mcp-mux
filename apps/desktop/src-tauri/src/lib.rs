@@ -776,6 +776,7 @@ pub fn run() {
             commands::approve_oauth_consent,
             commands::get_pending_consent,
             commands::get_oauth_clients,
+            commands::approve_oauth_client,
             commands::update_oauth_client,
             commands::delete_oauth_client,
             commands::get_oauth_client_grants,

@@ -5,8 +5,8 @@
 
 import { byTestId, TIMEOUT, waitForModalClose, safeClick } from '../helpers/selectors';
 
-describe('Server Configuration - API Key Server', () => {
-  it('TC-SC-001: Install API Key Server and click Enable shows config modal', async () => {
+describe('Server Configuration - PostgreSQL', () => {
+  it('TC-SC-001: Install PostgreSQL Server and click Enable shows config modal', async () => {
     const discoverButton = await byTestId('nav-discover');
     await safeClick(discoverButton);
     await browser.pause(2000);
@@ -14,12 +14,12 @@ describe('Server Configuration - API Key Server', () => {
     const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
-    await searchInput.setValue('API Key');
+    await searchInput.setValue('PostgreSQL');
     await browser.pause(1000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-01-search-apikey.png');
     
-    const installButton = await byTestId('install-btn-api-key-server');
+    const installButton = await byTestId('install-btn-postgres-server');
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
@@ -29,22 +29,22 @@ describe('Server Configuration - API Key Server', () => {
       await waitForModalClose();
     }
     
-    const uninstallButton = await byTestId('uninstall-btn-api-key-server');
+    const uninstallButton = await byTestId('uninstall-btn-postgres-server');
     await expect(uninstallButton).toBeDisplayed();
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-02-apikey-installed.png');
   });
 
-  it('TC-SC-002: Enable shows configuration modal with API Key input', async () => {
+  it('TC-SC-002: Enable shows configuration modal with connection input', async () => {
     const myServersButton = await byTestId('nav-my-servers');
     await safeClick(myServersButton);
     await browser.pause(2000);
     
-    // Verify API Key Server is in the list
+    // Verify PostgreSQL Server is in the list
     const pageSource = await browser.getPageSource();
-    expect(pageSource.includes('API Key Server')).toBe(true);
+    expect(pageSource.includes('PostgreSQL')).toBe(true);
     
-    const enableButton = await byTestId('enable-server-api-key-server');
+    const enableButton = await byTestId('enable-server-postgres-server');
     await safeClick(enableButton);
     await browser.pause(1000);
     
@@ -60,12 +60,12 @@ describe('Server Configuration - API Key Server', () => {
     expect(hasConfigModal).toBe(true);
   });
 
-  it('TC-SC-002b: Enter API Key and save configuration', async () => {
-    const apiKeyInput = await byTestId('config-input-API_KEY');
-    const isInputDisplayed = await apiKeyInput.isDisplayed().catch(() => false);
-    
+  it('TC-SC-002b: Enter connection string and save configuration', async () => {
+    const configInput = await byTestId('config-input-DATABASE_URL');
+    const isInputDisplayed = await configInput.isDisplayed().catch(() => false);
+
     if (isInputDisplayed) {
-      await apiKeyInput.setValue('test_api_key_12345');
+      await configInput.setValue('postgresql://test:test@localhost:5432/testdb');
       await browser.pause(500);
       
       await browser.saveScreenshot('./tests/e2e/screenshots/sc-04-entered-key.png');
@@ -93,7 +93,7 @@ describe('Server Configuration - API Key Server', () => {
     expect(modalClosed).toBe(true);
   });
 
-  it('Cleanup: Uninstall API Key Server', async () => {
+  it('Cleanup: Uninstall PostgreSQL Server', async () => {
     const discoverButton = await byTestId('nav-discover');
     await safeClick(discoverButton);
     await browser.pause(2000);
@@ -101,10 +101,10 @@ describe('Server Configuration - API Key Server', () => {
     const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
-    await searchInput.setValue('API Key');
+    await searchInput.setValue('PostgreSQL');
     await browser.pause(1000);
     
-    const uninstallButton = await byTestId('uninstall-btn-api-key-server');
+    const uninstallButton = await byTestId('uninstall-btn-postgres-server');
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {
@@ -118,8 +118,8 @@ describe('Server Configuration - API Key Server', () => {
   });
 });
 
-describe('Server Configuration - Directory Server', () => {
-  it('TC-SC-003: Install Directory Server', async () => {
+describe('Server Configuration - Filesystem', () => {
+  it('TC-SC-003: Install Filesystem Server', async () => {
     const discoverButton = await byTestId('nav-discover');
     await safeClick(discoverButton);
     await browser.pause(2000);
@@ -127,12 +127,12 @@ describe('Server Configuration - Directory Server', () => {
     const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
-    await searchInput.setValue('Directory');
+    await searchInput.setValue('Filesystem');
     await browser.pause(1000);
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-07-search-dir.png');
     
-    const installButton = await byTestId('install-btn-directory-server');
+    const installButton = await byTestId('install-btn-filesystem-server');
     const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
     
     if (isInstallDisplayed) {
@@ -142,7 +142,7 @@ describe('Server Configuration - Directory Server', () => {
       await waitForModalClose();
     }
     
-    const uninstallButton = await byTestId('uninstall-btn-directory-server');
+    const uninstallButton = await byTestId('uninstall-btn-filesystem-server');
     await expect(uninstallButton).toBeDisplayed();
   });
 
@@ -151,7 +151,7 @@ describe('Server Configuration - Directory Server', () => {
     await safeClick(myServersButton);
     await browser.pause(2000);
     
-    const enableButton = await byTestId('enable-server-directory-server');
+    const enableButton = await byTestId('enable-server-filesystem-server');
     const isEnableDisplayed = await enableButton.isDisplayed().catch(() => false);
     
     if (isEnableDisplayed) {
@@ -182,7 +182,7 @@ describe('Server Configuration - Directory Server', () => {
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-10-dir-after-config.png');
   });
 
-  it('Cleanup: Uninstall Directory Server', async () => {
+  it('Cleanup: Uninstall Filesystem Server', async () => {
     const discoverButton = await byTestId('nav-discover');
     await safeClick(discoverButton);
     await browser.pause(2000);
@@ -190,10 +190,10 @@ describe('Server Configuration - Directory Server', () => {
     const searchInput = await byTestId('search-input');
     await searchInput.clearValue();
     await browser.pause(300);
-    await searchInput.setValue('Directory');
+    await searchInput.setValue('Filesystem');
     await browser.pause(1000);
     
-    const uninstallButton = await byTestId('uninstall-btn-directory-server');
+    const uninstallButton = await byTestId('uninstall-btn-filesystem-server');
     const isDisplayed = await uninstallButton.isDisplayed().catch(() => false);
     
     if (isDisplayed) {

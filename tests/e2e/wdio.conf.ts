@@ -80,6 +80,32 @@ function checkTauriDriver(): boolean {
 }
 
 
+// Clear the app's SQLite database and related files for a clean start
+function clearAppData(): void {
+  const filesToDelete = [
+    path.join(APP_DATA_DIR, 'mcpmux.db'),
+    path.join(APP_DATA_DIR, 'mcpmux.db-shm'),
+    path.join(APP_DATA_DIR, 'mcpmux.db-wal'),
+    path.join(APP_DATA_DIR, 'cache'),
+    path.join(APP_DATA_DIR, 'spaces'),
+  ];
+
+  for (const filePath of filesToDelete) {
+    try {
+      if (fs.existsSync(filePath)) {
+        if (fs.lstatSync(filePath).isDirectory()) {
+          fs.rmSync(filePath, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(filePath);
+        }
+        console.log(`[e2e] Cleared: ${filePath}`);
+      }
+    } catch (error) {
+      console.warn(`[e2e] Failed to clear ${filePath}:`, error);
+    }
+  }
+}
+
 // Clear the app's registry bundle cache so it fetches fresh from our mock
 function clearBundleCache(): void {
   try {
@@ -177,6 +203,26 @@ function closeTauriDriver() {
   shouldExit = true;
   tauriDriver?.kill();
   stopMockServers();
+}
+
+// Kill any processes listening on our mock server ports (leftover from previous runs)
+function killPortProcesses(): void {
+  const ports = [MOCK_BUNDLE_API_PORT, STUB_MCP_HTTP_PORT, STUB_MCP_OAUTH_PORT];
+  for (const port of ports) {
+    try {
+      if (process.platform === 'win32') {
+        // Find PIDs listening on this port and kill them
+        const result = spawnSync('cmd', ['/c', `for /f "tokens=5" %a in ('netstat -ano ^| findstr ":${port} " ^| findstr LISTEN') do taskkill /F /PID %a`], { stdio: 'pipe', shell: true });
+        if (result.stdout?.toString().includes('SUCCESS')) {
+          console.log(`[e2e] Killed process on port ${port}`);
+        }
+      } else {
+        spawnSync('fuser', ['-k', `${port}/tcp`], { stdio: 'ignore' });
+      }
+    } catch {
+      // Ignore errors - no process may be on this port
+    }
+  }
 }
 
 // Kill any running mcpmux processes to prevent single-instance conflicts
@@ -314,8 +360,21 @@ export const config: Options.Testrunner = {
     // Verify app is built
     checkAppBuilt();
 
+    // Kill any leftover mcpmux processes and clear all app data BEFORE
+    // tauri-driver starts the app. This avoids EBUSY errors from trying
+    // to delete the SQLite DB while the app still holds a lock on it.
+    killMcpmuxProcesses();
+    // Brief pause to let processes fully exit
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    clearSingleInstanceLock();
+    clearAppData();
+
     // Clear bundle cache so app fetches from our mock
     clearBundleCache();
+
+    // Kill any leftover mock servers from previous runs (prevents EADDRINUSE)
+    killPortProcesses();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Start mock servers
     await startMockServers();
@@ -323,16 +382,6 @@ export const config: Options.Testrunner = {
 
   // Start tauri-driver before the session starts
   beforeSession: function () {
-    // Kill any leftover mcpmux processes and clear lock from previous sessions
-    killMcpmuxProcesses();
-    clearSingleInstanceLock();
-    
-    // Small delay to ensure processes are fully terminated
-    spawnSync('sleep', ['1'], { stdio: 'ignore', shell: process.platform !== 'win32' });
-    if (process.platform === 'win32') {
-      spawnSync('timeout', ['/t', '1', '/nobreak'], { stdio: 'ignore', shell: true });
-    }
-    
     const tauriDriverPath = path.resolve(
       os.homedir(),
       '.cargo',

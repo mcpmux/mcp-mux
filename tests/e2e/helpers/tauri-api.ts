@@ -115,6 +115,7 @@ export async function createFeatureSet(input: {
   name: string;
   space_id: string;
   description?: string;
+  icon?: string;
 }): Promise<FeatureSet> {
   return invoke<FeatureSet>('create_feature_set', { input });
 }
@@ -130,7 +131,7 @@ export async function deleteFeatureSet(id: string): Promise<void> {
 export interface InstalledServer {
   id: string;
   space_id: string;
-  server_id: string; // Definition ID (e.g. "echo-server")
+  server_id: string; // Definition ID (e.g. "github-server")
   is_enabled?: boolean;
   enabled?: boolean;
   input_values: Record<string, string>;
@@ -162,6 +163,24 @@ export async function enableServerV2(spaceId: string, serverId: string): Promise
 
 export async function disableServerV2(spaceId: string, serverId: string): Promise<void> {
   return invoke<void>('disable_server_v2', { spaceId, serverId });
+}
+
+// ============================================================================
+// Registry API
+// ============================================================================
+
+/** Force-refresh the server registry bundle (bypasses cache). */
+export async function refreshRegistry(): Promise<void> {
+  return invoke<void>('refresh_registry');
+}
+
+// ============================================================================
+// OAuth API
+// ============================================================================
+
+/** Approve a DCR-registered OAuth client by ID (for E2E testing). */
+export async function approveOAuthClient(clientId: string): Promise<void> {
+  return invoke<void>('approve_oauth_client', { clientId });
 }
 
 // ============================================================================

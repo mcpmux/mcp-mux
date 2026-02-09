@@ -21,21 +21,29 @@ export const byTestId = (testId: string) => $(`[data-testid="${testId}"]`);
  */
 export async function waitForModalClose(timeout = TIMEOUT.short): Promise<void> {
   try {
-    const overlay = await $('.fixed.inset-0.bg-black\\/20');
-    const exists = await overlay.isExisting().catch(() => false);
-    
-    if (!exists) {
-      return; // No modal, nothing to wait for
-    }
-    
-    // Try to wait for it to close naturally
-    const closed = await overlay.waitForDisplayed({ timeout, reverse: true }).then(() => true).catch(() => false);
-    
-    if (!closed) {
-      // Modal still open - try to dismiss it with Escape key
-      console.log('[waitForModalClose] Modal still displayed, trying Escape key');
-      await browser.keys('Escape');
-      await browser.pause(500);
+    // Match any fixed fullscreen overlay (bg-black/20, bg-black/50, bg-black/60)
+    const overlays = await $$('.fixed.inset-0');
+
+    for (const overlay of overlays) {
+      const isDisplayed = await overlay.isDisplayed().catch(() => false);
+      if (!isDisplayed) continue;
+
+      // Check if it looks like a modal backdrop (has bg-black in its classes)
+      const cls = await overlay.getAttribute('class').catch(() => '') ?? '';
+      if (!cls.includes('bg-black')) continue;
+
+      // Try to wait for it to close naturally
+      const closed = await overlay
+        .waitForDisplayed({ timeout, reverse: true })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!closed) {
+        // Modal still open - try to dismiss it with Escape key
+        console.log('[waitForModalClose] Modal still displayed, trying Escape key');
+        await browser.keys('Escape');
+        await browser.pause(500);
+      }
     }
   } catch {
     // Silently continue - modal handling shouldn't fail tests

@@ -218,7 +218,11 @@ export function ServerCard({
         <div className="flex items-center gap-4 min-w-0 flex-1">
           {/* Icon */}
           <div className="w-10 h-10 rounded-lg bg-[rgb(var(--surface-dim))] flex items-center justify-center flex-shrink-0 text-xl">
-            {server.icon || "🔌"}
+            {server.icon?.startsWith('http') ? (
+              <img src={server.icon} alt="" className="w-7 h-7 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.append(document.createTextNode('📦')); }} />
+            ) : (
+              server.icon || "🔌"
+            )}
           </div>
 
           {/* Name & Status */}

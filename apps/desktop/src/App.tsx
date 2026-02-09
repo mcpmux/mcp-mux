@@ -28,6 +28,7 @@ import {
 } from '@mcpmux/ui';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { OAuthConsentModal } from '@/components/OAuthConsentModal';
+import { ServerInstallModal } from '@/components/ServerInstallModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useAppStore, useActiveSpace, useViewSpace, useTheme } from '@/stores';
@@ -203,6 +204,8 @@ function App() {
       <AppContent />
       {/* OAuth consent modal - shown when MCP clients request authorization */}
       <OAuthConsentModal />
+      {/* Server install modal - shown when install deep link is received */}
+      <ServerInstallModal />
     </ThemeProvider>
   );
 }

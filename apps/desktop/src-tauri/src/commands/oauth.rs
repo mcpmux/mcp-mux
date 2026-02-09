@@ -44,12 +44,22 @@ use super::gateway::GatewayAppState;
 /// Now only contains request_id - frontend must call get_pending_consent
 pub const OAUTH_CONSENT_EVENT: &str = "oauth-consent-request";
 
+/// Event name for server install requests sent to frontend (from deep link)
+pub const SERVER_INSTALL_EVENT: &str = "server-install-request";
+
 /// Minimal deep link payload - only request_id
 /// Frontend must call get_pending_consent to get full details
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthDeepLinkPayload {
     pub request_id: String,
+}
+
+/// Deep link payload for server installation requests
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerInstallDeepLinkPayload {
+    pub server_id: String,
 }
 
 /// Full consent request details returned by get_pending_consent
@@ -111,6 +121,9 @@ pub fn handle_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &str)
             // Inbound OAuth - client requesting approval
             handle_authorize_deep_link(app, &parsed);
         }
+        Some("install") => {
+            handle_install_deep_link(app, &parsed);
+        }
         Some("test") => {
             info!("[DeepLink] Test URL received successfully!");
         }
@@ -146,6 +159,41 @@ fn handle_authorize_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url:
 
     if let Err(e) = app.emit(OAUTH_CONSENT_EVENT, &payload) {
         error!("[DeepLink] Failed to emit consent event: {}", e);
+        return;
+    }
+
+    // Focus the main window
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Handle server install deep link
+///
+/// Extracts server_id and emits to frontend.
+/// Frontend will look up the server definition and show install modal.
+fn handle_install_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &Url) {
+    let params: HashMap<_, _> = url.query_pairs().collect();
+
+    let server_id = match params.get("server") {
+        Some(id) if !id.is_empty() => id.to_string(),
+        _ => {
+            error!("[DeepLink] Install link missing required parameter: server");
+            return;
+        }
+    };
+
+    info!(
+        "[DeepLink] Server install request: server_id='{}'",
+        server_id
+    );
+
+    let payload = ServerInstallDeepLinkPayload { server_id };
+
+    if let Err(e) = app.emit(SERVER_INSTALL_EVENT, &payload) {
+        error!("[DeepLink] Failed to emit server install event: {}", e);
         return;
     }
 

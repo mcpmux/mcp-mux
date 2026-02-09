@@ -3,6 +3,7 @@
  */
 
 import type { ServerViewModel } from '../../types/registry';
+import { ServerIcon } from '../../components/ServerIcon';
 
 interface ServerDetailModalProps {
   server: ServerViewModel;
@@ -31,7 +32,9 @@ export function ServerDetailModal({
       <div className="dropdown-menu relative w-full max-w-lg max-h-[90vh] overflow-hidden animate-in fade-in scale-in duration-150">
         {/* Header */}
         <div className="flex items-start gap-4 p-6 border-b border-[rgb(var(--border))]">
-          <div className="text-5xl">{server.icon || '📦'}</div>
+          <div className="flex-shrink-0 flex items-center justify-center">
+            <ServerIcon icon={server.icon} className="w-12 h-12 object-contain rounded-lg" />
+          </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-xl font-bold">

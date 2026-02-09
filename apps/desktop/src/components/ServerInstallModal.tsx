@@ -29,6 +29,7 @@ import {
 } from '@/lib/api/registry';
 import type { ServerDefinition } from '@/types/registry';
 import { useViewSpace } from '@/stores';
+import { ServerIcon } from '@/components/ServerIcon';
 
 /** Deep link payload from backend */
 interface ServerInstallDeepLinkPayload {
@@ -243,9 +244,9 @@ export function ServerInstallModal() {
           {/* Server Info */}
           <div className="p-4 rounded-lg bg-surface-hover border border-[rgb(var(--border))]" data-testid="install-modal-server-info">
             <div className="flex items-center gap-3">
-              {server.icon && (
-                <span className="text-2xl">{server.icon}</span>
-              )}
+              <div className="flex-shrink-0 flex items-center justify-center text-2xl">
+                <ServerIcon icon={server.icon} className="w-8 h-8 object-contain rounded" />
+              </div>
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-lg" data-testid="install-modal-server-name">{server.name}</div>
                 {server.description && (

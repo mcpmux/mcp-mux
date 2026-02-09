@@ -86,6 +86,80 @@ test.describe('Registry/Discover Page', () => {
   });
 });
 
+test.describe('Registry Server Icon Rendering', () => {
+  test('should render server icons as images not raw URLs', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+
+    await dashboard.navigate();
+    await page.locator('nav button:has-text("Discover")').click();
+
+    // Wait for content to load
+    await page.waitForTimeout(500);
+
+    // Server cards with URL icons should render img elements, not raw URL text
+    const serverIconImages = page.locator('[data-testid="server-icon-img"]');
+    const serverIconFallbacks = page.locator('[data-testid="server-icon-fallback"]');
+    const serverIconEmojis = page.locator('[data-testid="server-icon-emoji"]');
+
+    const imgCount = await serverIconImages.count();
+    const fallbackCount = await serverIconFallbacks.count();
+    const emojiCount = await serverIconEmojis.count();
+
+    // At least some icons should be rendered (either as img or fallback/emoji)
+    expect(imgCount + fallbackCount + emojiCount).toBeGreaterThan(0);
+
+    // Verify img elements have valid src attributes
+    if (imgCount > 0) {
+      const firstImg = serverIconImages.first();
+      const src = await firstImg.getAttribute('src');
+      expect(src).toMatch(/^https?:\/\//);
+    }
+
+    // Ensure no raw URL text is shown in place of icons
+    const cardTexts = await page.locator('[data-testid^="server-card-"]').allTextContents();
+    for (const text of cardTexts) {
+      expect(text).not.toMatch(/^https?:\/\/avatars\./);
+    }
+  });
+
+  test('should render icon as img in server detail modal', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    const registry = new RegistryPage(page);
+
+    await dashboard.navigate();
+    await page.locator('nav button:has-text("Discover")').click();
+    await page.waitForTimeout(500);
+
+    // Click first server card to open detail modal
+    const firstCard = page.locator('[data-testid^="server-card-"]').first();
+    if (await firstCard.isVisible().catch(() => false)) {
+      await firstCard.click();
+      await page.waitForTimeout(300);
+
+      // The detail modal should render icons properly
+      const modalIconImg = page.locator('.fixed [data-testid="server-icon-img"]');
+      const modalIconFallback = page.locator('.fixed [data-testid="server-icon-fallback"]');
+      const modalIconEmoji = page.locator('.fixed [data-testid="server-icon-emoji"]');
+
+      const hasImg = await modalIconImg.isVisible().catch(() => false);
+      const hasFallback = await modalIconFallback.isVisible().catch(() => false);
+      const hasEmoji = await modalIconEmoji.isVisible().catch(() => false);
+
+      // At least one icon rendering approach should be used
+      expect(hasImg || hasFallback || hasEmoji).toBe(true);
+
+      // If img, verify it has valid src
+      if (hasImg) {
+        const src = await modalIconImg.getAttribute('src');
+        expect(src).toMatch(/^https?:\/\//);
+      }
+
+      // Close modal
+      await page.keyboard.press('Escape');
+    }
+  });
+});
+
 test.describe('Registry Filters and Sorting', () => {
   test('should have filter elements', async ({ page }) => {
     const dashboard = new DashboardPage(page);

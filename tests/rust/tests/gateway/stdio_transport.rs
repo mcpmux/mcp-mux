@@ -170,6 +170,52 @@ async fn test_platform_flags_idempotent() {
     assert!(status.success(), "Child process should exit successfully");
 }
 
+/// Verify that a docker command not found error includes a Docker-specific hint
+#[tokio::test]
+async fn test_docker_command_not_found_includes_hint() {
+    use mcpmux_gateway::pool::transport::StdioTransport;
+    use mcpmux_gateway::pool::{Transport, TransportConnectResult};
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    let transport = StdioTransport::new(
+        "docker".to_string(),
+        vec![
+            "run".to_string(),
+            "-i".to_string(),
+            "some-image".to_string(),
+        ],
+        HashMap::new(),
+        Uuid::new_v4(),
+        "test-docker-server".to_string(),
+        None,
+        Duration::from_secs(5),
+        None,
+    );
+
+    let result = transport.connect().await;
+    match result {
+        TransportConnectResult::Failed(msg) => {
+            // If docker is not installed, we get "Command not found" with hint.
+            // If docker IS installed but daemon isn't running, we'd get a different error with hint.
+            // Either way, the hint should be present.
+            assert!(
+                msg.contains("Docker Desktop"),
+                "Expected Docker hint in error message, got: {msg}"
+            );
+        }
+        // If docker happens to be installed and running, the test still passes
+        // (connect would succeed or fail with handshake error that includes the hint)
+        TransportConnectResult::Connected(_) => {
+            // Docker is installed and running - that's fine, test passes
+        }
+        TransportConnectResult::OAuthRequired { .. } => {
+            panic!("Unexpected OAuthRequired for docker stdio transport")
+        }
+    }
+}
+
 /// Verify that environment variables are passed through correctly
 /// when platform flags are applied (important because CREATE_NO_WINDOW
 /// is OR'd with CREATE_UNICODE_ENVIRONMENT internally).

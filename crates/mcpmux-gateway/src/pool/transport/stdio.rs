@@ -41,6 +41,16 @@ pub fn configure_child_process_platform(cmd: &mut Command) {
     }
 }
 
+/// Returns a helpful hint for common runtime-dependent commands when they fail.
+fn command_hint(command: &str) -> &'static str {
+    let cmd = command.rsplit(['/', '\\']).next().unwrap_or(command);
+    if cmd == "docker" || cmd == "docker.exe" || cmd.starts_with("docker-") {
+        " Ensure Docker Desktop is installed and running."
+    } else {
+        ""
+    }
+}
+
 /// STDIO transport for child process MCP servers
 pub struct StdioTransport {
     command: String,
@@ -114,8 +124,9 @@ impl Transport for StdioTransport {
         {
             Ok(path) => path,
             Err(_) => {
+                let hint = command_hint(&self.command);
                 let err = format!(
-                    "Command not found: {}. Ensure it's installed and in PATH.",
+                    "Command not found: {}. Ensure it's installed and in PATH.{hint}",
                     self.command
                 );
                 error!(server_id = %self.server_id, "{}", err);
@@ -156,7 +167,8 @@ impl Transport for StdioTransport {
             })) {
                 Ok(t) => t,
                 Err(e) => {
-                    let err = format!("Failed to spawn process: {}", e);
+                    let hint = command_hint(&self.command);
+                    let err = format!("Failed to spawn process: {e}.{hint}");
                     error!(server_id = %self.server_id, "{}", err);
                     self.log(LogLevel::Error, LogSource::Connection, err.clone())
                         .await;
@@ -173,14 +185,16 @@ impl Transport for StdioTransport {
         let client = match tokio::time::timeout(self.connect_timeout, connect_future).await {
             Ok(Ok(client)) => client,
             Ok(Err(e)) => {
-                let err = format!("MCP handshake failed: {}", e);
+                let hint = command_hint(&self.command);
+                let err = format!("MCP handshake failed: {e}.{hint}");
                 error!(server_id = %self.server_id, "{}", err);
                 self.log(LogLevel::Error, LogSource::Connection, err.clone())
                     .await;
                 return TransportConnectResult::Failed(err);
             }
             Err(_) => {
-                let err = format!("Connection timeout ({:?})", self.connect_timeout);
+                let hint = command_hint(&self.command);
+                let err = format!("Connection timeout ({:?}).{hint}", self.connect_timeout);
                 error!(server_id = %self.server_id, "{}", err);
                 self.log(LogLevel::Error, LogSource::Connection, err.clone())
                     .await;

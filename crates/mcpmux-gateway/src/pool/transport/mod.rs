@@ -16,7 +16,7 @@ use mcpmux_core::{CredentialRepository, OutboundOAuthRepository, ServerLogManage
 use uuid::Uuid;
 
 pub use http::HttpTransport;
-pub use stdio::StdioTransport;
+pub use stdio::{configure_child_process_platform, StdioTransport};
 
 // Re-export TransportType from mcpmux-core as the single source of truth
 pub use mcpmux_core::TransportType;

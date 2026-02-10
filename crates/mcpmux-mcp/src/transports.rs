@@ -145,11 +145,24 @@ impl McpSession {
                     .stderr(Stdio::null())
                     .kill_on_drop(true);
 
-                // On Windows, prevent console window from appearing
+                // Platform-specific child process isolation.
+                //
+                // Windows: In release builds the app uses `windows_subsystem = "windows"`
+                // (GUI subsystem), which causes Windows to allocate a new visible console
+                // for any spawned console-subsystem child process. CREATE_NO_WINDOW
+                // suppresses this.
+                //
+                // Unix (macOS/Linux): Create a new process group so terminal signals
+                // (SIGINT, SIGTSTP) sent to the parent don't propagate to MCP server
+                // child processes.
                 #[cfg(windows)]
                 {
                     const CREATE_NO_WINDOW: u32 = 0x08000000;
                     cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                #[cfg(unix)]
+                {
+                    cmd.process_group(0);
                 }
             })
         ).context(format!(

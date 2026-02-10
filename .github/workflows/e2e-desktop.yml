@@ -115,10 +115,14 @@ jobs:
       - name: Run desktop E2E tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # Start dbus session and unlock gnome-keyring with a dummy password for CI
+          # Start dbus session and unlock gnome-keyring with a dummy password for CI.
+          # Two-step process: unlock creates the login keyring, start exports env vars.
+          # Use eval to robustly export GNOME_KEYRING_CONTROL so the keyring stays
+          # accessible across all test specs (avoids "unlock prompt was dismissed").
           dbus-run-session -- bash -c '
             echo "test" | gnome-keyring-daemon --unlock --components=secrets
-            export $(gnome-keyring-daemon --start --components=secrets)
+            eval "$(gnome-keyring-daemon --start --components=secrets)"
+            echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL"
             sleep 1
             xvfb-run --auto-servernum pnpm test:e2e
           '

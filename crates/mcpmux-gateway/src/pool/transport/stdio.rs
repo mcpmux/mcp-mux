@@ -19,6 +19,38 @@ use uuid::Uuid;
 use super::TransportType;
 use super::{create_client_handler, Transport, TransportConnectResult};
 
+/// Apply platform-specific flags to a child process command.
+///
+/// - **Windows**: Sets `CREATE_NO_WINDOW` (`0x08000000`) so the child process does not
+///   allocate a visible console window. Required because release builds use
+///   `windows_subsystem = "windows"` (GUI subsystem) and Windows would otherwise create
+///   a new console for every spawned console-subsystem child.
+///
+/// - **Unix (macOS / Linux)**: Calls `process_group(0)` to place the child in its own
+///   process group, preventing terminal signals (`SIGINT`, `SIGTSTP`) sent to the parent
+///   from propagating to MCP server child processes.
+pub fn configure_child_process_platform(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
+}
+
+/// Returns a helpful hint for common runtime-dependent commands when they fail.
+fn command_hint(command: &str) -> &'static str {
+    let cmd = command.rsplit(['/', '\\']).next().unwrap_or(command);
+    if cmd == "docker" || cmd == "docker.exe" || cmd.starts_with("docker-") {
+        " Ensure Docker Desktop is installed and running."
+    } else {
+        ""
+    }
+}
+
 /// STDIO transport for child process MCP servers
 pub struct StdioTransport {
     command: String,
@@ -92,8 +124,9 @@ impl Transport for StdioTransport {
         {
             Ok(path) => path,
             Err(_) => {
+                let hint = command_hint(&self.command);
                 let err = format!(
-                    "Command not found: {}. Ensure it's installed and in PATH.",
+                    "Command not found: {}. Ensure it's installed and in PATH.{hint}",
                     self.command
                 );
                 error!(server_id = %self.server_id, "{}", err);
@@ -125,6 +158,8 @@ impl Transport for StdioTransport {
                     .stderr(Stdio::piped()) // Capture stderr for logging
                     .kill_on_drop(true);
 
+                configure_child_process_platform(cmd);
+
                 // Note: We can't easily access stderr after TokioChildProcess wraps it
                 // This is a limitation of the current rmcp API
                 // For now, we log connection events only
@@ -132,7 +167,8 @@ impl Transport for StdioTransport {
             })) {
                 Ok(t) => t,
                 Err(e) => {
-                    let err = format!("Failed to spawn process: {}", e);
+                    let hint = command_hint(&self.command);
+                    let err = format!("Failed to spawn process: {e}.{hint}");
                     error!(server_id = %self.server_id, "{}", err);
                     self.log(LogLevel::Error, LogSource::Connection, err.clone())
                         .await;
@@ -149,14 +185,16 @@ impl Transport for StdioTransport {
         let client = match tokio::time::timeout(self.connect_timeout, connect_future).await {
             Ok(Ok(client)) => client,
             Ok(Err(e)) => {
-                let err = format!("MCP handshake failed: {}", e);
+                let hint = command_hint(&self.command);
+                let err = format!("MCP handshake failed: {e}.{hint}");
                 error!(server_id = %self.server_id, "{}", err);
                 self.log(LogLevel::Error, LogSource::Connection, err.clone())
                     .await;
                 return TransportConnectResult::Failed(err);
             }
             Err(_) => {
-                let err = format!("Connection timeout ({:?})", self.connect_timeout);
+                let hint = command_hint(&self.command);
+                let err = format!("Connection timeout ({:?}).{hint}", self.connect_timeout);
                 error!(server_id = %self.server_id, "{}", err);
                 self.log(LogLevel::Error, LogSource::Connection, err.clone())
                     .await;

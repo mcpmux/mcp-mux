@@ -26,6 +26,19 @@ use super::oauth::OutboundOAuthManager;
 use super::token::TokenService;
 use super::transport::{ResolvedTransport, TransportType};
 
+/// Check if an error string indicates an authentication/authorization failure
+fn is_auth_error(error_str: &str) -> bool {
+    let lower = error_str.to_lowercase();
+    let indicators = [
+        "401",
+        "unauthorized",
+        "invalid_token",
+        "token expired",
+        "access token",
+    ];
+    indicators.iter().any(|s| lower.contains(s))
+}
+
 /// Result of bulk reconnect operation
 #[derive(Debug, Default)]
 pub struct ReconnectResult {
@@ -101,7 +114,41 @@ impl PoolService {
     }
 
     /// Read a resource from a backend server
+    ///
+    /// On auth errors, automatically reconnects the server and retries once.
     pub async fn read_resource(
+        &self,
+        space_id: Uuid,
+        server_id: &str,
+        uri: &str,
+    ) -> Result<Vec<Value>> {
+        match self.try_read_resource(space_id, server_id, uri).await {
+            Ok(content) => Ok(content),
+            Err(e) if is_auth_error(&e.to_string()) => {
+                warn!(
+                    "[PoolService] Auth error on read_resource for {}/{}, attempting auto-reconnect",
+                    server_id, uri
+                );
+                match self.reconnect_instance(space_id, server_id).await {
+                    ConnectionResult::Connected { .. } => {
+                        info!(
+                            "[PoolService] Reconnected {}, retrying read_resource",
+                            server_id
+                        );
+                        self.try_read_resource(space_id, server_id, uri).await
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "Server '{}' auth error on read_resource. Auto-reconnect failed. Please disconnect and connect again.",
+                        server_id
+                    )),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Internal: attempt to read a resource without retry logic
+    async fn try_read_resource(
         &self,
         space_id: Uuid,
         server_id: &str,
@@ -140,7 +187,46 @@ impl PoolService {
     }
 
     /// Get a prompt from a backend server
+    ///
+    /// On auth errors, automatically reconnects the server and retries once.
     pub async fn get_prompt(
+        &self,
+        space_id: Uuid,
+        server_id: &str,
+        prompt_name: &str,
+        arguments: Option<serde_json::Map<String, Value>>,
+    ) -> Result<Value> {
+        match self
+            .try_get_prompt(space_id, server_id, prompt_name, arguments.clone())
+            .await
+        {
+            Ok(value) => Ok(value),
+            Err(e) if is_auth_error(&e.to_string()) => {
+                warn!(
+                    "[PoolService] Auth error on get_prompt for {}/{}, attempting auto-reconnect",
+                    server_id, prompt_name
+                );
+                match self.reconnect_instance(space_id, server_id).await {
+                    ConnectionResult::Connected { .. } => {
+                        info!(
+                            "[PoolService] Reconnected {}, retrying get_prompt",
+                            server_id
+                        );
+                        self.try_get_prompt(space_id, server_id, prompt_name, arguments)
+                            .await
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "Server '{}' auth error on get_prompt. Auto-reconnect failed. Please disconnect and connect again.",
+                        server_id
+                    )),
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Internal: attempt to get a prompt without retry logic
+    async fn try_get_prompt(
         &self,
         space_id: Uuid,
         server_id: &str,

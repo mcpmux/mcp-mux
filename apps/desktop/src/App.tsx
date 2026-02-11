@@ -39,39 +39,33 @@ import { SpacesPage } from '@/features/spaces';
 import { SettingsPage } from '@/features/settings';
 import { useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
 
-/** McpMux neural router glyph — transparent background, brand colored, for inline use */
+/** McpMux title-bar icon — miniature of the actual app icon */
 function McpMuxGlyph({ className }: { className?: string }) {
   return (
     <svg
       className={className}
-      viewBox="0 0 24 24"
+      viewBox="0 0 32 32"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
-        <linearGradient id="glyph-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+        <linearGradient id="glyph-bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#DA7756" />
           <stop offset="100%" stopColor="#B8553A" />
         </linearGradient>
       </defs>
-      {/* Input curves */}
-      <path d="M 1.5 4 C 5 4, 6 9.5, 7.5 11.2" stroke="url(#glyph-grad)" strokeWidth="1.6" strokeLinecap="round" fill="none" opacity="0.6" />
-      <path d="M 1.5 12 C 4 12, 5.5 12, 7.5 12" stroke="url(#glyph-grad)" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.7" />
-      <path d="M 1.5 20 C 5 20, 6 14.5, 7.5 12.8" stroke="url(#glyph-grad)" strokeWidth="1.6" strokeLinecap="round" fill="none" opacity="0.6" />
-      {/* Input nodes */}
-      <circle cx="1.3" cy="4" r="1.3" fill="url(#glyph-grad)" opacity="0.65" />
-      <circle cx="1.3" cy="12" r="1.5" fill="url(#glyph-grad)" opacity="0.8" />
-      <circle cx="1.3" cy="20" r="1.3" fill="url(#glyph-grad)" opacity="0.65" />
-      {/* M hub */}
-      <path d="M 7.5 14.5 V 9.5 L 9.6 13 L 12 8.5 L 14.4 13 L 16.5 9.5 V 14.5" stroke="url(#glyph-grad)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      {/* Output curves */}
-      <path d="M 16.5 11.2 C 18 9.5, 19 4, 22.5 4" stroke="url(#glyph-grad)" strokeWidth="1.6" strokeLinecap="round" fill="none" opacity="0.6" />
-      <path d="M 16.5 12 C 18.5 12, 20 12, 22.5 12" stroke="url(#glyph-grad)" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.7" />
-      <path d="M 16.5 12.8 C 18 14.5, 19 20, 22.5 20" stroke="url(#glyph-grad)" strokeWidth="1.6" strokeLinecap="round" fill="none" opacity="0.6" />
-      {/* Output nodes */}
-      <circle cx="22.7" cy="4" r="1.3" fill="url(#glyph-grad)" opacity="0.65" />
-      <circle cx="22.7" cy="12" r="1.5" fill="url(#glyph-grad)" opacity="0.8" />
-      <circle cx="22.7" cy="20" r="1.3" fill="url(#glyph-grad)" opacity="0.65" />
+      <rect width="32" height="32" rx="7" fill="url(#glyph-bg)" />
+      {/* Left dots */}
+      <circle cx="6" cy="9" r="2.2" fill="white" opacity="0.7" />
+      <circle cx="6" cy="16" r="2.5" fill="white" opacity="0.85" />
+      <circle cx="6" cy="23" r="2.2" fill="white" opacity="0.7" />
+      {/* Bold M */}
+      <path d="M 10 21 V 11 L 13 18 L 16 10 L 19 18 L 22 11 V 21"
+        stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      {/* Right dots */}
+      <circle cx="26" cy="9" r="2.2" fill="white" opacity="0.7" />
+      <circle cx="26" cy="16" r="2.5" fill="white" opacity="0.85" />
+      <circle cx="26" cy="23" r="2.2" fill="white" opacity="0.7" />
     </svg>
   );
 }
@@ -204,8 +198,8 @@ function AppContent() {
   );
 
   const titleBar = (
-    <div className="flex items-center gap-2 pl-3">
-      <McpMuxGlyph className="h-5 w-5 shrink-0" />
+    <div className="flex items-center gap-1.5 pl-3">
+      <McpMuxGlyph className="h-4 w-4 shrink-0" />
       <span className="text-sm font-bold tracking-tight select-none">
         <span style={{ color: '#E8956A' }}>Mcp</span>
         <span style={{ color: '#B8553A' }}>Mux</span>

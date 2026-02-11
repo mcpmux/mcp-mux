@@ -39,32 +39,33 @@ import { SpacesPage } from '@/features/spaces';
 import { SettingsPage } from '@/features/settings';
 import { useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
 
-/** McpMux compacted glyph — dots + bold M, no connecting lines */
+/** McpMux title-bar icon — miniature of the actual app icon */
 function McpMuxGlyph({ className }: { className?: string }) {
   return (
     <svg
       className={className}
-      viewBox="0 0 24 24"
+      viewBox="0 0 32 32"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
-        <linearGradient id="glyph-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+        <linearGradient id="glyph-bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#DA7756" />
           <stop offset="100%" stopColor="#B8553A" />
         </linearGradient>
       </defs>
+      <rect width="32" height="32" rx="7" fill="url(#glyph-bg)" />
       {/* Left dots */}
-      <circle cx="2.5" cy="5.5" r="1.6" fill="url(#glyph-grad)" opacity="0.7" />
-      <circle cx="2.5" cy="12" r="1.8" fill="url(#glyph-grad)" opacity="0.85" />
-      <circle cx="2.5" cy="18.5" r="1.6" fill="url(#glyph-grad)" opacity="0.7" />
+      <circle cx="6" cy="9" r="2.2" fill="white" opacity="0.7" />
+      <circle cx="6" cy="16" r="2.5" fill="white" opacity="0.85" />
+      <circle cx="6" cy="23" r="2.2" fill="white" opacity="0.7" />
       {/* Bold M */}
-      <path d="M 7 16.5 V 7.5 L 9.5 14 L 12 6.5 L 14.5 14 L 17 7.5 V 16.5"
-        stroke="url(#glyph-grad)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M 10 21 V 11 L 13 18 L 16 10 L 19 18 L 22 11 V 21"
+        stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
       {/* Right dots */}
-      <circle cx="21.5" cy="5.5" r="1.6" fill="url(#glyph-grad)" opacity="0.7" />
-      <circle cx="21.5" cy="12" r="1.8" fill="url(#glyph-grad)" opacity="0.85" />
-      <circle cx="21.5" cy="18.5" r="1.6" fill="url(#glyph-grad)" opacity="0.7" />
+      <circle cx="26" cy="9" r="2.2" fill="white" opacity="0.7" />
+      <circle cx="26" cy="16" r="2.5" fill="white" opacity="0.85" />
+      <circle cx="26" cy="23" r="2.2" fill="white" opacity="0.7" />
     </svg>
   );
 }

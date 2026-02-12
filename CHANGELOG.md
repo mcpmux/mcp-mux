@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.11](https://github.com/ion-ash/mcp-mux/compare/v0.0.10...v0.0.11) (2026-02-12)
+
+
+### Bug Fixes
+
+* Claude client icon resolving ([#68](https://github.com/ion-ash/mcp-mux/issues/68)) ([c54128e](https://github.com/ion-ash/mcp-mux/commit/c54128e0fbff96bd110de4e4dea45580dfad224c))
+* Fix refresh token issue ([#69](https://github.com/ion-ash/mcp-mux/issues/69)) ([0eba047](https://github.com/ion-ash/mcp-mux/commit/0eba047922d3313121b5dd89e62f8b6aae9fe1db))
+
+
+### Documentation
+
+* add mcpmux.com links and download references to README ([#64](https://github.com/ion-ash/mcp-mux/issues/64)) ([04ab100](https://github.com/ion-ash/mcp-mux/commit/04ab1006d68860ff6f347ef6cd68dd3d678c3352))
+
 ## [0.0.10](https://github.com/ion-ash/mcp-mux/compare/v0.0.9...v0.0.10) (2026-02-10)
 
 

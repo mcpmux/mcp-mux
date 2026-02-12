@@ -146,6 +146,7 @@ pub struct InputDefinition {
     #[serde(default)]
     pub secret: bool,
     pub description: Option<String>,
+    pub default: Option<String>,
     pub placeholder: Option<String>,
 
     // Additional helpful metadata for acquiring credentials

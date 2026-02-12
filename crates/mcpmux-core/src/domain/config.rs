@@ -254,6 +254,7 @@ impl UserServerEntry {
                     required: true,
                     secret: true,
                     description: None,
+                    default: None,
                     placeholder: None,
                     obtain_url: None,
                     obtain_instructions: None,
@@ -444,6 +445,7 @@ mod tests {
                     required: false,
                     secret: false,
                     description: Some("Custom description".to_string()),
+                    default: None,
                     placeholder: None,
                     obtain_url: None,
                     obtain_instructions: None,
@@ -648,5 +650,134 @@ mod tests {
 
         // Explicit OAuth should not be overridden
         assert!(matches!(def.auth, Some(AuthConfig::Oauth)));
+    }
+
+    #[test]
+    fn test_input_default_value_parsed_from_json() {
+        let json = r#"{
+            "mcpServers": {
+                "test-server": {
+                    "command": "node",
+                    "args": ["server.js"],
+                    "env": {
+                        "LOG_LEVEL": "${input:LOG_LEVEL}"
+                    },
+                    "metadata": {
+                        "inputs": [
+                            {
+                                "id": "LOG_LEVEL",
+                                "label": "Log Level",
+                                "type": "text",
+                                "required": false,
+                                "secret": false,
+                                "default": "info"
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        let config: UserSpaceConfig = serde_json::from_str(json).unwrap();
+        let definitions =
+            config.to_server_definitions("test-space", PathBuf::from("/test/path.json"));
+
+        assert_eq!(definitions.len(), 1);
+        let inputs = &definitions[0].transport.metadata().inputs;
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "LOG_LEVEL");
+        assert_eq!(inputs[0].default, Some("info".to_string()));
+    }
+
+    #[test]
+    fn test_explicit_input_with_default_takes_precedence_over_autodiscovery() {
+        let entry = UserServerEntry {
+            command: Some("node".to_string()),
+            args: None,
+            env: Some(HashMap::from([(
+                "LOG_LEVEL".to_string(),
+                "${input:LOG_LEVEL}".to_string(),
+            )])),
+            url: None,
+            headers: None,
+            name: None,
+            description: None,
+            icon: None,
+            alias: None,
+            auth: None,
+            metadata: Some(UserServerMetadata {
+                inputs: Some(vec![InputDefinition {
+                    id: "LOG_LEVEL".to_string(),
+                    label: "Log Level".to_string(),
+                    r#type: "text".to_string(),
+                    required: false,
+                    secret: false,
+                    description: None,
+                    default: Some("info".to_string()),
+                    placeholder: None,
+                    obtain_url: None,
+                    obtain_instructions: None,
+                }]),
+                publisher: None,
+            }),
+        };
+
+        let (_, inputs) = entry.resolve_transport_and_inputs();
+
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "LOG_LEVEL");
+        assert_eq!(inputs[0].default, Some("info".to_string()));
+        // Should use explicit definition's type, not auto-discovered "password"
+        assert_eq!(inputs[0].r#type, "text");
+        assert!(!inputs[0].required);
+        assert!(!inputs[0].secret);
+    }
+
+    #[test]
+    fn test_auto_discovered_inputs_have_no_default() {
+        let entry = UserServerEntry {
+            command: Some("node".to_string()),
+            args: None,
+            env: Some(HashMap::from([(
+                "API_KEY".to_string(),
+                "${input:API_KEY}".to_string(),
+            )])),
+            url: None,
+            headers: None,
+            name: None,
+            description: None,
+            icon: None,
+            alias: None,
+            auth: None,
+            metadata: None,
+        };
+
+        let (_, inputs) = entry.resolve_transport_and_inputs();
+
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].id, "API_KEY");
+        assert_eq!(inputs[0].default, None);
+    }
+
+    #[test]
+    fn test_input_default_serializes_roundtrip() {
+        let input = InputDefinition {
+            id: "PORT".to_string(),
+            label: "Port".to_string(),
+            r#type: "number".to_string(),
+            required: false,
+            secret: false,
+            description: None,
+            default: Some("8080".to_string()),
+            placeholder: None,
+            obtain_url: None,
+            obtain_instructions: None,
+        };
+
+        let json = serde_json::to_string(&input).unwrap();
+        let deserialized: InputDefinition = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.id, "PORT");
+        assert_eq!(deserialized.default, Some("8080".to_string()));
     }
 }

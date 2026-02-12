@@ -1,7 +1,7 @@
 # McpMux
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![GitHub release](https://img.shields.io/github/v/release/MCP-Mux/mcp-mux)](https://github.com/MCP-Mux/mcp-mux/releases)
+[![GitHub release](https://img.shields.io/github/v/release/ion-ash/mcp-mux)](https://github.com/ion-ash/mcp-mux/releases)
 
 ### Configure your MCP servers once. Connect every AI client.
 
@@ -167,7 +167,7 @@ mcp-mux/
 - **Website & Server Discovery** — [mcpmux.com](https://mcpmux.com)
 - **Download** — [mcpmux.com/download](https://mcpmux.com/download)
 - **Features** — [mcpmux.com/features](https://mcpmux.com/features)
-- **Server Definitions Repo** — [github.com/MCP-Mux/mcp-servers](https://github.com/MCP-Mux/mcp-servers)
+- **Server Definitions Repo** — [github.com/ion-ash/mcp-servers](https://github.com/ion-ash/mcp-servers)
 
 ## Contributing
 

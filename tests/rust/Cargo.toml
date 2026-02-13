@@ -49,6 +49,9 @@ url = "2.5"
 # Sync primitives for tests
 parking_lot = "0.12"
 
+# Pipe creation for stderr capture tests
+os_pipe = { workspace = true }
+
 [lib]
 path = "src/lib.rs"
 

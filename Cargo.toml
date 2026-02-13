@@ -54,6 +54,7 @@ glob = "0.3"
 url = "2.5"
 urlencoding = "2.1"
 dotenvy = "0.15"
+os_pipe = "1"
 
 # MCP Protocol
 # NOTE: Never use local path dependency - E:\one-mcp\rust-sdk is for source lookup only

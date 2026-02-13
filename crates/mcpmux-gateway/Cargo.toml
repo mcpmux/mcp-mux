@@ -52,6 +52,7 @@ zeroize = "1.8"
 which = "7.0"
 open = "5.3"
 dirs = "5.0"
+os_pipe = { workspace = true }
 
 # MCP SDK
 rmcp.workspace = true

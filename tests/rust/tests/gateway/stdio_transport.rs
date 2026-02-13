@@ -216,6 +216,180 @@ async fn test_docker_command_not_found_includes_hint() {
     }
 }
 
+/// Verify that stderr from a child process is captured through an OS pipe
+/// and can be read line-by-line. Uses std::process::Command and spawn_blocking
+/// to ensure clean fd lifecycle.
+#[tokio::test]
+async fn test_stderr_capture_via_os_pipe() {
+    let (reader, writer) = os_pipe::pipe().expect("Failed to create pipe");
+
+    // Start the stderr reader FIRST (before spawning child) on a blocking thread.
+    // This mirrors production usage where the reader is spawned before the child connects.
+    let reader_handle = tokio::task::spawn_blocking(move || {
+        use std::io::BufRead;
+        let buf_reader = std::io::BufReader::new(reader);
+        buf_reader
+            .lines()
+            .map(|l| l.unwrap())
+            .collect::<Vec<String>>()
+    });
+
+    // Spawn a child process that writes to stderr using our pipe's write end.
+    // Use std::process::Command for predictable fd cleanup.
+    let status = tokio::task::spawn_blocking(move || {
+        #[cfg(unix)]
+        let mut cmd = std::process::Command::new("sh");
+        #[cfg(unix)]
+        cmd.args([
+            "-c",
+            "echo 'stderr line 1' >&2; echo 'stderr line 2' >&2; echo 'error: something failed' >&2",
+        ]);
+
+        #[cfg(windows)]
+        let mut cmd = std::process::Command::new("cmd.exe");
+        #[cfg(windows)]
+        cmd.args([
+            "/C",
+            "echo stderr line 1 1>&2 & echo stderr line 2 1>&2 & echo error: something failed 1>&2",
+        ]);
+
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::from(writer));
+
+        cmd.status().expect("Failed to spawn child process")
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    assert!(status.success(), "Child process should exit successfully");
+
+    // Wait for reader to finish (pipe is closed since child exited and writer was consumed)
+    let lines = reader_handle.await.expect("Reader task panicked");
+
+    assert!(
+        lines.len() >= 3,
+        "Expected at least 3 stderr lines, got {}: {:?}",
+        lines.len(),
+        lines
+    );
+
+    let has_stderr = lines.iter().any(|l| l.contains("stderr"));
+    let has_error = lines.iter().any(|l| l.contains("error"));
+    assert!(
+        has_stderr || has_error,
+        "Expected stderr or error content, got: {:?}",
+        lines
+    );
+}
+
+/// Verify that stderr capture with ServerLogManager logs process output
+/// to the correct location with the correct LogSource.
+#[tokio::test]
+async fn test_stderr_capture_logs_to_server_log_manager() {
+    use mcpmux_core::{LogConfig, LogSource, ServerLogManager};
+    use std::sync::Arc;
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let log_config = LogConfig {
+        base_dir: temp_dir.path().to_path_buf(),
+        ..Default::default()
+    };
+    let log_manager = Arc::new(ServerLogManager::new(log_config));
+    let space_id = uuid::Uuid::new_v4();
+    let server_id = "test-stderr-server".to_string();
+
+    let (reader, writer) = os_pipe::pipe().expect("Failed to create pipe");
+
+    // Start stderr reader on blocking thread (mirrors production spawn_stderr_reader)
+    let lm = Arc::clone(&log_manager);
+    let sid = space_id;
+    let svid = server_id.clone();
+    let reader_handle = tokio::task::spawn_blocking(move || {
+        use std::io::BufRead;
+        let rt = tokio::runtime::Handle::current();
+        let buf_reader = std::io::BufReader::new(reader);
+        for line_result in buf_reader.lines() {
+            match line_result {
+                Ok(line) if line.is_empty() => continue,
+                Ok(line) => {
+                    let log = mcpmux_core::ServerLog::new(
+                        mcpmux_core::LogLevel::Info,
+                        LogSource::Stderr,
+                        &line,
+                    );
+                    let _ = rt.block_on(lm.append(&sid.to_string(), &svid, log));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Spawn child on a blocking thread with std::process::Command
+    let status = tokio::task::spawn_blocking(move || {
+        #[cfg(unix)]
+        let mut cmd = std::process::Command::new("sh");
+        #[cfg(unix)]
+        cmd.args([
+            "-c",
+            "echo '[test-server] Starting...' >&2; echo '[test-server] Ready' >&2",
+        ]);
+
+        #[cfg(windows)]
+        let mut cmd = std::process::Command::new("cmd.exe");
+        #[cfg(windows)]
+        cmd.args([
+            "/C",
+            "echo [test-server] Starting... 1>&2 & echo [test-server] Ready 1>&2",
+        ]);
+
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::from(writer));
+
+        cmd.status().expect("Failed to spawn child process")
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    assert!(status.success());
+
+    // Wait for reader to drain the pipe
+    reader_handle.await.expect("Stderr reader task panicked");
+
+    // Small delay for log file write to flush
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Read logs back
+    let logs = log_manager
+        .read_logs(&space_id.to_string(), &server_id, 100, None)
+        .await
+        .expect("Failed to read logs");
+
+    assert!(
+        !logs.is_empty(),
+        "Expected at least one log entry from stderr capture"
+    );
+
+    // All logs should have source = Stderr
+    for log in &logs {
+        assert_eq!(
+            log.source,
+            LogSource::Stderr,
+            "Expected LogSource::Stderr, got {:?}",
+            log.source
+        );
+    }
+
+    let has_starting = logs.iter().any(|l| l.message.contains("Starting"));
+    let has_ready = logs.iter().any(|l| l.message.contains("Ready"));
+    assert!(
+        has_starting || has_ready,
+        "Expected 'Starting' or 'Ready' in log messages, got: {:?}",
+        logs.iter().map(|l| &l.message).collect::<Vec<_>>()
+    );
+}
+
 /// Verify that environment variables are passed through correctly
 /// when platform flags are applied (important because CREATE_NO_WINDOW
 /// is OR'd with CREATE_UNICODE_ENVIRONMENT internally).

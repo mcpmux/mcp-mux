@@ -2548,7 +2548,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcpmux"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-core"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2608,7 +2608,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-gateway"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2626,6 +2626,7 @@ dependencies = [
  "mcpmux-storage",
  "oauth2",
  "open",
+ "os_pipe",
  "parking_lot",
  "rand 0.8.5",
  "reqwest 0.12.28",
@@ -2648,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-mcp"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2667,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-storage"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3273,6 +3274,16 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "os_pipe"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5330,6 +5341,7 @@ dependencies = [
  "mcpmux-gateway",
  "mcpmux-mcp",
  "mcpmux-storage",
+ "os_pipe",
  "parking_lot",
  "pretty_assertions",
  "reqwest 0.12.28",

@@ -1,27 +1,35 @@
 /**
  * Tauri API Helper for E2E Tests
- * 
+ *
  * Uses window.__TAURI_TEST_API__ exposed by the app.
  */
 
 // Generic invoke helper
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  return browser.execute(async (cmd: string, cmdArgs: Record<string, unknown>) => {
-    if (!window.__TAURI_TEST_API__) {
-      throw new Error('Tauri Test API not available');
-    }
-    return window.__TAURI_TEST_API__.invoke(cmd, cmdArgs);
-  }, command, args || {}) as Promise<T>;
+  return browser.execute(
+    async (cmd: string, cmdArgs: Record<string, unknown>) => {
+      if (!window.__TAURI_TEST_API__) {
+        throw new Error('Tauri Test API not available');
+      }
+      return window.__TAURI_TEST_API__.invoke(cmd, cmdArgs);
+    },
+    command,
+    args || {}
+  ) as Promise<T>;
 }
 
 // Emit a Tauri event (for simulating deep link events in tests)
 export async function emitEvent(event: string, payload: unknown): Promise<void> {
-  return browser.execute(async (evt: string, data: unknown) => {
-    if (!window.__TAURI_TEST_API__?.emit) {
-      throw new Error('Tauri Test API emit not available');
-    }
-    return window.__TAURI_TEST_API__.emit(evt, data);
-  }, event, payload) as Promise<void>;
+  return browser.execute(
+    async (evt: string, data: unknown) => {
+      if (!window.__TAURI_TEST_API__?.emit) {
+        throw new Error('Tauri Test API emit not available');
+      }
+      return window.__TAURI_TEST_API__.emit(evt, data);
+    },
+    event,
+    payload
+  ) as Promise<void>;
 }
 
 // ============================================================================
@@ -181,6 +189,34 @@ export async function refreshRegistry(): Promise<void> {
 /** Approve a DCR-registered OAuth client by ID (for E2E testing). */
 export async function approveOAuthClient(clientId: string): Promise<void> {
   return invoke<void>('approve_oauth_client', { clientId });
+}
+
+// ============================================================================
+// Logs API
+// ============================================================================
+
+export interface ServerLogEntry {
+  timestamp: string;
+  level: string;
+  source: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export async function getServerLogs(
+  serverId: string,
+  limit?: number,
+  levelFilter?: string
+): Promise<ServerLogEntry[]> {
+  return invoke<ServerLogEntry[]>('get_server_logs', {
+    serverId,
+    limit,
+    levelFilter,
+  });
+}
+
+export async function clearServerLogs(serverId: string): Promise<void> {
+  return invoke<void>('clear_server_logs', { serverId });
 }
 
 // ============================================================================

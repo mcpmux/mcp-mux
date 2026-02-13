@@ -20,7 +20,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use mcpmux_core::{
-    branding, CredentialRepository, CredentialValue, LogLevel, LogSource, OutboundOAuthRepository,
+    branding, CredentialRepository, CredentialType, LogLevel, LogSource, OutboundOAuthRepository,
     ServerLog, ServerLogManager,
 };
 use rmcp::transport::auth::{AuthError, AuthorizationManager, AuthorizationSession, OAuthState};
@@ -675,36 +675,40 @@ impl OutboundOAuthManager {
         space_id: Uuid,
         server_id: &str,
     ) -> Option<OAuthTokenInfo> {
-        match credential_repo.get(&space_id, server_id).await {
-            Ok(Some(credential)) => {
-                if let CredentialValue::OAuth {
-                    access_token,
-                    refresh_token,
-                    expires_at,
-                    token_type,
-                    scope,
-                } = credential.value
-                {
-                    Some(OAuthTokenInfo {
-                        access_token,
-                        refresh_token,
-                        expires_at,
-                        token_type,
-                        scope,
-                    })
-                } else {
-                    None
-                }
-            }
-            Ok(None) => None,
+        // Load access token row
+        let access_cred = match credential_repo
+            .get(&space_id, server_id, &CredentialType::AccessToken)
+            .await
+        {
+            Ok(Some(cred)) => cred,
+            Ok(None) => return None,
             Err(e) => {
                 warn!(
-                    "[OAuth] Failed to load credential for {}/{}: {}",
+                    "[OAuth] Failed to load access token for {}/{}: {}",
                     space_id, server_id, e
                 );
-                None
+                return None;
             }
-        }
+        };
+
+        // Load refresh token row (optional)
+        let refresh_token = match credential_repo
+            .get(&space_id, server_id, &CredentialType::RefreshToken)
+            .await
+        {
+            Ok(Some(cred)) => Some(cred.value),
+            _ => None,
+        };
+
+        Some(OAuthTokenInfo {
+            access_token: access_cred.value,
+            refresh_token,
+            expires_at: access_cred.expires_at,
+            token_type: access_cred
+                .token_type
+                .unwrap_or_else(|| "Bearer".to_string()),
+            scope: access_cred.scope,
+        })
     }
 
     /// Create an AuthorizationManager with our database-backed credential store.

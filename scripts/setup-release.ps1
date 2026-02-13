@@ -71,7 +71,7 @@ try {
         Write-Host "   .\setup-release.ps1 -ShowPubkey" -ForegroundColor White
         Write-Host ""
         Write-Host "2. Add the PRIVATE key to GitHub secrets:" -ForegroundColor Gray
-        Write-Host "   - Go to: https://github.com/MCP-Mux/mcp-mux/settings/secrets/actions" -ForegroundColor White
+        Write-Host "   - Go to: https://github.com/ion-ash/mcp-mux/settings/secrets/actions" -ForegroundColor White
         Write-Host "   - Add secret: TAURI_SIGNING_PRIVATE_KEY" -ForegroundColor White
         Write-Host "   - Value: contents of $keyPath" -ForegroundColor White
         Write-Host ""

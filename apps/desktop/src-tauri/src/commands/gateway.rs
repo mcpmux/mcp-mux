@@ -9,7 +9,6 @@ use mcpmux_gateway::{
     ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, PoolService,
     ResolvedTransport, ServerKey,
 };
-use mcpmux_storage::{JwtSecretProvider, KeychainJwtSecretProvider};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -466,11 +465,11 @@ fn create_gateway_dependencies(
     app_state: &AppState,
     _app_handle: tauri::AppHandle,
 ) -> Result<mcpmux_gateway::GatewayDependencies, String> {
-    // Load JWT signing secret from keychain (or create if first run)
-    let jwt_secret = match KeychainJwtSecretProvider::new() {
+    // Load JWT signing secret (DPAPI on Windows, keychain elsewhere)
+    let jwt_secret = match mcpmux_storage::create_jwt_secret_provider(app_state.data_dir()) {
         Ok(provider) => match provider.get_or_create_secret() {
             Ok(secret) => {
-                info!("[Gateway] JWT signing secret loaded from keychain");
+                info!("[Gateway] JWT signing secret loaded");
                 Some(secret)
             }
             Err(e) => {
@@ -479,7 +478,7 @@ fn create_gateway_dependencies(
             }
         },
         Err(e) => {
-            warn!("[Gateway] Failed to create keychain provider: {}", e);
+            warn!("[Gateway] Failed to create JWT secret provider: {}", e);
             None
         }
     };
@@ -1021,11 +1020,15 @@ pub async fn connect_all_enabled_servers(
                 }
             };
 
-            // Check if has OAuth credentials
+            // Check if has OAuth credentials (access token)
             let has_credentials = matches!(
                 app_state
                     .credential_repository
-                    .get(&space.id, &installed.server_id)
+                    .get(
+                        &space.id,
+                        &installed.server_id,
+                        &mcpmux_core::CredentialType::AccessToken
+                    )
                     .await,
                 Ok(Some(_))
             );

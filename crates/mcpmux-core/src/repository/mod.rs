@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::domain::{
-    Client, Credential, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
+    Client, Credential, CredentialType, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
     OutboundOAuthRegistration, ServerFeature, Space,
 };
 
@@ -269,19 +269,38 @@ pub trait InboundMcpClientRepository: Send + Sync {
 }
 
 /// Credential repository trait (local-only, never synced)
+///
+/// Each credential is a separate row per (space, server, type).
+/// This allows independent lifecycle management for access tokens vs refresh tokens.
 #[async_trait]
 pub trait CredentialRepository: Send + Sync {
-    /// Get a credential for a (space, server) combination
-    async fn get(&self, space_id: &Uuid, server_id: &str) -> RepoResult<Option<Credential>>;
+    /// Get a specific credential by (space, server, type)
+    async fn get(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+        credential_type: &CredentialType,
+    ) -> RepoResult<Option<Credential>>;
 
-    /// Save a credential
+    /// Get all credentials for a (space, server) combination
+    async fn get_all(&self, space_id: &Uuid, server_id: &str) -> RepoResult<Vec<Credential>>;
+
+    /// Save a credential (upsert by space_id + server_id + credential_type)
     async fn save(&self, credential: &Credential) -> RepoResult<()>;
 
-    /// Delete a credential completely
-    async fn delete(&self, space_id: &Uuid, server_id: &str) -> RepoResult<()>;
+    /// Delete a specific credential by type
+    async fn delete(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+        credential_type: &CredentialType,
+    ) -> RepoResult<()>;
 
-    /// Clear OAuth tokens but preserve client registration (for logout)
-    /// Returns true if tokens were cleared, false if credential not found or not OAuth
+    /// Delete all credentials for a (space, server) combination
+    async fn delete_all(&self, space_id: &Uuid, server_id: &str) -> RepoResult<()>;
+
+    /// Clear OAuth tokens (access + refresh) but preserve client registration (for logout)
+    /// Returns true if tokens were cleared
     async fn clear_tokens(&self, space_id: &Uuid, server_id: &str) -> RepoResult<bool>;
 
     /// List all credentials for a space

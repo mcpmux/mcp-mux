@@ -1,18 +1,25 @@
 //! InstalledServerRepository integration tests
 
 use mcpmux_core::repository::{InstalledServerRepository, SpaceRepository};
-use mcpmux_storage::{SqliteInstalledServerRepository, SqliteSpaceRepository};
+use mcpmux_storage::{
+    generate_master_key, FieldEncryptor, SqliteInstalledServerRepository, SqliteSpaceRepository,
+};
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tests::{db::TestDatabase, fixtures};
 use tokio::sync::Mutex;
 
+fn test_encryptor() -> Arc<FieldEncryptor> {
+    let key = generate_master_key().expect("Failed to generate key");
+    Arc::new(FieldEncryptor::new(&key).expect("Failed to create encryptor"))
+}
+
 #[tokio::test]
 async fn test_installed_server_install_and_get() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     // First create a space (needed for foreign key)
@@ -41,7 +48,7 @@ async fn test_installed_server_install_and_get() {
 async fn test_installed_server_get_by_server_id() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -78,7 +85,7 @@ async fn test_installed_server_get_by_server_id() {
 async fn test_installed_server_list_for_space() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     // Create two spaces
@@ -121,7 +128,7 @@ async fn test_installed_server_list_for_space() {
 async fn test_installed_server_uninstall() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -149,7 +156,7 @@ async fn test_installed_server_uninstall() {
 async fn test_installed_server_set_enabled() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -193,7 +200,7 @@ async fn test_installed_server_set_enabled() {
 async fn test_installed_server_list_enabled() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -227,7 +234,7 @@ async fn test_installed_server_list_enabled() {
 async fn test_installed_server_set_oauth_connected() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -261,7 +268,7 @@ async fn test_installed_server_set_oauth_connected() {
 async fn test_installed_server_update_inputs() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -301,7 +308,7 @@ async fn test_installed_server_update_inputs() {
 async fn test_installed_server_update_cached_definition() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -337,7 +344,7 @@ async fn test_installed_server_update_cached_definition() {
 async fn test_installed_server_list_all() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     // Create two spaces with servers
@@ -366,7 +373,7 @@ async fn test_installed_server_list_all() {
 async fn test_installed_server_list_enabled_all() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space1 = fixtures::test_space("Space 1");
@@ -402,7 +409,7 @@ async fn test_installed_server_list_enabled_all() {
 async fn test_installed_server_env_overrides_persist() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -438,7 +445,7 @@ async fn test_installed_server_env_overrides_persist() {
 async fn test_installed_server_args_append_persist() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -471,7 +478,7 @@ async fn test_installed_server_args_append_persist() {
 async fn test_installed_server_extra_headers_persist() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -510,7 +517,7 @@ async fn test_installed_server_extra_headers_persist() {
 async fn test_installed_server_update_preserves_custom_fields() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -580,7 +587,7 @@ async fn test_installed_server_update_preserves_custom_fields() {
 async fn test_installed_server_empty_custom_fields_by_default() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -607,7 +614,7 @@ async fn test_installed_server_empty_custom_fields_by_default() {
 async fn test_installed_server_clear_custom_fields_via_update() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -670,7 +677,7 @@ async fn test_installed_server_clear_custom_fields_via_update() {
 async fn test_installed_server_special_characters_persist() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");

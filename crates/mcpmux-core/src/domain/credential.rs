@@ -1,45 +1,100 @@
 //! Credential entity - secure credential storage
 //!
+//! Each credential is a typed entry: one row per (space, server, type).
+//! This allows separate lifecycle management for access tokens vs refresh tokens,
+//! and keeps metadata (expiry, scope) as plaintext while only encrypting the secret value.
+//!
 //! Note: OAuth client registration (client_id, endpoints) is stored separately
 //! in the `oauth_clients` table via OAuthClient entity.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
-/// Credential type - stores tokens/keys, NOT client registration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum CredentialValue {
-    /// Simple API key
-    ApiKey { key: String },
-
-    /// OAuth tokens (client registration is in oauth_clients table)
-    OAuth {
-        access_token: String,
-        refresh_token: Option<String>,
-        expires_at: Option<DateTime<Utc>>,
-        token_type: String,
-        scope: Option<String>,
-    },
-
-    /// Basic authentication
-    BasicAuth { username: String, password: String },
+/// Type of credential entry.
+///
+/// Extensible: add new variants for session tokens, client certificates, etc.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialType {
+    /// OAuth access token (~1h lifetime)
+    AccessToken,
+    /// OAuth refresh token (~90d lifetime)
+    RefreshToken,
+    /// Simple API key (no expiry)
+    ApiKey,
+    /// Basic auth username
+    BasicAuthUser,
+    /// Basic auth password
+    BasicAuthPass,
 }
 
-/// Credential for a specific (Space, Server) combination.
+impl CredentialType {
+    /// Convert to database string representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::AccessToken => "access_token",
+            Self::RefreshToken => "refresh_token",
+            Self::ApiKey => "api_key",
+            Self::BasicAuthUser => "basic_auth_user",
+            Self::BasicAuthPass => "basic_auth_pass",
+        }
+    }
+
+    /// Parse from database string representation.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "access_token" => Some(Self::AccessToken),
+            "refresh_token" => Some(Self::RefreshToken),
+            "api_key" => Some(Self::ApiKey),
+            "basic_auth_user" => Some(Self::BasicAuthUser),
+            "basic_auth_pass" => Some(Self::BasicAuthPass),
+            _ => None,
+        }
+    }
+
+    /// Whether this type represents an OAuth token (access or refresh).
+    pub fn is_oauth(&self) -> bool {
+        matches!(self, Self::AccessToken | Self::RefreshToken)
+    }
+}
+
+impl fmt::Display for CredentialType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Individual credential entry — one per (space, server, type).
 ///
-/// Credentials are stored locally only, never synced to cloud.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The `value` field contains the secret (token, key, password) in plaintext
+/// at the domain level. Encryption is handled by the storage layer.
+///
+/// Metadata fields (expires_at, token_type, scope) are non-sensitive and
+/// stored as plaintext in the database for queryability.
+#[derive(Debug, Clone)]
 pub struct Credential {
-    /// Space ID
+    /// Space this credential belongs to
     pub space_id: Uuid,
 
-    /// Server ID
+    /// Server this credential is for
     pub server_id: String,
 
-    /// The credential value
-    pub value: CredentialValue,
+    /// Type of credential (access_token, refresh_token, api_key, etc.)
+    pub credential_type: CredentialType,
+
+    /// The secret value (plaintext at domain level, encrypted at storage level)
+    pub value: String,
+
+    /// When this credential expires (plaintext in DB for queryability)
+    pub expires_at: Option<DateTime<Utc>>,
+
+    /// Token type, e.g. "Bearer" (only for access_token)
+    pub token_type: Option<String>,
+
+    /// OAuth scope (only for access_token)
+    pub scope: Option<String>,
 
     /// When the credential was created
     pub created_at: DateTime<Utc>,
@@ -52,88 +107,78 @@ pub struct Credential {
 }
 
 impl Credential {
-    /// Create a new API key credential
+    /// Create a new API key credential.
     pub fn api_key(space_id: Uuid, server_id: impl Into<String>, key: impl Into<String>) -> Self {
         let now = Utc::now();
         Self {
             space_id,
             server_id: server_id.into(),
-            value: CredentialValue::ApiKey { key: key.into() },
+            credential_type: CredentialType::ApiKey,
+            value: key.into(),
+            expires_at: None,
+            token_type: None,
+            scope: None,
             created_at: now,
             updated_at: now,
             last_used: None,
         }
     }
 
-    /// Create an OAuth credential (tokens only, client registration is separate)
-    pub fn oauth(
+    /// Create an OAuth access token credential.
+    pub fn access_token(
         space_id: Uuid,
         server_id: impl Into<String>,
-        access_token: impl Into<String>,
-        refresh_token: Option<String>,
+        token: impl Into<String>,
         expires_at: Option<DateTime<Utc>>,
     ) -> Self {
         let now = Utc::now();
         Self {
             space_id,
             server_id: server_id.into(),
-            value: CredentialValue::OAuth {
-                access_token: access_token.into(),
-                refresh_token,
-                expires_at,
-                token_type: "Bearer".to_string(),
-                scope: None,
-            },
+            credential_type: CredentialType::AccessToken,
+            value: token.into(),
+            expires_at,
+            token_type: Some("Bearer".to_string()),
+            scope: None,
             created_at: now,
             updated_at: now,
             last_used: None,
         }
     }
 
-    /// Get the credential key for storage lookup
-    pub fn key(&self) -> String {
-        format!("{}:{}", self.space_id, self.server_id)
+    /// Create an OAuth refresh token credential.
+    pub fn refresh_token(
+        space_id: Uuid,
+        server_id: impl Into<String>,
+        token: impl Into<String>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            space_id,
+            server_id: server_id.into(),
+            credential_type: CredentialType::RefreshToken,
+            value: token.into(),
+            expires_at,
+            token_type: None,
+            scope: None,
+            created_at: now,
+            updated_at: now,
+            last_used: None,
+        }
     }
 
-    /// Check if this credential is expired (for OAuth)
+    /// Check if this credential is expired.
     pub fn is_expired(&self) -> bool {
-        match &self.value {
-            CredentialValue::OAuth {
-                expires_at: Some(exp),
-                ..
-            } => *exp < Utc::now(),
-            _ => false,
+        match self.expires_at {
+            Some(exp) => exp < Utc::now(),
+            None => false,
         }
     }
 
-    /// Check if this credential can be refreshed
-    pub fn can_refresh(&self) -> bool {
-        matches!(
-            &self.value,
-            CredentialValue::OAuth {
-                refresh_token: Some(_),
-                ..
-            }
-        )
-    }
-
-    /// Update the access token (after refresh)
-    pub fn update_token(&mut self, access_token: String, expires_at: Option<DateTime<Utc>>) {
-        if let CredentialValue::OAuth {
-            access_token: ref mut at,
-            expires_at: ref mut exp,
-            ..
-        } = self.value
-        {
-            *at = access_token;
-            *exp = expires_at;
-            self.updated_at = Utc::now();
-        }
-    }
-
-    /// Check if this is an OAuth credential
+    /// Check if this is an OAuth credential (access or refresh token).
     pub fn is_oauth(&self) -> bool {
-        matches!(self.value, CredentialValue::OAuth { .. })
+        self.credential_type.is_oauth()
     }
 }
 
@@ -147,38 +192,63 @@ mod tests {
         let cred = Credential::api_key(space_id, "github", "ghp_xxx");
 
         assert_eq!(cred.server_id, "github");
-        assert!(matches!(cred.value, CredentialValue::ApiKey { .. }));
+        assert_eq!(cred.credential_type, CredentialType::ApiKey);
+        assert_eq!(cred.value, "ghp_xxx");
         assert!(!cred.is_expired());
-        assert!(!cred.can_refresh());
+        assert!(!cred.is_oauth());
     }
 
     #[test]
-    fn test_oauth_credential() {
+    fn test_access_token_credential() {
         let space_id = Uuid::new_v4();
-        let cred = Credential::oauth(
+        let cred = Credential::access_token(
             space_id,
             "atlassian",
-            "access_token",
-            Some("refresh_token".to_string()),
+            "access_token_xyz",
             Some(Utc::now() + chrono::Duration::hours(1)),
         );
 
+        assert_eq!(cred.credential_type, CredentialType::AccessToken);
         assert!(!cred.is_expired());
-        assert!(cred.can_refresh());
+        assert!(cred.is_oauth());
+        assert_eq!(cred.token_type, Some("Bearer".to_string()));
+    }
+
+    #[test]
+    fn test_refresh_token_credential() {
+        let space_id = Uuid::new_v4();
+        let cred = Credential::refresh_token(space_id, "atlassian", "refresh_xyz", None);
+
+        assert_eq!(cred.credential_type, CredentialType::RefreshToken);
+        assert!(!cred.is_expired()); // No expiry set
+        assert!(cred.is_oauth());
     }
 
     #[test]
     fn test_expired_credential() {
         let space_id = Uuid::new_v4();
-        let cred = Credential::oauth(
+        let cred = Credential::access_token(
             space_id,
             "atlassian",
             "access_token",
-            None,
             Some(Utc::now() - chrono::Duration::hours(1)),
         );
 
         assert!(cred.is_expired());
-        assert!(!cred.can_refresh());
+    }
+
+    #[test]
+    fn test_credential_type_roundtrip() {
+        for ct in [
+            CredentialType::AccessToken,
+            CredentialType::RefreshToken,
+            CredentialType::ApiKey,
+            CredentialType::BasicAuthUser,
+            CredentialType::BasicAuthPass,
+        ] {
+            let s = ct.as_str();
+            let parsed = CredentialType::parse(s).unwrap();
+            assert_eq!(ct, parsed);
+        }
     }
 }

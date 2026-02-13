@@ -175,9 +175,9 @@ impl ServerAppService {
             }
         }
 
-        // Delete credentials
+        // Delete all credentials for this server
         if let Some(ref cred_repo) = self.credential_repo {
-            if let Err(e) = cred_repo.delete(&space_id, server_id).await {
+            if let Err(e) = cred_repo.delete_all(&space_id, server_id).await {
                 warn!(
                     server_id = server_id,
                     error = %e,

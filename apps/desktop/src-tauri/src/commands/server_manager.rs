@@ -478,10 +478,10 @@ pub async fn logout_server(
         .oauth_manager()
         .cancel_flow_for_space(space_uuid, &server_id);
 
-    // 3. Clear OAuth tokens from credential repository
+    // 3. Clear all credentials for this server
     if let Err(e) = app_state
         .credential_repository
-        .delete(&space_uuid, &server_id)
+        .delete_all(&space_uuid, &server_id)
         .await
     {
         warn!(
@@ -489,7 +489,7 @@ pub async fn logout_server(
             server_id, e
         );
     } else {
-        info!("[ServerManager] Cleared OAuth tokens for {}", server_id);
+        info!("[ServerManager] Cleared credentials for {}", server_id);
     }
 
     // 4. Clear oauth_connected flag

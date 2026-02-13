@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use mcpmux_core::{
     domain::{
-        Client, Credential, FeatureSet, FeatureSetMember, FeatureSetType, InstalledServer,
-        MemberMode, MemberType, OutboundOAuthRegistration, ServerFeature, Space,
+        Client, Credential, CredentialType, FeatureSet, FeatureSetMember, FeatureSetType,
+        InstalledServer, MemberMode, MemberType, OutboundOAuthRegistration, ServerFeature, Space,
     },
     repository::{
         AppSettingsRepository, CredentialRepository, FeatureSetRepository,
@@ -685,7 +685,7 @@ impl InboundMcpClientRepository for MockInboundMcpClientRepository {
 
 #[derive(Default)]
 pub struct MockCredentialRepository {
-    credentials: RwLock<HashMap<(Uuid, String), Credential>>,
+    credentials: RwLock<HashMap<(Uuid, String, String), Credential>>,
 }
 
 impl MockCredentialRepository {
@@ -694,54 +694,90 @@ impl MockCredentialRepository {
     }
 
     pub fn with_credential(self, cred: Credential) -> Self {
-        self.credentials
-            .write()
-            .unwrap()
-            .insert((cred.space_id, cred.server_id.clone()), cred);
+        self.credentials.write().unwrap().insert(
+            (
+                cred.space_id,
+                cred.server_id.clone(),
+                cred.credential_type.as_str().to_string(),
+            ),
+            cred,
+        );
         self
     }
 }
 
 #[async_trait]
 impl CredentialRepository for MockCredentialRepository {
-    async fn get(&self, space_id: &Uuid, server_id: &str) -> RepoResult<Option<Credential>> {
+    async fn get(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+        credential_type: &CredentialType,
+    ) -> RepoResult<Option<Credential>> {
         Ok(self
             .credentials
             .read()
             .unwrap()
-            .get(&(*space_id, server_id.to_string()))
+            .get(&(
+                *space_id,
+                server_id.to_string(),
+                credential_type.as_str().to_string(),
+            ))
             .cloned())
+    }
+
+    async fn get_all(&self, space_id: &Uuid, server_id: &str) -> RepoResult<Vec<Credential>> {
+        Ok(self
+            .credentials
+            .read()
+            .unwrap()
+            .values()
+            .filter(|c| c.space_id == *space_id && c.server_id == server_id)
+            .cloned()
+            .collect())
     }
 
     async fn save(&self, credential: &Credential) -> RepoResult<()> {
         self.credentials.write().unwrap().insert(
-            (credential.space_id, credential.server_id.clone()),
+            (
+                credential.space_id,
+                credential.server_id.clone(),
+                credential.credential_type.as_str().to_string(),
+            ),
             credential.clone(),
         );
         Ok(())
     }
 
-    async fn delete(&self, space_id: &Uuid, server_id: &str) -> RepoResult<()> {
+    async fn delete(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+        credential_type: &CredentialType,
+    ) -> RepoResult<()> {
+        self.credentials.write().unwrap().remove(&(
+            *space_id,
+            server_id.to_string(),
+            credential_type.as_str().to_string(),
+        ));
+        Ok(())
+    }
+
+    async fn delete_all(&self, space_id: &Uuid, server_id: &str) -> RepoResult<()> {
         self.credentials
             .write()
             .unwrap()
-            .remove(&(*space_id, server_id.to_string()));
+            .retain(|k, _| !(k.0 == *space_id && k.1 == server_id));
         Ok(())
     }
 
     async fn clear_tokens(&self, space_id: &Uuid, server_id: &str) -> RepoResult<bool> {
-        // Clearing tokens means removing the credential entirely for simplicity in mock
-        // In production, this preserves client_id but clears access/refresh tokens
-        if self
-            .credentials
-            .write()
-            .unwrap()
-            .remove(&(*space_id, server_id.to_string()))
-            .is_some()
-        {
-            return Ok(true);
-        }
-        Ok(false)
+        let mut creds = self.credentials.write().unwrap();
+        let before = creds.len();
+        creds.retain(|_, c| {
+            !(c.space_id == *space_id && c.server_id == server_id && c.credential_type.is_oauth())
+        });
+        Ok(creds.len() < before)
     }
 
     async fn list_for_space(&self, space_id: &Uuid) -> RepoResult<Vec<Credential>> {

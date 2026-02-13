@@ -4,6 +4,7 @@ import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import claudeIcon from '@/assets/client-icons/claude.svg';
 import windsurfIcon from '@/assets/client-icons/windsurf.svg';
+import { resolveKnownClientKey } from '@/lib/clientIcons';
 import {
   Laptop,
   Loader2,
@@ -79,21 +80,18 @@ const CONNECTION_MODES = [
   },
 ];
 
-// Bundled icons for well-known AI clients (matched by client_name)
-const KNOWN_CLIENT_ICONS: Record<string, string> = {
+// Bundled icons for well-known AI clients (resolved via icon key)
+const CLIENT_ICON_ASSETS: Record<string, string> = {
   cursor: cursorIcon,
-  'vs code': vscodeIcon,
   vscode: vscodeIcon,
-  'visual studio code': vscodeIcon,
-  'claude desktop': claudeIcon,
   claude: claudeIcon,
   windsurf: windsurfIcon,
-  codeium: windsurfIcon,
 };
 
 // Client icon component — uses bundled icon for known clients, falls back to logo_uri, then emoji
 function ClientIcon({ logo_uri, client_name }: { logo_uri?: string | null; client_name: string }) {
-  const iconUrl = KNOWN_CLIENT_ICONS[client_name.toLowerCase()] || logo_uri;
+  const knownKey = resolveKnownClientKey(client_name);
+  const iconUrl = (knownKey && CLIENT_ICON_ASSETS[knownKey]) || logo_uri;
   if (iconUrl) {
     return (
       <img

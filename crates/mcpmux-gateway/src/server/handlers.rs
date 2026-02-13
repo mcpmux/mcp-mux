@@ -647,10 +647,32 @@ pub async fn oauth_token(
                 ));
             };
 
-            // Update last_seen in database
+            // Verify client still exists in DB before issuing new tokens.
+            // The JWT may be valid (same secret) but the client may have been
+            // removed (e.g., DB was reset). Without this check, the middleware
+            // would fail with "Client not found" after we issue a new token.
             if let Some(repo) = gateway_state.inbound_client_repository() {
-                if let Err(e) = repo.update_client_last_seen(&claims.client_id).await {
-                    warn!("[OAuth] Failed to update last_seen: {}", e);
+                match repo.get_client(&claims.client_id).await {
+                    Ok(Some(_)) => {
+                        // Client exists, update last_seen
+                        if let Err(e) = repo.update_client_last_seen(&claims.client_id).await {
+                            warn!("[OAuth] Failed to update last_seen: {}", e);
+                        }
+                    }
+                    Ok(None) => {
+                        warn!(
+                            "[OAuth] Client {} not found in DB during refresh",
+                            claims.client_id
+                        );
+                        return Err(token_error("invalid_grant", "Client no longer registered"));
+                    }
+                    Err(e) => {
+                        warn!(
+                            "[OAuth] Failed to look up client {}: {}",
+                            claims.client_id, e
+                        );
+                        return Err(token_error("server_error", "Database error"));
+                    }
                 }
             }
 

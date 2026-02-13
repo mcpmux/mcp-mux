@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.10"
+version = "0.0.11"
 edition = "2021"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/mcpmux/mcpmux"
@@ -82,4 +82,5 @@ mcpmux-storage = { path = "crates/mcpmux-storage" }
 lto = true
 codegen-units = 1
 strip = true
+
 

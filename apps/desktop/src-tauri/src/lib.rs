@@ -300,12 +300,11 @@ pub fn run() {
                 let url = format!("http://localhost:{}", final_port);
                 info!("Auto-starting gateway on {}", url);
 
-                // Load JWT signing secret from keychain (or create if first run)
-                use mcpmux_storage::{JwtSecretProvider, KeychainJwtSecretProvider};
-                let jwt_secret = match KeychainJwtSecretProvider::new() {
+                // Load JWT signing secret (DPAPI on Windows, keychain elsewhere)
+                let jwt_secret = match mcpmux_storage::create_jwt_secret_provider(&app_data_dir) {
                     Ok(provider) => match provider.get_or_create_secret() {
                         Ok(secret) => {
-                            info!("[Gateway] JWT signing secret loaded from keychain");
+                            info!("[Gateway] JWT signing secret loaded");
                             Some(secret)
                         }
                         Err(e) => {
@@ -314,7 +313,7 @@ pub fn run() {
                         }
                     },
                     Err(e) => {
-                        warn!("[Gateway] Failed to create keychain provider: {}. Token signing disabled.", e);
+                        warn!("[Gateway] Failed to create JWT secret provider: {}. Token signing disabled.", e);
                         None
                     }
                 };

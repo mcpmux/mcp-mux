@@ -17,6 +17,7 @@ use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use super::connection::ConnectionResult;
 use super::features::FeatureService;
 use super::service::PoolService;
 
@@ -332,32 +333,222 @@ impl RoutingService {
             Ok(result) => {
                 let duration = call_start.elapsed();
                 if result.is_error {
-                    warn!(
-                        "[RoutingService] Tool execution error: {} (duration: {:?})",
-                        actual_tool_name, duration
-                    );
-                    self.log(
-                        &space_id,
-                        &server_id,
-                        LogLevel::Error,
-                        format!("Tool execution error: {}", actual_tool_name),
-                        Some(serde_json::json!({ "result": result.content, "duration_ms": duration.as_millis() }))
-                    ).await;
+                    // Check if this is an auth error embedded in the tool result.
+                    // Some servers (e.g., Atlassian) return 401 as tool results rather than
+                    // HTTP errors. The SDK refreshes the token successfully, but the server's
+                    // internal session may be stale. A fresh MCP connection fixes this.
+                    if Self::content_has_auth_error(&result.content) {
+                        warn!(
+                            "[RoutingService] Auth error in tool result for {}/{}, attempting auto-reconnect",
+                            server_id, actual_tool_name
+                        );
+                        self.log(
+                            &space_id,
+                            &server_id,
+                            LogLevel::Warn,
+                            format!(
+                                "Auth error in tool result for '{}' - auto-reconnecting",
+                                actual_tool_name
+                            ),
+                            Some(serde_json::json!({ "result": result.content, "duration_ms": duration.as_millis() })),
+                        )
+                        .await;
+
+                        match self
+                            .pool_service
+                            .reconnect_instance(space_id, &server_id)
+                            .await
+                        {
+                            ConnectionResult::Connected { .. } => {
+                                info!(
+                                    "[RoutingService] Reconnected {}, retrying tool call: {}",
+                                    server_id, actual_tool_name
+                                );
+
+                                let retry_start = std::time::Instant::now();
+                                match execute_call(
+                                    self.pool_service.clone(),
+                                    space_id,
+                                    server_id.clone(),
+                                    actual_tool_name.clone(),
+                                    arguments.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(retry_result) => {
+                                        let retry_duration = retry_start.elapsed();
+                                        if retry_result.is_error {
+                                            warn!(
+                                                "[RoutingService] Tool retry still has error: {} (duration: {:?})",
+                                                actual_tool_name, retry_duration
+                                            );
+                                        } else {
+                                            info!(
+                                                "[RoutingService] Tool retry succeeded after reconnect: {} (duration: {:?})",
+                                                actual_tool_name, retry_duration
+                                            );
+                                        }
+                                        self.log(
+                                            &space_id,
+                                            &server_id,
+                                            LogLevel::Info,
+                                            format!(
+                                                "Tool '{}' retried after auto-reconnect (is_error={})",
+                                                actual_tool_name, retry_result.is_error
+                                            ),
+                                            Some(serde_json::json!({ "retry_duration_ms": retry_duration.as_millis() })),
+                                        )
+                                        .await;
+                                        Ok(retry_result)
+                                    }
+                                    Err(retry_err) => {
+                                        warn!(
+                                            "[RoutingService] Tool retry transport error: {} - {}",
+                                            actual_tool_name, retry_err
+                                        );
+                                        self.log(
+                                            &space_id,
+                                            &server_id,
+                                            LogLevel::Error,
+                                            format!(
+                                                "Tool '{}' still failing after reconnect",
+                                                actual_tool_name
+                                            ),
+                                            Some(serde_json::json!({ "error": retry_err.to_string() })),
+                                        )
+                                        .await;
+                                        // Return original tool result since it has the error details
+                                        Ok(result)
+                                    }
+                                }
+                            }
+                            other => {
+                                warn!(
+                                    "[RoutingService] Auto-reconnect failed for {}: {:?}",
+                                    server_id, other
+                                );
+                                self.log(
+                                    &space_id,
+                                    &server_id,
+                                    LogLevel::Error,
+                                    format!(
+                                        "Auto-reconnect failed for tool '{}' - manual reconnection required",
+                                        actual_tool_name
+                                    ),
+                                    Some(serde_json::json!({ "reconnect_result": format!("{:?}", other) })),
+                                )
+                                .await;
+                                Ok(result)
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "[RoutingService] Tool execution error: {} (duration: {:?})",
+                            actual_tool_name, duration
+                        );
+                        self.log(
+                            &space_id,
+                            &server_id,
+                            LogLevel::Error,
+                            format!("Tool execution error: {}", actual_tool_name),
+                            Some(serde_json::json!({ "result": result.content, "duration_ms": duration.as_millis() }))
+                        ).await;
+                        Ok(result)
+                    }
                 } else {
-                    info!(
-                        "[RoutingService] Tool executed successfully: {} (duration: {:?})",
-                        actual_tool_name, duration
-                    );
-                    self.log(
-                        &space_id,
-                        &server_id,
-                        LogLevel::Info,
-                        format!("Tool executed successfully: {}", actual_tool_name),
-                        Some(serde_json::json!({ "duration_ms": duration.as_millis() })),
-                    )
-                    .await;
+                    // Even on "success" (is_error=false), some servers (e.g., Atlassian)
+                    // return auth errors as plain text content like {"code":401,"message":"Unauthorized"}.
+                    // Detect these and auto-reconnect + retry.
+                    if Self::content_has_auth_error(&result.content) {
+                        warn!(
+                            "[RoutingService] Auth error in successful tool result for {}/{}, attempting auto-reconnect",
+                            server_id, actual_tool_name
+                        );
+                        self.log(
+                            &space_id,
+                            &server_id,
+                            LogLevel::Warn,
+                            format!(
+                                "Auth error in tool result for '{}' (is_error=false) - auto-reconnecting",
+                                actual_tool_name
+                            ),
+                            Some(serde_json::json!({ "result": result.content, "duration_ms": duration.as_millis() })),
+                        )
+                        .await;
+
+                        match self
+                            .pool_service
+                            .reconnect_instance(space_id, &server_id)
+                            .await
+                        {
+                            ConnectionResult::Connected { .. } => {
+                                info!(
+                                    "[RoutingService] Reconnected {}, retrying tool call: {}",
+                                    server_id, actual_tool_name
+                                );
+
+                                let retry_start = std::time::Instant::now();
+                                match execute_call(
+                                    self.pool_service.clone(),
+                                    space_id,
+                                    server_id.clone(),
+                                    actual_tool_name.clone(),
+                                    arguments.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(retry_result) => {
+                                        let retry_duration = retry_start.elapsed();
+                                        info!(
+                                            "[RoutingService] Tool retry result: {} (is_error={}, duration: {:?})",
+                                            actual_tool_name, retry_result.is_error, retry_duration
+                                        );
+                                        self.log(
+                                            &space_id,
+                                            &server_id,
+                                            LogLevel::Info,
+                                            format!(
+                                                "Tool '{}' retried after auto-reconnect (is_error={})",
+                                                actual_tool_name, retry_result.is_error
+                                            ),
+                                            Some(serde_json::json!({ "retry_duration_ms": retry_duration.as_millis() })),
+                                        )
+                                        .await;
+                                        Ok(retry_result)
+                                    }
+                                    Err(retry_err) => {
+                                        warn!(
+                                            "[RoutingService] Tool retry transport error: {} - {}",
+                                            actual_tool_name, retry_err
+                                        );
+                                        Ok(result)
+                                    }
+                                }
+                            }
+                            other => {
+                                warn!(
+                                    "[RoutingService] Auto-reconnect failed for {}: {:?}",
+                                    server_id, other
+                                );
+                                Ok(result)
+                            }
+                        }
+                    } else {
+                        info!(
+                            "[RoutingService] Tool executed successfully: {} (duration: {:?})",
+                            actual_tool_name, duration
+                        );
+                        self.log(
+                            &space_id,
+                            &server_id,
+                            LogLevel::Info,
+                            format!("Tool executed successfully: {}", actual_tool_name),
+                            Some(serde_json::json!({ "duration_ms": duration.as_millis() })),
+                        )
+                        .await;
+                        Ok(result)
+                    }
                 }
-                Ok(result)
             }
             Err(e) => {
                 let duration = call_start.elapsed();
@@ -368,26 +559,116 @@ impl RoutingService {
                     actual_tool_name, server_id, e, duration
                 );
 
-                // Check if it's an auth error
-                // NOTE: With RMCP's AuthClient, token refresh happens automatically per-request.
-                // If we still get an auth error, it means the refresh token is invalid or expired.
-                // The user needs to reconnect to re-authorize.
                 let is_auth = Self::is_auth_error(&err_str);
-                let is_timeout = err_str.contains("timed out");
 
-                if is_auth || is_timeout {
+                if is_auth {
+                    // Auth error detected - attempt auto-reconnect and retry once.
+                    // This handles the case where RMCP's AuthClient failed to refresh
+                    // the token (e.g., stale in-memory state after idle).
+                    // Creating a fresh connection loads latest tokens from the database.
                     warn!(
-                        "[RoutingService] Auth/timeout error for {}/{} - RMCP auto-refresh likely failed, user needs to reconnect",
+                        "[RoutingService] Auth error for {}/{}, attempting auto-reconnect",
                         server_id, actual_tool_name
                     );
                     self.log(
                         &space_id,
                         &server_id,
-                        LogLevel::Error,
-                        format!("Authentication failed for tool '{}' - reconnection required", actual_tool_name),
-                        Some(serde_json::json!({ "error": e.to_string(), "duration_ms": duration.as_millis() }))
-                    ).await;
-                    Err(anyhow!("Server '{}' requires reconnection. Token may have expired. Please disconnect and connect again.", server_id))
+                        LogLevel::Warn,
+                        format!(
+                            "Auth error on tool '{}' - auto-reconnecting to refresh credentials",
+                            actual_tool_name
+                        ),
+                        Some(serde_json::json!({ "error": e.to_string(), "duration_ms": duration.as_millis() })),
+                    )
+                    .await;
+
+                    match self
+                        .pool_service
+                        .reconnect_instance(space_id, &server_id)
+                        .await
+                    {
+                        ConnectionResult::Connected { .. } => {
+                            info!(
+                                "[RoutingService] Reconnected {}, retrying tool call: {}",
+                                server_id, actual_tool_name
+                            );
+
+                            // Retry the call once with the fresh connection
+                            let retry_start = std::time::Instant::now();
+                            match execute_call(
+                                self.pool_service.clone(),
+                                space_id,
+                                server_id.clone(),
+                                actual_tool_name.clone(),
+                                arguments.clone(),
+                            )
+                            .await
+                            {
+                                Ok(result) => {
+                                    let retry_duration = retry_start.elapsed();
+                                    info!(
+                                        "[RoutingService] Tool retry succeeded: {} (duration: {:?})",
+                                        actual_tool_name, retry_duration
+                                    );
+                                    self.log(
+                                        &space_id,
+                                        &server_id,
+                                        LogLevel::Info,
+                                        format!(
+                                            "Tool '{}' succeeded after auto-reconnect",
+                                            actual_tool_name
+                                        ),
+                                        Some(serde_json::json!({ "retry_duration_ms": retry_duration.as_millis() })),
+                                    )
+                                    .await;
+                                    Ok(result)
+                                }
+                                Err(retry_err) => {
+                                    warn!(
+                                        "[RoutingService] Tool retry also failed: {} - {}",
+                                        actual_tool_name, retry_err
+                                    );
+                                    self.log(
+                                        &space_id,
+                                        &server_id,
+                                        LogLevel::Error,
+                                        format!(
+                                            "Tool '{}' still failing after reconnect - manual reconnection required",
+                                            actual_tool_name
+                                        ),
+                                        Some(serde_json::json!({ "error": retry_err.to_string() })),
+                                    )
+                                    .await;
+                                    Err(anyhow!(
+                                        "Server '{}' auth error persists after auto-reconnect. Please disconnect and connect again. Error: {}",
+                                        server_id,
+                                        retry_err
+                                    ))
+                                }
+                            }
+                        }
+                        other => {
+                            warn!(
+                                "[RoutingService] Auto-reconnect failed for {}: {:?}",
+                                server_id, other
+                            );
+                            self.log(
+                                &space_id,
+                                &server_id,
+                                LogLevel::Error,
+                                format!(
+                                    "Auto-reconnect failed for tool '{}' - manual reconnection required",
+                                    actual_tool_name
+                                ),
+                                Some(serde_json::json!({ "reconnect_result": format!("{:?}", other) })),
+                            )
+                            .await;
+                            Err(anyhow!(
+                                "Server '{}' requires reconnection. Auto-reconnect failed. Please disconnect and connect again.",
+                                server_id
+                            ))
+                        }
+                    }
                 } else {
                     // Not an auth error, return original error
                     self.log(
@@ -395,8 +676,9 @@ impl RoutingService {
                         &server_id,
                         LogLevel::Error,
                         format!("Tool call failed: {}", e),
-                        Some(serde_json::json!({ "error": e.to_string(), "duration_ms": duration.as_millis() }))
-                    ).await;
+                        Some(serde_json::json!({ "error": e.to_string(), "duration_ms": duration.as_millis() })),
+                    )
+                    .await;
                     Err(e)
                 }
             }
@@ -426,7 +708,7 @@ impl RoutingService {
         }
     }
 
-    /// Check if an error indicates authentication is needed
+    /// Check if an error string indicates authentication is needed
     fn is_auth_error(error_str: &str) -> bool {
         let indicators = [
             "401",
@@ -436,5 +718,23 @@ impl RoutingService {
             "access token",
         ];
         indicators.iter().any(|s| error_str.contains(s))
+    }
+
+    /// Check if tool result content contains authentication error indicators.
+    ///
+    /// Some MCP servers (e.g., Atlassian) return auth errors as tool results
+    /// (`is_error: true` with 401 in the text) rather than HTTP-level errors.
+    /// The SDK may have already refreshed the token, but the server's internal
+    /// session can be stale. A fresh connection (reconnect) fixes this.
+    fn content_has_auth_error(content: &[Value]) -> bool {
+        for item in content {
+            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                let lower = text.to_lowercase();
+                if Self::is_auth_error(&lower) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }

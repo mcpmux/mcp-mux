@@ -306,13 +306,17 @@ impl HttpTransport {
             "Connecting with manual token injection (RMCP metadata failed)"
         );
 
-        // Load token from our database
-        let credential = match self
+        // Load access token from our database
+        let access_token = match self
             .credential_repo
-            .get(&self.space_id, &self.server_id)
+            .get(
+                &self.space_id,
+                &self.server_id,
+                &mcpmux_core::CredentialType::AccessToken,
+            )
             .await
         {
-            Ok(Some(cred)) => cred,
+            Ok(Some(cred)) => cred.value,
             Ok(None) => {
                 debug!(server_id = %self.server_id, "No stored token for manual injection");
                 return TransportConnectResult::OAuthRequired {
@@ -321,16 +325,6 @@ impl HttpTransport {
             }
             Err(e) => {
                 let err = format!("Failed to load credential: {}", e);
-                error!(server_id = %self.server_id, "{}", err);
-                return TransportConnectResult::Failed(err);
-            }
-        };
-
-        // Extract access token from credential value
-        let access_token = match &credential.value {
-            mcpmux_core::CredentialValue::OAuth { access_token, .. } => access_token.clone(),
-            _ => {
-                let err = "Credential is not OAuth type".to_string();
                 error!(server_id = %self.server_id, "{}", err);
                 return TransportConnectResult::Failed(err);
             }
@@ -516,7 +510,11 @@ impl Transport for HttpTransport {
         // Check if we have stored credentials for this server
         let has_credentials = self
             .credential_repo
-            .get(&self.space_id, &self.server_id)
+            .get(
+                &self.space_id,
+                &self.server_id,
+                &mcpmux_core::CredentialType::AccessToken,
+            )
             .await
             .ok()
             .flatten()

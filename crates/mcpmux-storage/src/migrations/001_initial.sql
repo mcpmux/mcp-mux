@@ -71,40 +71,52 @@ CREATE TABLE IF NOT EXISTS installed_servers (
     
     -- OAuth connection state (persistent)
     oauth_connected INTEGER NOT NULL DEFAULT 0,
-    
+
+    -- Installation source tracking
+    source TEXT NOT NULL DEFAULT 'registry',  -- 'registry', 'user_config:/path/to/file.json', 'manual_entry'
+
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    
+
     UNIQUE(space_id, server_id),
     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_installed_servers_space ON installed_servers(space_id);
 CREATE INDEX IF NOT EXISTS idx_installed_servers_enabled ON installed_servers(space_id, enabled);
+CREATE INDEX IF NOT EXISTS idx_installed_servers_source ON installed_servers(source);
 
 -- ============================================================================
--- CREDENTIALS (Per-Space)
--- OAuth tokens, API keys per (space, server) - TOKENS ONLY, not client registration
+-- CREDENTIALS (Per-Space, Typed Rows)
+-- Each token/key is a separate row with its own type and expiry.
+-- One row per (space, server, credential_type).
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS credentials (
     id TEXT PRIMARY KEY,
     space_id TEXT NOT NULL,
     server_id TEXT NOT NULL,
-    credential_type TEXT NOT NULL,  -- 'oauth', 'api_key', 'basic_auth'
-    
-    -- Encrypted credential data (AES-256-GCM)
+    credential_type TEXT NOT NULL,  -- 'access_token', 'refresh_token', 'api_key', 'basic_auth_user', 'basic_auth_pass'
+
+    -- Only the secret value is encrypted (AES-256-GCM). Not a JSON blob.
     credential_value TEXT NOT NULL,
-    
+
+    -- Metadata stored as plaintext for queryability
+    expires_at TEXT,       -- RFC3339, nullable (refresh tokens / API keys may not expire)
+    token_type TEXT,       -- 'Bearer', etc. (only for access_token)
+    scope TEXT,            -- OAuth scope (only for access_token)
+
     last_used_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    
-    UNIQUE(space_id, server_id),
+
+    UNIQUE(space_id, server_id, credential_type),
     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_credentials_space_server ON credentials(space_id, server_id);
+CREATE INDEX IF NOT EXISTS idx_credentials_type ON credentials(space_id, server_id, credential_type);
+CREATE INDEX IF NOT EXISTS idx_credentials_expiry ON credentials(credential_type, expires_at);
 
 -- ============================================================================
 -- OUTBOUND OAUTH CLIENTS
@@ -283,18 +295,22 @@ CREATE TABLE IF NOT EXISTS inbound_clients (
     
     -- Permissions: JSON map of space_id -> [feature_set_ids]
     grants TEXT,
-    
+
+    -- Approval status (user must explicitly approve clients)
+    approved INTEGER NOT NULL DEFAULT 0,
+
     -- Timestamps
     last_seen TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    
+
     FOREIGN KEY (locked_space_id) REFERENCES spaces(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_inbound_clients_type ON inbound_clients(registration_type);
 CREATE INDEX IF NOT EXISTS idx_inbound_clients_name ON inbound_clients(client_name);
 CREATE INDEX IF NOT EXISTS idx_inbound_clients_metadata_url ON inbound_clients(metadata_url) WHERE metadata_url IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_inbound_clients_approved ON inbound_clients(approved) WHERE approved = 1;
 
 -- ============================================================================
 -- CLIENT GRANTS (Per-Space permissions for INBOUND clients)
@@ -365,3 +381,19 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- ============================================================================
+-- APP SETTINGS
+-- Key-value store for application-wide settings.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Seed default settings
+INSERT OR IGNORE INTO app_settings (key, value, updated_at)
+VALUES
+    ('gateway.auto_start', 'true', datetime('now'));

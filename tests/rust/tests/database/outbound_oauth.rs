@@ -4,7 +4,7 @@
 //! Handles OAuth client registrations (DCR with servers) and token storage.
 
 use chrono::{Duration, Utc};
-use mcpmux_core::domain::{Credential, CredentialValue, OutboundOAuthRegistration};
+use mcpmux_core::domain::{Credential, CredentialType, OutboundOAuthRegistration};
 use mcpmux_core::repository::{CredentialRepository, OutboundOAuthRepository, SpaceRepository};
 use mcpmux_storage::{
     generate_master_key, FieldEncryptor, SqliteCredentialRepository, SqliteOutboundOAuthRepository,
@@ -182,18 +182,20 @@ async fn test_registrations_isolated_by_space() {
 }
 
 // =============================================================================
-// CredentialRepository Tests
+// CredentialRepository Tests (Typed Rows)
 // =============================================================================
 
-fn create_oauth_credential(space_id: Uuid, server_id: &str) -> Credential {
+/// Helper: save access_token + refresh_token as separate rows
+async fn save_oauth_credentials(
+    repo: &SqliteCredentialRepository,
+    space_id: Uuid,
+    server_id: &str,
+) {
     let expires_at = Some(Utc::now() + Duration::hours(1));
-    Credential::oauth(
-        space_id,
-        server_id,
-        "access_token_xyz",
-        Some("refresh_token_abc".to_string()),
-        expires_at,
-    )
+    let access = Credential::access_token(space_id, server_id, "access_token_xyz", expires_at);
+    let refresh = Credential::refresh_token(space_id, server_id, "refresh_token_abc", None);
+    CredentialRepository::save(repo, &access).await.unwrap();
+    CredentialRepository::save(repo, &refresh).await.unwrap();
 }
 
 fn create_api_key_credential(space_id: Uuid, server_id: &str, api_key: &str) -> Credential {
@@ -211,28 +213,36 @@ async fn test_save_and_get_credential() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    let cred = create_oauth_credential(space.id, "server-oauth");
-    CredentialRepository::save(&cred_repo, &cred)
-        .await
-        .expect("Failed to save");
+    save_oauth_credentials(&cred_repo, space.id, "server-oauth").await;
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "server-oauth")
-        .await
-        .expect("Failed to get");
-    assert!(loaded.is_some());
-    let loaded = loaded.unwrap();
+    // Load access_token
+    let loaded = CredentialRepository::get(
+        &cred_repo,
+        &space.id,
+        "server-oauth",
+        &CredentialType::AccessToken,
+    )
+    .await
+    .expect("Failed to get")
+    .expect("Should find access token");
 
-    match &loaded.value {
-        CredentialValue::OAuth {
-            access_token,
-            refresh_token,
-            ..
-        } => {
-            assert_eq!(access_token, "access_token_xyz");
-            assert_eq!(refresh_token.as_deref(), Some("refresh_token_abc"));
-        }
-        _ => panic!("Expected OAuth credential"),
-    }
+    assert_eq!(loaded.value, "access_token_xyz");
+    assert_eq!(loaded.credential_type, CredentialType::AccessToken);
+    assert_eq!(loaded.token_type, Some("Bearer".to_string()));
+
+    // Load refresh_token
+    let refresh = CredentialRepository::get(
+        &cred_repo,
+        &space.id,
+        "server-oauth",
+        &CredentialType::RefreshToken,
+    )
+    .await
+    .unwrap()
+    .expect("Should find refresh token");
+
+    assert_eq!(refresh.value, "refresh_token_abc");
+    assert_eq!(refresh.credential_type, CredentialType::RefreshToken);
 }
 
 #[tokio::test]
@@ -242,9 +252,14 @@ async fn test_credential_not_found() {
     let encryptor = test_encryptor();
     let cred_repo = SqliteCredentialRepository::new(db, encryptor);
 
-    let loaded = CredentialRepository::get(&cred_repo, &Uuid::new_v4(), "nonexistent")
-        .await
-        .unwrap();
+    let loaded = CredentialRepository::get(
+        &cred_repo,
+        &Uuid::new_v4(),
+        "nonexistent",
+        &CredentialType::AccessToken,
+    )
+    .await
+    .unwrap();
     assert!(loaded.is_none());
 }
 
@@ -262,17 +277,14 @@ async fn test_save_api_key_credential() {
     let cred = create_api_key_credential(space.id, "api-server", "my_secret_api_key");
     CredentialRepository::save(&cred_repo, &cred).await.unwrap();
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "api-server")
-        .await
-        .unwrap()
-        .unwrap();
+    let loaded =
+        CredentialRepository::get(&cred_repo, &space.id, "api-server", &CredentialType::ApiKey)
+            .await
+            .unwrap()
+            .unwrap();
 
-    match &loaded.value {
-        CredentialValue::ApiKey { key } => {
-            assert_eq!(key, "my_secret_api_key");
-        }
-        _ => panic!("Expected ApiKey"),
-    }
+    assert_eq!(loaded.value, "my_secret_api_key");
+    assert_eq!(loaded.credential_type, CredentialType::ApiKey);
 }
 
 #[tokio::test]
@@ -286,30 +298,27 @@ async fn test_update_credential() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    let mut cred = create_oauth_credential(space.id, "server-1");
+    // Save initial access token
+    let cred = Credential::access_token(space.id, "server-1", "old_token", None);
     CredentialRepository::save(&cred_repo, &cred).await.unwrap();
 
-    // Update with new tokens
-    cred.value = CredentialValue::OAuth {
-        access_token: "new_access_token".to_string(),
-        refresh_token: Some("new_refresh_token".to_string()),
-        expires_at: None,
-        token_type: "Bearer".to_string(),
-        scope: None,
-    };
-    CredentialRepository::save(&cred_repo, &cred).await.unwrap();
-
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "server-1")
+    // Update with new token
+    let updated = Credential::access_token(space.id, "server-1", "new_access_token", None);
+    CredentialRepository::save(&cred_repo, &updated)
         .await
-        .unwrap()
         .unwrap();
 
-    match &loaded.value {
-        CredentialValue::OAuth { access_token, .. } => {
-            assert_eq!(access_token, "new_access_token");
-        }
-        _ => panic!("Expected OAuth credential"),
-    }
+    let loaded = CredentialRepository::get(
+        &cred_repo,
+        &space.id,
+        "server-1",
+        &CredentialType::AccessToken,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(loaded.value, "new_access_token");
 }
 
 #[tokio::test]
@@ -323,17 +332,43 @@ async fn test_delete_credential() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    let cred = create_oauth_credential(space.id, "to-delete");
-    CredentialRepository::save(&cred_repo, &cred).await.unwrap();
+    save_oauth_credentials(&cred_repo, space.id, "to-delete").await;
 
-    CredentialRepository::delete(&cred_repo, &space.id, "to-delete")
-        .await
-        .unwrap();
+    // Delete just the access token
+    CredentialRepository::delete(
+        &cred_repo,
+        &space.id,
+        "to-delete",
+        &CredentialType::AccessToken,
+    )
+    .await
+    .unwrap();
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "to-delete")
-        .await
-        .unwrap();
-    assert!(loaded.is_none());
+    // Access token gone, refresh token still there
+    let access = CredentialRepository::get(
+        &cred_repo,
+        &space.id,
+        "to-delete",
+        &CredentialType::AccessToken,
+    )
+    .await
+    .unwrap();
+    assert!(access.is_none());
+
+    let refresh = CredentialRepository::get(
+        &cred_repo,
+        &space.id,
+        "to-delete",
+        &CredentialType::RefreshToken,
+    )
+    .await
+    .unwrap();
+    assert!(refresh.is_some());
+
+    // Delete all remaining
+    cred_repo.delete_all(&space.id, "to-delete").await.unwrap();
+    let all = cred_repo.get_all(&space.id, "to-delete").await.unwrap();
+    assert!(all.is_empty());
 }
 
 #[tokio::test]
@@ -347,17 +382,12 @@ async fn test_list_credentials_for_space() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    let cred1 = create_oauth_credential(space.id, "server-1");
-    let cred2 = create_oauth_credential(space.id, "server-2");
-    CredentialRepository::save(&cred_repo, &cred1)
-        .await
-        .unwrap();
-    CredentialRepository::save(&cred_repo, &cred2)
-        .await
-        .unwrap();
+    // 2 rows for server-1 (access + refresh), 2 rows for server-2
+    save_oauth_credentials(&cred_repo, space.id, "server-1").await;
+    save_oauth_credentials(&cred_repo, space.id, "server-2").await;
 
     let list = cred_repo.list_for_space(&space.id).await.unwrap();
-    assert_eq!(list.len(), 2);
+    assert_eq!(list.len(), 4); // 2 servers × 2 types each
 }
 
 #[tokio::test]
@@ -377,19 +407,13 @@ async fn test_credentials_isolated_by_space() {
         .await
         .unwrap();
 
-    let cred_a = create_oauth_credential(space_a.id, "shared-server");
-    let cred_b = create_oauth_credential(space_b.id, "shared-server");
-    CredentialRepository::save(&cred_repo, &cred_a)
-        .await
-        .unwrap();
-    CredentialRepository::save(&cred_repo, &cred_b)
-        .await
-        .unwrap();
+    save_oauth_credentials(&cred_repo, space_a.id, "shared-server").await;
+    save_oauth_credentials(&cred_repo, space_b.id, "shared-server").await;
 
     let list_a = cred_repo.list_for_space(&space_a.id).await.unwrap();
     let list_b = cred_repo.list_for_space(&space_b.id).await.unwrap();
-    assert_eq!(list_a.len(), 1);
-    assert_eq!(list_b.len(), 1);
+    assert_eq!(list_a.len(), 2); // access + refresh
+    assert_eq!(list_b.len(), 2);
 }
 
 // =============================================================================
@@ -407,29 +431,29 @@ async fn test_credential_expiration() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    // Create credential that expires in the future
+    // Create access token that expires in the future
     let future_expiry = Some(Utc::now() + Duration::hours(2));
-    let not_expired = Credential::oauth(
-        space.id,
-        "valid-server",
-        "access_token",
-        Some("refresh".to_string()),
-        future_expiry,
-    );
+    let not_expired =
+        Credential::access_token(space.id, "valid-server", "access_token", future_expiry);
     CredentialRepository::save(&cred_repo, &not_expired)
         .await
         .unwrap();
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "valid-server")
-        .await
-        .unwrap()
-        .unwrap();
+    let loaded = CredentialRepository::get(
+        &cred_repo,
+        &space.id,
+        "valid-server",
+        &CredentialType::AccessToken,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(!loaded.is_expired());
-    assert!(loaded.can_refresh());
+    assert!(loaded.is_oauth());
 }
 
 #[tokio::test]
-async fn test_credential_without_refresh_token() {
+async fn test_clear_tokens_preserves_api_keys() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
     let encryptor = test_encryptor();
@@ -439,17 +463,20 @@ async fn test_credential_without_refresh_token() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    // Create credential without refresh token
-    let no_refresh = Credential::oauth(space.id, "no-refresh-server", "access_token", None, None);
-    CredentialRepository::save(&cred_repo, &no_refresh)
+    // Save access_token, refresh_token, and api_key
+    save_oauth_credentials(&cred_repo, space.id, "server").await;
+    let api_key = Credential::api_key(space.id, "server", "key123");
+    CredentialRepository::save(&cred_repo, &api_key)
         .await
         .unwrap();
 
-    let loaded = CredentialRepository::get(&cred_repo, &space.id, "no-refresh-server")
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!loaded.can_refresh());
+    // clear_tokens should remove access + refresh, keep api_key
+    let cleared = cred_repo.clear_tokens(&space.id, "server").await.unwrap();
+    assert!(cleared);
+
+    let all = cred_repo.get_all(&space.id, "server").await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].credential_type, CredentialType::ApiKey);
 }
 
 // =============================================================================
@@ -477,7 +504,13 @@ async fn test_different_encryptors_cannot_read_each_others_data() {
     let cred_repo2 = SqliteCredentialRepository::new(db, encryptor2);
 
     // Reading with wrong key should fail
-    let result = CredentialRepository::get(&cred_repo2, &space.id, "encrypted-server").await;
+    let result = CredentialRepository::get(
+        &cred_repo2,
+        &space.id,
+        "encrypted-server",
+        &CredentialType::ApiKey,
+    )
+    .await;
     assert!(
         result.is_err() || result.unwrap().is_none(),
         "Should fail to decrypt with wrong key"

@@ -32,28 +32,11 @@ struct Migration {
 /// Note: Migrations have been consolidated into a single clean initial migration.
 /// The schema includes cached_definition for offline operation and excludes
 /// runtime fields (connection_status, last_connected_at, last_error).
-const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 1,
-        name: "initial",
-        sql: include_str!("migrations/001_initial.sql"),
-    },
-    Migration {
-        version: 2,
-        name: "add_client_approved",
-        sql: include_str!("migrations/002_add_client_approved.sql"),
-    },
-    Migration {
-        version: 3,
-        name: "app_settings",
-        sql: include_str!("migrations/003_app_settings.sql"),
-    },
-    Migration {
-        version: 4,
-        name: "add_installation_source",
-        sql: include_str!("migrations/004_add_installation_source.sql"),
-    },
-];
+const MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    name: "initial",
+    sql: include_str!("migrations/001_initial.sql"),
+}];
 
 /// SQLite database wrapper.
 pub struct Database {

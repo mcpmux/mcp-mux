@@ -11,10 +11,9 @@ use mcpmux_core::{
     SpaceService,
 };
 use mcpmux_storage::{
-    Database, FieldEncryptor, KeychainKeyProvider, MasterKeyProvider, SqliteAppSettingsRepository,
-    SqliteCredentialRepository, SqliteFeatureSetRepository, SqliteInboundMcpClientRepository,
-    SqliteInstalledServerRepository, SqliteOutboundOAuthRepository, SqliteServerFeatureRepository,
-    SqliteSpaceRepository,
+    Database, FieldEncryptor, SqliteAppSettingsRepository, SqliteCredentialRepository,
+    SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
+    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository, SqliteSpaceRepository,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -67,9 +66,9 @@ impl AppState {
         // Ensure data directory exists
         std::fs::create_dir_all(&data_dir)?;
 
-        // Get or create master key from OS keychain
-        info!("Retrieving master key from keychain...");
-        let key_provider = KeychainKeyProvider::new()?;
+        // Get or create master key (DPAPI on Windows, OS Keychain elsewhere)
+        info!("Retrieving master key...");
+        let key_provider = mcpmux_storage::create_key_provider(&data_dir)?;
         let master_key = key_provider.get_or_create_key()?;
         info!("Master key retrieved successfully");
 
@@ -87,8 +86,9 @@ impl AppState {
         let space_repository: Arc<dyn SpaceRepository> =
             Arc::new(SqliteSpaceRepository::new(db.clone()));
 
-        let installed_server_repository: Arc<dyn InstalledServerRepository> =
-            Arc::new(SqliteInstalledServerRepository::new(db.clone()));
+        let installed_server_repository: Arc<dyn InstalledServerRepository> = Arc::new(
+            SqliteInstalledServerRepository::new(db.clone(), encryptor.clone()),
+        );
 
         let credential_repository: Arc<dyn CredentialRepository> = Arc::new(
             SqliteCredentialRepository::new(db.clone(), encryptor.clone()),

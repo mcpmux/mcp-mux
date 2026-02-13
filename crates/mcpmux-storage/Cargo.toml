@@ -26,6 +26,9 @@ keyring.workspace = true
 zeroize.workspace = true
 sha2 = "0.10"
 
+[target.'cfg(windows)'.dependencies]
+windows-dpapi = "0.1"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 tempfile = "3.14"

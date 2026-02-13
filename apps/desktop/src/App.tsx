@@ -56,16 +56,16 @@ function McpMuxGlyph({ className }: { className?: string }) {
       </defs>
       <rect width="32" height="32" rx="7" fill="url(#glyph-bg)" />
       {/* Left dots */}
-      <circle cx="6" cy="9" r="2.2" fill="white" opacity="0.7" />
-      <circle cx="6" cy="16" r="2.5" fill="white" opacity="0.85" />
-      <circle cx="6" cy="23" r="2.2" fill="white" opacity="0.7" />
+      <circle cx="6" cy="9" r="2.8" fill="white" opacity="0.85" />
+      <circle cx="6" cy="16" r="3" fill="white" />
+      <circle cx="6" cy="23" r="2.8" fill="white" opacity="0.85" />
       {/* Bold M */}
       <path d="M 10 21 V 11 L 13 18 L 16 10 L 19 18 L 22 11 V 21"
-        stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        stroke="white" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
       {/* Right dots */}
-      <circle cx="26" cy="9" r="2.2" fill="white" opacity="0.7" />
-      <circle cx="26" cy="16" r="2.5" fill="white" opacity="0.85" />
-      <circle cx="26" cy="23" r="2.2" fill="white" opacity="0.7" />
+      <circle cx="26" cy="9" r="2.8" fill="white" opacity="0.85" />
+      <circle cx="26" cy="16" r="3" fill="white" />
+      <circle cx="26" cy="23" r="2.8" fill="white" opacity="0.85" />
     </svg>
   );
 }

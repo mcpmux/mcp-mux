@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.12](https://github.com/ion-ash/mcp-mux/compare/v0.0.11...v0.0.12) (2026-02-14)
+
+
+### Features
+
+* Capture and stream process stderr to server log manager ([#63](https://github.com/ion-ash/mcp-mux/issues/63)) ([96795b0](https://github.com/ion-ash/mcp-mux/commit/96795b0b54ecfaa9743bb9e6045bfc86ddadcc2f))
+* Streamable HTTP transport with SSE notifications and E2E tests ([#61](https://github.com/ion-ash/mcp-mux/issues/61)) ([ca5b0ff](https://github.com/ion-ash/mcp-mux/commit/ca5b0ffab19aa395a75c5f10a18ab0e6efb1752a))
+* support default values for input definitions ([#70](https://github.com/ion-ash/mcp-mux/issues/70)) ([a1d9599](https://github.com/ion-ash/mcp-mux/commit/a1d9599601c212c1b7054fc4c5c76f065e0ea920))
+* update logo with bolder strokes and regenerate icons/screenshots ([#71](https://github.com/ion-ash/mcp-mux/issues/71)) ([68c292c](https://github.com/ion-ash/mcp-mux/commit/68c292c424671edf4a914484a7af570770fac71e))
+
 ## [0.0.11](https://github.com/ion-ash/mcp-mux/compare/v0.0.10...v0.0.11) (2026-02-12)
 
 

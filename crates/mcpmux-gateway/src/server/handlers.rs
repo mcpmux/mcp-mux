@@ -304,7 +304,7 @@ pub async fn oauth_authorize(
     // The page shows a brief message while the app opens
     // Industry standard: Don't auto-close, let user close after approval
     let html = format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -318,7 +318,7 @@ pub async fn oauth_authorize(
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+            background: linear-gradient(135deg, #1a1210 0%, #2a1c17 50%, #1e1412 100%);
             color: #e6e6e6;
             padding: 1rem;
         }}
@@ -326,16 +326,10 @@ pub async fn oauth_authorize(
             text-align: center;
             max-width: 400px;
         }}
-        .icon {{
+        .logo {{
             width: 64px;
             height: 64px;
             margin: 0 auto 1.5rem;
-            background: linear-gradient(135deg, #64ffda 0%, #00bcd4 100%);
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2rem;
         }}
         h1 {{
             font-size: 1.5rem;
@@ -344,25 +338,25 @@ pub async fn oauth_authorize(
             color: #fff;
         }}
         .subtitle {{
-            color: #8892b0;
+            color: #a0917e;
             margin-bottom: 2rem;
             line-height: 1.5;
         }}
         .client-info {{
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(218,119,86,0.06);
+            border: 1px solid rgba(218,119,86,0.15);
             border-radius: 12px;
             padding: 1rem;
             margin-bottom: 1.5rem;
         }}
         .client-name {{
             font-weight: 500;
-            color: #64ffda;
+            color: #DA7756;
             margin-bottom: 0.25rem;
         }}
         .client-id {{
             font-size: 0.75rem;
-            color: #6a7394;
+            color: #7a6e62;
             word-break: break-all;
         }}
         .action {{
@@ -370,8 +364,8 @@ pub async fn oauth_authorize(
         }}
         .btn {{
             display: inline-block;
-            background: linear-gradient(135deg, #64ffda 0%, #00bcd4 100%);
-            color: #0f0f23;
+            background: linear-gradient(135deg, #DA7756 0%, #B8553A 100%);
+            color: #fff;
             padding: 0.75rem 2rem;
             border-radius: 8px;
             text-decoration: none;
@@ -383,12 +377,12 @@ pub async fn oauth_authorize(
         }}
         .btn:hover {{
             transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(100, 255, 218, 0.3);
+            box-shadow: 0 4px 20px rgba(218, 119, 86, 0.35);
         }}
         .btn-secondary {{
             background: transparent;
             border: 1px solid rgba(255,255,255,0.2);
-            color: #8892b0;
+            color: #a0917e;
             margin-top: 1rem;
         }}
         .btn-secondary:hover {{
@@ -400,28 +394,34 @@ pub async fn oauth_authorize(
         .note {{
             margin-top: 2rem;
             font-size: 0.875rem;
-            color: #6a7394;
+            color: #7a6e62;
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="icon">🔐</div>
+        <svg class="logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#DA7756"/><stop offset="100%" stop-color="#B8553A"/></linearGradient></defs>
+            <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+            <circle cx="6" cy="9" r="2.8" fill="white" opacity="0.85"/><circle cx="6" cy="16" r="3" fill="white"/><circle cx="6" cy="23" r="2.8" fill="white" opacity="0.85"/>
+            <path d="M 10 21 V 11 L 13 18 L 16 10 L 19 18 L 22 11 V 21" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <circle cx="26" cy="9" r="2.8" fill="white" opacity="0.85"/><circle cx="26" cy="16" r="3" fill="white"/><circle cx="26" cy="23" r="2.8" fill="white" opacity="0.85"/>
+        </svg>
         <h1>Authorization Request</h1>
         <p class="subtitle">
             Complete authorization in {app_name}
         </p>
-        
+
         <div class="client-info">
             <div class="client-name">{display_name}</div>
             <div class="client-id">wants to connect</div>
         </div>
-        
+
         <div class="action">
             <a href="{deep_link_url}" class="btn">Open {app_name}</a>
             <button class="btn btn-secondary" onclick="window.close()">Close this tab</button>
         </div>
-        
+
         <p class="note">
             If prompted by your browser, click "Open" to allow.
         </p>
@@ -434,7 +434,7 @@ pub async fn oauth_authorize(
             iframe.style.display = 'none';
             iframe.src = "{deep_link_url}";
             document.body.appendChild(iframe);
-            
+
             // Fallback: remove iframe after a short delay
             // The protocol handler should have fired by then
             setTimeout(function() {{
@@ -445,7 +445,7 @@ pub async fn oauth_authorize(
         }})();
     </script>
 </body>
-</html>"#
+</html>"##
     );
 
     axum::response::Html(html).into_response()

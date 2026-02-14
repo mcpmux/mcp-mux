@@ -533,33 +533,89 @@ impl OutboundOAuthManager {
                             }
                         }
 
-                        // Return a nice HTML page that auto-closes
-                        Html(
-                            r#"
-<!DOCTYPE html>
-<html>
+                        // Return a branded HTML page that auto-closes
+                        let app_name = branding::DISPLAY_NAME;
+                        Html(format!(
+                            r##"<!DOCTYPE html>
+<html lang="en">
 <head>
-    <title>Authorization Complete</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{app_name} - Authorization Complete</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-               display: flex; justify-content: center; align-items: center; 
-               height: 100vh; margin: 0; background: #f5f5f5; }
-        .container { text-align: center; padding: 40px; background: white; 
-                     border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; margin-bottom: 16px; }
-        p { color: #666; }
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1a1210 0%, #2a1c17 50%, #1e1412 100%);
+            color: #e6e6e6;
+            padding: 1rem;
+        }}
+        .container {{
+            text-align: center;
+            max-width: 400px;
+        }}
+        .logo {{
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1.5rem;
+        }}
+        .check {{
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 1rem;
+            background: rgba(74, 222, 128, 0.12);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .check svg {{
+            width: 24px;
+            height: 24px;
+        }}
+        h1 {{
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: #fff;
+        }}
+        .subtitle {{
+            color: #a0917e;
+            line-height: 1.5;
+            margin-bottom: 1.5rem;
+        }}
+        .note {{
+            font-size: 0.875rem;
+            color: #7a6e62;
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>✓ Authorization Complete</h1>
-        <p>You can close this window and return to McpMux.</p>
-        <script>setTimeout(() => window.close(), 2000);</script>
+        <svg class="logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#DA7756"/><stop offset="100%" stop-color="#B8553A"/></linearGradient></defs>
+            <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+            <circle cx="6" cy="9" r="2.8" fill="white" opacity="0.85"/><circle cx="6" cy="16" r="3" fill="white"/><circle cx="6" cy="23" r="2.8" fill="white" opacity="0.85"/>
+            <path d="M 10 21 V 11 L 13 18 L 16 10 L 19 18 L 22 11 V 21" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            <circle cx="26" cy="9" r="2.8" fill="white" opacity="0.85"/><circle cx="26" cy="16" r="3" fill="white"/><circle cx="26" cy="23" r="2.8" fill="white" opacity="0.85"/>
+        </svg>
+        <div class="check">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <h1>Authorization Complete</h1>
+        <p class="subtitle">
+            You can close this window and return to {app_name}.
+        </p>
+        <p class="note">This window will close automatically.</p>
     </div>
+    <script>setTimeout(function(){{ window.close(); }}, 2000);</script>
 </body>
-</html>
-                    "#,
-                        )
+</html>"##
+                        ))
                     },
                 ),
             )

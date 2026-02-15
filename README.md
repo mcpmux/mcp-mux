@@ -7,45 +7,45 @@
 
 **[Website](https://mcpmux.com)** · **[Download](https://mcpmux.com/download)** · **[Discover Servers](https://mcpmux.com)** · **[Features](https://mcpmux.com/features)**
 
-![McpMux Dashboard](docs/screenshots/dashboard.png)
+![McpMux Dashboard](docs/screenshots/space-switcher.png)
 
 ---
 
 ## The Problem
 
-Every AI client has its own MCP config file. Same servers, same credentials — duplicated everywhere.
+You use Cursor, Claude Code, VS Code, and Windsurf. They all support MCP. But every client has its own config file — and none of them talk to each other.
 
 ```
 Cursor          → config.json   → github, slack, db  + API keys
-Claude Desktop  → config.json   → github, slack, db  + API keys  (again)
-VS Code         → settings.json → github, slack, db  + API keys  (again)
-Windsurf        → config.json   → github, slack, db  + API keys  (again)
+Claude Code     → config.json   → github, slack, db  + API keys  (copy-paste)
+VS Code         → settings.json → github, slack, db  + API keys  (copy-paste)
+Windsurf        → config.json   → github, slack, db  + API keys  (copy-paste)
 ```
 
-Add a server? **Update every client.** Rotate an API key? **Update every client.** New project? **Reconfigure everything.**
+Add a server? **Edit four files.** Rotate an API key? **Edit four files.** New teammate, new machine, new project? **Start from scratch.**
 
-And all those credentials? Sitting in **plain-text JSON files** on disk.
+And those API keys? Sitting in **plain-text JSON files** anyone can read.
 
 ## The Fix
 
-McpMux is a desktop app that runs a local gateway. Configure your servers once, point all clients to one URL.
+McpMux is a desktop app that runs a local MCP gateway. You configure servers once — every AI client connects to the same URL.
 
 ```
 Cursor          ─┐
-Claude Desktop  ─┤──→  McpMux (localhost)  ──→  all your MCP servers
+Claude Code     ─┤──→  McpMux (localhost:45818)  ──→  all your MCP servers
 VS Code         ─┤     encrypted credentials
 Windsurf        ─┘     one config, one place
 ```
 
-Add a server in McpMux and every client has it instantly. No files to edit.
+Add a server in McpMux and it appears in Cursor, Claude, VS Code, and Windsurf instantly. No files to edit. No credentials to copy.
 
 ---
 
 ## How It Works
 
-**1.** Install servers from the built-in registry (or add manually)
+**1.** Install servers from the built-in registry — or add your own
 
-**2.** Paste one config into your AI clients:
+**2.** Paste one config into each AI client (the last config you'll ever need):
 
 ```json
 {
@@ -58,77 +58,81 @@ Add a server in McpMux and every client has it instantly. No files to edit.
 }
 ```
 
-**3.** Done. All tools from all servers are available in every client.
+**3.** Done. Every tool from every server is available in every client, right now.
 
-McpMux routes calls to the right server, refreshes OAuth tokens automatically, and keeps credentials encrypted in your OS keychain. You don't think about it.
+McpMux routes calls to the right server, refreshes OAuth tokens automatically, and keeps credentials encrypted in your OS keychain — you never think about it again.
 
 ---
 
 ## Features
 
-### Server Management
+### All Your Servers, One Place
 
-Add, remove, and monitor all your MCP servers in one place. See connection status, auth type, and transport at a glance.
+No more duplicating server configs across Cursor, Claude, VS Code, and Windsurf. Install a server in McpMux and it's immediately available everywhere. Expand any server to inspect its tools, prompts, and resources. See live connection status. OAuth tokens refresh automatically in the background.
 
-![My Servers](docs/screenshots/servers.png)
+![Server Management — Azure, AWS, Notion, Docker, Slack all connected](docs/screenshots/servers.png)
 
-### Server Registry
+### 100+ Servers, One Click
 
-Browse and one-click install from a curated registry of MCP servers. Filter by category, auth type, or hosting. Cached for offline use. You can also browse the full registry at [mcpmux.com](https://mcpmux.com).
+Stop hunting for MCP server repos and hand-writing transport configs. Browse a curated registry of 100+ servers — GitHub, Slack, PostgreSQL, Docker, Notion, AWS, Azure, and more. Click install, enter your credentials, and the server is live across every AI client you use. You can also browse the full registry at [mcpmux.com](https://mcpmux.com).
 
-![Discover Servers](docs/screenshots/discover.png)
+![Discover — browse 100+ servers and install with one click](docs/screenshots/discover.png)
 
-### Spaces
+The full registry is also available on the web at [mcpmux.com](https://mcpmux.com) — with search, categories, and one-click install via deep links.
 
-Isolated workspaces with their own servers and credentials. Switch between "Work" and "Personal" in one click — your AI clients follow automatically.
+![mcpmux.com — server registry on the web](docs/screenshots/discover-web.png)
 
-![Workspaces](docs/screenshots/spaces.png)
+### Workspaces That Keep Things Separate
 
-### Feature Sets
+Create isolated Spaces — each with their own servers, credentials, and permissions. A "Work" space for company databases and internal APIs. A "Personal" space for side projects. Switch in one click from the sidebar and every connected AI client follows automatically. No more accidentally querying your personal database from a work project.
 
-Control exactly which tools, prompts, and resources are available. Create custom permission bundles like "Read Only" or "Dev Tools" and assign them to clients.
+![Workspaces — switch context instantly from the sidebar](docs/screenshots/space-switcher.png)
 
-![Feature Sets](docs/screenshots/featuresets.png)
+### Control What Each Client Can Do
 
-### Connected Clients
+Not every AI client should have the same power. Create Feature Sets — permission bundles that control exactly which tools, prompts, and resources a client can access. Build a "Read Only" set for cautious workflows, a "React Development" set with just GitHub and Filesystem, or a "Full Stack Dev" set with everything. Assign them per-client so each tool only goes where you want it.
 
-See every AI client connected to your gateway. Manage OAuth registrations and control which space each client can access.
+![Feature Sets — granular per-server tool selection](docs/screenshots/featureset-detail.png)
 
-![Connected Clients](docs/screenshots/clients.png)
+### See and Manage Every Connected Client
 
-### Settings
+Cursor, VS Code, Windsurf, Claude Code — see every AI client connected to your gateway in real time. Click any client to manage its workspace, grant or revoke feature sets, and see exactly which tools it can access. New clients authenticate via OAuth with a one-click approval flow.
 
-Auto-updates, launch at startup, system tray, and appearance preferences.
-
-![Settings](docs/screenshots/settings.png)
+![Client Management — per-client permissions and effective features](docs/screenshots/client-detail.png)
 
 ---
 
 ## Security
 
-MCP defaults to plain-text config files with raw API keys. McpMux replaces that with:
+MCP defaults to plain-text config files with raw API keys. McpMux replaces that with defense in depth:
 
-- **OS Keychain** — secrets in platform-native secure storage, not on disk
-- **AES-256-GCM** — field-level database encryption
-- **OAuth 2.1 + PKCE** — standard auth with automatic token refresh
+- **OS Keychain** — secrets in platform-native secure storage (DPAPI on Windows, Keychain on macOS, libsecret on Linux), never in plain-text files
+- **AES-256-GCM** — field-level database encryption for all sensitive data
+- **OAuth 2.1 + PKCE** — standard auth flow with automatic token refresh
 - **Local-only gateway** — binds to `127.0.0.1`, nothing exposed to the network
-- **Per-client access keys** — granular permissions per AI client
-- **Sanitized logs** — tokens never appear in log files
-- **Memory zeroization** — secrets wiped from memory after use
+- **Per-client access keys** — each AI client authenticates independently with granular permissions
+- **Sanitized logs** — tokens and secrets never appear in log output
+- **Memory zeroization** — secrets wiped from memory after use via `zeroize`
 
-All MCP traffic stays on your machine. Cloud sync (optional) only covers config metadata — never credentials or payloads.
+All MCP traffic stays on your machine. Cloud sync (optional, coming soon) only covers config metadata — never credentials or payloads.
 
 ---
 
 ## Getting Started
 
-**1. [Download McpMux](https://mcpmux.com/download)** — Windows (MSI), macOS (DMG), Linux (DEB/RPM/AppImage)
+**1. [Download McpMux](https://mcpmux.com/download)** — Windows, macOS, Linux
 
-**2. Add servers** — Discover tab to browse the registry, or [explore servers on mcpmux.com](https://mcpmux.com) and install with one click
+**2. Add servers** — use the Discover tab to browse 100+ servers, or [explore servers on mcpmux.com](https://mcpmux.com) and install with one click
 
-**3. Paste config** — Copy the snippet from the Dashboard into your AI clients
+**3. Paste the config** — copy the snippet from the Dashboard into your AI clients
 
-That's the last config file you'll need to touch.
+That's the last config file you'll ever touch.
+
+> **Linux quick install:** `curl -fsSL https://install.mcpmux.com | bash`
+>
+> **macOS via Homebrew:** `brew install --cask mcpmux/tap/mcpmux`
+>
+> See [mcpmux.com/download](https://mcpmux.com/download) for all platforms and install methods.
 
 ---
 

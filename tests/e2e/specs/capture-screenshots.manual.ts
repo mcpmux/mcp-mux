@@ -1,8 +1,8 @@
 /**
  * Screenshot Capture for Docs & Marketing
  *
- * Seeds realistic data, navigates to each page, and saves screenshots
- * to docs/screenshots/ for the README and discover UI.
+ * Seeds realistic data, navigates to each page, and saves focused screenshots
+ * of the main content area (excluding sidebar/titlebar) for maximum readability.
  *
  * Strategy:
  *   - Real Tauri API calls for spaces, servers, feature sets, gateway, OAuth clients
@@ -11,6 +11,8 @@
  *     (window.__TAURI_INTERNALS__.invoke is non-writable/non-configurable in Tauri v2,
  *      so we cannot mock invoke; instead we emit events that useServerManager listens to)
  *   - OAuth clients registered via HTTP POST to gateway's DCR endpoint, then approved
+ *   - Screenshots capture the <main> content area only (not full window) for readability
+ *   - Additional detail screenshots capture modals/panels for feature-specific views
  *
  * This file uses .manual.ts (not .wdio.ts) so it is excluded from `pnpm test:e2e`.
  * It must be invoked explicitly:
@@ -43,6 +45,13 @@ import {
   enableServerV2,
   emitEvent,
   approveOAuthClient,
+  seedServerFeatures,
+  listFeatureSetsBySpace,
+  listServerFeatures,
+  listClients,
+  addFeatureToSet,
+  grantFeatureSetToClient,
+  grantOAuthClientFeatureSet,
 } from '../helpers/tauri-api';
 import { PRESEED } from '../mocks/screenshot-preseed';
 
@@ -54,17 +63,68 @@ function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+/**
+ * Save a screenshot of the main content area only (excludes sidebar and titlebar).
+ * Falls back to full browser screenshot if <main> element is not found.
+ */
 async function saveScreenshot(name: string) {
   ensureDir(DOCS_DIR);
   const docsPath = path.join(DOCS_DIR, `${name}.png`);
-  await browser.saveScreenshot(docsPath);
-  console.log(`[screenshot] Saved: ${docsPath}`);
+
+  // Try to capture just the main content area for focused, readable screenshots
+  try {
+    const main = await $('main');
+    const isDisplayed = await main.isDisplayed();
+    if (isDisplayed) {
+      await main.saveScreenshot(docsPath);
+      console.log(`[screenshot] Saved (content-focused): ${docsPath}`);
+    } else {
+      await browser.saveScreenshot(docsPath);
+      console.log(`[screenshot] Saved (full window fallback): ${docsPath}`);
+    }
+  } catch {
+    await browser.saveScreenshot(docsPath);
+    console.log(`[screenshot] Saved (full window fallback): ${docsPath}`);
+  }
 
   // Copy to discover UI public folder
+  copyToDiscover(docsPath, name);
+}
+
+/**
+ * Save a full-window screenshot (for contexts where sidebar context is valuable).
+ */
+async function saveFullScreenshot(name: string) {
+  ensureDir(DOCS_DIR);
+  const docsPath = path.join(DOCS_DIR, `${name}.png`);
+  await browser.saveScreenshot(docsPath);
+  console.log(`[screenshot] Saved (full window): ${docsPath}`);
+  copyToDiscover(docsPath, name);
+}
+
+/**
+ * Save a screenshot of a specific element by selector.
+ */
+async function saveElementScreenshot(name: string, selector: string) {
+  ensureDir(DOCS_DIR);
+  const docsPath = path.join(DOCS_DIR, `${name}.png`);
+
+  try {
+    const element = await $(selector);
+    await element.waitForDisplayed({ timeout: 5000 });
+    await element.saveScreenshot(docsPath);
+    console.log(`[screenshot] Saved (element: ${selector}): ${docsPath}`);
+    copyToDiscover(docsPath, name);
+  } catch (err) {
+    console.warn(`[screenshot] Failed to capture element ${selector}: ${err}`);
+  }
+}
+
+function copyToDiscover(srcPath: string, name: string) {
   try {
     ensureDir(DISCOVER_DIR);
     const discoverPath = path.join(DISCOVER_DIR, `${name}.png`);
-    fs.copyFileSync(docsPath, discoverPath);
+    fs.copyFileSync(srcPath, discoverPath);
     console.log(`[screenshot] Copied to: ${discoverPath}`);
   } catch (err) {
     console.warn(`[screenshot] Could not copy to discover UI: ${err}`);
@@ -77,30 +137,30 @@ const OAUTH_CLIENTS = [
   {
     client_name: 'Cursor',
     redirect_uris: ['http://127.0.0.1:6274/callback'],
-    logo_uri: 'https://github.com/getcursor.png?size=128',
+    logo_uri: 'https://avatars.githubusercontent.com/u/157927506?v=4',
     software_id: 'com.cursor.app',
     software_version: '0.48.2',
   },
   {
     client_name: 'VS Code',
     redirect_uris: ['http://127.0.0.1:6275/callback'],
-    logo_uri: 'https://github.com/microsoft.png?size=128',
+    logo_uri: 'https://avatars.githubusercontent.com/u/9950313?v=4',
     software_id: 'com.microsoft.vscode',
     software_version: '1.96.4',
   },
   {
-    client_name: 'Claude Desktop',
-    redirect_uris: ['http://127.0.0.1:6276/callback'],
-    logo_uri: 'https://github.com/anthropics.png?size=128',
-    software_id: 'com.anthropic.claude-desktop',
-    software_version: '1.2.0',
-  },
-  {
     client_name: 'Windsurf',
     redirect_uris: ['http://127.0.0.1:6277/callback'],
-    logo_uri: 'https://github.com/codeium.png?size=128',
+    logo_uri: 'https://avatars.githubusercontent.com/u/137354558?v=4',
     software_id: 'com.codeium.windsurf',
     software_version: '1.6.0',
+  },
+  {
+    client_name: 'Claude Code',
+    redirect_uris: ['http://127.0.0.1:6278/callback'],
+    logo_uri: 'https://avatars.githubusercontent.com/u/76263028?v=4',
+    software_id: 'com.anthropic.claude-code',
+    software_version: '1.0.0',
   },
 ];
 
@@ -214,11 +274,13 @@ describe('Screenshot Capture', function () {
 
   let defaultSpaceId: string;
   let gatewayUrl: string;
+  let oauthClientIds: string[] = [];
 
   before(async () => {
-    // Set a fixed window size for readable, consistent screenshots.
-    // 1280x800 is optimal: text is legible, full UI visible, standard 16:10 ratio.
-    await browser.setWindowSize(1280, 800);
+    // Use a large window so content area screenshots are high-res and readable.
+    // Content area = window minus sidebar (240px) and titlebar (36px).
+    // At 1600x1000, the content area is ~1360x964 — plenty of detail.
+    await browser.setWindowSize(1600, 1000);
 
     // ---- Seed data from preseed config ----
 
@@ -276,16 +338,152 @@ describe('Screenshot Capture', function () {
       }
     }
 
+    // Seed server features (tools, prompts, resources) into the DB
+    // so the server expanded view and feature set panel show real data.
+    try {
+      const featureDefs = PRESEED.serverFeatures(defaultSpaceId);
+      const featureIds = await seedServerFeatures(featureDefs);
+      console.log(`[setup] Seeded ${featureIds.length} server features`);
+
+      // Assign realistic subsets of features to custom feature sets.
+      // Deliberately partial selection so screenshots show mixed enable/disable states.
+      const allFeatureSets = await listFeatureSetsBySpace(defaultSpaceId);
+      const allFeatures = await listServerFeatures(defaultSpaceId, true);
+
+      // ── React Development: GitHub + Filesystem read tools ──
+      const reactDevFS = allFeatureSets.find((fs) => fs.name === 'React Development');
+      if (reactDevFS) {
+        const reactInclude = new Set([
+          'get_file_contents', 'search_repositories', 'search_code', 'list_commits',
+          'read_file', 'list_directory', 'search_files', 'write_file',
+          'web_search',
+        ]);
+        const reactServerIds = ['github-server', 'filesystem-server', 'brave-search'];
+        const reactFeatures = allFeatures.filter(
+          (f) => reactServerIds.includes(f.server_id) && reactInclude.has(f.feature_name)
+        );
+        for (const feature of reactFeatures) {
+          try { await addFeatureToSet(reactDevFS.id, feature.id, 'include'); } catch { /* ignore */ }
+        }
+        console.log(`[setup] Assigned ${reactFeatures.length} features to React Development`);
+      }
+
+      // ── Cloudflare Workers: Cloudflare + Docker tools ──
+      const cloudflareFS = allFeatureSets.find((fs) => fs.name === 'Cloudflare Workers');
+      if (cloudflareFS) {
+        const cfInclude = new Set([
+          'list_workers', 'get_worker_code', 'list_kv_namespaces',
+          'list_containers', 'run_container', 'container_logs',
+        ]);
+        const cfServerIds = ['cloudflare-workers-server', 'docker-server'];
+        const cfFeatures = allFeatures.filter(
+          (f) => cfServerIds.includes(f.server_id) && cfInclude.has(f.feature_name)
+        );
+        for (const feature of cfFeatures) {
+          try { await addFeatureToSet(cloudflareFS.id, feature.id, 'include'); } catch { /* ignore */ }
+        }
+        console.log(`[setup] Assigned ${cfFeatures.length} features to Cloudflare Workers`);
+      }
+
+      // ── Research & Analysis: Brave Search + Notion + PostgreSQL query ──
+      const researchFS = allFeatureSets.find((fs) => fs.name === 'Research & Analysis');
+      if (researchFS) {
+        const researchInclude = new Set([
+          'web_search', 'local_search',
+          'search_pages', 'create_page',
+          'query', 'list_tables', 'describe_table',
+        ]);
+        const researchServerIds = ['brave-search', 'notion-server', 'postgres-server'];
+        const researchFeatures = allFeatures.filter(
+          (f) => researchServerIds.includes(f.server_id) && researchInclude.has(f.feature_name)
+        );
+        for (const feature of researchFeatures) {
+          try { await addFeatureToSet(researchFS.id, feature.id, 'include'); } catch { /* ignore */ }
+        }
+        console.log(`[setup] Assigned ${researchFeatures.length} features to Research & Analysis`);
+      }
+
+      // ── Full Stack Dev: GitHub + Filesystem + PostgreSQL + Docker ──
+      const fullStackFS = allFeatureSets.find((fs) => fs.name === 'Full Stack Dev');
+      if (fullStackFS) {
+        const fullStackServerIds = ['github-server', 'filesystem-server', 'postgres-server', 'docker-server'];
+        const fullStackFeatures = allFeatures.filter(
+          (f) => fullStackServerIds.includes(f.server_id)
+        );
+        for (const feature of fullStackFeatures) {
+          try { await addFeatureToSet(fullStackFS.id, feature.id, 'include'); } catch { /* ignore */ }
+        }
+        console.log(`[setup] Assigned ${fullStackFeatures.length} features to Full Stack Dev`);
+      }
+
+      // ── Read Only: only read/list/search/query tools (no writes, deletes, mutations) ──
+      const readOnlyFS = allFeatureSets.find((fs) => fs.name === 'Read Only');
+      if (readOnlyFS) {
+        const readOnlyInclude = new Set([
+          'get_file_contents', 'search_repositories', 'search_code', 'list_commits',
+          'read_file', 'list_directory', 'search_files',
+          'query', 'list_tables', 'describe_table',
+          'list_channels', 'search_messages',
+          'web_search', 'local_search',
+          'list_containers', 'container_logs', 'list_images',
+          'search_pages',
+          'list_s3_buckets', 'get_s3_object', 'describe_instances',
+          'list_workers', 'get_worker_code', 'list_kv_namespaces',
+          'list_resource_groups', 'list_vms', 'query_cosmos_db',
+        ]);
+        const readOnlyFeatures = allFeatures.filter(
+          (f) => readOnlyInclude.has(f.feature_name)
+        );
+        for (const feature of readOnlyFeatures) {
+          try { await addFeatureToSet(readOnlyFS.id, feature.id, 'include'); } catch { /* ignore */ }
+        }
+        console.log(`[setup] Assigned ${readOnlyFeatures.length} features to Read Only`);
+      }
+    } catch (e) {
+      console.warn('[setup] Feature seeding failed:', e);
+    }
+
     // Ensure gateway is running (may have auto-started when servers were enabled)
     try {
       gatewayUrl = await ensureGatewayRunning();
       await browser.pause(1000); // Let gateway fully initialize
 
       // Register and approve OAuth clients via DCR
-      await registerOAuthClients(gatewayUrl);
+      oauthClientIds = await registerOAuthClients(gatewayUrl);
     } catch (e) {
       console.warn('[setup] Gateway/OAuth setup failed:', e);
       gatewayUrl = '';
+    }
+
+    // Grant feature sets to OAuth clients so Permissions checkboxes and Effective Features have data.
+    // IMPORTANT: Use grantOAuthClientFeatureSet (inbound_clients table), NOT grantFeatureSetToClient (clients table).
+    // Only grant specific custom sets — NOT "All Features" — to show realistic granular permissions.
+    try {
+      const allFeatureSets = await listFeatureSetsBySpace(defaultSpaceId);
+      const reactDevFS = allFeatureSets.find((fs) => fs.name === 'React Development');
+      const fullStackFS = allFeatureSets.find((fs) => fs.name === 'Full Stack Dev');
+      const readOnlyFS = allFeatureSets.find((fs) => fs.name === 'Read Only');
+
+      if (oauthClientIds.length > 0) {
+        const firstClientId = oauthClientIds[0]; // Cursor
+        // Grant "React Development" (custom, 9 features)
+        if (reactDevFS) {
+          await grantOAuthClientFeatureSet(firstClientId, defaultSpaceId, reactDevFS.id);
+          console.log(`[setup] Granted React Development to first OAuth client`);
+        }
+        // Grant "Full Stack Dev" (custom, 55 features)
+        if (fullStackFS) {
+          await grantOAuthClientFeatureSet(firstClientId, defaultSpaceId, fullStackFS.id);
+          console.log(`[setup] Granted Full Stack Dev to first OAuth client`);
+        }
+        // Grant "Read Only" to second client (VS Code) for variety
+        if (oauthClientIds.length > 1 && readOnlyFS) {
+          await grantOAuthClientFeatureSet(oauthClientIds[1], defaultSpaceId, readOnlyFS.id);
+          console.log(`[setup] Granted Read Only to second OAuth client`);
+        }
+      }
+    } catch (e) {
+      console.warn('[setup] OAuth client feature set grant failed:', e);
     }
 
     // Set active space back to default
@@ -296,6 +494,8 @@ describe('Screenshot Capture', function () {
     await browser.refresh();
     await browser.pause(3000);
   });
+
+  // ── Page Screenshots (content area only) ───────────────────────────
 
   it('captures My Servers', async () => {
     const nav = await byTestId('nav-my-servers');
@@ -331,16 +531,102 @@ describe('Screenshot Capture', function () {
     await saveScreenshot('featuresets');
   });
 
-  it('captures Connected Clients', async () => {
+  it('captures Connected Clients with approval modal', async () => {
     const nav = await byTestId('nav-clients');
     await safeClick(nav);
     await browser.pause(2000);
-    await saveScreenshot('clients');
+
+    // Trigger an OAuth consent modal over the clients page.
+    // Flow: register a new client → hit /oauth/authorize → extract request_id → emit event
+    if (gatewayUrl) {
+      try {
+        // Register a new client (not yet approved) for the consent flow
+        const consentResp = await fetch(`${gatewayUrl}/oauth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_name: 'VS Code',
+            redirect_uris: ['http://127.0.0.1:6280/callback'],
+            logo_uri: 'https://avatars.githubusercontent.com/u/9950313?v=4',
+            software_id: 'com.microsoft.vscode',
+            software_version: '1.96.4',
+          }),
+        });
+
+        if (consentResp.ok) {
+          const consentClient = (await consentResp.json()) as { client_id: string };
+
+          // Generate PKCE challenge
+          const codeVerifier = 'screenshot-test-verifier-01234567890123456789012345678901234567890123';
+          const encoder = new TextEncoder();
+          const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(codeVerifier));
+          const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hashBuffer)))
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+
+          // Hit authorize endpoint — creates pending consent in gateway memory
+          const authorizeUrl = `${gatewayUrl}/oauth/authorize?` + new URLSearchParams({
+            response_type: 'code',
+            client_id: consentClient.client_id,
+            redirect_uri: 'http://127.0.0.1:6280/callback',
+            scope: 'mcp',
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+          }).toString();
+
+          const authResp = await fetch(authorizeUrl, { redirect: 'manual' });
+          // The response is HTML containing a deep link with request_id
+          const html = await authResp.text();
+          const match = html.match(/request_id=([a-f0-9-]+)/);
+
+          if (match) {
+            const requestId = match[1];
+            console.log(`[setup] Created pending consent: ${requestId}`);
+
+            // Emit the event that triggers OAuthConsentModal (simulates deep link)
+            await emitEvent('oauth-consent-request', { requestId });
+            await browser.pause(3000); // Wait for modal to validate and render
+            console.log('[setup] Consent modal should be visible');
+          } else {
+            console.warn('[screenshot] Could not extract request_id from authorize response');
+          }
+        }
+      } catch (e) {
+        console.warn('[screenshot] Failed to trigger consent modal:', e);
+      }
+    }
+
+    // Capture full window to show consent modal overlay + clients behind
+    await saveFullScreenshot('clients');
+
+    // Dismiss the consent modal — click the "Dismiss" link or remove via JS
+    try {
+      // Try clicking the "Dismiss (client will wait)" button
+      const dismissBtns = await $$('button');
+      for (const btn of dismissBtns) {
+        const text = await btn.getText();
+        if (text.includes('Dismiss')) {
+          await browser.execute((el: HTMLElement) => el.click(), btn as any);
+          await browser.pause(500);
+          break;
+        }
+      }
+      // Fallback: force-remove any z-50 overlay still present
+      await browser.execute(() => {
+        const overlay = document.querySelector('.fixed.inset-0.bg-black\\/50');
+        if (overlay) overlay.remove();
+      });
+      await browser.pause(500);
+    } catch { /* ignore */ }
   });
 
   // Dashboard captured after other pages so it remounts with fresh data
   // (client count, server stats reflect all setup done in before() hook)
   it('captures Dashboard', async () => {
+    // Clear any lingering overlays from consent modal
+    await browser.execute(() => {
+      document.querySelectorAll('.fixed.inset-0').forEach((el) => el.remove());
+    });
+    await browser.pause(300);
     const nav = await byTestId('nav-dashboard');
     await safeClick(nav);
     await browser.pause(2000);
@@ -352,5 +638,290 @@ describe('Screenshot Capture', function () {
     await safeClick(nav);
     await browser.pause(2000);
     await saveScreenshot('settings');
+  });
+
+  // ── Detail Screenshots (modals, panels, focused views) ─────────────
+
+  // Helper: dismiss any open panel/modal and navigate to ensure clean state
+  async function dismissAndNavigate(navTestId: string) {
+    // Force-remove any z-50 overlay (consent modal, etc.) that may be blocking
+    await browser.execute(() => {
+      document.querySelectorAll('.fixed.inset-0').forEach((el) => el.remove());
+    });
+    await browser.pause(300);
+
+    // Try Escape multiple times to close any open panels/modals/dropdowns
+    for (let i = 0; i < 3; i++) {
+      await browser.keys('Escape');
+      await browser.pause(300);
+    }
+
+    // Click the main content area to defocus any panels
+    try {
+      const main = await $('main');
+      if (await main.isDisplayed()) {
+        await main.click();
+        await browser.pause(300);
+      }
+    } catch { /* ignore */ }
+
+    // Now navigate — use direct click without safeClick's strict waitForClickable
+    // since we may still have overlay remnants
+    const nav = await byTestId(navTestId);
+    try {
+      await nav.waitForClickable({ timeout: 5000 });
+      await nav.click();
+    } catch {
+      // Fallback: force-click via JS if element exists but is "not clickable"
+      await browser.execute((el: HTMLElement) => el.click(), nav as any);
+    }
+    await browser.pause(2000);
+  }
+
+  it('captures Feature Set detail panel', async () => {
+    await dismissAndNavigate('nav-featuresets');
+
+    // Click "React Development" feature set to show the detail panel with assigned features
+    try {
+      const featureSetCards = await $$('[data-testid="featuresets-page"] [data-testid^="featureset-card"]');
+      let clicked = false;
+      for (const card of featureSetCards) {
+        const text = await card.getText();
+        if (text.includes('React Development')) {
+          await card.click();
+          clicked = true;
+          break;
+        }
+      }
+      if (!clicked && featureSetCards.length > 0) {
+        await featureSetCards[0].click();
+      }
+      // Wait for features to load — the "Included Features" section is expanded by default
+      await browser.pause(3000);
+
+      await saveFullScreenshot('featureset-detail');
+    } catch (err) {
+      console.warn(`[screenshot] Could not capture feature set detail: ${err}`);
+    }
+  });
+
+  it('captures Client detail panel with granted feature sets', async () => {
+    await dismissAndNavigate('nav-clients');
+
+    // Click first client card to open the detail/authorization panel
+    try {
+      const clientCards = await $$('[data-testid="clients-page"] [data-testid^="client-card"]');
+      if (clientCards.length > 0) {
+        await clientCards[0].click();
+        await browser.pause(2000);
+
+        // Expand "Permissions" section if collapsed (it defaults to expanded)
+        // and collapse "Quick Settings" to make room for permissions
+        const buttons = await $$('button');
+        for (const btn of buttons) {
+          const text = await btn.getText();
+          if (text.includes('Quick Settings')) {
+            // Quick Settings is expanded by default — collapse it to focus on Permissions
+            await btn.click();
+            await browser.pause(500);
+            break;
+          }
+        }
+
+        await browser.pause(1000);
+        await saveFullScreenshot('client-detail');
+      } else {
+        console.warn('[screenshot] No client cards found for detail screenshot');
+      }
+    } catch (err) {
+      console.warn(`[screenshot] Could not capture client detail: ${err}`);
+    }
+  });
+
+  it('captures Server Install modal', async () => {
+    await dismissAndNavigate('nav-discover');
+    await browser.pause(1000); // Extra wait for registry load
+
+    // Click the first server card's install button
+    try {
+      const installBtns = await $$('[data-testid^="install-btn-"]');
+      if (installBtns.length > 0) {
+        await installBtns[0].click();
+        await browser.pause(1500);
+
+        // Capture the install modal
+        await saveElementScreenshot('install-modal', '[data-testid="install-modal"]');
+
+        // Close the modal
+        const cancelBtn = await $('[data-testid="install-modal-cancel-btn"]');
+        if (await cancelBtn.isDisplayed().catch(() => false)) {
+          await cancelBtn.click();
+        } else {
+          await browser.keys('Escape');
+        }
+        await browser.pause(500);
+      } else {
+        console.warn('[screenshot] No install buttons found for modal screenshot');
+      }
+    } catch (err) {
+      console.warn(`[screenshot] Could not capture install modal: ${err}`);
+    }
+  });
+
+  it('captures Server expanded view with tools/resources', async () => {
+    await dismissAndNavigate('nav-my-servers');
+
+    // Ensure servers show as connected
+    await emitConnectedStatus(PRESEED.serversToInstall, defaultSpaceId);
+    await browser.pause(2000);
+
+    // Emit features-refreshed event so the UI knows features are available
+    // and shows the expand chevron with feature count badges
+    for (const serverId of PRESEED.serversToInstall) {
+      await emitEvent('server-features-refreshed', {
+        space_id: defaultSpaceId,
+        server_id: serverId,
+        tools_count: 5,
+        prompts_count: 1,
+        resources_count: 1,
+        added: [],
+        removed: [],
+      });
+    }
+    await browser.pause(1000);
+
+    // Expand GitHub server to show its rich tool set (8 seeded tools + 1 resource)
+    try {
+      // First scroll to GitHub in the server list (it may be below the fold)
+      const githubCard = await $('[data-testid="server-card-github-server"]');
+      if (await githubCard.isExisting()) {
+        await githubCard.scrollIntoView({ block: 'center' });
+        await browser.pause(500);
+      }
+
+      // Now click its expand button
+      let expandBtn = await $('[data-testid="expand-server-github-server"]');
+      if (!(await expandBtn.isExisting())) {
+        // Fallback: any expandable server
+        expandBtn = await $('[data-testid^="expand-server-"]');
+      }
+      if (await expandBtn.isDisplayed()) {
+        await expandBtn.click();
+        await browser.pause(3000); // Wait for features to load from DB
+        await saveFullScreenshot('server-expanded');
+      } else {
+        console.warn('[screenshot] No expand button found');
+      }
+    } catch (err) {
+      console.warn(`[screenshot] Could not capture server expanded: ${err}`);
+    }
+  });
+
+  it('captures Client permissions panel (granting feature sets)', async () => {
+    await dismissAndNavigate('nav-clients');
+
+    // Click first client to open detail panel
+    try {
+      const clientCards = await $$('[data-testid="clients-page"] [data-testid^="client-card"]');
+      if (clientCards.length > 0) {
+        await clientCards[0].click();
+        await browser.pause(2000);
+
+        // Collapse "Quick Settings" to make room for the features sections
+        const buttons = await $$('button');
+        for (const btn of buttons) {
+          const text = await btn.getText();
+          if (text.includes('Quick Settings')) {
+            await btn.click();
+            await browser.pause(500);
+            break;
+          }
+        }
+
+        // Expand "Effective Features" to show resolved tools/prompts/resources
+        const buttons2 = await $$('button');
+        for (const btn of buttons2) {
+          const text = await btn.getText();
+          if (text.includes('Effective Features')) {
+            await btn.click();
+            await browser.pause(2000); // Wait for features to load
+            break;
+          }
+        }
+
+        await saveFullScreenshot('client-permissions');
+      }
+    } catch (err) {
+      console.warn(`[screenshot] Could not capture client permissions: ${err}`);
+    }
+  });
+
+  it('captures Space switcher dropdown', async () => {
+    await dismissAndNavigate('nav-dashboard');
+
+    // The space switcher is in the sidebar — click it to open the dropdown
+    try {
+      const sidebar = await $('[data-testid="sidebar"]');
+      const spaceSwitcherButtons = await sidebar.$$('button');
+
+      for (const btn of spaceSwitcherButtons) {
+        const text = await btn.getText();
+        // The space switcher shows the current space name
+        if (text.includes('Default') || text.includes('Work') || text.includes('Personal') || text.includes('My Space') || text.includes('Open Source')) {
+          await btn.click();
+          await browser.pause(1000);
+
+          // Capture the full window to show sidebar + dropdown
+          await saveFullScreenshot('space-switcher');
+
+          // Close the dropdown
+          await browser.keys('Escape');
+          await browser.pause(500);
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn(`[screenshot] Could not capture space switcher: ${err}`);
+    }
+  });
+
+  // ── Discover Web Screenshot ────────────────────────────────────────
+
+  it('captures Discover Web UI', async function () {
+    // Take a screenshot of the discover web UI (Next.js site)
+    // This requires the discover dev server running on port 3000
+    this.timeout(30000);
+    const DISCOVER_WEB_URL = 'http://localhost:3000';
+
+    // First check if the dev server is running
+    try {
+      const resp = await fetch(DISCOVER_WEB_URL, { signal: AbortSignal.timeout(3000) });
+      if (!resp.ok) {
+        console.warn('[screenshot] Discover dev server returned non-OK status, skipping');
+        return;
+      }
+    } catch {
+      console.warn('[screenshot] Discover dev server not running on port 3000, skipping');
+      console.warn('[screenshot] To capture: cd ../mcpmux.discover.ui && pnpm dev');
+      return;
+    }
+
+    try {
+      const originalUrl = await browser.getUrl();
+
+      await browser.url(DISCOVER_WEB_URL);
+      await browser.pause(3000);
+
+      await browser.setWindowSize(1920, 1080);
+      await browser.pause(500);
+
+      await saveFullScreenshot('discover-web');
+
+      await browser.url(originalUrl);
+      await browser.setWindowSize(1600, 1000);
+      await browser.pause(2000);
+    } catch (err) {
+      console.warn(`[screenshot] Could not capture discover web UI: ${err}`);
+    }
   });
 });

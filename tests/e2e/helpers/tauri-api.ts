@@ -103,6 +103,15 @@ export async function grantFeatureSetToClient(
   return invoke<void>('grant_feature_set_to_client', { clientId, spaceId, featureSetId });
 }
 
+/** Grant a feature set to an OAuth/inbound client (Cursor, VS Code, etc.) */
+export async function grantOAuthClientFeatureSet(
+  clientId: string,
+  spaceId: string,
+  featureSetId: string
+): Promise<void> {
+  return invoke<void>('grant_oauth_client_feature_set', { clientId, spaceId, featureSetId });
+}
+
 // ============================================================================
 // FeatureSet API
 // ============================================================================
@@ -130,6 +139,23 @@ export async function createFeatureSet(input: {
 
 export async function deleteFeatureSet(id: string): Promise<void> {
   return invoke<void>('delete_feature_set', { id });
+}
+
+/** Add a feature (tool/prompt/resource) to a feature set. */
+export async function addFeatureToSet(
+  featureSetId: string,
+  featureId: string,
+  mode: 'include' | 'exclude' = 'include'
+): Promise<void> {
+  return invoke<void>('add_feature_to_set', { featureSetId, featureId, mode });
+}
+
+/** List all server features in a space. */
+export async function listServerFeatures(
+  spaceId: string,
+  includeUnavailable?: boolean
+): Promise<{ id: string; server_id: string; feature_type: string; feature_name: string }[]> {
+  return invoke('list_server_features', { spaceId, includeUnavailable });
 }
 
 // ============================================================================
@@ -189,6 +215,24 @@ export async function refreshRegistry(): Promise<void> {
 /** Approve a DCR-registered OAuth client by ID (for E2E testing). */
 export async function approveOAuthClient(clientId: string): Promise<void> {
   return invoke<void>('approve_oauth_client', { clientId });
+}
+
+// ============================================================================
+// Server Feature Seeding API (for E2E / screenshots)
+// ============================================================================
+
+export interface SeedFeatureInput {
+  space_id: string;
+  server_id: string;
+  feature_type: 'tool' | 'prompt' | 'resource';
+  feature_name: string;
+  display_name?: string;
+  description?: string;
+}
+
+/** Seed server features into the database for screenshot/E2E purposes. */
+export async function seedServerFeatures(features: SeedFeatureInput[]): Promise<string[]> {
+  return invoke<string[]>('seed_server_features', { features });
 }
 
 // ============================================================================

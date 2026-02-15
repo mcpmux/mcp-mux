@@ -741,6 +741,7 @@ pub fn run() {
             commands::list_server_features_by_server,
             commands::list_server_features_by_type,
             commands::get_server_feature,
+            commands::seed_server_features,
             // Client commands
             commands::list_clients,
             commands::get_client,

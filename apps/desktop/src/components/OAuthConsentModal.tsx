@@ -23,6 +23,25 @@ import {
   CardContent,
 } from '@mcpmux/ui';
 import { listSpaces, type Space } from '@/lib/api/spaces';
+import { resolveKnownClientKey } from '@/lib/clientIcons';
+import cursorIcon from '@/assets/client-icons/cursor.svg';
+import vscodeIcon from '@/assets/client-icons/vscode.png';
+import claudeIcon from '@/assets/client-icons/claude.svg';
+import windsurfIcon from '@/assets/client-icons/windsurf.svg';
+
+/** Bundled icon assets for known clients */
+const CLIENT_ICON_ASSETS: Record<string, string> = {
+  cursor: cursorIcon,
+  vscode: vscodeIcon,
+  claude: claudeIcon,
+  windsurf: windsurfIcon,
+};
+
+/** Look up a bundled logo for a known client by name */
+function getClientLogo(clientName: string): string | null {
+  const key = resolveKnownClientKey(clientName);
+  return key ? CLIENT_ICON_ASSETS[key] ?? null : null;
+}
 
 /** Minimal deep link payload - only request_id */
 interface OAuthDeepLinkPayload {
@@ -267,15 +286,24 @@ export function OAuthConsentModal() {
   // Consent state - show approval modal
   const { details } = modalState;
   const scopes = details.scope?.split(' ').filter(Boolean) || ['mcp'];
+  const logoUrl = getClientLogo(details.clientName);
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
       <Card className="w-full max-w-md mx-4 shadow-xl animate-in fade-in zoom-in duration-200">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-full bg-primary-500/10">
-              <Shield className="h-6 w-6 text-primary-500" />
-            </div>
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={details.clientName}
+                className="h-10 w-10 rounded-full"
+              />
+            ) : (
+              <div className="p-2 rounded-full bg-primary-500/10">
+                <Shield className="h-6 w-6 text-primary-500" />
+              </div>
+            )}
             <div>
               <CardTitle>Authorization Request</CardTitle>
               <CardDescription>
@@ -286,12 +314,21 @@ export function OAuthConsentModal() {
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Client Info */}
-          <div className="p-4 rounded-lg bg-surface-hover border border-[rgb(var(--border))]">
-            <div className="font-medium text-lg">{details.clientName}</div>
-            <div className="text-sm text-[rgb(var(--muted))] mt-1 break-all">
-              {details.clientId.length > 50
-                ? `${details.clientId.substring(0, 50)}...`
-                : details.clientId}
+          <div className="flex items-center gap-3 p-4 rounded-lg bg-surface-hover border border-[rgb(var(--border))]">
+            {logoUrl && (
+              <img
+                src={logoUrl}
+                alt={details.clientName}
+                className="h-8 w-8 rounded-lg"
+              />
+            )}
+            <div>
+              <div className="font-medium text-lg">{details.clientName}</div>
+              <div className="text-sm text-[rgb(var(--muted))] mt-0.5 break-all">
+                {details.clientId.length > 50
+                  ? `${details.clientId.substring(0, 50)}...`
+                  : details.clientId}
+              </div>
             </div>
           </div>
 

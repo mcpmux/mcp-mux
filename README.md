@@ -132,6 +132,43 @@ That's the last config file you'll need to touch.
 
 ---
 
+## Install on Linux
+
+**Quick install** (detects your distro automatically):
+```bash
+curl -fsSL https://install.mcpmux.com | bash
+```
+
+<details>
+<summary>Other install methods</summary>
+
+**Debian / Ubuntu** (APT repository for automatic updates):
+```bash
+curl -fsSL https://install.mcpmux.com/apt | sudo bash
+```
+
+**Fedora / RHEL** (from GitHub Releases):
+```bash
+# Download the latest .rpm
+sudo dnf install https://github.com/mcpmux/mcp-mux/releases/latest/download/mcpmux-0.0.12-1.amd64.rpm
+```
+
+**Arch Linux** (AUR):
+```bash
+yay -S mcpmux-bin
+```
+
+**AppImage** (any distro):
+```bash
+curl -fsSL https://install.mcpmux.com | bash  # auto-detects, falls back to AppImage
+```
+
+Or download directly from [GitHub Releases](https://github.com/mcpmux/mcp-mux/releases/latest).
+
+</details>
+
+---
+
 ## Development
 
 ```bash

@@ -245,3 +245,65 @@ jobs:
           git add Casks/mcpmux.rb
           git commit -m "Update mcpmux to ${VERSION}"
           git push
+
+  # ─────────────────────────────────────────────────────────────
+  # Update APT Repository: Add .deb to self-hosted APT repo on R2
+  # ─────────────────────────────────────────────────────────────
+  update-apt-repo:
+    needs: [release-please, publish-release]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y reprepro
+
+      - name: Configure AWS CLI for R2
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.R2_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.R2_SECRET_ACCESS_KEY }}"
+          aws configure set default.region auto
+        env:
+          AWS_DEFAULT_OUTPUT: json
+
+      - name: Import GPG signing key
+        run: echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Download .deb from GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.release-please.outputs.version }}"
+          mkdir -p artifacts
+          # Download all .deb files from the release
+          gh release download "v${VERSION}" --pattern "*.deb" --dir artifacts
+
+      - name: Sync existing APT repo from R2
+        run: |
+          mkdir -p repo
+          aws s3 sync "s3://mcpmux-apt/" repo/ \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+            || echo "No existing repo (first run)"
+
+      - name: Update APT repo with new packages
+        run: |
+          # Copy reprepro config
+          cp -r scripts/apt-repo/conf repo/
+
+          # Add each .deb package
+          for deb in artifacts/*.deb; do
+            echo "Adding: $deb"
+            reprepro -b repo includedeb stable "$deb"
+          done
+
+          # Export public key
+          gpg --armor --export hello@mcpmux.com > repo/key.gpg
+
+      - name: Sync APT repo back to R2
+        run: |
+          aws s3 sync repo/ "s3://mcpmux-apt/" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+            --delete

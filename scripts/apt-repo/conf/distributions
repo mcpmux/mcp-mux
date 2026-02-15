@@ -1,0 +1,7 @@
+Origin: McpMux
+Label: McpMux
+Codename: stable
+Architectures: amd64 arm64
+Components: main
+Description: McpMux APT Repository
+SignWith: yes

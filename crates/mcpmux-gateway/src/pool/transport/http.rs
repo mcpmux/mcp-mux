@@ -243,8 +243,12 @@ impl HttpTransport {
         let transport_config = StreamableHttpClientTransportConfig::with_uri(self.url.as_str());
         let transport = StreamableHttpClientTransport::with_client(auth_client, transport_config);
 
-        let client_handler =
-            create_client_handler(&self.server_id, self.space_id, self.event_tx.clone());
+        let client_handler = create_client_handler(
+            &self.server_id,
+            self.space_id,
+            self.event_tx.clone(),
+            self.log_manager.clone(),
+        );
 
         let connect_future = client_handler.serve(transport);
         match tokio::time::timeout(self.connect_timeout, connect_future).await {
@@ -363,8 +367,12 @@ impl HttpTransport {
         let transport_config = StreamableHttpClientTransportConfig::with_uri(self.url.as_str());
         let transport = StreamableHttpClientTransport::with_client(client, transport_config);
 
-        let client_handler =
-            create_client_handler(&self.server_id, self.space_id, self.event_tx.clone());
+        let client_handler = create_client_handler(
+            &self.server_id,
+            self.space_id,
+            self.event_tx.clone(),
+            self.log_manager.clone(),
+        );
 
         let connect_future = client_handler.serve(transport);
         match tokio::time::timeout(self.connect_timeout, connect_future).await {
@@ -430,8 +438,12 @@ impl HttpTransport {
         .await;
 
         let transport = StreamableHttpClientTransport::from_uri(self.url.as_str());
-        let client_handler =
-            create_client_handler(&self.server_id, self.space_id, self.event_tx.clone());
+        let client_handler = create_client_handler(
+            &self.server_id,
+            self.space_id,
+            self.event_tx.clone(),
+            self.log_manager.clone(),
+        );
 
         let connect_future = client_handler.serve(transport);
         match tokio::time::timeout(self.connect_timeout, connect_future).await {

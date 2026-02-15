@@ -108,7 +108,7 @@ const TEST_SERVERS: ServerDefinition[] = [
     transport: {
       type: 'stdio',
       command: 'node',
-      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
+      args: ['--import', 'tsx', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
       env: {},
       metadata: {
         inputs: [],
@@ -148,7 +148,7 @@ const TEST_SERVERS: ServerDefinition[] = [
     transport: {
       type: 'stdio',
       command: 'node',
-      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts', '${input:DIRECTORY}'],
+      args: ['--import', 'tsx', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts', '${input:DIRECTORY}'],
       env: {},
       metadata: {
         inputs: [
@@ -195,7 +195,7 @@ const TEST_SERVERS: ServerDefinition[] = [
     transport: {
       type: 'stdio',
       command: 'node',
-      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
+      args: ['--import', 'tsx', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
       env: {
         DATABASE_URL: '${input:DATABASE_URL}',
       },
@@ -316,7 +316,7 @@ const TEST_SERVERS: ServerDefinition[] = [
     transport: {
       type: 'stdio',
       command: 'node',
-      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
+      args: ['--import', 'tsx', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
       env: {},
       metadata: {
         inputs: [],
@@ -424,7 +424,7 @@ const TEST_SERVERS: ServerDefinition[] = [
     transport: {
       type: 'stdio',
       command: 'node',
-      args: ['--experimental-strip-types', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
+      args: ['--import', 'tsx', 'tests/e2e/mocks/stub-mcp-server/stdio-server.ts'],
       env: {},
       metadata: {
         inputs: [],

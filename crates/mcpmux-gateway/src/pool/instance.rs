@@ -6,9 +6,11 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use mcpmux_core::DomainEvent;
+use std::sync::Arc;
+
+use mcpmux_core::{DomainEvent, LogLevel, LogSource, ServerLog, ServerLogManager};
 use parking_lot::RwLock;
-use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
+use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, LoggingLevel};
 use rmcp::service::{NotificationContext, RunningService};
 use rmcp::RoleClient;
 use serde::{Deserialize, Serialize};
@@ -22,12 +24,23 @@ pub use mcpmux_core::TransportType;
 pub type McpClient = RunningService<RoleClient, McpClientHandler>;
 
 /// Client handler for MCP connections
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct McpClientHandler {
     info: ClientInfo,
     server_id: String,
     space_id: Uuid,
     event_tx: Option<tokio::sync::broadcast::Sender<DomainEvent>>,
+    log_manager: Option<Arc<ServerLogManager>>,
+}
+
+impl std::fmt::Debug for McpClientHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpClientHandler")
+            .field("server_id", &self.server_id)
+            .field("space_id", &self.space_id)
+            .field("log_manager", &self.log_manager.is_some())
+            .finish()
+    }
 }
 
 impl McpClientHandler {
@@ -35,6 +48,7 @@ impl McpClientHandler {
         server_id: &str,
         space_id: Uuid,
         event_tx: Option<tokio::sync::broadcast::Sender<DomainEvent>>,
+        log_manager: Option<Arc<ServerLogManager>>,
     ) -> Self {
         Self {
             info: ClientInfo {
@@ -53,6 +67,20 @@ impl McpClientHandler {
             server_id: server_id.to_string(),
             space_id,
             event_tx,
+            log_manager,
+        }
+    }
+
+    /// Convert MCP protocol LoggingLevel to our internal LogLevel
+    fn convert_logging_level(level: &LoggingLevel) -> LogLevel {
+        match level {
+            LoggingLevel::Debug => LogLevel::Debug,
+            LoggingLevel::Info | LoggingLevel::Notice => LogLevel::Info,
+            LoggingLevel::Warning => LogLevel::Warn,
+            LoggingLevel::Error
+            | LoggingLevel::Critical
+            | LoggingLevel::Alert
+            | LoggingLevel::Emergency => LogLevel::Error,
         }
     }
 }
@@ -188,6 +216,45 @@ impl rmcp::ClientHandler for McpClientHandler {
                     space_id = %space_id,
                     "[McpClientHandler] ⚠️ No event_tx available - cannot forward resources/list_changed"
                 );
+            }
+        }
+    }
+
+    fn on_logging_message(
+        &self,
+        params: rmcp::model::LoggingMessageNotificationParam,
+        _context: NotificationContext<RoleClient>,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
+        let server_id = self.server_id.clone();
+        let space_id = self.space_id;
+        let log_manager = self.log_manager.clone();
+        async move {
+            // Format the log message from the MCP data field
+            let message = match &params.data {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+
+            let level = Self::convert_logging_level(&params.level);
+
+            debug!(
+                server_id = %server_id,
+                space_id = %space_id,
+                level = ?params.level,
+                logger = ?params.logger,
+                "[McpClientHandler] Server log: {}",
+                message
+            );
+
+            if let Some(log_manager) = &log_manager {
+                let mut log = ServerLog::new(level, LogSource::Server, &message);
+                // Include logger name in metadata if present
+                if let Some(logger) = &params.logger {
+                    log = log.with_metadata(serde_json::json!({ "logger": logger }));
+                }
+                let _ = log_manager
+                    .append(&space_id.to_string(), &server_id, log)
+                    .await;
             }
         }
     }

@@ -170,6 +170,7 @@ pub fn create_client_handler(
     server_id: &str,
     space_id: uuid::Uuid,
     event_tx: Option<tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>>,
+    log_manager: Option<Arc<ServerLogManager>>,
 ) -> McpClientHandler {
-    McpClientHandler::new(server_id, space_id, event_tx)
+    McpClientHandler::new(server_id, space_id, event_tx, log_manager)
 }

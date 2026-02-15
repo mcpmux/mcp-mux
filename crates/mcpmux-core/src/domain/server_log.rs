@@ -101,6 +101,8 @@ pub enum LogSource {
     Connection,
     /// OAuth flow
     OAuth,
+    /// MCP protocol logging notifications (notifications/message from server)
+    Server,
 }
 
 impl LogSource {
@@ -114,6 +116,7 @@ impl LogSource {
             Self::SseEvent => "sse-event",
             Self::Connection => "connection",
             Self::OAuth => "oauth",
+            Self::Server => "server",
         }
     }
 }

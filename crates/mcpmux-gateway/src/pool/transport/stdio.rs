@@ -3,9 +3,10 @@
 //! Handles connecting to MCP servers that run as child processes
 //! communicating over stdin/stdout.
 //!
-//! Process stderr is captured via an OS pipe and streamed to the server
-//! log manager, making terminal output visible in the desktop log viewer.
-//! These logs are internal to the desktop app and are never exposed
+//! Process stderr is captured via tokio's piped stderr and streamed to the
+//! server log manager, making terminal output visible in the desktop log
+//! viewer. This works generically for any runtime (npx, node, docker, python,
+//! etc.). These logs are internal to the desktop app and are never exposed
 //! externally via the HTTP gateway.
 
 use std::collections::HashMap;
@@ -17,7 +18,8 @@ use async_trait::async_trait;
 use mcpmux_core::{LogLevel, LogSource, ServerLog, ServerLogManager};
 use rmcp::transport::{ConfigureCommandExt, TokioChildProcess};
 use rmcp::ServiceExt;
-use tokio::process::Command;
+use tokio::io::AsyncBufReadExt;
+use tokio::process::{ChildStderr, Command};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -56,23 +58,13 @@ fn command_hint(command: &str) -> &'static str {
     }
 }
 
-/// Create an OS pipe for stderr capture.
-///
-/// Returns `(reader, write_stdio)` where:
-/// - `reader` is a blocking `PipeReader` for the read end
-/// - `write_stdio` is a `Stdio` for the child process's stderr
-fn create_stderr_pipe() -> std::io::Result<(os_pipe::PipeReader, Stdio)> {
-    let (reader, writer) = os_pipe::pipe()?;
-    Ok((reader, writer.into()))
-}
-
-/// Spawn a background task that reads lines from the process stderr pipe
+/// Spawn an async task that reads lines from the child process stderr
 /// and logs them to the server log manager.
 ///
-/// The task runs on the blocking thread pool until the pipe is closed
-/// (child process exits) or an I/O error occurs.
+/// The task runs until the stderr stream is closed (child process exits)
+/// or an I/O error occurs.
 fn spawn_stderr_reader(
-    stderr_file: os_pipe::PipeReader,
+    stderr: ChildStderr,
     log_manager: Option<Arc<ServerLogManager>>,
     space_id: Uuid,
     server_id: String,
@@ -83,23 +75,22 @@ fn spawn_stderr_reader(
 
     let space_id_str = space_id.to_string();
 
-    tokio::task::spawn_blocking(move || {
-        use std::io::BufRead;
+    tokio::spawn(async move {
+        let reader = tokio::io::BufReader::new(stderr);
+        let mut lines = reader.lines();
 
-        let rt = match tokio::runtime::Handle::try_current() {
-            Ok(h) => h,
-            Err(_) => return,
-        };
-
-        let reader = std::io::BufReader::new(stderr_file);
-
-        for line_result in reader.lines() {
-            match line_result {
-                Ok(line) if line.is_empty() => continue,
-                Ok(line) => {
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) if line.is_empty() => continue,
+                Ok(Some(line)) => {
                     let level = classify_stderr_line(&line);
                     let log = ServerLog::new(level, LogSource::Stderr, &line);
-                    let _ = rt.block_on(log_manager.append(&space_id_str, &server_id, log));
+                    let _ = log_manager.append(&space_id_str, &server_id, log).await;
+                }
+                Ok(None) => {
+                    // EOF - child process closed stderr
+                    debug!(server_id = %server_id, "Stderr reader finished (stream closed)");
+                    break;
                 }
                 Err(e) => {
                     debug!(
@@ -111,8 +102,6 @@ fn spawn_stderr_reader(
                 }
             }
         }
-
-        debug!(server_id = %server_id, "Stderr reader finished (pipe closed)");
     });
 }
 
@@ -178,76 +167,6 @@ impl StdioTransport {
             }
         }
     }
-
-    /// Internal helper: attempt connection with a given stderr Stdio target.
-    async fn connect_with_stderr(
-        &self,
-        command_path: &std::path::Path,
-        stderr_config: Stdio,
-    ) -> TransportConnectResult {
-        let args = self.args.clone();
-        let env = self.env.clone();
-
-        let transport =
-            match TokioChildProcess::new(Command::new(command_path).configure(move |cmd| {
-                cmd.args(&args)
-                    .envs(&env)
-                    .stderr(stderr_config)
-                    .kill_on_drop(true);
-
-                configure_child_process_platform(cmd);
-            })) {
-                Ok(t) => t,
-                Err(e) => {
-                    let hint = command_hint(&self.command);
-                    let err = format!("Failed to spawn process: {e}.{hint}");
-                    error!(server_id = %self.server_id, "{}", err);
-                    self.log(LogLevel::Error, LogSource::Connection, err.clone())
-                        .await;
-                    return TransportConnectResult::Failed(err);
-                }
-            };
-
-        // Create client handler
-        let client_handler =
-            create_client_handler(&self.server_id, self.space_id, self.event_tx.clone());
-
-        // Connect with timeout
-        let connect_future = client_handler.serve(transport);
-        let client = match tokio::time::timeout(self.connect_timeout, connect_future).await {
-            Ok(Ok(client)) => client,
-            Ok(Err(e)) => {
-                let hint = command_hint(&self.command);
-                let err = format!("MCP handshake failed: {e}.{hint}");
-                error!(server_id = %self.server_id, "{}", err);
-                self.log(LogLevel::Error, LogSource::Connection, err.clone())
-                    .await;
-                return TransportConnectResult::Failed(err);
-            }
-            Err(_) => {
-                let hint = command_hint(&self.command);
-                let err = format!("Connection timeout ({:?}).{hint}", self.connect_timeout);
-                error!(server_id = %self.server_id, "{}", err);
-                self.log(LogLevel::Error, LogSource::Connection, err.clone())
-                    .await;
-                return TransportConnectResult::Failed(err);
-            }
-        };
-
-        info!(
-            server_id = %self.server_id,
-            "STDIO server connected"
-        );
-
-        self.log(
-            LogLevel::Info,
-            LogSource::Connection,
-            "Server connected successfully".to_string(),
-        )
-        .await;
-
-        TransportConnectResult::Connected(client)
-    }
 }
 
 #[async_trait]
@@ -291,32 +210,90 @@ impl Transport for StdioTransport {
             "Found command"
         );
 
-        // Create an OS pipe for stderr capture.
-        // The write end goes to the child process, the read end stays with us
-        // for streaming process output into the log viewer.
-        let (stderr_read, stderr_write) = match create_stderr_pipe() {
-            Ok(pair) => pair,
-            Err(e) => {
-                warn!(
-                    server_id = %self.server_id,
-                    error = %e,
-                    "Failed to create stderr pipe, falling back to null"
-                );
-                // Connection still works, just without process log capture
-                return self.connect_with_stderr(&command_path, Stdio::null()).await;
+        // Spawn the child process using the builder pattern so that stderr
+        // is configured through the builder (not overridden).
+        // TokioChildProcess::new() would override our stderr setting with
+        // Stdio::inherit(), so we must use builder().stderr().spawn().
+        let args = self.args.clone();
+        let env = self.env.clone();
+
+        let (transport, child_stderr) =
+            match TokioChildProcess::builder(Command::new(&command_path).configure(move |cmd| {
+                cmd.args(&args).envs(&env).kill_on_drop(true);
+                configure_child_process_platform(cmd);
+            }))
+            .stderr(Stdio::piped())
+            .spawn()
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    let hint = command_hint(&self.command);
+                    let err = format!("Failed to spawn process: {e}.{hint}");
+                    error!(server_id = %self.server_id, "{}", err);
+                    self.log(LogLevel::Error, LogSource::Connection, err.clone())
+                        .await;
+                    return TransportConnectResult::Failed(err);
+                }
+            };
+
+        // Start the async stderr reader if we got a handle
+        if let Some(stderr) = child_stderr {
+            spawn_stderr_reader(
+                stderr,
+                self.log_manager.clone(),
+                self.space_id,
+                self.server_id.clone(),
+            );
+        } else {
+            warn!(
+                server_id = %self.server_id,
+                "No stderr handle available - process logs will not be captured"
+            );
+        }
+
+        // Create client handler
+        let client_handler = create_client_handler(
+            &self.server_id,
+            self.space_id,
+            self.event_tx.clone(),
+            self.log_manager.clone(),
+        );
+
+        // Connect with timeout
+        let connect_future = client_handler.serve(transport);
+        let client = match tokio::time::timeout(self.connect_timeout, connect_future).await {
+            Ok(Ok(client)) => client,
+            Ok(Err(e)) => {
+                let hint = command_hint(&self.command);
+                let err = format!("MCP handshake failed: {e}.{hint}");
+                error!(server_id = %self.server_id, "{}", err);
+                self.log(LogLevel::Error, LogSource::Connection, err.clone())
+                    .await;
+                return TransportConnectResult::Failed(err);
+            }
+            Err(_) => {
+                let hint = command_hint(&self.command);
+                let err = format!("Connection timeout ({:?}).{hint}", self.connect_timeout);
+                error!(server_id = %self.server_id, "{}", err);
+                self.log(LogLevel::Error, LogSource::Connection, err.clone())
+                    .await;
+                return TransportConnectResult::Failed(err);
             }
         };
 
-        // Spawn the background stderr reader before connecting.
-        // It blocks on the read end until the child writes to stderr.
-        spawn_stderr_reader(
-            stderr_read,
-            self.log_manager.clone(),
-            self.space_id,
-            self.server_id.clone(),
+        info!(
+            server_id = %self.server_id,
+            "STDIO server connected"
         );
 
-        self.connect_with_stderr(&command_path, stderr_write).await
+        self.log(
+            LogLevel::Info,
+            LogSource::Connection,
+            "Server connected successfully".to_string(),
+        )
+        .await;
+
+        TransportConnectResult::Connected(client)
     }
 
     fn transport_type(&self) -> TransportType {

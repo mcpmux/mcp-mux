@@ -29,6 +29,7 @@ const SOURCE_COLORS: Record<string, string> = {
   'sse-event': 'text-indigo-400',
   connection: 'text-green-300',
   oauth: 'text-pink-400',
+  server: 'text-cyan-400',
 };
 
 export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogViewerProps) {

@@ -344,11 +344,17 @@ export const config: Options.Testrunner = {
         return `wdio-junit-${options.cid}.xml`;
       },
     }],
-    [video, {
-      saveAllVideos: process.env.SAVE_ALL_VIDEOS === 'true', // Save all videos when env var is set
-      videoSlowdownMultiplier: 1, // Normal speed
-      outputDir: './tests/e2e/videos/',
-    }],
+    // Only enable video reporter when explicitly requested via SAVE_ALL_VIDEOS=true.
+    // The video reporter takes a screenshot after every WebDriver command, including
+    // during session teardown. This races with deleteSession killing the Tauri app,
+    // causing UND_ERR_SOCKET errors that mark passing specs as FAILED.
+    ...(process.env.SAVE_ALL_VIDEOS === 'true'
+      ? [[video, {
+          saveAllVideos: true,
+          videoSlowdownMultiplier: 1,
+          outputDir: './tests/e2e/videos/',
+        }]]
+      : []),
   ],
 
   mochaOpts: {
@@ -490,6 +496,11 @@ export const config: Options.Testrunner = {
   // the next spec's beforeSession to avoid racing with WebdriverIO's own
   // deleteSession call, which would cause cascading failures in subsequent specs.
   afterSession: async function () {
+    // Mark as crashed to prevent afterTest screenshot attempts against a dying session.
+    // On Linux, WebKitGTK tears down the process synchronously on deleteSession,
+    // so any pending screenshot requests will hit a dead socket.
+    tauriDriverCrashed = true;
+
     closeTauriDriver();
 
     // Brief pause to let tauri-driver/mcpmux handle SIGTERM gracefully

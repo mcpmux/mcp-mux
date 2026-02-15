@@ -1,6 +1,6 @@
 [package]
 name = "mcpmux"
-version = "0.0.12"
+version = "0.0.13"
 edition.workspace = true
 publish = false
 description = "McpMux - Centralized MCP Server Management"

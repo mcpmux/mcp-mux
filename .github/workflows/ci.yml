@@ -189,60 +189,61 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # Build Verification (macOS only - Linux/Windows covered by e2e-desktop)
+  # Disabled until macOS signing key is available
   # ─────────────────────────────────────────────────────────────
-  build:
-    needs: [rust-check, ts-check]
-    runs-on: macos-latest
-    env:
-      MACOSX_DEPLOYMENT_TARGET: '10.13'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: aarch64-apple-darwin
-          shared-key: rust-aarch64-apple-darwin
-          cache-on-failure: true
-
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      # Cache pnpm store
-      - name: Get pnpm store directory
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
-
-      # Cache Tauri CLI binary
-      - name: Cache Tauri CLI
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/cargo-tauri*
-            ~/.cargo/bin/tauri*
-          key: tauri-cli-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            tauri-cli-${{ runner.os }}-
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+  # build:
+  #   needs: [rust-check, ts-check]
+  #   runs-on: macos-latest
+  #   env:
+  #     MACOSX_DEPLOYMENT_TARGET: '10.13'
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         targets: aarch64-apple-darwin
+  #
+  #     - uses: Swatinem/rust-cache@v2
+  #       with:
+  #         key: aarch64-apple-darwin
+  #         shared-key: rust-aarch64-apple-darwin
+  #         cache-on-failure: true
+  #
+  #     - uses: pnpm/action-setup@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 20
+  #         cache: 'pnpm'
+  #
+  #     # Cache pnpm store
+  #     - name: Get pnpm store directory
+  #       shell: bash
+  #       run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+  #
+  #     - name: Cache pnpm store
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: ${{ env.STORE_PATH }}
+  #         key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+  #         restore-keys: |
+  #           pnpm-store-${{ runner.os }}-
+  #
+  #     # Cache Tauri CLI binary
+  #     - name: Cache Tauri CLI
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: |
+  #           ~/.cargo/bin/cargo-tauri*
+  #           ~/.cargo/bin/tauri*
+  #         key: tauri-cli-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+  #         restore-keys: |
+  #           tauri-cli-${{ runner.os }}-
+  #
+  #     - run: pnpm install --frozen-lockfile
+  #     - run: pnpm build
+  #       env:
+  #         TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  #         TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
   # ─────────────────────────────────────────────────────────────
   # Test Results Report (separate checks per test type and OS)

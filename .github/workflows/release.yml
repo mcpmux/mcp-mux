@@ -50,13 +50,12 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: windows
-          # macOS builds disabled until signing key is available
-          # - os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   artifact: macos-arm
-          # - os: macos-15
-          #   target: x86_64-apple-darwin
-          #   artifact: macos-intel
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-arm
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: macos-intel
 
     runs-on: ${{ matrix.os }}
     permissions:

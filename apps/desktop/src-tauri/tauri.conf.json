@@ -85,6 +85,7 @@
     },
     "linux": {
       "deb": {
+        "section": "utils",
         "depends": [
           "libsecret-1-0",
           "gnome-keyring",

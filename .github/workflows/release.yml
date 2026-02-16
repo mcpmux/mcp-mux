@@ -322,10 +322,11 @@ jobs:
           # Copy reprepro config
           cp -r scripts/apt-repo/conf repo/
 
-          # Add each .deb package
+          # Add each .deb package (--section/--priority override in case
+          # the .deb control file is missing these fields)
           for deb in artifacts/*.deb; do
             echo "Adding: $deb"
-            reprepro -b repo includedeb stable "$deb"
+            reprepro -b repo --section utils --priority optional includedeb stable "$deb"
           done
 
           # Export public key

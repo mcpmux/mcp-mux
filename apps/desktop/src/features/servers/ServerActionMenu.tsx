@@ -29,7 +29,7 @@ export interface ServerActionMenuProps {
 }
 
 export function ServerActionMenu({
-  serverId: _serverId,
+  serverId,
   serverName: _serverName,
   hasInputs,
   isOAuth,
@@ -94,6 +94,7 @@ export function ServerActionMenu({
         aria-label="More actions"
         aria-expanded={isOpen}
         aria-haspopup="menu"
+        data-testid={`action-menu-${serverId}`}
       >
         <MoreVertical className="h-4 w-4" />
       </button>
@@ -145,6 +146,7 @@ export function ServerActionMenu({
             onClick={() => handleAction(onViewLogs)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
             role="menuitem"
+            data-testid={`view-logs-${serverId}`}
           >
             <FileText className="h-4 w-4 text-[rgb(var(--muted))]" />
             View Logs
@@ -155,6 +157,7 @@ export function ServerActionMenu({
             onClick={() => handleAction(onViewDefinition)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
             role="menuitem"
+            data-testid={`view-definition-${serverId}`}
           >
             <Code className="h-4 w-4 text-[rgb(var(--muted))]" />
             View Definition
@@ -168,6 +171,7 @@ export function ServerActionMenu({
             onClick={() => handleAction(onUninstall)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--error))] hover:bg-[rgb(var(--error))]/10 transition-colors"
             role="menuitem"
+            data-testid={`uninstall-menu-${serverId}`}
           >
             <Trash2 className="h-4 w-4" />
             Uninstall

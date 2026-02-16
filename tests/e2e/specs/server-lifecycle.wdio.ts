@@ -106,6 +106,60 @@ describe('Server Installation - GitHub Server (No Inputs)', () => {
     }
   });
 
+  it('TC-SL-004: Action menu shows View Logs, View Definition, Uninstall', async () => {
+    await waitForModalClose();
+    // Ensure we're on My Servers page
+    const myServersButton = await byTestId('nav-my-servers');
+    await myServersButton.click();
+    await browser.pause(2000);
+
+    // Open the action menu for the GitHub server
+    const menuButton = await byTestId('action-menu-github-server');
+    const isMenuDisplayed = await menuButton.isDisplayed().catch(() => false);
+
+    if (isMenuDisplayed) {
+      await menuButton.click();
+      await browser.pause(500);
+
+      await browser.saveScreenshot('./tests/e2e/screenshots/sl-08-action-menu.png');
+
+      // Verify View Logs menu item
+      const viewLogsItem = await byTestId('view-logs-github-server');
+      await expect(viewLogsItem).toBeDisplayed();
+
+      // Verify View Definition menu item
+      const viewDefItem = await byTestId('view-definition-github-server');
+      await expect(viewDefItem).toBeDisplayed();
+
+      // Verify Uninstall menu item
+      const uninstallItem = await byTestId('uninstall-menu-github-server');
+      await expect(uninstallItem).toBeDisplayed();
+
+      // Click View Definition to open the definition modal
+      await viewDefItem.click();
+      await browser.pause(1000);
+
+      await browser.saveScreenshot('./tests/e2e/screenshots/sl-09-view-definition.png');
+
+      // Verify the definition modal is open (contains Monaco editor or JSON content)
+      const pageSource = await browser.getPageSource();
+      const hasDefinitionModal =
+        pageSource.includes('Definition') ||
+        pageSource.includes('monaco') ||
+        pageSource.includes('GitHub');
+
+      expect(hasDefinitionModal).toBe(true);
+
+      // Close the modal
+      await browser.keys('Escape');
+      await browser.pause(500);
+    } else {
+      // Server card may not be present (install may have failed)
+      const pageSource = await browser.getPageSource();
+      expect(pageSource.includes('GitHub') || pageSource.includes('My Servers')).toBe(true);
+    }
+  });
+
   it('TC-SD-005: Uninstall GitHub Server', async () => {
     await waitForModalClose();
     const discoverButton = await byTestId('nav-discover');

@@ -136,6 +136,11 @@ pub struct PendingAuthorization {
     pub code_challenge_method: Option<String>,
     /// Unix timestamp when this request expires
     pub expires_at: i64,
+    /// Consent token: cryptographic secret shared only via Tauri IPC.
+    /// Prevents any process from approving consent via HTTP without going
+    /// through the desktop app UI. Only present on initial consent requests
+    /// (not on auth-code entries used for token exchange).
+    pub consent_token: Option<String>,
 }
 
 /// OAuth authorization endpoint
@@ -272,6 +277,18 @@ pub async fn oauth_authorize(
         .map(|d| d.as_secs() as i64 + 300) // 5 minutes
         .unwrap_or(i64::MAX);
 
+    // Generate consent_token: a cryptographic secret shared only via Tauri IPC.
+    // This prevents any external process from approving consent by calling an
+    // HTTP endpoint directly—only the desktop app UI that retrieves this token
+    // via get_pending_consent can submit a valid approval.
+    let consent_token = {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let mut bytes = [0u8; 32];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut bytes);
+        URL_SAFE_NO_PAD.encode(bytes)
+    };
+
     {
         let mut gateway_state = state.write().await;
         gateway_state.store_pending_authorization(
@@ -285,6 +302,7 @@ pub async fn oauth_authorize(
                 code_challenge: params.code_challenge.clone(),
                 code_challenge_method: params.code_challenge_method.clone(),
                 expires_at,
+                consent_token: Some(consent_token),
             },
         );
     }
@@ -850,6 +868,7 @@ pub async fn oauth_consent_approve(
                 code_challenge: pending.code_challenge.clone(),
                 code_challenge_method: pending.code_challenge_method.clone(),
                 expires_at: code_expires_at,
+                consent_token: None, // Auth code entries don't need consent tokens
             },
         );
 

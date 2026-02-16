@@ -74,6 +74,10 @@ pub struct ConsentRequestDetails {
     pub state: Option<String>,
     /// When this request expires (Unix timestamp)
     pub expires_at: i64,
+    /// Cryptographic consent token (shared only via this IPC call, never over HTTP).
+    /// Must be returned in the approval request to prove the caller is the
+    /// legitimate desktop app UI—not an external script or bot.
+    pub consent_token: String,
 }
 
 /// Handle an incoming deep link URL
@@ -360,6 +364,16 @@ pub async fn get_pending_consent(
         return Err(ConsentError::expired(&request_id));
     }
 
+    // Extract consent_token (required for security—ensures only the desktop
+    // app that retrieved this token via IPC can approve the request)
+    let consent_token = auth.consent_token.clone().ok_or_else(|| {
+        error!("[OAuth] Pending authorization missing consent_token");
+        ConsentError {
+            code: "NOT_FOUND".to_string(),
+            message: "Authorization request is missing consent token — it may have been created before this security update. Please retry.".to_string(),
+        }
+    })?;
+
     // Build response with authoritative data from backend
     // The client_name here comes from our database lookup in handlers.rs
     let details = ConsentRequestDetails {
@@ -373,6 +387,7 @@ pub async fn get_pending_consent(
         scope: auth.scope.clone().unwrap_or_default(),
         state: auth.state.clone(),
         expires_at: auth.expires_at,
+        consent_token,
     };
 
     info!(
@@ -390,6 +405,9 @@ pub struct ConsentApprovalRequest {
     pub request_id: String,
     /// Whether the user approved the request
     pub approved: bool,
+    /// Cryptographic consent token (must match the one issued via get_pending_consent).
+    /// This proves the caller obtained the token through Tauri IPC, not HTTP scraping.
+    pub consent_token: String,
     /// Optional alias name for the client
     pub client_alias: Option<String>,
     /// Connection mode: "follow_active", "locked", or "ask_on_change"
@@ -453,6 +471,27 @@ pub async fn approve_oauth_consent(
         });
     };
 
+    // Validate consent_token: proves the caller obtained this token via Tauri
+    // IPC (get_pending_consent), not by scraping the HTTP authorization page.
+    match &pending.consent_token {
+        Some(expected_token) => {
+            if request.consent_token != *expected_token {
+                error!(
+                    "[OAuth] Consent token mismatch for request_id: {} — possible unauthorized approval attempt",
+                    request.request_id
+                );
+                return Err("Invalid consent token".to_string());
+            }
+        }
+        None => {
+            error!(
+                "[OAuth] Pending authorization missing consent_token for request_id: {}",
+                request.request_id
+            );
+            return Err("Consent token not available".to_string());
+        }
+    }
+
     // Remove the pending authorization (it's been processed)
     {
         let mut state = gw_state.write().await;
@@ -504,6 +543,7 @@ pub async fn approve_oauth_consent(
             code_challenge: pending.code_challenge.clone(),
             code_challenge_method: pending.code_challenge_method.clone(),
             expires_at: code_expires_at,
+            consent_token: None, // Auth code entries don't need consent tokens
         };
 
         state.store_pending_authorization(&code, new_pending);
@@ -656,13 +696,19 @@ pub async fn get_oauth_clients(
     Ok(client_infos)
 }
 
-/// Approve a registered OAuth client by ID (for E2E testing).
-/// In production, clients are approved via the consent flow.
+/// Approve a registered OAuth client by ID (for E2E testing only).
+///
+/// Guarded by the `MCPMUX_E2E_TEST` environment variable. In production
+/// builds this command is a no-op that returns an error.
 #[tauri::command]
 pub async fn approve_oauth_client(
     client_id: String,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<(), String> {
+    if std::env::var("MCPMUX_E2E_TEST").is_err() {
+        return Err("approve_oauth_client is only available in E2E test mode".to_string());
+    }
+
     let app_state = gateway_state.read().await;
     let Some(ref gw_state) = app_state.gateway_state else {
         return Err("Gateway not running".to_string());
@@ -674,7 +720,10 @@ pub async fn approve_oauth_client(
     repo.approve_client(&client_id)
         .await
         .map_err(|e| format!("Failed to approve client: {}", e))?;
-    info!("[OAuth] Approved client via test command: {}", client_id);
+    info!(
+        "[OAuth] Approved client via E2E test command: {}",
+        client_id
+    );
     Ok(())
 }
 

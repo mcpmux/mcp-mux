@@ -80,7 +80,6 @@ function checkTauriDriver(): boolean {
   }
 }
 
-
 // Clear the app's SQLite database and related files for a clean start
 function clearAppData(): void {
   const filesToDelete = [
@@ -125,7 +124,7 @@ function clearBundleCache(): void {
 async function waitForServer(port: number, name: string, timeout = 30000): Promise<void> {
   const start = Date.now();
   const healthUrl = `http://localhost:${port}/health`;
-  
+
   while (Date.now() - start < timeout) {
     try {
       const response = await fetch(healthUrl);
@@ -138,44 +137,68 @@ async function waitForServer(port: number, name: string, timeout = 30000): Promi
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  
+
   throw new Error(`[e2e] ${name} failed to start within ${timeout}ms`);
 }
 
 // Start mock servers
 async function startMockServers(): Promise<void> {
   const mocksDir = path.resolve('./tests/e2e/mocks');
-  
+
   // Start Mock Bundle API
   console.log('[e2e] Starting Mock Bundle API...');
-  mockBundleApi = spawn('pnpm', ['exec', 'tsx', path.join(mocksDir, 'mock-bundle-api', 'server.ts')], {
-    env: { ...process.env, PORT: String(MOCK_BUNDLE_API_PORT) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
-  });
-  mockBundleApi.stdout?.on('data', (data) => console.log(`[mock-bundle-api] ${data.toString().trim()}`));
-  mockBundleApi.stderr?.on('data', (data) => console.error(`[mock-bundle-api] ${data.toString().trim()}`));
-  
+  mockBundleApi = spawn(
+    'pnpm',
+    ['exec', 'tsx', path.join(mocksDir, 'mock-bundle-api', 'server.ts')],
+    {
+      env: { ...process.env, PORT: String(MOCK_BUNDLE_API_PORT) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+    }
+  );
+  mockBundleApi.stdout?.on('data', (data) =>
+    console.log(`[mock-bundle-api] ${data.toString().trim()}`)
+  );
+  mockBundleApi.stderr?.on('data', (data) =>
+    console.error(`[mock-bundle-api] ${data.toString().trim()}`)
+  );
+
   // Start Stub MCP HTTP Server
   console.log('[e2e] Starting Stub MCP HTTP Server...');
-  stubMcpHttp = spawn('pnpm', ['exec', 'tsx', path.join(mocksDir, 'stub-mcp-server', 'http-server.ts')], {
-    env: { ...process.env, PORT: String(STUB_MCP_HTTP_PORT) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
-  });
-  stubMcpHttp.stdout?.on('data', (data) => console.log(`[stub-mcp-http] ${data.toString().trim()}`));
-  stubMcpHttp.stderr?.on('data', (data) => console.error(`[stub-mcp-http] ${data.toString().trim()}`));
-  
+  stubMcpHttp = spawn(
+    'pnpm',
+    ['exec', 'tsx', path.join(mocksDir, 'stub-mcp-server', 'http-server.ts')],
+    {
+      env: { ...process.env, PORT: String(STUB_MCP_HTTP_PORT) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+    }
+  );
+  stubMcpHttp.stdout?.on('data', (data) =>
+    console.log(`[stub-mcp-http] ${data.toString().trim()}`)
+  );
+  stubMcpHttp.stderr?.on('data', (data) =>
+    console.error(`[stub-mcp-http] ${data.toString().trim()}`)
+  );
+
   // Start Stub MCP OAuth Server
   console.log('[e2e] Starting Stub MCP OAuth Server...');
-  stubMcpOauth = spawn('pnpm', ['exec', 'tsx', path.join(mocksDir, 'stub-mcp-server', 'http-oauth-server.ts')], {
-    env: { ...process.env, PORT: String(STUB_MCP_OAUTH_PORT) },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
-  });
-  stubMcpOauth.stdout?.on('data', (data) => console.log(`[stub-mcp-oauth] ${data.toString().trim()}`));
-  stubMcpOauth.stderr?.on('data', (data) => console.error(`[stub-mcp-oauth] ${data.toString().trim()}`));
-  
+  stubMcpOauth = spawn(
+    'pnpm',
+    ['exec', 'tsx', path.join(mocksDir, 'stub-mcp-server', 'http-oauth-server.ts')],
+    {
+      env: { ...process.env, PORT: String(STUB_MCP_OAUTH_PORT) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+    }
+  );
+  stubMcpOauth.stdout?.on('data', (data) =>
+    console.log(`[stub-mcp-oauth] ${data.toString().trim()}`)
+  );
+  stubMcpOauth.stderr?.on('data', (data) =>
+    console.error(`[stub-mcp-oauth] ${data.toString().trim()}`)
+  );
+
   // Wait for all servers to be ready
   await Promise.all([
     waitForServer(MOCK_BUNDLE_API_PORT, 'Mock Bundle API'),
@@ -239,7 +262,14 @@ function killPortProcesses(): void {
     try {
       if (process.platform === 'win32') {
         // Find PIDs listening on this port and kill them
-        const result = spawnSync('cmd', ['/c', `for /f "tokens=5" %a in ('netstat -ano ^| findstr ":${port} " ^| findstr LISTEN') do taskkill /F /PID %a`], { stdio: 'pipe', shell: true });
+        const result = spawnSync(
+          'cmd',
+          [
+            '/c',
+            `for /f "tokens=5" %a in ('netstat -ano ^| findstr ":${port} " ^| findstr LISTEN') do taskkill /F /PID %a`,
+          ],
+          { stdio: 'pipe', shell: true }
+        );
         if (result.stdout?.toString().includes('SUCCESS')) {
           console.log(`[e2e] Killed process on port ${port}`);
         }
@@ -338,22 +368,30 @@ export const config: Options.Testrunner = {
   framework: 'mocha',
   reporters: [
     'spec',
-    ['junit', {
-      outputDir: './tests/e2e/reports/',
-      outputFileFormat: function(options) {
-        return `wdio-junit-${options.cid}.xml`;
+    [
+      'junit',
+      {
+        outputDir: './tests/e2e/reports/',
+        outputFileFormat: function (options) {
+          return `wdio-junit-${options.cid}.xml`;
+        },
       },
-    }],
+    ],
     // Only enable video reporter when explicitly requested via SAVE_ALL_VIDEOS=true.
     // The video reporter takes a screenshot after every WebDriver command, including
     // during session teardown. This races with deleteSession killing the Tauri app,
     // causing UND_ERR_SOCKET errors that mark passing specs as FAILED.
     ...(process.env.SAVE_ALL_VIDEOS === 'true'
-      ? [[video, {
-          saveAllVideos: true,
-          videoSlowdownMultiplier: 1,
-          outputDir: './tests/e2e/videos/',
-        }]]
+      ? [
+          [
+            video,
+            {
+              saveAllVideos: true,
+              videoSlowdownMultiplier: 1,
+              outputDir: './tests/e2e/videos/',
+            },
+          ],
+        ]
       : []),
   ],
 
@@ -363,7 +401,7 @@ export const config: Options.Testrunner = {
   },
 
   // Take screenshot on test failure
-  afterTest: async function(test, context, { error }) {
+  afterTest: async function (test, context, { error }) {
     if (error) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       // Sanitize test title: replace invalid filename chars (NTFS: " : < > | * ? \r \n) and spaces
@@ -458,12 +496,16 @@ export const config: Options.Testrunner = {
       process.platform === 'win32' ? 'tauri-driver.exe' : 'tauri-driver'
     );
 
-    // Pass registry URL environment variable to tauri-driver (which passes to the app)
+    // Pass environment variables to tauri-driver (which passes to the app)
+    // MCPMUX_E2E_TEST=1 enables test-only endpoints:
+    //   - POST /oauth/consent/approve (HTTP consent for programmatic OAuth flow)
+    //   - approve_oauth_client Tauri IPC command
     tauriDriver = spawn(tauriDriverPath, [], {
       stdio: [null, process.stdout, process.stderr],
       env: {
         ...process.env,
         MCPMUX_REGISTRY_URL: `http://localhost:${MOCK_BUNDLE_API_PORT}`,
+        MCPMUX_E2E_TEST: '1',
       },
     });
 

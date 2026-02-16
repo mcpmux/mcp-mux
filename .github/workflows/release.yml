@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,6 +15,19 @@ env:
 jobs:
   # ─────────────────────────────────────────────────────────────
   # Release Please: Create/update release PR with version bump
+  #
+  # When a release PR is merged, release-please creates a published
+  # release (required for git tag creation — draft releases don't
+  # create tags, which breaks version tracking). We immediately
+  # convert it to draft so users never see an empty release.
+  #
+  # This is safe because:
+  # - /releases/latest API returns the PREVIOUS release while draft
+  # - Tauri updater checks /releases/latest/download/latest.json
+  #   → still resolves to old release → no broken updates
+  # - discover.ui fetches /releases/latest → still gets old release
+  # - Once publish-release un-drafts, /latest atomically switches
+  #   to the new release with all artifacts already attached
   # ─────────────────────────────────────────────────────────────
   release-please:
     runs-on: ubuntu-latest
@@ -30,9 +43,25 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          # Use manifest mode for Rust project
           manifest-file: .release-please-manifest.json
           config-file: release-please-config.json
+
+      # release-please creates a published release (so the git tag is created
+      # and version tracking works). Immediately convert to draft so users
+      # don't see an empty release while artifacts are being built.
+      # Uses github-script (not gh CLI) for minimal latency — the octokit
+      # client is pre-authenticated, no process spawn needed.
+      - name: Convert release to draft
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ steps.release.outputs.id }},
+              draft: true,
+            });
 
   # ─────────────────────────────────────────────────────────────
   # Build Release: Build Tauri app when release is created
@@ -142,7 +171,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: apps/desktop
-          # Upload to the existing draft release created by release-please
+          # Upload to the existing draft release
           releaseId: ${{ needs.release-please.outputs.release_id }}
           updaterJsonKeepUniversal: true
 
@@ -158,15 +187,12 @@ jobs:
       contents: write
     steps:
       - name: Publish release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ needs.release-please.outputs.release_id }},
-              draft: false,
-            });
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ needs.release-please.outputs.tag_name }}" \
+            --draft=false \
+            --repo "${{ github.repository }}"
 
   # ─────────────────────────────────────────────────────────────
   # Update Homebrew Tap: Push new version to homebrew-mcpmux

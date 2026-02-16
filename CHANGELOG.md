@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/mcpmux/mcp-mux/compare/v0.1.0...v0.1.1) (2026-02-16)
+
+
+### Bug Fixes
+
+* add deb section field and reprepro override for APT repo ([5da9fd3](https://github.com/mcpmux/mcp-mux/commit/5da9fd39315d69e464204336ac2fc6c42649d399))
+
 ## [0.1.0](https://github.com/mcpmux/mcp-mux/compare/v0.0.1...v0.1.0) (2026-02-16)
 
 First public release of McpMux — the unified MCP gateway and manager for AI clients.

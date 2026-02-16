@@ -7,6 +7,7 @@
 mod dependencies;
 mod handlers;
 pub mod logging_middleware;
+pub mod rate_limit;
 mod service_container;
 mod startup;
 mod state;
@@ -301,10 +302,10 @@ impl GatewayServer {
             // Fallback for clients that don't fetch metadata (VS Code default behavior)
             .route("/authorize", get(handlers::oauth_authorize))
             .route("/oauth/token", post(handlers::oauth_token))
-            .route(
-                "/oauth/consent/approve",
-                post(handlers::oauth_consent_approve),
-            )
+            // NOTE: /oauth/consent/approve was removed for security.
+            // Consent approval now happens exclusively via Tauri IPC command
+            // (approve_oauth_consent), which can only be invoked by the desktop
+            // app's own WebView—not by external HTTP clients, scripts, or bots.
             // Client registration (DCR - public)
             .route("/oauth/register", post(handlers::oauth_register))
             // Client management (for desktop app)
@@ -317,7 +318,22 @@ impl GatewayServer {
             .route(
                 "/oauth/clients/{client_id}",
                 delete(handlers::oauth_delete_client),
-            )
+            );
+
+        // E2E test mode: re-enable HTTP consent endpoint (guarded by env var).
+        // In production this endpoint does NOT exist—consent is Tauri-IPC-only.
+        if std::env::var("MCPMUX_E2E_TEST").is_ok() {
+            warn!("[Gateway] E2E test mode: /oauth/consent/approve HTTP endpoint enabled");
+            router = router.route(
+                "/oauth/consent/approve",
+                post(handlers::oauth_consent_approve),
+            );
+        }
+
+        // Rate limiter for OAuth endpoints (prevents abuse / consent flooding)
+        let rate_limiter = rate_limit::default_oauth_rate_limiter();
+
+        let mut router = router
             // Protected MCP routes (using rmcp's StreamableHttpService)
             .merge(mcp_routes)
             // Client features (needs services)
@@ -328,7 +344,10 @@ impl GatewayServer {
             // Request/Response logging with body (DEBUG level)
             .layer(middleware::from_fn(
                 logging_middleware::http_logging_middleware,
-            ));
+            ))
+            // Rate limiting on OAuth endpoints
+            .layer(axum::Extension(rate_limiter))
+            .layer(middleware::from_fn(rate_limit::rate_limit_middleware));
 
         // Add CORS if enabled
         if self.config.enable_cors {

@@ -7,41 +7,56 @@
 ![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)
 
-### Configure your MCP servers once. Connect every AI client.
+### One app to manage all your MCP servers across every AI client.
 
 **[Website](https://mcpmux.com)** · **[Download](https://mcpmux.com/download)** · **[Discover Servers](https://mcpmux.com)** · **[Features](https://mcpmux.com/features)**
-
-![McpMux Dashboard](docs/screenshots/space-switcher.png)
 
 ---
 
 ## The Problem
 
-You use Cursor, Claude Code, VS Code, and Windsurf. They all support MCP. But every client has its own config file — and none of them talk to each other.
+Cursor, Claude Desktop, VS Code, Windsurf — they all support [MCP](https://modelcontextprotocol.io/), but each one needs its own config file. None of them talk to each other.
 
 ```
-Cursor          → config.json   → github, slack, db  + API keys
-Claude Code     → config.json   → github, slack, db  + API keys  (copy-paste)
-VS Code         → settings.json → github, slack, db  + API keys  (copy-paste)
-Windsurf        → config.json   → github, slack, db  + API keys  (copy-paste)
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Today: every client manages MCP servers independently                  │
+│                                                                         │
+│  Cursor       → config.json    → github, slack, db  + API keys         │
+│  Claude       → config.json    → github, slack, db  + API keys  (dupe) │
+│  VS Code      → settings.json  → github, slack, db  + API keys  (dupe) │
+│  Windsurf     → config.json    → github, slack, db  + API keys  (dupe) │
+│                                                                         │
+│  ⚠ 4 config files  ·  4 copies of every API key  ·  all plain text     │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Add a server? **Edit four files.** Rotate an API key? **Edit four files.** New teammate, new machine, new project? **Start from scratch.**
+Add a server? **Edit four files.** Rotate an API key? **Edit four files.** New machine? **Start from scratch.**
 
-And those API keys? Sitting in **plain-text JSON files** anyone can read.
+And those API keys? Sitting in **plain-text JSON files** anyone on your machine can read.
 
 ## The Fix
 
-McpMux is a desktop app that runs a local MCP gateway. You configure servers once — every AI client connects to the same URL.
+McpMux is a desktop app that runs a local MCP gateway. You configure servers once — every AI client connects through a single URL.
 
 ```
-Cursor          ─┐
-Claude Code     ─┤──→  McpMux (localhost:45818)  ──→  all your MCP servers
-VS Code         ─┤     encrypted credentials
-Windsurf        ─┘     one config, one place
+┌─────────────────────────────────────────────────────────────────────────┐
+│  With McpMux: one gateway, every client                                 │
+│                                                                         │
+│  Cursor       ─┐                                                        │
+│  Claude       ─┤                  ┌──→  GitHub                          │
+│  VS Code      ─┼──→  McpMux      ├──→  Slack                           │
+│  Windsurf     ─┤   localhost:45818├──→  PostgreSQL                      │
+│  Any client   ─┘                  └──→  + all your servers              │
+│                                                                         │
+│  ✓ 1 config  ·  credentials encrypted in OS keychain  ·  instant sync  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Add a server in McpMux and it appears in Cursor, Claude, VS Code, and Windsurf instantly. No files to edit. No credentials to copy.
+Add a server in McpMux and every connected client picks it up instantly — no restart, no manual refresh. Remove a tool or update a prompt? Every client knows immediately.
+
+Lightweight and cross-platform — built in Rust with Tauri 2, McpMux uses minimal CPU and memory while running quietly in your system tray on Windows, macOS, and Linux.
+
+![McpMux Dashboard](docs/screenshots/space-switcher.png)
 
 ---
 

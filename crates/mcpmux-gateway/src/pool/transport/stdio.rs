@@ -23,6 +23,7 @@ use tokio::process::{ChildStderr, Command};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use super::shell_env;
 use super::TransportType;
 use super::{create_client_handler, Transport, TransportConnectResult};
 
@@ -186,10 +187,13 @@ impl Transport for StdioTransport {
         )
         .await;
 
-        // Validate command exists
-        let command_path = match which::which(&self.command)
-            .or_else(|_| which::which(format!("{}.exe", &self.command)))
-        {
+        // Resolve the user's full shell PATH (cached after first call).
+        // On macOS/Linux, GUI apps have a minimal PATH that doesn't include
+        // Homebrew, nvm, Volta, fnm, or /usr/local/bin — this fixes that.
+        let shell_path = shell_env::get_shell_path();
+
+        // Validate command exists, using the shell-resolved PATH when available
+        let command_path = match resolve_command(&self.command, shell_path) {
             Ok(path) => path,
             Err(_) => {
                 let hint = command_hint(&self.command);
@@ -210,12 +214,13 @@ impl Transport for StdioTransport {
             "Found command"
         );
 
-        // Spawn the child process using the builder pattern so that stderr
-        // is configured through the builder (not overridden).
-        // TokioChildProcess::new() would override our stderr setting with
-        // Stdio::inherit(), so we must use builder().stderr().spawn().
+        // Build the child process environment:
+        // - Start with user-configured env vars (from resolution.rs)
+        // - Inject the shell-resolved PATH so child processes can find
+        //   their own dependencies (e.g., npx needs to find node)
         let args = self.args.clone();
-        let env = self.env.clone();
+        let mut env = self.env.clone();
+        inject_shell_path(&mut env, shell_path);
 
         let (transport, child_stderr) =
             match TokioChildProcess::builder(Command::new(&command_path).configure(move |cmd| {
@@ -302,5 +307,39 @@ impl Transport for StdioTransport {
 
     fn description(&self) -> String {
         format!("stdio:{}", self.command)
+    }
+}
+
+/// Resolve a command binary using the shell-resolved PATH when available.
+///
+/// Falls back to the standard `which::which()` (which uses the process PATH)
+/// if no shell PATH was resolved.
+fn resolve_command(
+    command: &str,
+    shell_path: Option<&std::ffi::OsString>,
+) -> Result<std::path::PathBuf, which::Error> {
+    if let Some(path) = shell_path {
+        which::which_in(command, Some(path), ".")
+            .or_else(|_| which::which_in(format!("{}.exe", command), Some(path), "."))
+    } else {
+        which::which(command).or_else(|_| which::which(format!("{}.exe", command)))
+    }
+}
+
+/// Inject the shell-resolved PATH into the child process environment.
+///
+/// This ensures child processes (e.g., npx spawning node) can find their
+/// own dependencies even when the parent GUI app has a minimal PATH.
+///
+/// Only injects if the user hasn't explicitly set PATH in their env overrides.
+fn inject_shell_path(env: &mut HashMap<String, String>, shell_path: Option<&std::ffi::OsString>) {
+    if env.contains_key("PATH") {
+        return; // User explicitly set PATH — respect it
+    }
+
+    if let Some(path) = shell_path {
+        if let Some(path_str) = path.to_str() {
+            env.insert("PATH".to_string(), path_str.to_string());
+        }
     }
 }

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.mcpmux/mcp-mux",
+  "title": "McpMux",
+  "description": "McpMux — configure MCP servers once, connect every AI client through one local gateway.",
+  "websiteUrl": "https://mcpmux.com",
+  "repository": {
+    "url": "https://github.com/mcpmux/mcp-mux",
+    "source": "github"
+  },
+  "version": "0.1.1"
+}

@@ -2611,7 +2611,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcpmux"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2649,7 +2649,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-core"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-gateway"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2714,7 +2714,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-mcp"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2733,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "mcpmux-storage"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4222,6 +4222,7 @@ dependencies = [
 [[package]]
 name = "rmcp"
 version = "0.15.0"
+source = "git+https://github.com/mcpmux/rust-sdk.git?branch=fix%2Fsse-channel-replacement-conflict#4fd9ae79f3b56d8346097c82ba5b3827f1b9fd21"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4255,6 +4256,7 @@ dependencies = [
 [[package]]
 name = "rmcp-macros"
 version = "0.15.0"
+source = "git+https://github.com/mcpmux/rust-sdk.git?branch=fix%2Fsse-channel-replacement-conflict#4fd9ae79f3b56d8346097c82ba5b3827f1b9fd21"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",

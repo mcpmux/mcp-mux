@@ -50,10 +50,6 @@ pub enum InputType {
     /// Single-line text input
     #[default]
     Text,
-    /// Multi-line text input
-    Textarea,
-    /// Password/secret input (masked)
-    Password,
     /// Boolean toggle
     Boolean,
     /// Numeric input

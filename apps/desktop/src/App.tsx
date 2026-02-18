@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   Home,
   Server,
@@ -12,6 +13,8 @@ import {
   Loader2,
   FolderOpen,
   FileText,
+  Download,
+  X,
 } from 'lucide-react';
 import {
   AppShell,
@@ -82,6 +85,7 @@ function AppContent() {
   useDataSync();
 
   const [activeNav, setActiveNav] = useState<NavItem>('home');
+  const [availableUpdate, setAvailableUpdate] = useState<{ version: string } | null>(null);
 
   // Auto-check for updates on startup (silent check after 5 seconds)
   useEffect(() => {
@@ -91,7 +95,7 @@ function AppContent() {
         const update = await check();
         if (update) {
           console.log(`[Auto-Update] Update available: ${update.version}`);
-          // User can check Settings page to see the update
+          setAvailableUpdate({ version: update.version });
         }
       } catch (error) {
         console.error('[Auto-Update] Failed to check for updates:', error);
@@ -106,6 +110,39 @@ function AppContent() {
   const theme = useTheme();
   const setTheme = useAppStore((state) => state.setTheme);
   const activeSpace = useActiveSpace();
+  const viewSpace = useViewSpace();
+
+  // App version from Rust backend
+  const [appVersion, setAppVersion] = useState('');
+  useEffect(() => {
+    invoke<string>('get_version')
+      .then(setAppVersion)
+      .catch((err) => console.error('Failed to get version:', err));
+  }, []);
+
+  // Gateway status for sidebar footer
+  const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);
+  const loadGatewayUrl = useCallback(async () => {
+    try {
+      const { getGatewayStatus } = await import('@/lib/api/gateway');
+      const status = await getGatewayStatus(viewSpace?.id);
+      setGatewayUrl(status.running && status.url ? status.url : null);
+    } catch {
+      setGatewayUrl(null);
+    }
+  }, [viewSpace?.id]);
+
+  useEffect(() => {
+    loadGatewayUrl();
+  }, [loadGatewayUrl]);
+
+  useGatewayEvents((payload) => {
+    if (payload.action === 'started') {
+      setGatewayUrl(payload.url || null);
+    } else if (payload.action === 'stopped') {
+      setGatewayUrl(null);
+    }
+  });
 
   // Toggle dark mode
   const toggleDarkMode = () => {
@@ -119,8 +156,8 @@ function AppContent() {
       }
       footer={
         <div className="text-xs text-[rgb(var(--muted))]">
-          <div>McpMux v0.1.0</div>
-          <div>Gateway: localhost:9315</div>
+          <div>McpMux{appVersion ? ` v${appVersion}` : ''}</div>
+          <div>Gateway: {gatewayUrl ?? 'Not running'}</div>
         </div>
       }
     >
@@ -234,6 +271,36 @@ function AppContent() {
       }
     >
       <div className="animate-fade-in">
+        {availableUpdate && (
+          <div
+            className="flex items-center justify-between gap-3 px-4 py-2.5 bg-blue-500/10 border-b border-blue-500/20 text-sm"
+            data-testid="update-banner"
+          >
+            <div className="flex items-center gap-2">
+              <Download className="h-4 w-4 text-blue-500 flex-shrink-0" />
+              <span>
+                McpMux <strong>v{availableUpdate.version}</strong> is available.
+              </span>
+              <button
+                onClick={() => {
+                  setActiveNav('settings');
+                  setAvailableUpdate(null);
+                }}
+                className="text-blue-500 hover:text-blue-400 font-medium underline underline-offset-2"
+              >
+                Update now
+              </button>
+            </div>
+            <button
+              onClick={() => setAvailableUpdate(null)}
+              className="text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors flex-shrink-0"
+              aria-label="Dismiss update notification"
+              data-testid="dismiss-update-banner"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
         {activeNav === 'home' && <DashboardView />}
         {activeNav === 'registry' && <RegistryPage />}
         {activeNav === 'servers' && <ServersPage />}

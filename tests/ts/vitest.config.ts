@@ -32,6 +32,13 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, '../../apps/desktop/src'),
       '@mcpmux/ui': path.resolve(__dirname, '../../packages/ui/src'),
+      // Tauri packages live in apps/desktop/node_modules — alias them so
+      // vi.mock() calls in tests resolve to the same module IDs as the
+      // source code imports from apps/desktop/src/.
+      '@tauri-apps/api': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/api'),
+      '@tauri-apps/plugin-updater': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-updater'),
+      '@tauri-apps/plugin-process': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-process'),
+      '@tauri-apps/plugin-opener': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-opener'),
     },
   },
 });

@@ -238,8 +238,10 @@ impl GatewayServer {
         }
 
         // Create MCP handler
-        let handler =
-            McpMuxGatewayHandler::new(Arc::new(self.services.clone()), notification_bridge.clone());
+        let handler = McpMuxGatewayHandler::new(
+            Arc::new(self.services.clone()),
+            notification_bridge.clone(),
+        );
 
         // Create STATEFUL MCP service (full Streamable HTTP per spec 2025-11-25)
         // stateful_mode: true means:

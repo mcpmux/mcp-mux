@@ -29,7 +29,10 @@ pub struct McpMuxGatewayHandler {
 }
 
 impl McpMuxGatewayHandler {
-    pub fn new(services: Arc<ServiceContainer>, notification_bridge: Arc<MCPNotifier>) -> Self {
+    pub fn new(
+        services: Arc<ServiceContainer>,
+        notification_bridge: Arc<MCPNotifier>,
+    ) -> Self {
         Self {
             services,
             notification_bridge,
@@ -115,6 +118,7 @@ impl ServerHandler for McpMuxGatewayHandler {
             server_info: Implementation {
                 name: "mcpmux-gateway".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                title: Some("McpMux".to_string()),
                 ..Default::default()
             },
             instructions: Some(

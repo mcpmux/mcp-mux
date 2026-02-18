@@ -5,6 +5,7 @@
 
 pub mod client;
 pub mod client_custom_features;
+pub mod client_install;
 pub mod config_export;
 pub mod credential;
 pub mod feature_members;
@@ -22,6 +23,7 @@ pub mod space;
 // Re-export commands for convenience
 pub use client::*;
 pub use client_custom_features::*;
+pub use client_install::*;
 pub use config_export::*;
 pub use feature_members::*;
 pub use feature_set::*;

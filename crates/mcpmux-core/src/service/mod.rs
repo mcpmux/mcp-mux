@@ -4,6 +4,7 @@
 
 pub mod app_settings_service;
 mod cimd_fetcher;
+mod client_install;
 mod client_service;
 mod config_export;
 pub mod gateway_port_service;
@@ -15,6 +16,7 @@ mod space_service;
 
 pub use app_settings_service::{keys, AppSettingsService};
 pub use cimd_fetcher::*;
+pub use client_install::{cursor_deep_link, vscode_deep_link};
 pub use client_service::*;
 pub use config_export::*;
 pub use gateway_port_service::{

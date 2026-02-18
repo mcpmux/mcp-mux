@@ -8,7 +8,6 @@ import {
   Settings,
   Sun,
   Moon,
-  Check,
   Loader2,
   FolderOpen,
   FileText,
@@ -29,6 +28,7 @@ import { ThemeProvider } from '@/components/ThemeProvider';
 import { OAuthConsentModal } from '@/components/OAuthConsentModal';
 import { ServerInstallModal } from '@/components/ServerInstallModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
+import { ConnectIDEs } from '@/components/ConnectIDEs';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useAppStore, useActiveSpace, useViewSpace, useTheme } from '@/stores';
 import { RegistryPage } from '@/features/registry';
@@ -270,7 +270,6 @@ function DashboardView() {
     running: boolean;
     url: string | null;
   }>({ running: false, url: null });
-  const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const viewSpace = useViewSpace();
 
   // Load stats on mount and when gateway changes
@@ -438,61 +437,11 @@ function DashboardView() {
         </Card>
       </div>
 
-      {/* Client Config */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Connect Your Client</CardTitle>
-          <CardDescription>
-            Add this server configuration to your MCP client settings (e.g., inside mcpServers section).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {/* Gateway URL */}
-            <div className="flex items-center gap-2 text-sm">
-              <span className={`h-2 w-2 rounded-full ${gatewayStatus.running ? 'bg-green-500' : 'bg-orange-500'}`} />
-              <span className="text-[rgb(var(--muted))]">Gateway:</span>
-              <code className="bg-[var(--surface)] px-2 py-1 rounded text-primary-500">
-                {gatewayStatus.url || 'http://localhost:3100'}
-              </code>
-              {!gatewayStatus.running && (
-                <span className="text-orange-500 text-xs">(not running)</span>
-              )}
-            </div>
-
-            {/* Config Display */}
-            <div className="relative">
-              <pre className="bg-mcpmux-dark text-primary-100 p-4 rounded-lg text-sm overflow-x-auto font-mono">
-{`"mcpmux": {
-  "type": "http",
-  "url": "${gatewayStatus.url || 'http://localhost:3100'}/mcp"
-}`}
-              </pre>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="absolute top-2 right-2"
-                onClick={async () => {
-                  const config = `"mcpmux": {\n  "type": "http",\n  "url": "${gatewayStatus.url || 'http://localhost:3100'}/mcp"\n}`;
-                  await navigator.clipboard.writeText(config);
-                  setExportSuccess('Config copied to clipboard!');
-                  setTimeout(() => setExportSuccess(null), 2000);
-                }}
-                data-testid="copy-config-btn"
-              >
-                📋 Copy
-              </Button>
-            </div>
-
-            {exportSuccess && (
-              <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
-                <Check className="h-4 w-4" />
-                {exportSuccess}
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+      {/* Connect IDEs — one-click install */}
+      <ConnectIDEs
+        gatewayUrl={gatewayStatus.url || 'http://localhost:3100'}
+        gatewayRunning={gatewayStatus.running}
+      />
     </div>
   );
 }

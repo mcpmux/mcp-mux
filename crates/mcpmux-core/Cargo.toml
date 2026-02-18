@@ -22,6 +22,8 @@ flate2 = "1.0"
 reqwest = { workspace = true, features = ["json"] }
 regex = "1.11"
 lazy_static = "1.5"
+base64 = "0.22"
+urlencoding = "2.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

@@ -760,6 +760,9 @@ pub fn run() {
             commands::get_config_paths,
             commands::check_config_exists,
             commands::backup_existing_config,
+            // Client install commands (one-click IDE setup)
+            commands::add_to_vscode,
+            commands::add_to_cursor,
             // Gateway commands
             commands::get_gateway_status,
             commands::start_gateway,

@@ -915,6 +915,20 @@ describe('Screenshot Capture', function () {
       await browser.setWindowSize(1920, 1080);
       await browser.pause(500);
 
+      // Scroll down to the server list section so the screenshot focuses on
+      // the registry grid rather than the hero banner
+      try {
+        const categoryPill = await $('[data-testid="category-pill-all"]');
+        if (await categoryPill.isExisting()) {
+          await categoryPill.scrollIntoView({ block: 'start' });
+          await browser.pause(500);
+        }
+      } catch {
+        // Fallback: scroll by a fixed amount to get past the hero
+        await browser.execute(() => window.scrollBy(0, 600));
+        await browser.pause(500);
+      }
+
       await saveFullScreenshot('discover-web');
 
       await browser.url(originalUrl);

@@ -24,7 +24,7 @@ use super::transport::{
 };
 
 /// Default connection timeout
-const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Result of a connection attempt
 #[derive(Debug)]

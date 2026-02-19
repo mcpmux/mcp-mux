@@ -709,15 +709,9 @@ export function ServersPage() {
   };
 
   const handleUninstall = async (server: ServerViewModel) => {
-    // Import source-aware helpers
-    const { getUninstallConfirmMessage, getUninstallLabel } = await import('@/components/SourceBadge');
-    const confirmMsg = getUninstallConfirmMessage(server.name, server.installation_source);
+    const { getUninstallLabel } = await import('@/components/SourceBadge');
     const actionLabel = getUninstallLabel(server.installation_source);
-    
-    if (!confirm(confirmMsg)) {
-      return;
-    }
-    
+
     setActionLoading(`uninstall-${server.id}`);
     try {
       const { uninstallServer } = await import('@/lib/api/registry');

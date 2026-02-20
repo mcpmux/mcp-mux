@@ -9,6 +9,7 @@ const initialState: AppState = {
   viewSpaceId: null,
   sidebarCollapsed: false,
   theme: 'system',
+  analyticsEnabled: true,
   loading: {
     spaces: false,
     servers: false,
@@ -95,6 +96,11 @@ export const useAppStore = create<AppStore>()(
           state.theme = theme;
         }),
 
+      setAnalyticsEnabled: (enabled) =>
+        set((state) => {
+          state.analyticsEnabled = enabled;
+        }),
+
       // Loading
       setLoading: (key, value) =>
         set((state) => {
@@ -110,6 +116,7 @@ export const useAppStore = create<AppStore>()(
         activeSpaceId: state.activeSpaceId,
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
+        analyticsEnabled: state.analyticsEnabled,
       }),
     }
   )

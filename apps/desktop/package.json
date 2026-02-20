@@ -24,6 +24,7 @@
     "@tauri-apps/plugin-updater": "^2",
     "immer": "^11.0.1",
     "lucide-react": "^0.561.0",
+    "posthog-js": "^1.351.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.9"

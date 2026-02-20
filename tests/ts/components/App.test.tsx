@@ -68,6 +68,15 @@ vi.mock('@/hooks/useDomainEvents', () => ({
     gatewayEventCallbacks.push(cb);
   }),
   useServerStatusEvents: vi.fn(),
+  useDomainEvents: vi.fn(() => ({ subscribe: vi.fn(() => vi.fn()) })),
+}));
+
+vi.mock('@/lib/analytics', () => ({
+  initAnalytics: vi.fn(),
+  capture: vi.fn(),
+  optOut: vi.fn(),
+  optIn: vi.fn(),
+  hasOptedOut: vi.fn(() => false),
 }));
 
 function fireGatewayEvent(payload: GatewayPayload) {

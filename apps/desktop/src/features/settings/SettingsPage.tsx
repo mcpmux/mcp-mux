@@ -22,8 +22,9 @@ import {
   Minimize2,
   XCircle,
   Trash2,
+  BarChart3,
 } from 'lucide-react';
-import { useAppStore, useTheme } from '@/stores';
+import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
 
 interface StartupSettings {
@@ -35,6 +36,8 @@ interface StartupSettings {
 export function SettingsPage() {
   const theme = useTheme();
   const setTheme = useAppStore((state) => state.setTheme);
+  const analyticsEnabled = useAnalyticsEnabled();
+  const setAnalyticsEnabled = useAppStore((state) => state.setAnalyticsEnabled);
   const [logsPath, setLogsPath] = useState<string>('');
   const [openingLogs, setOpeningLogs] = useState(false);
   const { toasts, success, error } = useToast();
@@ -298,6 +301,38 @@ export function SettingsPage() {
                 </Button>
               </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Analytics Section */}
+      <Card data-testid="settings-analytics-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart3 className="h-5 w-5" />
+            Analytics
+          </CardTitle>
+          <CardDescription>
+            Help improve McpMux by sharing anonymous usage data. No personal information is collected.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <BarChart3 className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+              <div>
+                <label className="text-sm font-medium">Share Usage Data</label>
+                <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                  Sends anonymous data like app version, OS, and feature usage to help us prioritize improvements.
+                  Location is approximated from IP by PostHog. No credentials or server configurations are shared.
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={analyticsEnabled}
+              onCheckedChange={setAnalyticsEnabled}
+              data-testid="analytics-switch"
+            />
           </div>
         </CardContent>
       </Card>

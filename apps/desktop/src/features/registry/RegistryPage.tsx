@@ -11,6 +11,7 @@ import { useRegistryStore } from '../../stores/registryStore';
 import { ServerCard } from './ServerCard';
 import { ServerDetailModal } from './ServerDetailModal';
 import { useViewSpace } from '@/stores';
+import { capture } from '@/lib/analytics';
 
 export function RegistryPage() {
   const {
@@ -85,6 +86,9 @@ export function RegistryPage() {
     const timer = setTimeout(() => {
       if (localSearch !== searchQuery) {
         search(localSearch);
+        if (localSearch.trim()) {
+          capture('registry_search', { query: localSearch.trim() });
+        }
       }
     }, 300);
     return () => clearTimeout(timer);

@@ -9,6 +9,7 @@ export interface AppState {
   // UI state
   sidebarCollapsed: boolean;
   theme: 'light' | 'dark' | 'system';
+  analyticsEnabled: boolean;
 
   // Loading states
   loading: {
@@ -29,6 +30,7 @@ export interface AppActions {
   // UI
   toggleSidebar: () => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  setAnalyticsEnabled: (enabled: boolean) => void;
 
   // Loading
   setLoading: (key: keyof AppState['loading'], value: boolean) => void;

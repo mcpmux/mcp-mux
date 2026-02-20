@@ -33,7 +33,9 @@ import { ServerInstallModal } from '@/components/ServerInstallModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
 import { ConnectIDEs } from '@/components/ConnectIDEs';
 import { useDataSync } from '@/hooks/useDataSync';
-import { useAppStore, useActiveSpace, useViewSpace, useTheme } from '@/stores';
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { initAnalytics, capture, optIn, optOut } from '@/lib/analytics';
+import { useAppStore, useActiveSpace, useViewSpace, useTheme, useAnalyticsEnabled } from '@/stores';
 import { RegistryPage } from '@/features/registry';
 import { FeatureSetsPage } from '@/features/featuresets';
 import { ClientsPage } from '@/features/clients';
@@ -111,6 +113,7 @@ function AppContent() {
   const setTheme = useAppStore((state) => state.setTheme);
   const activeSpace = useActiveSpace();
   const viewSpace = useViewSpace();
+  const analyticsEnabled = useAnalyticsEnabled();
 
   // App version from Rust backend
   const [appVersion, setAppVersion] = useState('');
@@ -119,6 +122,36 @@ function AppContent() {
       .then(setAppVersion)
       .catch((err) => console.error('Failed to get version:', err));
   }, []);
+
+  // Initialize analytics once we have the app version
+  useEffect(() => {
+    if (!appVersion) return;
+    initAnalytics(appVersion);
+    if (analyticsEnabled) {
+      optIn();
+      capture('app_opened');
+    } else {
+      optOut();
+    }
+  }, [appVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync opt-in/out when user toggles analytics
+  useEffect(() => {
+    if (!appVersion) return;
+    if (analyticsEnabled) {
+      optIn();
+    } else {
+      optOut();
+    }
+  }, [analyticsEnabled, appVersion]);
+
+  // Track domain events (server install/uninstall)
+  useAnalytics();
+
+  // Track page navigation
+  useEffect(() => {
+    capture('page_viewed', { page: activeNav });
+  }, [activeNav]);
 
   // Gateway status for sidebar footer
   const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);

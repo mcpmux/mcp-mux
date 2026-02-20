@@ -17,25 +17,25 @@ pnpm exec wdio run tests/e2e/wdio.conf.ts --spec tests/e2e/specs/capture-screens
 
 ## What Gets Captured
 
-### Page Screenshots (content area only — no sidebar/titlebar)
+### Page Screenshots
 
-| Screenshot | Page | Content |
-|---|---|---|
-| `dashboard.png` | Dashboard | Gateway status, stats cards, client config snippet |
-| `servers.png` | My Servers | Installed servers with connection states |
-| `discover.png` | Discover | Server registry (mock bundle with 14 servers) |
-| `spaces.png` | Spaces | Workspace cards (default + 5 additional) |
-| `featuresets.png` | FeatureSets | Permission bundles |
-| `clients.png` | Clients | Connected AI clients (Cursor, VS Code, Claude Desktop, Windsurf, Claude Code) |
-| `settings.png` | Settings | App settings page |
+| Screenshot | Page | Type | Content |
+|---|---|---|---|
+| `dashboard.png` | Dashboard | content area | Gateway status, stats cards, client config snippet |
+| `servers.png` | My Servers | content area | Installed servers with connection states |
+| `discover.png` | Discover | content area | Server registry (mock bundle with 14 servers) |
+| `spaces.png` | Spaces | content area | Workspace cards (default + 5 additional) |
+| `featuresets.png` | FeatureSets | content area | Permission bundles |
+| `clients.png` | Clients | full window | OAuth consent modal over connected clients (Cursor, VS Code, Windsurf, Claude Code) |
+| `settings.png` | Settings | content area | App settings page |
 
 ### Detail Screenshots (modals, panels, focused views)
 
 | Screenshot | Content |
 |---|---|
 | `featureset-detail.png` | Feature set panel with permission checkboxes |
-| `client-detail.png` | Client detail panel with connection mode/locking |
-| `client-permissions.png` | Client panel with Permissions section expanded (feature set granting) |
+| `client-detail.png` | Client detail panel with Permissions section (Quick Settings collapsed) |
+| `client-permissions.png` | Client panel with Effective Features section expanded (resolved tools/prompts/resources) |
 | `server-expanded.png` | Server card expanded showing tools, prompts, resources |
 | `space-switcher.png` | Sidebar with space switcher dropdown open (full window) |
 | `install-modal.png` | Server install modal from registry |

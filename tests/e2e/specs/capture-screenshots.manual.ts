@@ -915,6 +915,24 @@ describe('Screenshot Capture', function () {
       await browser.setWindowSize(1920, 1080);
       await browser.pause(500);
 
+      // Scroll down past the hero so the server grid is the main focus.
+      // First scroll to the category pills, then nudge further so the
+      // server cards fill the viewport.
+      try {
+        const categoryPill = await $('[data-testid="category-pill-all"]');
+        if (await categoryPill.isExisting()) {
+          await categoryPill.scrollIntoView({ block: 'start' });
+          await browser.pause(300);
+          // Scroll down more so the server cards fill the viewport
+          await browser.execute(() => window.scrollBy(0, 500));
+          await browser.pause(500);
+        }
+      } catch {
+        // Fallback: scroll by a large fixed amount to get past the hero
+        await browser.execute(() => window.scrollBy(0, 900));
+        await browser.pause(500);
+      }
+
       await saveFullScreenshot('discover-web');
 
       await browser.url(originalUrl);

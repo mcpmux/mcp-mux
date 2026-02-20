@@ -86,13 +86,19 @@ export function RegistryPage() {
     const timer = setTimeout(() => {
       if (localSearch !== searchQuery) {
         search(localSearch);
-        if (localSearch.trim()) {
-          capture('registry_search', { query: localSearch.trim() });
-        }
       }
     }, 300);
     return () => clearTimeout(timer);
   }, [localSearch, searchQuery, search]);
+
+  // Track search analytics with longer debounce to capture final query only
+  useEffect(() => {
+    if (!localSearch.trim()) return;
+    const timer = setTimeout(() => {
+      capture('registry_search', { query: localSearch.trim() });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [localSearch]);
 
   const handleInstall = async (id: string) => {
     const server = servers.find(s => s.id === id);

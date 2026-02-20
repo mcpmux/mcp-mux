@@ -94,6 +94,7 @@ impl HttpTransport {
             "access token",
             "missing or invalid",
             "bearer",
+            "unexpected content type",
         ];
         oauth_indicators.iter().any(|s| error_lower.contains(s))
     }
@@ -843,6 +844,13 @@ mod tests {
     #[test]
     fn test_requires_oauth_channel_closed() {
         assert!(HttpTransport::requires_oauth("transport channel closed"));
+    }
+
+    #[test]
+    fn test_requires_oauth_unexpected_content_type() {
+        assert!(HttpTransport::requires_oauth(
+            "Unexpected content type: Some(\"text/plain;charset=UTF-8\")"
+        ));
     }
 
     #[test]

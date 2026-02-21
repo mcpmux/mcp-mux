@@ -287,4 +287,35 @@ mod tests {
         let count = sender.emit(DomainEvent::GatewayStopped);
         assert_eq!(count, 0);
     }
+
+    #[test]
+    fn try_recv_none_when_empty() {
+        let bus = EventBus::new();
+        let mut receiver = bus.subscribe();
+
+        // No events emitted yet
+        assert!(receiver.try_recv().is_none());
+    }
+
+    #[test]
+    fn try_recv_returns_event() {
+        let bus = EventBus::new();
+        let sender = bus.sender();
+        let mut receiver = bus.subscribe();
+
+        sender.emit(DomainEvent::GatewayStopped);
+
+        let event = receiver.try_recv();
+        assert!(event.is_some());
+        assert_eq!(event.unwrap().type_name(), "gateway_stopped");
+    }
+
+    #[test]
+    fn emit_or_warn_no_receivers_does_not_panic() {
+        let bus = EventBus::new();
+        let sender = bus.sender();
+
+        // Should not panic even with no receivers
+        sender.emit_or_warn(DomainEvent::GatewayStopped);
+    }
 }

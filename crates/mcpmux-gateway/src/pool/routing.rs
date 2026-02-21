@@ -738,3 +738,67 @@ impl RoutingService {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // is_auth_error tests
+
+    #[test]
+    fn is_auth_error_401() {
+        assert!(RoutingService::is_auth_error("got 401 from server"));
+    }
+
+    #[test]
+    fn is_auth_error_unauthorized() {
+        assert!(RoutingService::is_auth_error("unauthorized access denied"));
+    }
+
+    #[test]
+    fn is_auth_error_invalid_token() {
+        assert!(RoutingService::is_auth_error(
+            "invalid_token: token revoked"
+        ));
+    }
+
+    #[test]
+    fn is_auth_error_token_expired() {
+        assert!(RoutingService::is_auth_error("token expired at 12:00"));
+    }
+
+    #[test]
+    fn is_auth_error_access_token() {
+        assert!(RoutingService::is_auth_error("access token is invalid"));
+    }
+
+    #[test]
+    fn is_auth_error_unrelated() {
+        assert!(!RoutingService::is_auth_error("connection refused"));
+    }
+
+    #[test]
+    fn is_auth_error_empty() {
+        assert!(!RoutingService::is_auth_error(""));
+    }
+
+    // content_has_auth_error tests
+
+    #[test]
+    fn content_auth_error_in_text() {
+        let content = vec![serde_json::json!({"type": "text", "text": "Error: 401 Unauthorized"})];
+        assert!(RoutingService::content_has_auth_error(&content));
+    }
+
+    #[test]
+    fn content_no_text_field() {
+        let content = vec![serde_json::json!({"type": "image", "data": "base64..."})];
+        assert!(!RoutingService::content_has_auth_error(&content));
+    }
+
+    #[test]
+    fn content_empty_slice() {
+        let content: Vec<Value> = vec![];
+        assert!(!RoutingService::content_has_auth_error(&content));
+    }
+}

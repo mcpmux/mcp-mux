@@ -9,6 +9,7 @@ describe('appStore', () => {
       spaces: [],
       activeSpaceId: null,
       viewSpaceId: null,
+      activeNav: 'home',
       sidebarCollapsed: false,
       theme: 'system',
       loading: { spaces: false, servers: false },
@@ -275,6 +276,26 @@ describe('appStore', () => {
       useAppStore.getState().setTheme('light');
       useAppStore.getState().setTheme('system');
       expect(useAppStore.getState().theme).toBe('system');
+    });
+  });
+
+  describe('navigateTo', () => {
+    it('should set activeNav', () => {
+      expect(useAppStore.getState().activeNav).toBe('home');
+
+      useAppStore.getState().navigateTo('servers');
+      expect(useAppStore.getState().activeNav).toBe('servers');
+    });
+
+    it('should navigate to different pages', () => {
+      useAppStore.getState().navigateTo('registry');
+      expect(useAppStore.getState().activeNav).toBe('registry');
+
+      useAppStore.getState().navigateTo('clients');
+      expect(useAppStore.getState().activeNav).toBe('clients');
+
+      useAppStore.getState().navigateTo('home');
+      expect(useAppStore.getState().activeNav).toBe('home');
     });
   });
 

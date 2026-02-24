@@ -35,7 +35,7 @@ import { ConnectIDEs } from '@/components/ConnectIDEs';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { initAnalytics, capture, optIn, optOut } from '@/lib/analytics';
-import { useAppStore, useActiveSpace, useViewSpace, useTheme, useAnalyticsEnabled } from '@/stores';
+import { useAppStore, useActiveSpace, useViewSpace, useTheme, useAnalyticsEnabled, useActiveNav, useNavigateTo } from '@/stores';
 import { RegistryPage } from '@/features/registry';
 import { FeatureSetsPage } from '@/features/featuresets';
 import { ClientsPage } from '@/features/clients';
@@ -80,13 +80,12 @@ function McpMuxGlyph({ className }: { className?: string }) {
   );
 }
 
-type NavItem = 'home' | 'registry' | 'servers' | 'spaces' | 'featuresets' | 'clients' | 'settings';
-
 function AppContent() {
   // Sync data from backend on mount
   useDataSync();
 
-  const [activeNav, setActiveNav] = useState<NavItem>('home');
+  const activeNav = useActiveNav();
+  const navigateTo = useNavigateTo();
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string } | null>(null);
 
   // Auto-check for updates on startup (silent check after 5 seconds)
@@ -199,21 +198,21 @@ function AppContent() {
           icon={<Home className="h-4 w-4" />}
           label="Dashboard"
           active={activeNav === 'home'}
-          onClick={() => setActiveNav('home')}
+          onClick={() => navigateTo('home')}
           data-testid="nav-dashboard"
         />
         <SidebarItem
           icon={<Server className="h-4 w-4" />}
           label="My Servers"
           active={activeNav === 'servers'}
-          onClick={() => setActiveNav('servers')}
+          onClick={() => navigateTo('servers')}
           data-testid="nav-my-servers"
         />
         <SidebarItem
           icon={<Server className="h-4 w-4" />}
           label="Discover"
           active={activeNav === 'registry'}
-          onClick={() => setActiveNav('registry')}
+          onClick={() => navigateTo('registry')}
           data-testid="nav-discover"
         />
       </SidebarSection>
@@ -223,14 +222,14 @@ function AppContent() {
           icon={<Globe className="h-4 w-4" />}
           label="Spaces"
           active={activeNav === 'spaces'}
-          onClick={() => setActiveNav('spaces')}
+          onClick={() => navigateTo('spaces')}
           data-testid="nav-spaces"
         />
         <SidebarItem
           icon={<Wrench className="h-4 w-4" />}
           label="FeatureSets"
           active={activeNav === 'featuresets'}
-          onClick={() => setActiveNav('featuresets')}
+          onClick={() => navigateTo('featuresets')}
           data-testid="nav-featuresets"
         />
       </SidebarSection>
@@ -240,7 +239,7 @@ function AppContent() {
           icon={<Monitor className="h-4 w-4" />}
           label="Clients"
           active={activeNav === 'clients'}
-          onClick={() => setActiveNav('clients')}
+          onClick={() => navigateTo('clients')}
           data-testid="nav-clients"
         />
       </SidebarSection>
@@ -250,7 +249,7 @@ function AppContent() {
           icon={<Settings className="h-4 w-4" />}
           label="Settings"
           active={activeNav === 'settings'}
-          onClick={() => setActiveNav('settings')}
+          onClick={() => navigateTo('settings')}
           data-testid="nav-settings"
         />
       </SidebarSection>
@@ -316,7 +315,7 @@ function AppContent() {
               </span>
               <button
                 onClick={() => {
-                  setActiveNav('settings');
+                  navigateTo('settings');
                   setAvailableUpdate(null);
                 }}
                 className="text-blue-500 hover:text-blue-400 font-medium underline underline-offset-2"

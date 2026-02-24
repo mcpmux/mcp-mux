@@ -10,7 +10,7 @@ import { useToast, ToastContainer } from '@mcpmux/ui';
 import { useRegistryStore } from '../../stores/registryStore';
 import { ServerCard } from './ServerCard';
 import { ServerDetailModal } from './ServerDetailModal';
-import { useViewSpace } from '@/stores';
+import { useViewSpace, useNavigateTo } from '@/stores';
 import { capture } from '@/lib/analytics';
 
 export function RegistryPage() {
@@ -39,6 +39,7 @@ export function RegistryPage() {
 
   const [localSearch, setLocalSearch] = useState('');
   const viewSpace = useViewSpace();
+  const navigateTo = useNavigateTo();
   const { toasts, success, error: showToastError, dismiss } = useToast();
 
   const itemsPerPage = uiConfig?.items_per_page ?? 24;
@@ -105,7 +106,13 @@ export function RegistryPage() {
     const serverName = server?.name || 'Server';
     try {
       await installServer(id, viewSpace?.id);
-      success('Server installed', `"${serverName}" has been installed`);
+      success('Server installed', `"${serverName}" has been installed`, {
+        duration: 6000,
+        action: {
+          label: 'Go to My Servers to enable →',
+          onClick: () => navigateTo('servers'),
+        },
+      });
     } catch {
       showToastError('Install failed', `Failed to install "${serverName}"`);
     }

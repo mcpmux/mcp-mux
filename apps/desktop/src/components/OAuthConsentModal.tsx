@@ -16,6 +16,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Check, X, AlertCircle, Loader2, Globe, Lock } from 'lucide-react';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent } from '@mcpmux/ui';
 import { listSpaces, type Space } from '@/lib/api/spaces';
+import { useAppStore } from '@/stores';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
@@ -72,7 +73,8 @@ type ModalState =
   | { type: 'hidden' }
   | { type: 'loading'; requestId: string }
   | { type: 'error'; requestId: string; error: ConsentError }
-  | { type: 'consent'; details: ConsentRequestDetails };
+  | { type: 'consent'; details: ConsentRequestDetails }
+  | { type: 'approved'; clientName: string };
 
 /** Open a URL using the backend open command (handles custom protocols like cursor://) */
 async function openRedirectUrl(url: string): Promise<void> {
@@ -196,7 +198,7 @@ export function OAuthConsentModal() {
       if (response.success && response.redirect_url) {
         console.log('[OAuth] Approved, redirecting to:', response.redirect_url);
         await openRedirectUrl(response.redirect_url);
-        setModalState({ type: 'hidden' });
+        setModalState({ type: 'approved', clientName: clientAlias || details.clientName });
       } else {
         setProcessError(response.error || 'Failed to approve consent');
       }
@@ -283,6 +285,58 @@ export function OAuthConsentModal() {
             <Button onClick={handleDismiss} className="w-full">
               Close
             </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Approved state - show success with next-step guidance
+  if (modalState.type === 'approved') {
+    const navigateTo = useAppStore.getState().navigateTo;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <Card className="animate-in fade-in zoom-in mx-4 w-full max-w-md shadow-xl duration-200">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="rounded-full bg-green-500/10 p-2">
+                <Check className="h-6 w-6 text-green-500" />
+              </div>
+              <div>
+                <CardTitle>Client Approved</CardTitle>
+                <CardDescription>
+                  {modalState.clientName} is now connected
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 text-sm">
+              <p className="font-medium mb-1">Next step: Grant permissions</p>
+              <p className="text-[rgb(var(--muted))]">
+                Assign FeatureSets to control which tools, prompts, and resources this client can access.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={handleDismiss}
+              >
+                Later
+              </Button>
+              <Button
+                variant="primary"
+                className="flex-1"
+                onClick={() => {
+                  navigateTo('clients');
+                  handleDismiss();
+                }}
+                data-testid="go-to-clients-btn"
+              >
+                Manage Permissions →
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

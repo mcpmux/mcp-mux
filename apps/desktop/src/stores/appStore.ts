@@ -7,6 +7,7 @@ const initialState: AppState = {
   spaces: [],
   activeSpaceId: null,
   viewSpaceId: null,
+  activeNav: 'home',
   sidebarCollapsed: false,
   theme: 'system',
   analyticsEnabled: true,
@@ -83,6 +84,12 @@ export const useAppStore = create<AppStore>()(
           if (index !== -1) {
             state.spaces[index] = { ...state.spaces[index], ...updates };
           }
+        }),
+
+      // Navigation
+      navigateTo: (nav) =>
+        set((state) => {
+          state.activeNav = nav;
         }),
 
       // UI

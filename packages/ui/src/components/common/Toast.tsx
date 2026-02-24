@@ -4,12 +4,18 @@ import { cn } from '../../lib/cn';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface ToastProps {
   id: string;
   type: ToastType;
   title: string;
   message?: string;
   duration?: number;
+  action?: ToastAction;
   onClose: (id: string) => void;
 }
 
@@ -33,6 +39,7 @@ export function Toast({
   title,
   message,
   duration = 3000,
+  action,
   onClose,
 }: ToastProps) {
   const Icon = iconMap[type];
@@ -61,6 +68,15 @@ export function Toast({
         <p className="text-sm font-medium">{title}</p>
         {message && (
           <p className="text-xs text-[rgb(var(--muted))] mt-1">{message}</p>
+        )}
+        {action && (
+          <button
+            onClick={() => { action.onClick(); onClose(id); }}
+            className="mt-2 text-xs font-semibold text-[rgb(var(--primary))] hover:underline"
+            data-testid="toast-action"
+          >
+            {action.label}
+          </button>
         )}
       </div>
       <button

@@ -26,7 +26,7 @@ import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
 import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverManager';
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
-import { useViewSpace } from '@/stores';
+import { useViewSpace, useNavigateTo } from '@/stores';
 import { useServerManager } from '@/hooks/useServerManager';
 import { useGatewayEvents, useDomainEvents } from '@/hooks/useDomainEvents';
 import type { GatewayChangedPayload, ServerChangedPayload } from '@/hooks/useDomainEvents';
@@ -192,7 +192,8 @@ export function ServersPage() {
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
   
   const viewSpace = useViewSpace();
-  
+  const navigateTo = useNavigateTo();
+
   // Event-driven server status management
   const {
     statuses: serverStatuses,
@@ -890,7 +891,13 @@ export function ServersPage() {
         <div className="text-center py-12 text-[rgb(var(--muted))]">
           <div className="text-5xl mb-4">📦</div>
           <p className="text-lg mb-2">No servers installed</p>
-          <p className="text-sm">Visit Discover to install MCP servers</p>
+          <button
+            onClick={() => navigateTo('registry')}
+            className="mt-3 px-6 py-2.5 rounded-lg text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-purple-500 hover:from-primary-600 hover:to-purple-600 shadow-md hover:shadow-lg transition-all hover:scale-[1.03]"
+            data-testid="discover-servers-btn"
+          >
+            Discover MCP Servers
+          </button>
         </div>
       ) : (
         <div className="space-y-3">

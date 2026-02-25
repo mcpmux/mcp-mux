@@ -20,7 +20,7 @@ import {
   Shield,
   Save,
 } from 'lucide-react';
-import { Button, useToast, ToastContainer } from '@mcpmux/ui';
+import { Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
 import { setFeatureSetMembers } from '@/lib/api/featureSets';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
@@ -49,6 +49,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const [error, setError] = useState<string | null>(null);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const { toasts, success, error: showError, dismiss } = useToast();
+  const { confirm, ConfirmDialogElement } = useConfirm();
 
   // Collapsible sections - only one expanded at a time, features by default
   const [expandedSections, setExpandedSections] = useState({
@@ -279,6 +280,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   return (
     <div className="fixed right-0 top-0 bottom-0 w-full max-w-[45%] min-w-[600px] bg-[rgb(var(--surface))] border-l border-[rgb(var(--border))] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 z-50">
       <ToastContainer toasts={toasts} onClose={dismiss} />
+      {ConfirmDialogElement}
       {/* Panel Header */}
       <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
         <div className="flex items-start justify-between mb-3">
@@ -598,8 +600,13 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              if (confirm('Delete this feature set?')) {
+            onClick={async () => {
+              if (await confirm({
+                title: 'Delete feature set',
+                message: `Delete "${featureSet.name}"? This cannot be undone.`,
+                confirmLabel: 'Delete',
+                variant: 'danger',
+              })) {
                 onDelete(featureSet.id);
               }
             }}

@@ -32,6 +32,7 @@ import {
   Button,
   useToast,
   ToastContainer,
+  useConfirm,
 } from '@mcpmux/ui';
 import type { OAuthClient, UpdateClientRequest } from '@/lib/api/gateway';
 import { listOAuthClients, updateOAuthClient, deleteOAuthClient } from '@/lib/api/gateway';
@@ -120,7 +121,8 @@ export default function ClientsPage() {
   const [selectedClient, setSelectedClient] = useState<OAuthClient | null>(null);
   
   const { toasts, success, error: showError, info, dismiss } = useToast();
-  
+  const { confirm, ConfirmDialogElement } = useConfirm();
+
   // Edit state
   const [editAlias, setEditAlias] = useState('');
   const [editMode, setEditMode] = useState('follow_active');
@@ -383,9 +385,14 @@ export default function ClientsPage() {
   };
 
   const handleDelete = async (clientId: string) => {
-    if (!confirm('Remove this client? All tokens will be revoked.')) return;
-    
     const deletedClient = oauthClients.find(c => c.client_id === clientId);
+    const name = deletedClient?.client_alias || deletedClient?.client_name || 'this client';
+    if (!await confirm({
+      title: 'Remove client',
+      message: `Remove "${name}"? All tokens will be revoked.`,
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    })) return;
     const clientName = deletedClient?.client_alias || deletedClient?.client_name || 'Client';
     
     try {
@@ -1321,6 +1328,7 @@ export default function ClientsPage() {
       )}
 
       <ToastContainer toasts={toasts} onClose={dismiss} />
+      {ConfirmDialogElement}
     </div>
   );
 }

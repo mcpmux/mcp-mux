@@ -16,6 +16,8 @@ export { Card, CardHeader, CardTitle, CardDescription, CardContent } from './com
 export { Switch } from './components/common/Switch';
 export { Toast, ToastContainer } from './components/common/Toast';
 export type { ToastProps, ToastType, ToastAction } from './components/common/Toast';
+export { ConfirmDialog, useConfirm } from './components/common/ConfirmDialog';
+export type { ConfirmDialogState, ConfirmDialogProps } from './components/common/ConfirmDialog';
 
 // Hooks
 export { useToast } from './hooks/useToast';

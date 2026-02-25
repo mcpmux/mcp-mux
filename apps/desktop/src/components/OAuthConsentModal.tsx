@@ -16,7 +16,7 @@ import { listen } from '@tauri-apps/api/event';
 import { Check, X, AlertCircle, Loader2, Globe, Lock } from 'lucide-react';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent } from '@mcpmux/ui';
 import { listSpaces, type Space } from '@/lib/api/spaces';
-import { useAppStore } from '@/stores';
+import { useNavigateTo } from '@/stores';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
@@ -123,6 +123,7 @@ export function OAuthConsentModal() {
   const [processError, setProcessError] = useState<string | null>(null);
   /** 2-second cooldown before the Approve button becomes active */
   const [approveReady, setApproveReady] = useState(false);
+  const navigateTo = useNavigateTo();
 
   // Load spaces when modal opens
   useEffect(() => {
@@ -293,7 +294,6 @@ export function OAuthConsentModal() {
 
   // Approved state - show success with next-step guidance
   if (modalState.type === 'approved') {
-    const navigateTo = useAppStore.getState().navigateTo;
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
         <Card className="animate-in fade-in zoom-in mx-4 w-full max-w-md shadow-xl duration-200">
@@ -320,21 +320,21 @@ export function OAuthConsentModal() {
             <div className="flex gap-3">
               <Button
                 variant="secondary"
-                className="flex-1"
                 onClick={handleDismiss}
               >
                 Later
               </Button>
               <Button
                 variant="primary"
-                className="flex-1"
+                className="flex-1 whitespace-nowrap"
                 onClick={() => {
                   navigateTo('clients');
                   handleDismiss();
                 }}
                 data-testid="go-to-clients-btn"
               >
-                Manage Permissions →
+                Manage Permissions
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
               </Button>
             </div>
           </CardContent>

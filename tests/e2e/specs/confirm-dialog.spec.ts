@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { DashboardPage, SpacesPage, ClientsPage } from '../pages';
+import { DashboardPage } from '../pages';
 
 // Helper to click Spaces in sidebar (avoids space switcher button)
 async function goToSpaces(page: import('@playwright/test').Page) {

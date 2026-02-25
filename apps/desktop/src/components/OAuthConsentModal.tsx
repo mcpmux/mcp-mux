@@ -12,7 +12,7 @@
 
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit } from '@tauri-apps/api/event';
 import { Check, X, AlertCircle, Loader2, Globe, Lock } from 'lucide-react';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent } from '@mcpmux/ui';
 import { listSpaces, type Space } from '@/lib/api/spaces';
@@ -328,8 +328,13 @@ export function OAuthConsentModal() {
                 variant="primary"
                 className="flex-1 whitespace-nowrap"
                 onClick={() => {
-                  navigateTo('clients');
                   handleDismiss();
+                  navigateTo('clients');
+                  // Emit event after a short delay so ClientsPage has time to mount
+                  // and subscribe to the event before it fires
+                  setTimeout(() => {
+                    emit('oauth-client-changed', { action: 'approved' });
+                  }, 300);
                 }}
                 data-testid="go-to-clients-btn"
               >

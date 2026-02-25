@@ -7,6 +7,8 @@ export const useActiveSpaceId = () => useAppStore((state) => state.activeSpaceId
 export const useViewSpaceId = () => useAppStore((state) => state.viewSpaceId);
 export const useActiveNav = () => useAppStore((state) => state.activeNav);
 export const useNavigateTo = () => useAppStore((state) => state.navigateTo);
+export const usePendingClientId = () => useAppStore((state) => state.pendingClientId);
+export const useSetPendingClientId = () => useAppStore((state) => state.setPendingClientId);
 export const useTheme = () => useAppStore((state) => state.theme);
 export const useSidebarCollapsed = () => useAppStore((state) => state.sidebarCollapsed);
 export const useAnalyticsEnabled = () => useAppStore((state) => state.analyticsEnabled);

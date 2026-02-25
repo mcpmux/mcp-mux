@@ -10,6 +10,7 @@ describe('appStore', () => {
       activeSpaceId: null,
       viewSpaceId: null,
       activeNav: 'home',
+      pendingClientId: null,
       sidebarCollapsed: false,
       theme: 'system',
       loading: { spaces: false, servers: false },
@@ -296,6 +297,18 @@ describe('appStore', () => {
 
       useAppStore.getState().navigateTo('home');
       expect(useAppStore.getState().activeNav).toBe('home');
+    });
+  });
+
+  describe('setPendingClientId', () => {
+    it('should set and clear pending client id', () => {
+      expect(useAppStore.getState().pendingClientId).toBeNull();
+
+      useAppStore.getState().setPendingClientId('client-123');
+      expect(useAppStore.getState().pendingClientId).toBe('client-123');
+
+      useAppStore.getState().setPendingClientId(null);
+      expect(useAppStore.getState().pendingClientId).toBeNull();
     });
   });
 

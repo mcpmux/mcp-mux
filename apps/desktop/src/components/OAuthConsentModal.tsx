@@ -16,7 +16,7 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { Check, X, AlertCircle, Loader2, Globe, Lock } from 'lucide-react';
 import { Button, Card, CardHeader, CardTitle, CardDescription, CardContent } from '@mcpmux/ui';
 import { listSpaces, type Space } from '@/lib/api/spaces';
-import { useNavigateTo } from '@/stores';
+import { useNavigateTo, useSetPendingClientId } from '@/stores';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
@@ -74,7 +74,7 @@ type ModalState =
   | { type: 'loading'; requestId: string }
   | { type: 'error'; requestId: string; error: ConsentError }
   | { type: 'consent'; details: ConsentRequestDetails }
-  | { type: 'approved'; clientName: string };
+  | { type: 'approved'; clientName: string; clientId: string };
 
 /** Open a URL using the backend open command (handles custom protocols like cursor://) */
 async function openRedirectUrl(url: string): Promise<void> {
@@ -124,6 +124,7 @@ export function OAuthConsentModal() {
   /** 2-second cooldown before the Approve button becomes active */
   const [approveReady, setApproveReady] = useState(false);
   const navigateTo = useNavigateTo();
+  const setPendingClientId = useSetPendingClientId();
 
   // Load spaces when modal opens
   useEffect(() => {
@@ -199,7 +200,7 @@ export function OAuthConsentModal() {
       if (response.success && response.redirect_url) {
         console.log('[OAuth] Approved, redirecting to:', response.redirect_url);
         await openRedirectUrl(response.redirect_url);
-        setModalState({ type: 'approved', clientName: clientAlias || details.clientName });
+        setModalState({ type: 'approved', clientName: clientAlias || details.clientName, clientId: details.clientId });
       } else {
         setProcessError(response.error || 'Failed to approve consent');
       }
@@ -328,6 +329,7 @@ export function OAuthConsentModal() {
                 variant="primary"
                 className="flex-1 whitespace-nowrap"
                 onClick={() => {
+                  setPendingClientId(modalState.clientId);
                   handleDismiss();
                   navigateTo('clients');
                   // Emit event after a short delay so ClientsPage has time to mount

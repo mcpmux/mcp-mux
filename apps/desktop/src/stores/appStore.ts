@@ -8,6 +8,7 @@ const initialState: AppState = {
   activeSpaceId: null,
   viewSpaceId: null,
   activeNav: 'home',
+  pendingClientId: null,
   sidebarCollapsed: false,
   theme: 'system',
   analyticsEnabled: true,
@@ -90,6 +91,11 @@ export const useAppStore = create<AppStore>()(
       navigateTo: (nav) =>
         set((state) => {
           state.activeNav = nav;
+        }),
+
+      setPendingClientId: (id) =>
+        set((state) => {
+          state.pendingClientId = id;
         }),
 
       // UI

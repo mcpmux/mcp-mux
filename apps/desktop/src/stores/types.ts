@@ -10,6 +10,8 @@ export interface AppState {
 
   // Navigation
   activeNav: NavItem;
+  /** Client ID to auto-select when navigating to Clients page */
+  pendingClientId: string | null;
 
   // UI state
   sidebarCollapsed: boolean;
@@ -34,6 +36,7 @@ export interface AppActions {
 
   // Navigation
   navigateTo: (nav: NavItem) => void;
+  setPendingClientId: (id: string | null) => void;
 
   // UI
   toggleSidebar: () => void;

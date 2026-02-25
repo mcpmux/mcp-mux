@@ -32,12 +32,13 @@ import {
   Button,
   useToast,
   ToastContainer,
+  useConfirm,
 } from '@mcpmux/ui';
 import type { OAuthClient, UpdateClientRequest } from '@/lib/api/gateway';
 import { listOAuthClients, updateOAuthClient, deleteOAuthClient } from '@/lib/api/gateway';
 import type { Space } from '@/lib/api/spaces';
 import { listSpaces } from '@/lib/api/spaces';
-import { useViewSpace } from '@/stores';
+import { useViewSpace, usePendingClientId, useSetPendingClientId } from '@/stores';
 import type { FeatureSet } from '@/lib/api/featureSets';
 import { listFeatureSetsBySpace } from '@/lib/api/featureSets';
 import { 
@@ -120,7 +121,10 @@ export default function ClientsPage() {
   const [selectedClient, setSelectedClient] = useState<OAuthClient | null>(null);
   
   const { toasts, success, error: showError, info, dismiss } = useToast();
-  
+  const { confirm, ConfirmDialogElement } = useConfirm();
+  const pendingClientId = usePendingClientId();
+  const setPendingClientId = useSetPendingClientId();
+
   // Edit state
   const [editAlias, setEditAlias] = useState('');
   const [editMode, setEditMode] = useState('follow_active');
@@ -265,6 +269,16 @@ export default function ClientsPage() {
     loadData();
   }, []);
 
+  // Auto-open a client panel when navigated from "Manage Permissions"
+  useEffect(() => {
+    if (!pendingClientId || isLoading) return;
+    const client = oauthClients.find(c => c.client_id === pendingClientId);
+    if (client) {
+      openPanel(client);
+      setPendingClientId(null);
+    }
+  }, [pendingClientId, isLoading, oauthClients]);
+
   useEffect(() => {
     setActiveSpace(viewSpace);
   }, [viewSpace?.id]);
@@ -383,9 +397,14 @@ export default function ClientsPage() {
   };
 
   const handleDelete = async (clientId: string) => {
-    if (!confirm('Remove this client? All tokens will be revoked.')) return;
-    
     const deletedClient = oauthClients.find(c => c.client_id === clientId);
+    const name = deletedClient?.client_alias || deletedClient?.client_name || 'this client';
+    if (!await confirm({
+      title: 'Remove client',
+      message: `Remove "${name}"? All tokens will be revoked.`,
+      confirmLabel: 'Remove',
+      variant: 'danger',
+    })) return;
     const clientName = deletedClient?.client_alias || deletedClient?.client_name || 'Client';
     
     try {
@@ -1321,6 +1340,7 @@ export default function ClientsPage() {
       )}
 
       <ToastContainer toasts={toasts} onClose={dismiss} />
+      {ConfirmDialogElement}
     </div>
   );
 }

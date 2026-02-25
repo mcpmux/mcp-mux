@@ -26,7 +26,7 @@ import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
 import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverManager';
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
-import { useViewSpace } from '@/stores';
+import { useViewSpace, useNavigateTo } from '@/stores';
 import { useServerManager } from '@/hooks/useServerManager';
 import { useGatewayEvents, useDomainEvents } from '@/hooks/useDomainEvents';
 import type { GatewayChangedPayload, ServerChangedPayload } from '@/hooks/useDomainEvents';
@@ -192,7 +192,8 @@ export function ServersPage() {
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
   
   const viewSpace = useViewSpace();
-  
+  const navigateTo = useNavigateTo();
+
   // Event-driven server status management
   const {
     statuses: serverStatuses,
@@ -846,9 +847,9 @@ export function ServersPage() {
         {viewSpace && (
           <button
             onClick={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
-            className="flex items-center gap-2 px-4 py-2 text-sm border border-[rgb(var(--border))] rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors"
+            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] hover:border-[rgb(var(--border-subtle))] shadow-sm hover:shadow transition-all"
           >
-            <FileJson className="h-4 w-4" />
+            <FileJson className="h-4 w-4 text-[rgb(var(--primary))]" />
             Add Custom Server
           </button>
         )}
@@ -890,7 +891,14 @@ export function ServersPage() {
         <div className="text-center py-12 text-[rgb(var(--muted))]">
           <div className="text-5xl mb-4">📦</div>
           <p className="text-lg mb-2">No servers installed</p>
-          <p className="text-sm">Visit Discover to install MCP servers</p>
+          <button
+            onClick={() => navigateTo('registry')}
+            className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] shadow-sm hover:shadow transition-all"
+            data-testid="discover-servers-btn"
+          >
+            Discover MCP Servers
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </button>
         </div>
       ) : (
         <div className="space-y-3">

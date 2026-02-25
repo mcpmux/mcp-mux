@@ -1,10 +1,17 @@
 import { Space } from '@/lib/api/spaces';
 
+export type NavItem = 'home' | 'registry' | 'servers' | 'spaces' | 'featuresets' | 'clients' | 'settings';
+
 export interface AppState {
   // Spaces
   spaces: Space[];
   activeSpaceId: string | null;
   viewSpaceId: string | null;
+
+  // Navigation
+  activeNav: NavItem;
+  /** Client ID to auto-select when navigating to Clients page */
+  pendingClientId: string | null;
 
   // UI state
   sidebarCollapsed: boolean;
@@ -26,6 +33,10 @@ export interface AppActions {
   addSpace: (space: Space) => void;
   removeSpace: (id: string) => void;
   updateSpace: (id: string, updates: Partial<Space>) => void;
+
+  // Navigation
+  navigateTo: (nav: NavItem) => void;
+  setPendingClientId: (id: string | null) => void;
 
   // UI
   toggleSidebar: () => void;

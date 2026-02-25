@@ -16,6 +16,7 @@ import {
   Button,
   useToast,
   ToastContainer,
+  useConfirm,
 } from '@mcpmux/ui';
 import {
   useAppStore,
@@ -39,6 +40,7 @@ export function SpacesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isActionLoading, setIsActionLoading] = useState<string | null>(null); // ID of space being acted on
+  const { confirm, ConfirmDialogElement } = useConfirm();
   const { toasts, success, error: showError, dismiss } = useToast();
 
   // Create Modal State
@@ -69,7 +71,13 @@ export function SpacesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this space? This action cannot be undone.')) return;
+    const spaceName = spaces.find(s => s.id === id)?.name || 'this space';
+    if (!await confirm({
+      title: 'Delete workspace',
+      message: `Are you sure you want to delete "${spaceName}"? This action cannot be undone.`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+    })) return;
     
     setIsActionLoading(id);
     setError(null);
@@ -117,6 +125,7 @@ export function SpacesPage() {
   return (
     <>
     <ToastContainer toasts={toasts} onClose={dismiss} />
+    {ConfirmDialogElement}
     <div className="h-full flex flex-col relative" data-testid="spaces-page">
       {/* Header */}
       <div className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">

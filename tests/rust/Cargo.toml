@@ -88,3 +88,7 @@ path = "tests/integration/mod.rs"
 [[test]]
 name = "streamable_http"
 path = "tests/streamable_http/mod.rs"
+
+[[test]]
+name = "application"
+path = "tests/application/mod.rs"

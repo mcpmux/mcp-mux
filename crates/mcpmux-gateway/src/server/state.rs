@@ -256,3 +256,148 @@ impl Default for GatewayState {
         Self::new(domain_event_tx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::oauth::OAuthToken;
+
+    fn make_state() -> GatewayState {
+        GatewayState::default()
+    }
+
+    fn test_pending_auth(client_id: &str) -> PendingAuthorization {
+        PendingAuthorization {
+            client_id: client_id.to_string(),
+            client_name: Some("Test Client".to_string()),
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+            scope: Some("read".to_string()),
+            state: Some("state123".to_string()),
+            code_challenge: Some("challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            expires_at: chrono::Utc::now().timestamp() + 300,
+            consent_token: None,
+        }
+    }
+
+    #[test]
+    fn store_consume_pending_auth_one_time() {
+        let mut state = make_state();
+        let auth = test_pending_auth("client-1");
+
+        state.store_pending_authorization("code-abc", auth);
+
+        let consumed = state.consume_pending_authorization("code-abc");
+        assert!(consumed.is_some());
+        assert_eq!(consumed.unwrap().client_id, "client-1");
+
+        // Second consume returns None (one-time use)
+        let second = state.consume_pending_authorization("code-abc");
+        assert!(second.is_none());
+    }
+
+    #[test]
+    fn consume_nonexistent_returns_none() {
+        let mut state = make_state();
+        let result = state.consume_pending_authorization("unknown-code");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn register_validate_access_key() {
+        let mut state = make_state();
+        let client_id = Uuid::new_v4();
+
+        state.register_access_key("mcp_test_key".to_string(), client_id);
+
+        let validated = state.validate_access_key("mcp_test_key");
+        assert_eq!(validated, Some(client_id));
+    }
+
+    #[test]
+    fn validate_unknown_key_returns_none() {
+        let state = make_state();
+        assert!(state.validate_access_key("unknown_key").is_none());
+    }
+
+    #[test]
+    fn register_same_key_overwrites() {
+        let mut state = make_state();
+        let client1 = Uuid::new_v4();
+        let client2 = Uuid::new_v4();
+
+        state.register_access_key("shared_key".to_string(), client1);
+        state.register_access_key("shared_key".to_string(), client2);
+
+        assert_eq!(state.validate_access_key("shared_key"), Some(client2));
+    }
+
+    #[test]
+    fn create_get_remove_session() {
+        let mut state = make_state();
+        let client_id = Uuid::new_v4();
+        let space_id = Uuid::new_v4();
+
+        let session = state.create_session(client_id, "key".to_string(), space_id);
+        let session_id = session.id;
+
+        // Get session
+        let found = state.get_session(&session_id);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().client_id, client_id);
+
+        // Remove session
+        let removed = state.remove_session(&session_id);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().space_id, space_id);
+
+        // Gone after removal
+        assert!(state.get_session(&session_id).is_none());
+    }
+
+    #[test]
+    fn remove_nonexistent_session_none() {
+        let mut state = make_state();
+        assert!(state.remove_session(&Uuid::new_v4()).is_none());
+    }
+
+    #[test]
+    fn jwt_secret_none_before_set() {
+        let state = make_state();
+        assert!(state.get_jwt_secret().is_none());
+        assert!(!state.has_jwt_secret());
+    }
+
+    #[test]
+    fn set_get_jwt_secret() {
+        let mut state = make_state();
+        let secret = Zeroizing::new([42u8; JWT_SECRET_SIZE]);
+        state.set_jwt_secret(secret);
+
+        assert!(state.has_jwt_secret());
+        let retrieved = state.get_jwt_secret().unwrap();
+        assert_eq!(retrieved[0], 42);
+    }
+
+    #[test]
+    fn store_get_oauth_token() {
+        let mut state = make_state();
+        let token = OAuthToken {
+            access_token: "access-123".to_string(),
+            token_type: "Bearer".to_string(),
+            refresh_token: None,
+            expires_at: None,
+            scope: None,
+            id_token: None,
+        };
+
+        state.store_oauth_token("server-1".to_string(), token);
+
+        let found = state.get_oauth_token("server-1");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().access_token, "access-123");
+
+        // Non-existent server
+        assert!(state.get_oauth_token("server-2").is_none());
+    }
+}

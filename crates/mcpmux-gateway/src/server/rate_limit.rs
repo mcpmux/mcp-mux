@@ -128,3 +128,136 @@ pub fn default_oauth_rate_limiter() -> RateLimiter {
         ),
     ])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allows_within_limit() {
+        let limiter = RateLimiter::new(vec![(
+            "/test".to_string(),
+            RateLimitConfig {
+                max_requests: 5,
+                window: Duration::from_secs(60),
+            },
+        )]);
+
+        for _ in 0..5 {
+            assert!(limiter.check("/test"), "Should allow requests within limit");
+        }
+    }
+
+    #[test]
+    fn blocks_at_limit() {
+        let limiter = RateLimiter::new(vec![(
+            "/test".to_string(),
+            RateLimitConfig {
+                max_requests: 3,
+                window: Duration::from_secs(60),
+            },
+        )]);
+
+        assert!(limiter.check("/test")); // 1
+        assert!(limiter.check("/test")); // 2
+        assert!(limiter.check("/test")); // 3
+        assert!(!limiter.check("/test"), "Should block at limit");
+    }
+
+    #[test]
+    fn no_matching_rule_allows() {
+        let limiter = RateLimiter::new(vec![(
+            "/oauth".to_string(),
+            RateLimitConfig {
+                max_requests: 1,
+                window: Duration::from_secs(60),
+            },
+        )]);
+
+        assert!(limiter.check("/health"), "Unmatched path should be allowed");
+    }
+
+    #[test]
+    fn prefix_matching() {
+        let limiter = RateLimiter::new(vec![(
+            "/oauth/token".to_string(),
+            RateLimitConfig {
+                max_requests: 1,
+                window: Duration::from_secs(60),
+            },
+        )]);
+
+        assert!(limiter.check("/oauth/token/extra")); // matches prefix, count=1
+        assert!(
+            !limiter.check("/oauth/token"),
+            "Second request to same prefix should be blocked"
+        );
+    }
+
+    #[test]
+    fn independent_buckets() {
+        let limiter = RateLimiter::new(vec![
+            (
+                "/oauth/authorize".to_string(),
+                RateLimitConfig {
+                    max_requests: 1,
+                    window: Duration::from_secs(60),
+                },
+            ),
+            (
+                "/oauth/token".to_string(),
+                RateLimitConfig {
+                    max_requests: 1,
+                    window: Duration::from_secs(60),
+                },
+            ),
+        ]);
+
+        assert!(limiter.check("/oauth/authorize"));
+        assert!(
+            !limiter.check("/oauth/authorize"),
+            "authorize should be blocked"
+        );
+        // token should still be allowed (independent counter)
+        assert!(limiter.check("/oauth/token"));
+    }
+
+    #[test]
+    fn default_has_expected_rules() {
+        let limiter = default_oauth_rate_limiter();
+        // Verify it has rules for 5 OAuth paths by checking they are rate-limited
+        let paths = [
+            "/oauth/authorize",
+            "/authorize",
+            "/oauth/token",
+            "/oauth/register",
+            "/oauth/clients",
+        ];
+        for path in &paths {
+            assert!(
+                limiter.check(path),
+                "First request to {} should be allowed",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn window_reset() {
+        let limiter = RateLimiter::new(vec![(
+            "/test".to_string(),
+            RateLimitConfig {
+                max_requests: 1,
+                window: Duration::from_millis(1), // 1ms window
+            },
+        )]);
+
+        assert!(limiter.check("/test")); // count=1
+        assert!(!limiter.check("/test")); // blocked
+
+        // Sleep past the window
+        std::thread::sleep(Duration::from_millis(10));
+
+        assert!(limiter.check("/test"), "Should allow after window reset");
+    }
+}

@@ -215,6 +215,7 @@ impl TestGateway {
             Arc::new(LocalSessionManager::default()),
             StreamableHttpServerConfig {
                 stateful_mode: true,
+                json_response: false,
                 sse_keep_alive: Some(std::time::Duration::from_secs(15)),
                 sse_retry: Some(std::time::Duration::from_secs(3)),
                 cancellation_token: ct.child_token(),

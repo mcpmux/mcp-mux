@@ -208,6 +208,7 @@ impl CredentialStore for DatabaseCredentialStore {
                     client_id: reg.client_id,
                     token_response: Some(token_response),
                     granted_scopes: Vec::new(),
+                    token_received_at: None,
                 })
             }
             (Some(reg), None) => {
@@ -219,6 +220,7 @@ impl CredentialStore for DatabaseCredentialStore {
                     client_id: reg.client_id,
                     token_response: None,
                     granted_scopes: Vec::new(),
+                    token_received_at: None,
                 })
             }
             (None, Some(access)) => {
@@ -231,6 +233,7 @@ impl CredentialStore for DatabaseCredentialStore {
                     client_id: String::new(),
                     token_response: Some(token_response),
                     granted_scopes: Vec::new(),
+                    token_received_at: None,
                 })
             }
             (None, None) => {
@@ -588,6 +591,7 @@ mod tests {
             client_id: "new-client-id".to_string(),
             token_response: Some(token_response),
             granted_scopes: Vec::new(),
+            token_received_at: None,
         };
 
         store.save(credentials).await.unwrap();
@@ -646,6 +650,7 @@ mod tests {
             client_id: "client-id".to_string(),
             token_response: Some(token_response),
             granted_scopes: Vec::new(),
+            token_received_at: None,
         };
 
         store.save(credentials).await.unwrap();

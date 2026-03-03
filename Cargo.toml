@@ -58,7 +58,7 @@ os_pipe = "1"
 
 # MCP Protocol
 # NOTE: Never use local path dependency - E:\one-mcp\rust-sdk is for source lookup only
-rmcp = { version = "0.15.0", features = [
+rmcp = { version = "0.17.0", features = [
     "client",
     "server",
     "transport-io",
@@ -69,7 +69,7 @@ rmcp = { version = "0.15.0", features = [
 ] }
 
 # HTTP
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", features = ["json", "form", "rustls"] }
 axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 
@@ -83,10 +83,5 @@ mcpmux-storage = { path = "crates/mcpmux-storage" }
 lto = true
 codegen-units = 1
 strip = true
-
-# Temporary patch: fixes SSE channel replacement bug (notifications lost on reconnect)
-# Remove once upstream merges https://github.com/modelcontextprotocol/rust-sdk/pull/660
-[patch.crates-io]
-rmcp = { git = "https://github.com/mcpmux/rust-sdk.git", branch = "fix/sse-channel-replacement-conflict" }
 
 

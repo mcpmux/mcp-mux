@@ -55,7 +55,7 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       label: 'Windsurf',
       icon: windsurfIcon,
       action: 'copy_config',
-      handler: `"mcpmux": {\n  "type": "http",\n  "url": "${mcpUrl}"\n}`,
+      handler: `"mcpmux": {\n  "serverUrl": "${mcpUrl}"\n}`,
     },
     {
       id: 'claude-code',
@@ -71,7 +71,7 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       label: 'JetBrains',
       icon: jetbrainsIcon,
       action: 'copy_config',
-      handler: `"mcpmux": {\n  "type": "http",\n  "url": "${mcpUrl}"\n}`,
+      handler: `"mcpmux": {\n  "url": "${mcpUrl}"\n}`,
     },
     {
       id: 'android-studio',
@@ -79,7 +79,7 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       label: 'Android',
       icon: androidStudioIcon,
       action: 'copy_config',
-      handler: `"mcpmux": {\n  "type": "http",\n  "url": "${mcpUrl}"\n}`,
+      handler: `"mcpmux": {\n  "httpUrl": "${mcpUrl}"\n}`,
     },
     {
       id: 'copy-config',

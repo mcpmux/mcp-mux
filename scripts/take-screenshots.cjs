@@ -138,8 +138,8 @@ const FEATURE_SETS = [
 ];
 
 const OAUTH_CLIENTS = [
-  { client_id: 'cursor-001', registration_type: 'dcr', client_name: 'Cursor', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'cursor', software_version: '0.45.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T09:30:00Z', created_at: '2026-01-20T10:00:00Z', has_active_tokens: true },
-  { client_id: 'vscode-001', registration_type: 'dcr', client_name: 'VS Code', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'vscode', software_version: '1.96.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T08:45:00Z', created_at: '2026-01-22T10:00:00Z', has_active_tokens: true },
+  { client_id: 'cursor-001', registration_type: 'dcr', client_name: 'Cursor', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'cursor', software_version: '0.45.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T09:30:00Z', created_at: '2026-01-20T10:00:00Z' },
+  { client_id: 'vscode-001', registration_type: 'dcr', client_name: 'VS Code', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'vscode', software_version: '1.96.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T08:45:00Z', created_at: '2026-01-22T10:00:00Z' },
 ];
 
 function mkRegistry(id, name, desc, alias, icon, categories, auth, transportType, publisher, caps, hostingType, badges) {

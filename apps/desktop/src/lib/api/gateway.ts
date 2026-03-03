@@ -131,7 +131,6 @@ export interface OAuthClient {
   locked_space_id: string | null;
   last_seen: string | null;
   created_at: string;
-  has_active_tokens: boolean;
 }
 
 /**

@@ -668,28 +668,25 @@ pub async fn get_oauth_clients(
     // Map to response format
     let client_infos: Vec<OAuthClientInfo> = clients
         .into_iter()
-        .map(|client| {
-            OAuthClientInfo {
-                client_id: client.client_id,
-                registration_type: client.registration_type.as_str().to_string(),
-                client_name: client.client_name,
-                client_alias: client.client_alias,
-                redirect_uris: client.redirect_uris,
-                scope: client.scope,
-                approved: client.approved,
-                logo_uri: client.logo_uri,
-                client_uri: client.client_uri,
-                software_id: client.software_id,
-                software_version: client.software_version,
-                metadata_url: client.metadata_url,
-                metadata_cached_at: client.metadata_cached_at,
-                metadata_cache_ttl: client.metadata_cache_ttl,
-                connection_mode: client.connection_mode,
-                locked_space_id: client.locked_space_id,
-                last_seen: client.last_seen,
-                created_at: client.created_at,
-                has_active_tokens: false, // TODO: Check if client has active tokens
-            }
+        .map(|client| OAuthClientInfo {
+            client_id: client.client_id,
+            registration_type: client.registration_type.as_str().to_string(),
+            client_name: client.client_name,
+            client_alias: client.client_alias,
+            redirect_uris: client.redirect_uris,
+            scope: client.scope,
+            approved: client.approved,
+            logo_uri: client.logo_uri,
+            client_uri: client.client_uri,
+            software_id: client.software_id,
+            software_version: client.software_version,
+            metadata_url: client.metadata_url,
+            metadata_cached_at: client.metadata_cached_at,
+            metadata_cache_ttl: client.metadata_cache_ttl,
+            connection_mode: client.connection_mode,
+            locked_space_id: client.locked_space_id,
+            last_seen: client.last_seen,
+            created_at: client.created_at,
         })
         .collect();
 
@@ -763,7 +760,6 @@ pub struct OAuthClientInfo {
     pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
-    pub has_active_tokens: bool,
 }
 
 /// Request to update client settings
@@ -837,7 +833,6 @@ pub async fn update_oauth_client(
         locked_space_id: updated_client.locked_space_id,
         last_seen: updated_client.last_seen,
         created_at: updated_client.created_at,
-        has_active_tokens: false,
     })
 }
 

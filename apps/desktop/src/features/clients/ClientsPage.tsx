@@ -4,6 +4,8 @@ import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import claudeIcon from '@/assets/client-icons/claude.svg';
 import windsurfIcon from '@/assets/client-icons/windsurf.svg';
+import jetbrainsIcon from '@/assets/client-icons/jetbrains.svg';
+import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
 import {
   Laptop,
@@ -87,6 +89,8 @@ const CLIENT_ICON_ASSETS: Record<string, string> = {
   vscode: vscodeIcon,
   claude: claudeIcon,
   windsurf: windsurfIcon,
+  jetbrains: jetbrainsIcon,
+  'android-studio': androidStudioIcon,
 };
 
 // Client icon component — uses bundled icon for known clients, falls back to logo_uri, then emoji

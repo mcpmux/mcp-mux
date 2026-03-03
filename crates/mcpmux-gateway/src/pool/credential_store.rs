@@ -5,6 +5,7 @@
 //! CredentialStore interface.
 
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -159,6 +160,19 @@ impl DatabaseCredentialStore {
     }
 }
 
+/// Current time as seconds since UNIX epoch, matching rmcp's `AuthorizationManager::now_epoch_secs()`.
+///
+/// Used when loading credentials from the database: since `build_token_response` recalculates
+/// `expires_in` as remaining time from the stored `expires_at`, setting `token_received_at = now`
+/// makes rmcp's expiry arithmetic correct (`remaining = expires_in - (now - received_at)` = `expires_in`),
+/// enabling proactive token refresh before expiry instead of waiting for a 401.
+fn now_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 #[async_trait]
 impl CredentialStore for DatabaseCredentialStore {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
@@ -208,7 +222,7 @@ impl CredentialStore for DatabaseCredentialStore {
                     client_id: reg.client_id,
                     token_response: Some(token_response),
                     granted_scopes: Vec::new(),
-                    token_received_at: None,
+                    token_received_at: Some(now_epoch_secs()),
                 })
             }
             (Some(reg), None) => {
@@ -220,7 +234,7 @@ impl CredentialStore for DatabaseCredentialStore {
                     client_id: reg.client_id,
                     token_response: None,
                     granted_scopes: Vec::new(),
-                    token_received_at: None,
+                    token_received_at: Some(now_epoch_secs()),
                 })
             }
             (None, Some(access)) => {
@@ -233,7 +247,7 @@ impl CredentialStore for DatabaseCredentialStore {
                     client_id: String::new(),
                     token_response: Some(token_response),
                     granted_scopes: Vec::new(),
-                    token_received_at: None,
+                    token_received_at: Some(now_epoch_secs()),
                 })
             }
             (None, None) => {

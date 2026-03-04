@@ -255,6 +255,7 @@ impl GatewayServer {
             LocalSessionManager::default().into(),
             StreamableHttpServerConfig {
                 stateful_mode: true,
+                json_response: false,
                 sse_keep_alive: Some(std::time::Duration::from_secs(30)),
                 sse_retry: Some(std::time::Duration::from_secs(3)),
                 cancellation_token: CancellationToken::new(),

@@ -11,8 +11,6 @@ import {
   Lock,
   Unlock,
   HelpCircle,
-  Wifi,
-  WifiOff,
   RefreshCw,
   Settings,
   Trash2,
@@ -649,21 +647,6 @@ export default function ClientsPage() {
                         </div>
                       </div>
 
-                      {/* Status Badge */}
-                      <div className="mb-4">
-                        <span className={`inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded-full font-medium ${
-                          client.has_active_tokens 
-                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' 
-                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                        }`}>
-                          {client.has_active_tokens ? (
-                            <><Wifi className="h-4 w-4" /> Active</>
-                          ) : (
-                            <><WifiOff className="h-4 w-4" /> Inactive</>
-                          )}
-                        </span>
-                      </div>
-
                       {/* Connection Mode */}
                       <div className="flex items-center gap-2.5 text-sm text-[rgb(var(--foreground))] mb-2">
                         <ModeIcon className={`h-4 w-4 ${modeInfo.color}`} />
@@ -722,25 +705,11 @@ export default function ClientsPage() {
               </button>
             </div>
 
-            {/* Quick Status */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium ${
-                selectedClient.has_active_tokens 
-                  ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' 
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-              }`}>
-                {selectedClient.has_active_tokens ? (
-                  <><Wifi className="h-3 w-3" /> Connected</>
-                ) : (
-                  <><WifiOff className="h-3 w-3" /> Inactive</>
-                )}
+            {selectedClient.software_version && (
+              <span className="text-xs text-[rgb(var(--muted))] px-2.5 py-1 bg-[rgb(var(--background))] rounded-full inline-block mt-1">
+                v{selectedClient.software_version}
               </span>
-              {selectedClient.software_version && (
-                <span className="text-xs text-[rgb(var(--muted))] px-2.5 py-1 bg-[rgb(var(--background))] rounded-full">
-                  v{selectedClient.software_version}
-                </span>
-              )}
-            </div>
+            )}
           </div>
 
           {/* Scrollable Content */}

@@ -55,18 +55,18 @@ test.describe('Clients Page', () => {
 });
 
 test.describe('Client Details', () => {
-  test('should show client connection status', async ({ page }) => {
+  test('should show client details', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     await page.locator('nav button:has-text("Clients")').click();
-    
+
     const clientCards = page.locator('[class*="rounded"][class*="border"]');
     const count = await clientCards.count();
-    
+
     if (count > 0) {
-      // Clients should have status indicators
-      const statusIndicator = page.locator('[class*="bg-green"], [class*="bg-red"], text=/connected|active/i');
-      // May or may not be visible
+      // Clients should have connection mode indicators
+      const firstCard = clientCards.first();
+      await expect(firstCard).toBeVisible();
     }
   });
 

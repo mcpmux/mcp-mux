@@ -51,8 +51,6 @@ pub struct GatewayState {
     pub oauth_tokens: HashMap<String, super::super::oauth::OAuthToken>,
     /// Pending authorization codes (code -> PendingAuthorization)
     pub pending_authorizations: HashMap<String, PendingAuthorization>,
-    /// Set of client_ids that have been issued tokens (for "active" status)
-    pub clients_with_tokens: std::collections::HashSet<String>,
     /// JWT signing secret (for issuing access tokens)
     pub jwt_signing_secret: Option<Zeroizing<[u8; JWT_SECRET_SIZE]>>,
     /// Database connection (for persistent OAuth storage)
@@ -74,7 +72,6 @@ impl GatewayState {
             access_keys: HashMap::new(),
             oauth_tokens: HashMap::new(),
             pending_authorizations: HashMap::new(),
-            clients_with_tokens: std::collections::HashSet::new(),
             jwt_signing_secret: None,
             db: None,
             inbound_client_repository: None,

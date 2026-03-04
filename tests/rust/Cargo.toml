@@ -41,7 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP mocking for OAuth tests
 wiremock = "0.6"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # URL parsing for OAuth tests
 url = "2.5"
@@ -50,7 +50,7 @@ url = "2.5"
 parking_lot = "0.12"
 
 # RMCP for streamable HTTP transport tests
-rmcp = { version = "0.15.0", features = [
+rmcp = { version = "0.17.0", features = [
     "client",
     "server",
     "transport-streamable-http-server",

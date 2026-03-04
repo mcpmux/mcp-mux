@@ -602,12 +602,9 @@ pub async fn oauth_token(
             let client_id_for_tracking = pending.client_id.clone();
             drop(gateway_state);
 
-            // Track that this client has active tokens and emit event
+            // Update last_seen and emit event
             {
-                let mut gateway_state = state.write().await;
-                gateway_state
-                    .clients_with_tokens
-                    .insert(client_id_for_tracking.clone());
+                let gateway_state = state.read().await;
 
                 // Update last_seen in database
                 if let Some(repo) = gateway_state.inbound_client_repository() {
@@ -949,7 +946,6 @@ pub struct OAuthClientInfoResponse {
     pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
-    pub has_active_tokens: bool,
 }
 
 /// List all registered OAuth clients
@@ -969,28 +965,24 @@ pub async fn oauth_list_clients(
         Ok(db_clients) => {
             let clients: Vec<OAuthClientInfoResponse> = db_clients
                 .into_iter()
-                .map(|c| {
-                    let has_active = gateway_state.clients_with_tokens.contains(&c.client_id);
-                    OAuthClientInfoResponse {
-                        client_id: c.client_id,
-                        registration_type: c.registration_type.as_str().to_string(),
-                        client_name: c.client_name,
-                        client_alias: c.client_alias,
-                        redirect_uris: c.redirect_uris,
-                        scope: c.scope,
-                        logo_uri: c.logo_uri,
-                        client_uri: c.client_uri,
-                        software_id: c.software_id,
-                        software_version: c.software_version,
-                        metadata_url: c.metadata_url,
-                        metadata_cached_at: c.metadata_cached_at,
-                        metadata_cache_ttl: c.metadata_cache_ttl,
-                        connection_mode: c.connection_mode,
-                        locked_space_id: c.locked_space_id,
-                        last_seen: c.last_seen,
-                        created_at: c.created_at,
-                        has_active_tokens: has_active,
-                    }
+                .map(|c| OAuthClientInfoResponse {
+                    client_id: c.client_id,
+                    registration_type: c.registration_type.as_str().to_string(),
+                    client_name: c.client_name,
+                    client_alias: c.client_alias,
+                    redirect_uris: c.redirect_uris,
+                    scope: c.scope,
+                    logo_uri: c.logo_uri,
+                    client_uri: c.client_uri,
+                    software_id: c.software_id,
+                    software_version: c.software_version,
+                    metadata_url: c.metadata_url,
+                    metadata_cached_at: c.metadata_cached_at,
+                    metadata_cache_ttl: c.metadata_cache_ttl,
+                    connection_mode: c.connection_mode,
+                    locked_space_id: c.locked_space_id,
+                    last_seen: c.last_seen,
+                    created_at: c.created_at,
                 })
                 .collect();
             info!("[OAuth] Listed {} clients from database", clients.len());
@@ -1213,9 +1205,6 @@ pub async fn oauth_update_client(
         .await
     {
         Ok(Some(client)) => {
-            let has_active = gateway_state
-                .clients_with_tokens
-                .contains(&client.client_id);
             let response = OAuthClientInfoResponse {
                 client_id: client.client_id,
                 registration_type: client.registration_type.as_str().to_string(),
@@ -1234,7 +1223,6 @@ pub async fn oauth_update_client(
                 locked_space_id: client.locked_space_id,
                 last_seen: client.last_seen,
                 created_at: client.created_at,
-                has_active_tokens: has_active,
             };
             info!("[OAuth] Client updated: {}", response.client_id);
             Json(response).into_response()
@@ -1264,7 +1252,7 @@ pub async fn oauth_delete_client(
 ) -> Response {
     info!("[OAuth] Deleting client: {}", client_id);
 
-    let mut gateway_state = state.write().await;
+    let gateway_state = state.read().await;
 
     let Some(repo) = gateway_state.inbound_client_repository() else {
         warn!("[OAuth] Database not available for client deletion");
@@ -1273,8 +1261,6 @@ pub async fn oauth_delete_client(
 
     match repo.delete_client(&client_id).await {
         Ok(true) => {
-            // Remove from active tokens set
-            gateway_state.clients_with_tokens.remove(&client_id);
             info!("[OAuth] Client deleted: {}", client_id);
             StatusCode::NO_CONTENT.into_response()
         }

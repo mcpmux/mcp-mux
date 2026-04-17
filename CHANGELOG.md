@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/mcpmux/mcp-mux/compare/v0.3.0...v0.3.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* add Windsurf, JetBrains, and Android Studio to quick-connect grid ([#139](https://github.com/mcpmux/mcp-mux/issues/139)) ([fb58d9c](https://github.com/mcpmux/mcp-mux/commit/fb58d9ce6c46ec1a55356a9fecb35f34ae2b29f6))
+
 ## [0.3.0](https://github.com/mcpmux/mcp-mux/compare/v0.2.3...v0.3.0) (2026-02-25)
 
 

@@ -4,6 +4,9 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button } fro
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import claudeIcon from '@/assets/client-icons/claude.svg';
+import windsurfIcon from '@/assets/client-icons/windsurf.svg';
+import jetbrainsIcon from '@/assets/client-icons/jetbrains.svg';
+import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
 import { addToVscode, addToCursor } from '@/lib/api/clientInstall';
 
 type GridAction = 'deep_link' | 'copy_command' | 'copy_config';
@@ -47,12 +50,36 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       handler: () => addToCursor(gatewayUrl),
     },
     {
+      id: 'windsurf',
+      name: 'Windsurf',
+      label: 'Windsurf',
+      icon: windsurfIcon,
+      action: 'copy_config',
+      handler: `"mcpmux": {\n  "serverUrl": "${mcpUrl}"\n}`,
+    },
+    {
       id: 'claude-code',
       name: 'Claude Code',
       label: 'Claude',
       icon: claudeIcon,
       action: 'copy_command',
       handler: `claude mcp add --transport http --scope user mcpmux ${mcpUrl}`,
+    },
+    {
+      id: 'jetbrains',
+      name: 'JetBrains IDEs',
+      label: 'JetBrains',
+      icon: jetbrainsIcon,
+      action: 'copy_config',
+      handler: `"mcpmux": {\n  "url": "${mcpUrl}"\n}`,
+    },
+    {
+      id: 'android-studio',
+      name: 'Android Studio',
+      label: 'Android',
+      icon: androidStudioIcon,
+      action: 'copy_config',
+      handler: `"mcpmux": {\n  "httpUrl": "${mcpUrl}"\n}`,
     },
     {
       id: 'copy-config',

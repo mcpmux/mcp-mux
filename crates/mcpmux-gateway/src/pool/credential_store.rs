@@ -218,24 +218,24 @@ impl CredentialStore for DatabaseCredentialStore {
                     self.space_id, self.server_id, reg.client_id
                 );
                 let token_response = Self::build_token_response(access, refresh_cred.as_ref());
-                Some(StoredCredentials {
-                    client_id: reg.client_id,
-                    token_response: Some(token_response),
-                    granted_scopes: Vec::new(),
-                    token_received_at: Some(now_epoch_secs()),
-                })
+                Some(StoredCredentials::new(
+                    reg.client_id,
+                    Some(token_response),
+                    Vec::new(),
+                    Some(now_epoch_secs()),
+                ))
             }
             (Some(reg), None) => {
                 debug!(
                     "[CredentialStore] Loaded registration (no token) for {}/{}, client_id={} - will reuse for DCR",
                     self.space_id, self.server_id, reg.client_id
                 );
-                Some(StoredCredentials {
-                    client_id: reg.client_id,
-                    token_response: None,
-                    granted_scopes: Vec::new(),
-                    token_received_at: Some(now_epoch_secs()),
-                })
+                Some(StoredCredentials::new(
+                    reg.client_id,
+                    None,
+                    Vec::new(),
+                    Some(now_epoch_secs()),
+                ))
             }
             (None, Some(access)) => {
                 warn!(
@@ -243,12 +243,12 @@ impl CredentialStore for DatabaseCredentialStore {
                     self.space_id, self.server_id
                 );
                 let token_response = Self::build_token_response(access, refresh_cred.as_ref());
-                Some(StoredCredentials {
-                    client_id: String::new(),
-                    token_response: Some(token_response),
-                    granted_scopes: Vec::new(),
-                    token_received_at: Some(now_epoch_secs()),
-                })
+                Some(StoredCredentials::new(
+                    String::new(),
+                    Some(token_response),
+                    Vec::new(),
+                    Some(now_epoch_secs()),
+                ))
             }
             (None, None) => {
                 debug!(
@@ -286,12 +286,13 @@ fn build_token_response(
     refresh_token: Option<String>,
     expires_in: Option<std::time::Duration>,
 ) -> OAuthTokenResponse {
-    use oauth2::{EmptyExtraTokenFields, StandardTokenResponse};
+    use oauth2::StandardTokenResponse;
+    use rmcp::transport::auth::VendorExtraTokenFields;
 
     let mut response = StandardTokenResponse::new(
         AccessToken::new(access_token),
         BasicTokenType::Bearer,
-        EmptyExtraTokenFields {},
+        VendorExtraTokenFields::default(),
     );
 
     if let Some(refresh) = refresh_token {
@@ -601,12 +602,12 @@ mod tests {
             Some(std::time::Duration::from_secs(3600)),
         );
 
-        let credentials = StoredCredentials {
-            client_id: "new-client-id".to_string(),
-            token_response: Some(token_response),
-            granted_scopes: Vec::new(),
-            token_received_at: None,
-        };
+        let credentials = StoredCredentials::new(
+            "new-client-id".to_string(),
+            Some(token_response),
+            Vec::new(),
+            None,
+        );
 
         store.save(credentials).await.unwrap();
 
@@ -660,12 +661,12 @@ mod tests {
             Some(std::time::Duration::from_secs(3600)),
         );
 
-        let credentials = StoredCredentials {
-            client_id: "client-id".to_string(),
-            token_response: Some(token_response),
-            granted_scopes: Vec::new(),
-            token_received_at: None,
-        };
+        let credentials = StoredCredentials::new(
+            "client-id".to_string(),
+            Some(token_response),
+            Vec::new(),
+            None,
+        );
 
         store.save(credentials).await.unwrap();
 

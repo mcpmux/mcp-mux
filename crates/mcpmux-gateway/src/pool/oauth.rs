@@ -1049,12 +1049,11 @@ impl OutboundOAuthManager {
                 let scopes = Self::get_scopes_from_metadata(&discovered_metadata);
 
                 // Then configure client with the existing registration
-                let config = rmcp::transport::auth::OAuthClientConfig {
-                    client_id: reg.client_id.clone(),
-                    client_secret: None,
-                    scopes: scopes.clone(),
-                    redirect_uri: redirect_uri.clone(),
-                };
+                let mut config = rmcp::transport::auth::OAuthClientConfig::new(
+                    reg.client_id.clone(),
+                    redirect_uri.clone(),
+                );
+                config.scopes = scopes.clone();
 
                 if let Err(e) = manager.configure_client(config) {
                     self.log(
@@ -1084,17 +1083,23 @@ impl OutboundOAuthManager {
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to get auth URL: {}", e))?;
 
-                // Create session manually
-                oauth_state = OAuthState::Session(rmcp::transport::auth::AuthorizationSession {
-                    auth_manager: std::mem::replace(
-                        manager,
-                        rmcp::transport::auth::AuthorizationManager::new(server_url)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("Failed: {}", e))?,
+                // Create session manually (reusing the existing registration).
+                // We already called configure_client + get_authorization_url above,
+                // so we use `for_scope_upgrade` to wrap the pre-computed values without
+                // re-registering the client via DCR.
+                let taken_manager = std::mem::replace(
+                    manager,
+                    rmcp::transport::auth::AuthorizationManager::new(server_url)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed: {}", e))?,
+                );
+                oauth_state = OAuthState::Session(
+                    rmcp::transport::auth::AuthorizationSession::for_scope_upgrade(
+                        taken_manager,
+                        auth_url.clone(),
+                        &redirect_uri,
                     ),
-                    auth_url: auth_url.clone(),
-                    redirect_uri: redirect_uri.clone(),
-                });
+                );
             }
             (false, None) // Not a new registration, no metadata to save
         } else {

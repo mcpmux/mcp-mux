@@ -283,12 +283,8 @@ impl RoutingService {
 
             match client_handle {
                 Some(client) => {
-                    let params = CallToolRequestParams {
-                        name: tool_name.into(),
-                        arguments: args.as_object().cloned(),
-                        task: None,
-                        meta: None,
-                    };
+                    let mut params = CallToolRequestParams::new(tool_name.to_string());
+                    params.arguments = args.as_object().cloned();
 
                     // Wrap call_tool with timeout to prevent hanging
                     let res = tokio::time::timeout(TOOL_CALL_TIMEOUT, client.call_tool(params))

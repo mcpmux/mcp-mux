@@ -210,16 +210,16 @@ impl TestGateway {
         let handler = McpMuxGatewayHandler::new(services.clone(), notifier.clone());
 
         // Build MCP service
+        let mut http_cfg = StreamableHttpServerConfig::default();
+        http_cfg.stateful_mode = true;
+        http_cfg.json_response = false;
+        http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(15));
+        http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
+        http_cfg.cancellation_token = ct.child_token();
         let mcp_service = StreamableHttpService::new(
             move || Ok(handler.clone()),
             Arc::new(LocalSessionManager::default()),
-            StreamableHttpServerConfig {
-                stateful_mode: true,
-                json_response: false,
-                sse_keep_alive: Some(std::time::Duration::from_secs(15)),
-                sse_retry: Some(std::time::Duration::from_secs(3)),
-                cancellation_token: ct.child_token(),
-            },
+            http_cfg,
         );
 
         // Build router with test OAuth middleware
@@ -309,16 +309,10 @@ impl GatewayTestClient {
 
 impl rmcp::ClientHandler for GatewayTestClient {
     fn get_info(&self) -> ClientInfo {
-        ClientInfo {
-            protocol_version: Default::default(),
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "gateway-test-client".to_string(),
-                version: "1.0.0".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        ClientInfo::new(
+            ClientCapabilities::default(),
+            Implementation::new("gateway-test-client", "1.0.0"),
+        )
     }
 
     fn on_tool_list_changed(

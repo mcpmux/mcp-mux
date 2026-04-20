@@ -247,19 +247,21 @@ impl GatewayServer {
         // - GET endpoint for SSE streams (server-initiated notifications)
         // - DELETE endpoint for session termination
         // - list_changed notifications delivered via SSE
+        // Build via default() + setters so new non-exhaustive fields (e.g. allowed_hosts,
+        // which defaults to localhost/127.0.0.1/::1) don't require us to enumerate them.
+        let mut http_cfg = StreamableHttpServerConfig::default();
+        http_cfg.stateful_mode = true;
+        http_cfg.json_response = false;
+        http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(30));
+        http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
+        http_cfg.cancellation_token = CancellationToken::new();
         let mcp_service = StreamableHttpService::new(
             move || {
                 debug!("[Gateway] Creating handler instance for MCP session");
                 Ok(handler.clone())
             },
             LocalSessionManager::default().into(),
-            StreamableHttpServerConfig {
-                stateful_mode: true,
-                json_response: false,
-                sse_keep_alive: Some(std::time::Duration::from_secs(30)),
-                sse_retry: Some(std::time::Duration::from_secs(3)),
-                cancellation_token: CancellationToken::new(),
-            },
+            http_cfg,
         );
 
         // Wrap MCP service with OAuth middleware

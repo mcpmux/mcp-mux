@@ -18,6 +18,13 @@ interface GridEntry {
   icon?: string;
   action: GridAction;
   handler: (() => Promise<void>) | string;
+  /**
+   * Per-IDE, what does the user actually have to do after the button fires?
+   * Each IDE's "make MCP server live" flow is different — VS Code auto-starts
+   * while Cursor needs the server toggled on, for example. Keep this wording
+   * specific; a generic "restart" message has already misled testers.
+   */
+  nextStep: string;
 }
 
 interface ConnectIDEsProps {
@@ -40,6 +47,11 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       icon: vscodeIcon,
       action: 'deep_link',
       handler: () => addToVscode(gatewayUrl),
+      nextStep:
+        'Opens VS Code and drops mcpmux into mcp.json. VS Code starts the server ' +
+        'automatically — if it doesn’t, open the Command Palette and run ' +
+        '"MCP: Show Installed Servers", then click Start on mcpmux. The approval ' +
+        'prompt lands on this page.',
     },
     {
       id: 'cursor',
@@ -48,6 +60,10 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       icon: cursorIcon,
       action: 'deep_link',
       handler: () => addToCursor(gatewayUrl),
+      nextStep:
+        'Opens Cursor and adds mcpmux to its config. Cursor does not auto-start ' +
+        'new MCP servers — go to Settings → Features → MCP (or the MCP ' +
+        'Tools panel) and toggle mcpmux on. The approval prompt lands on this page.',
     },
     {
       id: 'windsurf',
@@ -56,6 +72,10 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       icon: windsurfIcon,
       action: 'copy_config',
       handler: `"mcpmux": {\n  "serverUrl": "${mcpUrl}"\n}`,
+      nextStep:
+        'Copies a JSON snippet. In Windsurf, open Cascade → MCP settings, ' +
+        'paste mcpmux under mcpServers, and hit "Refresh" (or reload Windsurf). ' +
+        'Approve on this page when Windsurf reaches the gateway.',
     },
     {
       id: 'claude-code',
@@ -64,6 +84,10 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       icon: claudeIcon,
       action: 'copy_command',
       handler: `claude mcp add --transport http --scope user mcpmux ${mcpUrl}`,
+      nextStep:
+        'Copies a `claude mcp add` command. Run it in your shell — Claude Code ' +
+        'loads mcpmux on the next `claude` invocation (existing sessions need ' +
+        '/restart). Approve on this page when it connects.',
     },
     {
       id: 'jetbrains',
@@ -72,6 +96,10 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       icon: jetbrainsIcon,
       action: 'copy_config',
       handler: `"mcpmux": {\n  "url": "${mcpUrl}"\n}`,
+      nextStep:
+        'Copies a JSON snippet. Paste into the AI Assistant MCP config, then ' +
+        'restart the IDE — JetBrains only reads MCP config on startup. Approve ' +
+        'on this page.',
     },
     {
       id: 'android-studio',
@@ -80,6 +108,9 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       icon: androidStudioIcon,
       action: 'copy_config',
       handler: `"mcpmux": {\n  "httpUrl": "${mcpUrl}"\n}`,
+      nextStep:
+        'Copies a JSON snippet. Paste into Android Studio’s AI Assistant MCP ' +
+        'config, then restart the IDE. Approve on this page.',
     },
     {
       id: 'copy-config',
@@ -87,6 +118,9 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
       label: 'JSON',
       action: 'copy_config',
       handler: `"mcpmux": {\n  "type": "http",\n  "url": "${mcpUrl}"\n}`,
+      nextStep:
+        'Copies a generic MCP JSON snippet. Paste into any MCP-compatible client ' +
+        'and follow its reload instructions. Approve on this page when it connects.',
     },
   ];
 
@@ -173,26 +207,24 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
                   {entry.label}
                 </span>
 
-                {/* Popover */}
+                {/* Popover — opens UPWARD. The grid usually sits at the
+                    bottom of a Card (Dashboard + Clients empty state), so
+                    opening downward put the action button below the scroll
+                    viewport on first paint, forcing users to scroll to find
+                    it. Anchor to the bottom of the trigger button instead. */}
                 {isActive && (
                   <div
-                    className="absolute top-full left-0 mt-2 z-10 w-60 rounded-lg border border-[rgb(var(--border))] bg-white dark:bg-zinc-900 shadow-lg p-3"
+                    className="absolute bottom-full left-0 mb-2 z-10 w-64 rounded-lg border border-[rgb(var(--border))] bg-white dark:bg-zinc-900 shadow-lg p-3"
                     data-testid="client-popover"
                   >
-                    {/* Arrow */}
-                    <div className="absolute -top-1.5 left-4 h-3 w-3 rotate-45 border-l border-t border-[rgb(var(--border))] bg-white dark:bg-zinc-900" />
-
                     <p className="text-xs font-semibold mb-1 relative">{entry.name}</p>
 
-                    {/* Per-action "what happens + what's next" blurb. Users
-                        kept asking "did it install? should I restart?" —
-                        state both up front. */}
+                    {/* Per-IDE instructions. Not a switch on action type —
+                        each IDE's post-install step is meaningfully different
+                        (VS Code auto-starts, Cursor needs explicit toggle,
+                        JetBrains needs a full restart, etc.). */}
                     <p className="text-[11px] leading-snug text-[rgb(var(--muted))] mb-2.5">
-                      {entry.action === 'deep_link'
-                        ? 'Opens the IDE and registers mcpmux automatically. Start a new chat or reload MCP servers in the IDE, then approve on the Clients page.'
-                        : entry.action === 'copy_command'
-                          ? 'Copies a terminal command to your clipboard. Run it in your shell, then restart the IDE and approve on the Clients page.'
-                          : 'Copies a JSON snippet to your clipboard. Paste it into the IDE’s MCP config file, restart the IDE, then approve on the Clients page.'}
+                      {entry.nextStep}
                     </p>
 
                     {entry.action === 'deep_link' ? (
@@ -208,7 +240,7 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
                     ) : isCopied ? (
                       <div className="flex items-center justify-center gap-1 text-xs text-green-600 h-7 relative">
                         <Check className="h-3 w-3" />
-                        Copied — paste &amp; restart
+                        Copied — paste &amp; follow above
                       </div>
                     ) : (
                       <Button
@@ -222,6 +254,10 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
                         {entry.action === 'copy_config' ? 'Copy config' : 'Copy command'}
                       </Button>
                     )}
+
+                    {/* Arrow — points down from the popover to the trigger
+                        icon below. */}
+                    <div className="absolute -bottom-1.5 left-4 h-3 w-3 rotate-45 border-r border-b border-[rgb(var(--border))] bg-white dark:bg-zinc-900" />
                   </div>
                 )}
               </div>

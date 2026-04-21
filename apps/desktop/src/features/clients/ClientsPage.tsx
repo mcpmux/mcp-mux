@@ -26,8 +26,6 @@ import {
   AlertCircle,
   Zap,
   PlugZap,
-  RotateCcw,
-  CheckCircle2,
 } from 'lucide-react';
 import { ConnectIDEs } from '@/components/ConnectIDEs';
 import type { GatewayStatus } from '@/lib/api/gateway';
@@ -147,6 +145,7 @@ export default function ClientsPage() {
     active_sessions: 0,
     connected_backends: 0,
   });
+
   
   // Feature set grant state
   const viewSpace = useViewSpace();
@@ -640,116 +639,68 @@ export default function ClientsPage() {
               // the IDE, then come back and approve. Each step is a distinct
               // visual block so users don't skim past "and then approve here".
               <div className="max-w-4xl mx-auto space-y-6" data-testid="clients-empty-connect">
-                <Card>
+                {/* Generic 3-step welcome. Always visible while there are no
+                    connected clients — no dismiss — because a user hitting
+                    this page with nothing connected needs the instructions
+                    every time, not just the first time. */}
+                <Card data-testid="clients-empty-onboarding">
                   <CardContent className="p-8">
-                    <div className="flex items-start gap-4 mb-2">
+                    <div className="flex items-start gap-4 mb-1">
                       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 text-white shadow-[0_6px_16px_-4px_rgb(99_102_241/0.45)] flex-shrink-0">
                         <PlugZap className="h-6 w-6" />
                       </div>
                       <div>
-                        <h2 className="text-xl font-semibold">Connect your first IDE</h2>
+                        <h2 className="text-xl font-semibold">Let&apos;s hook up your first IDE</h2>
                         <p className="text-sm text-[rgb(var(--muted))] mt-1">
-                          Nothing has connected to mcpmux yet. Pick the path that matches your IDE
-                          below — the approval prompt shows up on this page either way.
+                          mcpmux is one connection your AI client uses to reach every MCP server.
+                          Three steps and you&apos;re done:
                         </p>
                       </div>
                     </div>
 
-                    {/* Two distinct install paths. Mixing them into a single
-                        numbered list made users think "copy config" auto-installs
-                        somewhere — it doesn't; it's clipboard content they have
-                        to paste themselves. Keep them separated. */}
-                    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Track A — one-click install (VS Code, Cursor) */}
-                      <div className="rounded-xl border border-primary-300/60 dark:border-primary-700/40 bg-gradient-to-br from-primary-50/50 to-transparent dark:from-primary-900/15 p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-500 text-white text-xs font-bold">
-                            A
-                          </div>
-                          <h3 className="font-semibold text-sm">
-                            VS Code&nbsp;·&nbsp;Cursor
-                            <span className="ml-2 text-[10px] uppercase tracking-wide text-primary-700 dark:text-primary-300 bg-primary-500/10 rounded px-1.5 py-0.5">
-                              One-click
-                            </span>
-                          </h3>
+                    <ol className="mt-6 space-y-3 text-sm">
+                      <li className="flex gap-3 items-start">
+                        <span className="flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 font-semibold text-sm">
+                          1
+                        </span>
+                        <div className="flex-1">
+                          <p className="font-medium">Pick your IDE below and follow its prompt</p>
+                          <p className="text-[rgb(var(--muted))] text-xs mt-0.5">
+                            Each card tells you exactly what the button does — either one-click
+                            install or copy a small config for you to paste.
+                          </p>
                         </div>
-                        <ol className="space-y-2 text-xs">
-                          <li className="flex gap-2">
-                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">1.</span>
-                            <span>
-                              Click the IDE icon below → click <span className="font-medium">Add to VS Code</span> /
-                              <span className="font-medium"> Add to Cursor</span>. The IDE opens and registers mcpmux.
-                            </span>
-                          </li>
-                          <li className="flex gap-2">
-                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">2.</span>
-                            <span>
-                              Start a new chat / reload the MCP server in that IDE so it actually
-                              connects.
-                            </span>
-                          </li>
-                          <li className="flex gap-2">
-                            <span className="font-semibold text-emerald-600 dark:text-emerald-400 w-4 shrink-0">3.</span>
-                            <span>
-                              <span className="font-medium text-emerald-700 dark:text-emerald-300">
-                                Approve here.
-                              </span>{' '}
-                              mcpmux will pop a dialog on this app — nothing is routed to the IDE
-                              until you accept.
-                            </span>
-                          </li>
-                        </ol>
-                      </div>
-
-                      {/* Track B — manual copy-paste (everyone else) */}
-                      <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgb(var(--muted))] text-white text-xs font-bold">
-                            B
-                          </div>
-                          <h3 className="font-semibold text-sm">
-                            Windsurf&nbsp;·&nbsp;Claude Code&nbsp;·&nbsp;JetBrains&nbsp;·&nbsp;Android Studio
-                            <span className="ml-2 text-[10px] uppercase tracking-wide text-[rgb(var(--muted))] bg-[rgb(var(--surface-elevated))] rounded px-1.5 py-0.5 border border-[rgb(var(--border))]">
-                              Manual
-                            </span>
-                          </h3>
+                      </li>
+                      <li className="flex gap-3 items-start">
+                        <span className="flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 font-semibold text-sm">
+                          2
+                        </span>
+                        <div className="flex-1">
+                          <p className="font-medium">Open or restart the IDE</p>
+                          <p className="text-[rgb(var(--muted))] text-xs mt-0.5">
+                            Your client only connects to mcpmux the next time its MCP servers
+                            start up.
+                          </p>
                         </div>
-                        <ol className="space-y-2 text-xs">
-                          <li className="flex gap-2">
-                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">1.</span>
-                            <span>
-                              Click the IDE icon below → <span className="font-medium">Copy config</span> or
-                              <span className="font-medium"> Copy command</span> (your clipboard now has the
-                              snippet).
+                      </li>
+                      <li className="flex gap-3 items-start">
+                        <span className="flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-semibold text-sm">
+                          3
+                        </span>
+                        <div className="flex-1">
+                          <p className="font-medium">
+                            Approve the connection{' '}
+                            <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold uppercase tracking-wide">
+                              right here
                             </span>
-                          </li>
-                          <li className="flex gap-2">
-                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">2.</span>
-                            <span>
-                              Paste it into that IDE&apos;s MCP config file (or run the copied
-                              command for Claude Code).
-                            </span>
-                          </li>
-                          <li className="flex gap-2">
-                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">3.</span>
-                            <span>
-                              Restart the IDE or reload its MCP servers — mcpmux is not picked up
-                              until you do.
-                            </span>
-                          </li>
-                          <li className="flex gap-2">
-                            <span className="font-semibold text-emerald-600 dark:text-emerald-400 w-4 shrink-0">4.</span>
-                            <span>
-                              <span className="font-medium text-emerald-700 dark:text-emerald-300">
-                                Approve here.
-                              </span>{' '}
-                              mcpmux will pop a dialog on this app as soon as the IDE reaches the
-                              gateway.
-                            </span>
-                          </li>
-                        </ol>
-                      </div>
-                    </div>
+                          </p>
+                          <p className="text-[rgb(var(--muted))] text-xs mt-0.5">
+                            mcpmux will pop a dialog on this app the moment your IDE reaches
+                            the gateway. Until you accept it, nothing is routed.
+                          </p>
+                        </div>
+                      </li>
+                    </ol>
 
                     {!gatewayStatus.running && (
                       <div className="mt-5 flex items-start gap-2 p-3 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 text-xs">
@@ -768,8 +719,8 @@ export default function ClientsPage() {
                   </CardContent>
                 </Card>
 
-                {/* Reuse the shared ConnectIDEs grid from the Dashboard so users
-                    don't have to navigate away. */}
+                {/* IDE grid — each card's popover tells the user what pressing
+                    the button actually does + what to do next. */}
                 <ConnectIDEs
                   gatewayUrl={gatewayStatus.url || 'http://localhost:45818'}
                   gatewayRunning={gatewayStatus.running}

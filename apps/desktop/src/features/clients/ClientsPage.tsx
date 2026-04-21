@@ -649,60 +649,107 @@ export default function ClientsPage() {
                       <div>
                         <h2 className="text-xl font-semibold">Connect your first IDE</h2>
                         <p className="text-sm text-[rgb(var(--muted))] mt-1">
-                          Nothing has connected to mcpmux yet. It only takes three steps:
+                          Nothing has connected to mcpmux yet. Pick the path that matches your IDE
+                          below — the approval prompt shows up on this page either way.
                         </p>
                       </div>
                     </div>
 
-                    {/* Three-step flow. Each step is explicit so users don't
-                        get lost between "I added the config" and "why doesn't
-                        my client show up here?". */}
-                    <ol className="mt-6 space-y-3 text-sm">
-                      <li className="flex gap-3 items-start">
-                        <span className="flex-shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 font-semibold text-xs">
-                          1
-                        </span>
-                        <div className="flex-1">
-                          <p className="font-medium">Add mcpmux to your IDE</p>
-                          <p className="text-[rgb(var(--muted))] text-xs mt-0.5">
-                            Pick one from the cards below — we&apos;ll copy the config or deep-link
-                            straight into the IDE.
-                          </p>
-                        </div>
-                      </li>
-                      <li className="flex gap-3 items-start">
-                        <RotateCcw className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
-                        <span className="flex-shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 font-semibold text-xs">
-                          2
-                        </span>
-                        <div className="flex-1">
-                          <p className="font-medium">Start or restart the MCP server in that IDE</p>
-                          <p className="text-[rgb(var(--muted))] text-xs mt-0.5">
-                            Some clients connect automatically on restart; others (Cursor, Claude
-                            Code) need you to toggle &quot;mcpmux&quot; on once.
-                          </p>
-                        </div>
-                      </li>
-                      <li className="flex gap-3 items-start">
-                        <CheckCircle2 className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
-                        <span className="flex-shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-semibold text-xs">
-                          3
-                        </span>
-                        <div className="flex-1">
-                          <p className="font-medium">
-                            Approve the connection here
-                            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold uppercase tracking-wide">
-                              on this page
+                    {/* Two distinct install paths. Mixing them into a single
+                        numbered list made users think "copy config" auto-installs
+                        somewhere — it doesn't; it's clipboard content they have
+                        to paste themselves. Keep them separated. */}
+                    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Track A — one-click install (VS Code, Cursor) */}
+                      <div className="rounded-xl border border-primary-300/60 dark:border-primary-700/40 bg-gradient-to-br from-primary-50/50 to-transparent dark:from-primary-900/15 p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-500 text-white text-xs font-bold">
+                            A
+                          </div>
+                          <h3 className="font-semibold text-sm">
+                            VS Code&nbsp;·&nbsp;Cursor
+                            <span className="ml-2 text-[10px] uppercase tracking-wide text-primary-700 dark:text-primary-300 bg-primary-500/10 rounded px-1.5 py-0.5">
+                              One-click
                             </span>
-                          </p>
-                          <p className="text-[rgb(var(--muted))] text-xs mt-0.5">
-                            As soon as the IDE hits the gateway, mcpmux will pop an approval
-                            dialog. Pick a Space + FeatureSet pin and the client shows up right
-                            here. Nothing gets routed until you approve.
-                          </p>
+                          </h3>
                         </div>
-                      </li>
-                    </ol>
+                        <ol className="space-y-2 text-xs">
+                          <li className="flex gap-2">
+                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">1.</span>
+                            <span>
+                              Click the IDE icon below → click <span className="font-medium">Add to VS Code</span> /
+                              <span className="font-medium"> Add to Cursor</span>. The IDE opens and registers mcpmux.
+                            </span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">2.</span>
+                            <span>
+                              Start a new chat / reload the MCP server in that IDE so it actually
+                              connects.
+                            </span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="font-semibold text-emerald-600 dark:text-emerald-400 w-4 shrink-0">3.</span>
+                            <span>
+                              <span className="font-medium text-emerald-700 dark:text-emerald-300">
+                                Approve here.
+                              </span>{' '}
+                              mcpmux will pop a dialog on this app — nothing is routed to the IDE
+                              until you accept.
+                            </span>
+                          </li>
+                        </ol>
+                      </div>
+
+                      {/* Track B — manual copy-paste (everyone else) */}
+                      <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgb(var(--muted))] text-white text-xs font-bold">
+                            B
+                          </div>
+                          <h3 className="font-semibold text-sm">
+                            Windsurf&nbsp;·&nbsp;Claude Code&nbsp;·&nbsp;JetBrains&nbsp;·&nbsp;Android Studio
+                            <span className="ml-2 text-[10px] uppercase tracking-wide text-[rgb(var(--muted))] bg-[rgb(var(--surface-elevated))] rounded px-1.5 py-0.5 border border-[rgb(var(--border))]">
+                              Manual
+                            </span>
+                          </h3>
+                        </div>
+                        <ol className="space-y-2 text-xs">
+                          <li className="flex gap-2">
+                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">1.</span>
+                            <span>
+                              Click the IDE icon below → <span className="font-medium">Copy config</span> or
+                              <span className="font-medium"> Copy command</span> (your clipboard now has the
+                              snippet).
+                            </span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">2.</span>
+                            <span>
+                              Paste it into that IDE&apos;s MCP config file (or run the copied
+                              command for Claude Code).
+                            </span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="font-semibold text-[rgb(var(--muted))] w-4 shrink-0">3.</span>
+                            <span>
+                              Restart the IDE or reload its MCP servers — mcpmux is not picked up
+                              until you do.
+                            </span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="font-semibold text-emerald-600 dark:text-emerald-400 w-4 shrink-0">4.</span>
+                            <span>
+                              <span className="font-medium text-emerald-700 dark:text-emerald-300">
+                                Approve here.
+                              </span>{' '}
+                              mcpmux will pop a dialog on this app as soon as the IDE reaches the
+                              gateway.
+                            </span>
+                          </li>
+                        </ol>
+                      </div>
+                    </div>
 
                     {!gatewayStatus.running && (
                       <div className="mt-5 flex items-start gap-2 p-3 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 text-xs">
@@ -712,8 +759,8 @@ export default function ClientsPage() {
                             Gateway is stopped
                           </p>
                           <p className="text-amber-700 dark:text-amber-300 mt-0.5">
-                            Start it from the Dashboard first, otherwise your IDE will sit at
-                            &quot;initialize&quot; forever.
+                            Start it from the Dashboard first — otherwise the IDE will hang at{' '}
+                            <code>initialize</code>.
                           </p>
                         </div>
                       </div>

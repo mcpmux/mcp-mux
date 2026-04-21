@@ -127,9 +127,9 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
           <div>
             <CardTitle>Connect Your IDEs</CardTitle>
             <CardDescription>
-              Add mcpmux to your AI client, then <span className="font-medium">restart / reconnect
-              the MCP server in that client</span> — an approval prompt appears in this app when it
-              hits the gateway.
+              <span className="font-medium">VS Code &amp; Cursor</span> are one-click; the rest copy
+              a config you paste into their MCP settings. Either path ends with an approval
+              prompt in this app.
             </CardDescription>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
@@ -176,14 +176,23 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
                 {/* Popover */}
                 {isActive && (
                   <div
-                    className="absolute top-full left-0 mt-2 z-10 w-44 rounded-lg border border-[rgb(var(--border))] bg-white dark:bg-zinc-900 shadow-lg p-2.5"
+                    className="absolute top-full left-0 mt-2 z-10 w-60 rounded-lg border border-[rgb(var(--border))] bg-white dark:bg-zinc-900 shadow-lg p-3"
                     data-testid="client-popover"
                   >
                     {/* Arrow */}
                     <div className="absolute -top-1.5 left-4 h-3 w-3 rotate-45 border-l border-t border-[rgb(var(--border))] bg-white dark:bg-zinc-900" />
 
-                    <p className="text-xs font-medium mb-2 text-center relative">
-                      {entry.name}
+                    <p className="text-xs font-semibold mb-1 relative">{entry.name}</p>
+
+                    {/* Per-action "what happens + what's next" blurb. Users
+                        kept asking "did it install? should I restart?" —
+                        state both up front. */}
+                    <p className="text-[11px] leading-snug text-[rgb(var(--muted))] mb-2.5">
+                      {entry.action === 'deep_link'
+                        ? 'Opens the IDE and registers mcpmux automatically. Start a new chat or reload MCP servers in the IDE, then approve on the Clients page.'
+                        : entry.action === 'copy_command'
+                          ? 'Copies a terminal command to your clipboard. Run it in your shell, then restart the IDE and approve on the Clients page.'
+                          : 'Copies a JSON snippet to your clipboard. Paste it into the IDE’s MCP config file, restart the IDE, then approve on the Clients page.'}
                     </p>
 
                     {entry.action === 'deep_link' ? (
@@ -199,7 +208,7 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
                     ) : isCopied ? (
                       <div className="flex items-center justify-center gap-1 text-xs text-green-600 h-7 relative">
                         <Check className="h-3 w-3" />
-                        Copied!
+                        Copied — paste &amp; restart
                       </div>
                     ) : (
                       <Button

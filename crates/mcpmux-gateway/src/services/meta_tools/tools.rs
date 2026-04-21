@@ -29,6 +29,9 @@ fn emit_tools_list_changed(event_tx: &broadcast::Sender<DomainEvent>, space_id: 
     });
 }
 
+// NOTE: MetaToolInvoked audit events are emitted centrally by
+// MetaToolRegistry::call, so individual tools don't need to fire them.
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

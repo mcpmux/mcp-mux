@@ -128,6 +128,43 @@ pub fn should_start_hidden() -> bool {
     args.contains(&"--hidden".to_string())
 }
 
+/// Get the current value of the meta-tools master switch.
+///
+/// When disabled, the gateway hides the entire `mcpmux_*` namespace from
+/// connected MCP clients — no introspection, no self-management. Default
+/// ON.
+#[tauri::command]
+pub async fn get_meta_tools_enabled(app_state: State<'_, AppState>) -> Result<bool, String> {
+    match app_state
+        .settings_repository
+        .get("gateway.meta_tools_enabled")
+        .await
+    {
+        Ok(Some(v)) => Ok(!matches!(v.as_str(), "false" | "0")),
+        _ => Ok(true),
+    }
+}
+
+/// Flip the meta-tools master switch. The change takes effect on the NEXT
+/// `list_tools` / `call_tool` from any connected client — existing cached
+/// tool lists are invalidated by the usual `tools/list_changed` push.
+#[tauri::command]
+pub async fn set_meta_tools_enabled(
+    enabled: bool,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .settings_repository
+        .set(
+            "gateway.meta_tools_enabled",
+            if enabled { "true" } else { "false" },
+        )
+        .await
+        .map_err(|e| format!("Failed to save meta_tools_enabled: {}", e))?;
+    info!("[Settings] meta_tools_enabled = {}", enabled);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

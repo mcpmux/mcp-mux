@@ -129,6 +129,7 @@ impl Fixture {
             session_roots.clone(),
             broker.clone(),
             tx,
+            None,
         );
 
         Self {
@@ -573,6 +574,196 @@ async fn registry_advertises_every_default_tool_with_annotations() {
         pin.annotations.as_ref().and_then(|a| a.destructive_hint),
         Some(true)
     );
+}
+
+// ---------------------------------------------------------------------------
+// MetaToolInvoked audit emission + master switch
+// ---------------------------------------------------------------------------
+
+/// Build a bare registry (no fixture sugar) so tests can subscribe to the
+/// event bus before the first call or flip the master-switch setting.
+async fn bare_registry(
+    settings_repo: Option<Arc<dyn mcpmux_core::AppSettingsRepository>>,
+) -> (
+    Arc<MetaToolRegistry>,
+    Uuid,
+    broadcast::Sender<DomainEvent>,
+    broadcast::Receiver<DomainEvent>,
+) {
+    let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+    let space_repo: Arc<dyn SpaceRepository> = Arc::new(SqliteSpaceRepository::new(db.clone()));
+    let feature_set_repo: Arc<dyn FeatureSetRepository> =
+        Arc::new(SqliteFeatureSetRepository::new(db.clone()));
+    let client_repo: Arc<dyn InboundMcpClientRepository> =
+        Arc::new(SqliteInboundMcpClientRepository::new(db.clone()));
+    let binding_repo: Arc<dyn WorkspaceBindingRepository> =
+        Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
+    let server_feature_repo: Arc<dyn ServerFeatureRepository> =
+        Arc::new(SqliteServerFeatureRepository::new(db.clone()));
+
+    let space = space_repo.get_default().await.unwrap().unwrap();
+    let client = Client::new("c", "t");
+    let client_id = client.id;
+    client_repo.create(&client).await.unwrap();
+    client_repo
+        .set_pin(&client_id, &space.id, None)
+        .await
+        .unwrap();
+
+    let resolver = Arc::new(FeatureSetResolverService::new(
+        client_repo.clone(),
+        space_repo.clone(),
+        binding_repo.clone(),
+        SessionRootsRegistry::new(),
+    ));
+    let prefix_cache = Arc::new(PrefixCacheService::new());
+    let feature_service = Arc::new(FeatureService::new(
+        server_feature_repo.clone(),
+        feature_set_repo.clone(),
+        prefix_cache,
+    ));
+    let (tx, rx) = broadcast::channel::<DomainEvent>(32);
+    let registry = meta_tools::build_default_registry(
+        client_repo,
+        space_repo,
+        feature_set_repo,
+        binding_repo,
+        server_feature_repo,
+        resolver,
+        feature_service,
+        SessionRootsRegistry::new(),
+        Arc::new(ApprovalBroker::new()),
+        tx.clone(),
+        settings_repo,
+    );
+    (registry, client_id, tx, rx)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_tool_emits_meta_tool_invoked_with_decision_read() {
+    let (registry, client_id, _tx, mut rx) = bare_registry(None).await;
+
+    registry
+        .call(
+            "mcpmux_describe_resolution",
+            &client_id,
+            Some("s"),
+            json!({}),
+        )
+        .await
+        .unwrap();
+
+    let evt = tokio::time::timeout(Duration::from_millis(200), rx.recv())
+        .await
+        .expect("receive within 200ms")
+        .expect("event");
+    match evt {
+        DomainEvent::MetaToolInvoked {
+            tool_name,
+            decision,
+            ..
+        } => {
+            assert_eq!(tool_name, "mcpmux_describe_resolution");
+            assert_eq!(decision, "read");
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn denied_write_emits_meta_tool_invoked_with_decision_deny() {
+    let (registry, client_id, _tx, mut rx) = bare_registry(None).await;
+
+    // No publisher → write fails with ApprovalRequiredNoDesktop, which the
+    // registry's central audit-logger records as `approval_required`.
+    let _ = registry
+        .call(
+            "mcpmux_pin_this_session",
+            &client_id,
+            Some("s"),
+            json!({ "feature_set_id": Uuid::new_v4().to_string() }),
+        )
+        .await;
+    let evt = tokio::time::timeout(Duration::from_millis(200), rx.recv())
+        .await
+        .expect("receive within 200ms")
+        .expect("event");
+    match evt {
+        DomainEvent::MetaToolInvoked {
+            decision,
+            tool_name,
+            ..
+        } => {
+            assert_eq!(tool_name, "mcpmux_pin_this_session");
+            assert_eq!(decision, "approval_required");
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn master_switch_toggles_registry_visibility() {
+    use mcpmux_storage::SqliteAppSettingsRepository;
+
+    // Same DB so the settings repo and the registry see one another.
+    let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+    let settings_repo: Arc<dyn mcpmux_core::AppSettingsRepository> =
+        Arc::new(SqliteAppSettingsRepository::new(db.clone()));
+    settings_repo
+        .set("gateway.meta_tools_enabled", "false")
+        .await
+        .unwrap();
+
+    let space_repo: Arc<dyn SpaceRepository> = Arc::new(SqliteSpaceRepository::new(db.clone()));
+    let feature_set_repo: Arc<dyn FeatureSetRepository> =
+        Arc::new(SqliteFeatureSetRepository::new(db.clone()));
+    let client_repo: Arc<dyn InboundMcpClientRepository> =
+        Arc::new(SqliteInboundMcpClientRepository::new(db.clone()));
+    let binding_repo: Arc<dyn WorkspaceBindingRepository> =
+        Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
+    let server_feature_repo: Arc<dyn ServerFeatureRepository> =
+        Arc::new(SqliteServerFeatureRepository::new(db.clone()));
+    let resolver = Arc::new(FeatureSetResolverService::new(
+        client_repo.clone(),
+        space_repo.clone(),
+        binding_repo.clone(),
+        SessionRootsRegistry::new(),
+    ));
+    let prefix_cache = Arc::new(PrefixCacheService::new());
+    let feature_service = Arc::new(FeatureService::new(
+        server_feature_repo.clone(),
+        feature_set_repo.clone(),
+        prefix_cache,
+    ));
+    let (tx, _) = broadcast::channel::<DomainEvent>(16);
+    let registry = meta_tools::build_default_registry(
+        client_repo,
+        space_repo,
+        feature_set_repo,
+        binding_repo,
+        server_feature_repo,
+        resolver,
+        feature_service,
+        SessionRootsRegistry::new(),
+        Arc::new(ApprovalBroker::new()),
+        tx,
+        Some(settings_repo.clone()),
+    );
+
+    assert!(!registry.is_enabled().await, "initially disabled");
+
+    settings_repo
+        .set("gateway.meta_tools_enabled", "true")
+        .await
+        .unwrap();
+    assert!(registry.is_enabled().await, "flipped back on");
+
+    // Missing key → default on (fresh install).
+    settings_repo
+        .delete("gateway.meta_tools_enabled")
+        .await
+        .unwrap();
+    assert!(registry.is_enabled().await, "missing key defaults on");
 }
 
 // Silence unused-import warnings from helper imports that only some tests exercise.

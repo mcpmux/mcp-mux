@@ -308,10 +308,13 @@ impl ServerHandler for McpMuxGatewayHandler {
             })
             .collect();
 
-        // Append built-in `mcpmux_*` meta tools. These are always visible
-        // (they're introspection + self-management helpers, not filtered by
-        // the caller's FeatureSet).
-        mcp_tools.extend(self.services.meta_tool_registry.list_as_tools());
+        // Append built-in `mcpmux_*` meta tools when enabled. Default is ON;
+        // users can set `gateway.meta_tools_enabled = "false"` in settings
+        // to hide the entire namespace — useful when a deployment explicitly
+        // wants a non-self-managing gateway.
+        if self.services.meta_tool_registry.is_enabled().await {
+            mcp_tools.extend(self.services.meta_tool_registry.list_as_tools());
+        }
 
         // Log tool names at DEBUG level for visibility
         let tool_names: Vec<String> = mcp_tools.iter().map(|t| t.name.to_string()).collect();
@@ -343,10 +346,13 @@ impl ServerHandler for McpMuxGatewayHandler {
         let session_id_owned = extract_session_id(&context.extensions);
         let session_id = session_id_owned.as_deref();
 
-        // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering. These
-        // are always available regardless of the caller's resolved FS.
+        // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering.
+        // When the master switch is off we fall through to the feature-set
+        // path where the tool will miss and surface a normal "not found"
+        // error — same behaviour a client would see for any unknown tool.
         if crate::services::is_meta_tool(&params.name)
             && self.services.meta_tool_registry.contains(&params.name)
+            && self.services.meta_tool_registry.is_enabled().await
         {
             let client_uuid = uuid::Uuid::parse_str(&oauth_ctx.client_id)
                 .map_err(|e| McpError::invalid_params(format!("bad client_id: {e}"), None))?;

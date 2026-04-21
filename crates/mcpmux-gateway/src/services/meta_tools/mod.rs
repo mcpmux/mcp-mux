@@ -30,7 +30,7 @@ pub use approval::{
     ApprovalScope,
 };
 pub use diff::ToolDiff;
-pub use registry::{MetaToolContext, MetaToolError, MetaToolRegistry};
+pub use registry::{MetaToolContext, MetaToolError, MetaToolRegistry, META_TOOLS_ENABLED_KEY};
 
 /// Every built-in tool's name must start with this prefix so the handler
 /// can intercept it before routing to backend servers.
@@ -57,6 +57,7 @@ pub fn build_default_registry(
     session_roots: std::sync::Arc<crate::services::SessionRootsRegistry>,
     approval_broker: std::sync::Arc<ApprovalBroker>,
     domain_event_tx: tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>,
+    settings_repo: Option<std::sync::Arc<dyn mcpmux_core::AppSettingsRepository>>,
 ) -> std::sync::Arc<MetaToolRegistry> {
     let ctx = MetaToolContext {
         client_repo,
@@ -69,6 +70,7 @@ pub fn build_default_registry(
         session_roots,
         approval_broker,
         domain_event_tx,
+        settings_repo,
     };
 
     let mut registry = MetaToolRegistry::new(ctx);

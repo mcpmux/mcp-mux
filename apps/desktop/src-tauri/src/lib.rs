@@ -805,6 +805,8 @@ pub fn run() {
             commands::respond_to_meta_tool_approval,
             commands::list_meta_tool_grants,
             commands::revoke_meta_tool_grant,
+            commands::get_meta_tools_enabled,
+            commands::set_meta_tools_enabled,
             // Config export commands
             commands::preview_config_export,
             commands::export_config_to_file,

@@ -456,6 +456,27 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "server_id": server_id,
             }),
         ),
+        DomainEvent::MetaToolInvoked {
+            client_id,
+            session_id,
+            tool_name,
+            decision,
+            resolved_feature_set_id,
+            summary,
+        } => (
+            // New channel so the Connection Log can render a dedicated row
+            // type without interleaving with regular backend events.
+            "meta-tool-invoked",
+            serde_json::json!({
+                "client_id": client_id,
+                "session_id": session_id,
+                "tool_name": tool_name,
+                "decision": decision,
+                "resolved_feature_set_id": resolved_feature_set_id,
+                "summary": summary,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            }),
+        ),
     }
 }
 

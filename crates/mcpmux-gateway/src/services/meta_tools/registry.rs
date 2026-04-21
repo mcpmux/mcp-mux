@@ -22,6 +22,10 @@ use super::approval::ApprovalBroker;
 use crate::pool::FeatureService;
 use crate::services::{FeatureSetResolverService, SessionRootsRegistry};
 
+/// App-settings key that toggles the entire `mcpmux_*` namespace.
+/// Present + "false" → hidden; missing or anything else → enabled.
+pub const META_TOOLS_ENABLED_KEY: &str = "gateway.meta_tools_enabled";
+
 /// Context injected into every meta-tool invocation.
 ///
 /// Cheap to clone (all `Arc`s); the registry holds one and hands references
@@ -40,6 +44,10 @@ pub struct MetaToolContext {
     /// Broadcast domain events (e.g. ToolsChanged) so MCPNotifier can push
     /// `tools/list_changed` to connected peers after a write mutates state.
     pub domain_event_tx: broadcast::Sender<DomainEvent>,
+    /// App-settings repo for the `gateway.meta_tools_enabled` master switch.
+    /// Optional because older dependency builders may not have wired it.
+    /// When absent the switch defaults to ENABLED (matches the product default).
+    pub settings_repo: Option<Arc<dyn mcpmux_core::AppSettingsRepository>>,
 }
 
 /// Per-request metadata threaded through every tool call.
@@ -148,6 +156,24 @@ impl MetaToolRegistry {
         self.tools.contains_key(name)
     }
 
+    /// Master switch: are meta tools enabled in app settings? When disabled,
+    /// the gateway handler hides `mcpmux_*` from `list_tools` and routes
+    /// `call_tool` invocations straight to the feature-set path (where they
+    /// will miss and return "tool not found").
+    ///
+    /// Default when the setting is missing or the repo is not wired: ON.
+    /// Default when the setting value is unparseable: ON (fail-open on the
+    /// discoverability side; security-sensitive writes still require approval).
+    pub async fn is_enabled(&self) -> bool {
+        let Some(repo) = self.ctx.settings_repo.as_ref() else {
+            return true;
+        };
+        match repo.get(META_TOOLS_ENABLED_KEY).await {
+            Ok(Some(v)) => !matches!(v.as_str(), "false" | "0"),
+            _ => true,
+        }
+    }
+
     /// The `rmcp::model::Tool` list advertised to clients.
     pub fn list_as_tools(&self) -> Vec<Tool> {
         self.tools
@@ -174,6 +200,11 @@ impl MetaToolRegistry {
 
     /// Dispatch. Caller (the MCP handler) has already verified the name
     /// starts with our prefix.
+    ///
+    /// Every invocation — read or write, success or failure — emits a
+    /// [`DomainEvent::MetaToolInvoked`] audit event so the desktop
+    /// Connection Log can render a row. Read tools get `decision = "read"`;
+    /// write tools get the actual approval decision or an error string.
     pub async fn call(
         &self,
         name: &str,
@@ -185,13 +216,37 @@ impl MetaToolRegistry {
             .tools
             .get(name)
             .ok_or_else(|| MetaToolError::InvalidArgument(format!("unknown meta tool: {name}")))?;
+        let is_write = tool.is_write();
         let call = MetaToolCall {
             client_id,
             session_id,
-            args,
+            args: args.clone(),
             ctx: &self.ctx,
         };
-        tool.call(call).await
+        let result = tool.call(call).await;
+
+        let (decision, summary) = match &result {
+            Ok(_) if is_write => ("allow_once", format!("{name} succeeded")),
+            Ok(_) => ("read", format!("{name} read")),
+            Err(MetaToolError::ApprovalDenied) => ("deny", format!("{name} denied by user")),
+            Err(MetaToolError::ApprovalTimedOut) => ("timeout", format!("{name} timed out")),
+            Err(MetaToolError::ApprovalRequiredNoDesktop) => {
+                ("approval_required", format!("{name} no desktop"))
+            }
+            Err(MetaToolError::RateLimited) => ("rate_limited", format!("{name} rate-limited")),
+            Err(MetaToolError::InvalidArgument(m)) => ("invalid_args", format!("{name}: {m}")),
+            Err(MetaToolError::Internal(m)) => ("error", format!("{name}: {m}")),
+        };
+        let _ = self.ctx.domain_event_tx.send(DomainEvent::MetaToolInvoked {
+            client_id: client_id.to_string(),
+            session_id: session_id.map(|s| s.to_string()),
+            tool_name: name.to_string(),
+            decision: decision.to_string(),
+            resolved_feature_set_id: None,
+            summary,
+        });
+
+        result
     }
 
     pub fn context(&self) -> &MetaToolContext {

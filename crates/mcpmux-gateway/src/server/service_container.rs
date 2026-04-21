@@ -129,6 +129,7 @@ impl ServiceContainer {
             session_roots.clone(),
             approval_broker.clone(),
             domain_event_tx.clone(),
+            deps.settings_repo.clone(),
         );
 
         // Create space resolver service (DIP: inject repository dependencies)

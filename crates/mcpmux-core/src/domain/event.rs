@@ -356,6 +356,26 @@ pub enum DomainEvent {
 
     /// Backend server notified that its resources changed
     ResourcesChanged { space_id: Uuid, server_id: String },
+
+    // ════════════════════════════════════════════════════════════════════════
+    // META-TOOL AUDIT TRAIL
+    // ════════════════════════════════════════════════════════════════════════
+    /// A built-in `mcpmux_*` self-management tool was called by an MCP client.
+    ///
+    /// Emitted by the gateway for every meta-tool invocation (read + write)
+    /// so the desktop's Connection Log can show an audit row. For writes,
+    /// `decision` records what the user chose in the approval dialog.
+    MetaToolInvoked {
+        client_id: String,
+        session_id: Option<String>,
+        tool_name: String,
+        /// `"allow_once" | "always_for_this_session_and_client" | "deny" | "timeout" | "read"`
+        decision: String,
+        /// FeatureSet that became active as a result of the write, when known.
+        resolved_feature_set_id: Option<String>,
+        /// Redacted summary of the payload the LLM supplied (no secrets).
+        summary: String,
+    },
 }
 
 // ============================================================================
@@ -395,6 +415,7 @@ impl DomainEvent {
             Self::ToolsChanged { .. } => "tools_changed",
             Self::PromptsChanged { .. } => "prompts_changed",
             Self::ResourcesChanged { .. } => "resources_changed",
+            Self::MetaToolInvoked { .. } => "meta_tool_invoked",
         }
     }
 
@@ -460,7 +481,8 @@ impl DomainEvent {
             | Self::ClientDeleted { .. }
             | Self::ClientTokenIssued { .. }
             | Self::GatewayStarted { .. }
-            | Self::GatewayStopped => None,
+            | Self::GatewayStopped
+            | Self::MetaToolInvoked { .. } => None,
         }
     }
 

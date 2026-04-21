@@ -23,9 +23,15 @@ import {
   XCircle,
   Trash2,
   BarChart3,
+  Github,
+  Bug,
+  Lightbulb,
+  Package,
+  Heart,
 } from 'lucide-react';
 import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
+import { CONTRIBUTE, openExternal } from '@/lib/contribute';
 
 interface StartupSettings {
   autoLaunch: boolean;
@@ -337,6 +343,54 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Contribute & feedback — the single global "help make mcpmux
+          better" card. Mirrors the items in <ContributeMenu> so power
+          users have quick access without digging into GitHub. */}
+      <Card data-testid="settings-contribute-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Heart className="h-5 w-5" />
+            Contribute &amp; feedback
+          </CardTitle>
+          <CardDescription>
+            mcpmux is open source. Request a server, report a bug, suggest a feature, or jump
+            straight to the source.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <ContributeRow
+              icon={Package}
+              title="Request a new server"
+              subtitle="Ask the community to add an MCP server to the registry"
+              onClick={() => openExternal(CONTRIBUTE.requestServer())}
+              testId="contribute-request-server"
+            />
+            <ContributeRow
+              icon={Bug}
+              title="Report a bug"
+              subtitle="Something broken in the desktop app or gateway"
+              onClick={() => openExternal(CONTRIBUTE.bug)}
+              testId="contribute-report-bug"
+            />
+            <ContributeRow
+              icon={Lightbulb}
+              title="Suggest a feature"
+              subtitle="An idea for mcpmux itself"
+              onClick={() => openExternal(CONTRIBUTE.featureRequest)}
+              testId="contribute-feature-request"
+            />
+            <ContributeRow
+              icon={Github}
+              title="Open on GitHub"
+              subtitle="Browse source, issues, pull requests"
+              onClick={() => openExternal(CONTRIBUTE.repo)}
+              testId="contribute-open-github"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Logs Section */}
       <Card>
         <CardHeader>
@@ -405,5 +459,38 @@ export function SettingsPage() {
       </Card>
     </div>
     </>
+  );
+}
+
+/**
+ * Flat row used inside the Contribute card. Local to the Settings page — if
+ * we ever need this elsewhere, promote it into @mcpmux/ui.
+ */
+function ContributeRow({
+  icon: Icon,
+  title,
+  subtitle,
+  onClick,
+  testId,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  subtitle: string;
+  onClick: () => void;
+  testId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-left flex items-start gap-3 p-3 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] hover:border-primary-400/60 hover:bg-primary-500/5 transition-colors"
+      data-testid={testId}
+    >
+      <Icon className="h-4 w-4 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-[11px] text-[rgb(var(--muted))] leading-snug mt-0.5">{subtitle}</p>
+      </div>
+    </button>
   );
 }

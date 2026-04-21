@@ -12,6 +12,7 @@ import { ServerCard } from './ServerCard';
 import { ServerDetailModal } from './ServerDetailModal';
 import { useViewSpace, useNavigateTo } from '@/stores';
 import { capture } from '@/lib/analytics';
+import { RequestServerCTA, ContributeMenu } from '@/components/Contribute';
 
 export function RegistryPage() {
   const {
@@ -140,13 +141,18 @@ export function RegistryPage() {
       <ToastContainer toasts={toasts} onClose={dismiss} />
       {/* Header */}
       <div className="p-6 border-b border-[rgb(var(--border-subtle))]">
-        <div className="flex items-center gap-3 mb-1">
-          <h1 className="text-2xl font-bold" data-testid="registry-title">Discover Servers</h1>
-          {isOffline && (
-            <span className="px-2 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-full">
-              Offline
-            </span>
-          )}
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold" data-testid="registry-title">Discover Servers</h1>
+            {isOffline && (
+              <span className="px-2 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-full">
+                Offline
+              </span>
+            )}
+          </div>
+          {/* Always-reachable contribute menu — users don't have to trigger
+              an empty search to find the request / bug / feature links. */}
+          <ContributeMenu variant="ghost" size="sm" />
         </div>
         <p className="text-sm text-[rgb(var(--muted))]">
           {isOffline 
@@ -242,7 +248,7 @@ export function RegistryPage() {
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-[rgb(var(--primary))] border-t-transparent" />
           </div>
         ) : displayServers.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-[rgb(var(--muted))]">
+          <div className="flex flex-col items-center justify-center h-full text-[rgb(var(--muted))] px-8">
             <svg className="w-16 h-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 strokeLinecap="round"
@@ -252,7 +258,12 @@ export function RegistryPage() {
               />
             </svg>
             <p className="text-lg">No servers found</p>
-            <p className="text-sm">Try adjusting your search or filters</p>
+            <p className="text-sm mb-6">Try adjusting your search or filters</p>
+            {/* Empty-search CTA — push the user toward requesting or
+                contributing the missing server rather than just giving up. */}
+            <div className="w-full max-w-xl">
+              <RequestServerCTA searchTerm={searchQuery || undefined} />
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

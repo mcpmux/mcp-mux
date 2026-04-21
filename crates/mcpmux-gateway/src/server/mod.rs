@@ -169,6 +169,12 @@ impl GatewayServer {
         self.services.grant_service.clone()
     }
 
+    /// Approval broker for meta-tool writes. Exposed so the desktop layer
+    /// can attach a Tauri-event publisher + resolve pending prompts.
+    pub fn approval_broker(&self) -> Arc<crate::services::ApprovalBroker> {
+        self.services.approval_broker.clone()
+    }
+
     /// Get the OAuth manager
     pub fn oauth_manager(&self) -> Arc<crate::pool::OutboundOAuthManager> {
         self.services.pool_services.oauth_manager.clone()

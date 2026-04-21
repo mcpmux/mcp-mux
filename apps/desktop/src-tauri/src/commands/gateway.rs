@@ -56,6 +56,8 @@ pub struct GatewayAppState {
     pub event_emitter: Option<Arc<mcpmux_gateway::EventEmitter>>,
     /// Grant service for centralized grant management with auto-notifications
     pub grant_service: Option<Arc<mcpmux_gateway::GrantService>>,
+    /// Approval broker for meta-tool writes (publisher attached on gateway start)
+    pub approval_broker: Option<Arc<mcpmux_gateway::services::ApprovalBroker>>,
 }
 
 /// Start domain event bridge from Gateway to Tauri
@@ -596,6 +598,34 @@ pub async fn start_gateway(
     let grant_service = server.grant_service();
     info!("[Gateway] Got grant_service: {:p}", &*grant_service);
 
+    // Meta-tool approval broker — attach a Tauri-event publisher so
+    // incoming approval requests reach the React dialog.
+    let approval_broker = server.approval_broker();
+    {
+        let app_handle_for_broker = app_handle.clone();
+        let publisher: mcpmux_gateway::services::meta_tools::ApprovalPublisher =
+            std::sync::Arc::new(move |req| {
+                let app_handle = app_handle_for_broker.clone();
+                Box::pin(async move {
+                    // Emit the request; the React layer owns rendering +
+                    // collecting the user's decision. Failure to emit means
+                    // no desktop frontend is listening — broker maps that to
+                    // "approval_required" to the calling tool.
+                    match app_handle.emit("meta-tool-approval-request", &req) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "[meta-tool] failed to emit approval request"
+                            );
+                            false
+                        }
+                    }
+                })
+            });
+        approval_broker.set_publisher(publisher).await;
+    }
+
     // Start domain event bridge (clean architecture)
     start_domain_event_bridge(&app_handle, gw_state.clone());
 
@@ -615,6 +645,7 @@ pub async fn start_gateway(
         &*grant_service
     );
     state.grant_service = Some(grant_service);
+    state.approval_broker = Some(approval_broker);
     info!(
         "[Gateway] grant_service set! Checking: {}",
         state.grant_service.is_some()

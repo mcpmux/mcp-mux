@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use crate::pool::{PoolServices, ServerManager, ServiceFactory};
 use crate::services::{
-    AuthorizationService, ClientMetadataService, FeatureSetResolverService, GrantService,
-    PrefixCacheService, SessionRootsRegistry, SpaceResolverService,
+    meta_tools, ApprovalBroker, AuthorizationService, ClientMetadataService,
+    FeatureSetResolverService, GrantService, MetaToolRegistry, PrefixCacheService,
+    SessionRootsRegistry, SpaceResolverService,
 };
 use mcpmux_core::DomainEvent;
 
@@ -34,13 +35,17 @@ pub struct ServiceContainer {
     pub authorization_service: Arc<AuthorizationService>,
 
     /// FeatureSet resolver v2 (pin > workspace > space-active).
-    ///
-    /// Runs in shadow mode alongside `authorization_service` — its decision
-    /// is logged on every request but not yet enforced.
     pub feature_set_resolver: Arc<FeatureSetResolverService>,
 
     /// Registry of per-session workspace roots (populated from MCP `roots/list`).
     pub session_roots: Arc<SessionRootsRegistry>,
+
+    /// Broker that asks the desktop UI for user approval on meta-tool writes.
+    /// Shared with the Tauri layer so it can attach a publisher + respond.
+    pub approval_broker: Arc<ApprovalBroker>,
+
+    /// Built-in `mcpmux_*` meta tools advertised alongside backend tools.
+    pub meta_tool_registry: Arc<MetaToolRegistry>,
 
     /// Space resolver for determining client's active space (SRP)
     pub space_resolver_service: Arc<SpaceResolverService>,
@@ -107,6 +112,25 @@ impl ServiceContainer {
         let authorization_service =
             Arc::new(AuthorizationService::new(feature_set_resolver.clone()));
 
+        // Approval broker for meta-tool writes. Publisher is attached later
+        // by the Tauri layer; until then, writes return `approval_required`.
+        let approval_broker = Arc::new(ApprovalBroker::new());
+
+        // Registry of built-in `mcpmux_*` meta tools (introspection + self-
+        // management). Each write tool is gated by the broker above.
+        let meta_tool_registry = meta_tools::build_default_registry(
+            deps.inbound_mcp_client_repo.clone(),
+            deps.space_repo.clone(),
+            deps.feature_set_repo.clone(),
+            deps.workspace_binding_repo.clone(),
+            deps.feature_repo.clone(),
+            feature_set_resolver.clone(),
+            pool_services.feature_service.clone(),
+            session_roots.clone(),
+            approval_broker.clone(),
+            domain_event_tx.clone(),
+        );
+
         // Create space resolver service (DIP: inject repository dependencies)
         let space_resolver_service = Arc::new(SpaceResolverService::new(
             deps.inbound_client_repo.clone(),
@@ -131,6 +155,8 @@ impl ServiceContainer {
             authorization_service,
             feature_set_resolver,
             session_roots,
+            approval_broker,
+            meta_tool_registry,
             space_resolver_service,
             prefix_cache_service,
             client_metadata_service,

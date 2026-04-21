@@ -671,19 +671,35 @@ async fn test_client_can_list_tools_after_notification() {
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Initially no tools (empty feature repo = empty tools list)
+    // Initially no BACKEND tools (empty feature repo). The gateway always
+    // appends its built-in `mcpmux_*` meta tools regardless of FS resolution,
+    // so we assert on the non-meta subset here.
     let tools = client
         .list_tools(Default::default())
         .await
         .expect("list_tools should work");
-    assert_eq!(tools.tools.len(), 0, "Should start with no tools");
+    let backend_tools: Vec<_> = tools
+        .tools
+        .iter()
+        .filter(|t| !t.name.starts_with("mcpmux_"))
+        .collect();
+    assert_eq!(
+        backend_tools.len(),
+        0,
+        "Should start with no backend tools; meta tools are always present"
+    );
 
-    // list_tools should still work after re-fetch
+    // list_tools should still work after re-fetch.
     let tools2 = client
         .list_tools(Default::default())
         .await
         .expect("second list_tools should work");
-    assert_eq!(tools2.tools.len(), 0, "Still no tools");
+    let backend_tools2: Vec<_> = tools2
+        .tools
+        .iter()
+        .filter(|t| !t.name.starts_with("mcpmux_"))
+        .collect();
+    assert_eq!(backend_tools2.len(), 0, "Still no backend tools");
 
     client.cancel().await.ok();
     gw.shutdown();

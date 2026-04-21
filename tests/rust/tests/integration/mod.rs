@@ -12,3 +12,4 @@ mod feature_grants;
 mod feature_routing;
 mod feature_set_resolver;
 mod mcp_flows;
+mod meta_tools;

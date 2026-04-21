@@ -801,6 +801,10 @@ pub fn run() {
             commands::create_workspace_binding,
             commands::update_workspace_binding,
             commands::delete_workspace_binding,
+            // Meta-tool approval (self-management mcpmux_* tools)
+            commands::respond_to_meta_tool_approval,
+            commands::list_meta_tool_grants,
+            commands::revoke_meta_tool_grant,
             // Config export commands
             commands::preview_config_export,
             commands::export_config_to_file,

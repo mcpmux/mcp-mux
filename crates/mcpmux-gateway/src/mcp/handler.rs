@@ -296,7 +296,7 @@ impl ServerHandler for McpMuxGatewayHandler {
             .map_err(|e| McpError::internal_error(format!("Failed to get tools: {}", e), None))?;
 
         // Convert to MCP Tool types with qualified names (prefix.tool_name)
-        let mcp_tools: Vec<Tool> = tools
+        let mut mcp_tools: Vec<Tool> = tools
             .iter()
             .filter_map(|f| {
                 f.raw_json.as_ref().and_then(|json| {
@@ -307,6 +307,11 @@ impl ServerHandler for McpMuxGatewayHandler {
                 })
             })
             .collect();
+
+        // Append built-in `mcpmux_*` meta tools. These are always visible
+        // (they're introspection + self-management helpers, not filtered by
+        // the caller's FeatureSet).
+        mcp_tools.extend(self.services.meta_tool_registry.list_as_tools());
 
         // Log tool names at DEBUG level for visibility
         let tool_names: Vec<String> = mcp_tools.iter().map(|t| t.name.to_string()).collect();
@@ -335,15 +340,36 @@ impl ServerHandler for McpMuxGatewayHandler {
             "call_tool"
         );
 
+        let session_id_owned = extract_session_id(&context.extensions);
+        let session_id = session_id_owned.as_deref();
+
+        // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering. These
+        // are always available regardless of the caller's resolved FS.
+        if crate::services::is_meta_tool(&params.name)
+            && self.services.meta_tool_registry.contains(&params.name)
+        {
+            let client_uuid = uuid::Uuid::parse_str(&oauth_ctx.client_id)
+                .map_err(|e| McpError::invalid_params(format!("bad client_id: {e}"), None))?;
+            let args: serde_json::Value = params
+                .arguments
+                .map(|a| serde_json::to_value(a).unwrap_or(serde_json::Value::Null))
+                .unwrap_or(serde_json::Value::Null);
+            return match self
+                .services
+                .meta_tool_registry
+                .call(&params.name, &client_uuid, session_id, args)
+                .await
+            {
+                Ok(result) => Ok(result),
+                Err(e) => Ok(e.into_call_tool_result()),
+            };
+        }
+
         // Get client's feature set grants for authorization
         let feature_set_ids = self
             .services
             .authorization_service
-            .get_client_grants(
-                &oauth_ctx.client_id,
-                &oauth_ctx.space_id,
-                extract_session_id(&context.extensions).as_deref(),
-            )
+            .get_client_grants(&oauth_ctx.client_id, &oauth_ctx.space_id, session_id)
             .await
             .map_err(|e| McpError::internal_error(format!("Failed to get grants: {}", e), None))?;
 

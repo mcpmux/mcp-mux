@@ -42,6 +42,7 @@ import { ClientsPage } from '@/features/clients';
 import { ServersPage } from '@/features/servers';
 import { SpacesPage } from '@/features/spaces';
 import { SettingsPage } from '@/features/settings';
+import { MetaToolApprovalDialog } from '@/features/metaTools';
 import { useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
 
 /** McpMux title-bar icon — miniature cat icon */
@@ -353,6 +354,8 @@ function App() {
       <OAuthConsentModal />
       {/* Server install modal - shown when install deep link is received */}
       <ServerInstallModal />
+      {/* Meta-tool approval dialog — gates every mcpmux_* write tool */}
+      <MetaToolApprovalDialog />
     </ThemeProvider>
   );
 }

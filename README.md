@@ -9,7 +9,7 @@
 
 ### One app to manage all your MCP servers across every AI client.
 
-**[Website](https://mcpmux.com)** · **[Download](https://mcpmux.com/download)** · **[Discover Servers](https://mcpmux.com)** · **[Features](https://mcpmux.com/features)** · **[Discord](https://discord.gg/8V3Vq2bxU)**
+**[Website](https://mcpmux.com)** · **[Download](https://mcpmux.com/download)** · **[Discover Servers](https://mcpmux.com)** · **[Features](https://mcpmux.com/features)** · **[Discord](https://discord.gg/b4RDmwAHAN)**
 
 ---
 
@@ -228,7 +228,7 @@ mcp-mux/
 - **Download** — [mcpmux.com/download](https://mcpmux.com/download)
 - **Features** — [mcpmux.com/features](https://mcpmux.com/features)
 - **Server Definitions Repo** — [github.com/mcpmux/mcp-servers](https://github.com/mcpmux/mcp-servers)
-- **Community Chat** — [Discord](https://discord.gg/8V3Vq2bxU)
+- **Community Chat** — [Discord](https://discord.gg/b4RDmwAHAN)
 
 ## Contributing
 

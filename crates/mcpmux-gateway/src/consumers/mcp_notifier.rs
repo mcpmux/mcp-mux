@@ -402,50 +402,6 @@ impl MCPNotifier {
         }
 
         match event {
-            // ============ Grant Events ============
-            // When grants are issued/revoked, tools/prompts/resources might change
-            DomainEvent::GrantIssued {
-                client_id,
-                space_id,
-                feature_set_id,
-            } => {
-                info!(
-                    client_id = %client_id,
-                    space_id = %space_id,
-                    feature_set_id = %feature_set_id,
-                    "[MCPNotifier] 📨 GrantIssued - notifying all clients in space"
-                );
-                self.notify_all_list_changed(space_id, true).await;
-            }
-
-            DomainEvent::GrantRevoked {
-                client_id,
-                space_id,
-                feature_set_id,
-            } => {
-                info!(
-                    client_id = %client_id,
-                    space_id = %space_id,
-                    feature_set_id = %feature_set_id,
-                    "[MCPNotifier] 📨 GrantRevoked - notifying all clients in space"
-                );
-                self.notify_all_list_changed(space_id, true).await;
-            }
-
-            DomainEvent::ClientGrantsUpdated {
-                client_id,
-                space_id,
-                feature_set_ids,
-            } => {
-                info!(
-                    client_id = %client_id,
-                    space_id = %space_id,
-                    feature_sets = feature_set_ids.len(),
-                    "[MCPNotifier] 📨 ClientGrantsUpdated - notifying all clients in space"
-                );
-                self.notify_all_list_changed(space_id, true).await;
-            }
-
             DomainEvent::FeatureSetMembersChanged {
                 space_id,
                 feature_set_id,
@@ -455,6 +411,23 @@ impl MCPNotifier {
                     space_id = %space_id,
                     feature_set_id = %feature_set_id,
                     "[MCPNotifier] 📨 FeatureSetMembersChanged - notifying all clients in space"
+                );
+                self.notify_all_list_changed(space_id, true).await;
+            }
+
+            // A workspace binding was created / updated / deleted. Every
+            // session in the space may now resolve to a different FS, so
+            // broadcast all three list_changed notifications. `force=true`
+            // bypasses the content-hash dedupe because the resolver's output
+            // changed even when backend tool content hasn't.
+            DomainEvent::WorkspaceBindingChanged {
+                space_id,
+                workspace_root,
+            } => {
+                info!(
+                    space_id = %space_id,
+                    workspace_root = %workspace_root,
+                    "[MCPNotifier] 📨 WorkspaceBindingChanged - notifying all clients in space"
                 );
                 self.notify_all_list_changed(space_id, true).await;
             }
@@ -946,6 +919,47 @@ impl MCPNotifier {
             if let Err(e) = peer.notify_resource_list_changed().await {
                 warn!(error = ?e, "[MCPNotifier] Failed to send resources/list_changed");
             }
+        }
+    }
+
+    /// Send all three list_changed notifications to a single peer, bypassing
+    /// the space-level hash dedup and throttle.
+    ///
+    /// Called when a *specific session's* feature-set resolution flips —
+    /// e.g. workspace roots arrive after `initialize` and now match a
+    /// binding, so the client's effective tool set differs from what it
+    /// just fetched. The space-wide bridge can't catch this on its own:
+    /// its hash is per-space, not per-resolved-FS, so a flip from the
+    /// fallback FS to a bound FS doesn't change the space hash even though
+    /// the client's view changed.
+    pub async fn notify_peer_lists_changed(&self, client_id: &str) {
+        if DISABLE_ALL_NOTIFICATIONS {
+            trace!(%client_id, "[MCPNotifier] 🚫 disabled — skipping peer list_changed");
+            return;
+        }
+
+        let peer = {
+            let peers = self.client_peers.read();
+            peers
+                .get(client_id)
+                .filter(|h| h.has_active_stream)
+                .map(|h| h.peer.clone())
+        };
+        let Some(peer) = peer else {
+            debug!(%client_id, "[MCPNotifier] no active peer — skipping peer list_changed");
+            return;
+        };
+
+        info!(%client_id, "[MCPNotifier] 📤 per-peer list_changed (resolution flipped)");
+
+        if let Err(e) = peer.notify_tool_list_changed().await {
+            warn!(error = ?e, %client_id, "[MCPNotifier] failed tools/list_changed");
+        }
+        if let Err(e) = peer.notify_prompt_list_changed().await {
+            warn!(error = ?e, %client_id, "[MCPNotifier] failed prompts/list_changed");
+        }
+        if let Err(e) = peer.notify_resource_list_changed().await {
+            warn!(error = ?e, %client_id, "[MCPNotifier] failed resources/list_changed");
         }
     }
 }

@@ -99,12 +99,14 @@ impl ServiceContainer {
             prefix_cache_service.clone(),
         ));
 
-        // Resolver v2 — now authoritative. AuthorizationService delegates here.
+        // Resolver — workspace-root-driven. AuthorizationService delegates
+        // here; the old per-client pin path is gone (see v2 migration
+        // journey in mcpmux.space/diagrams/workppace-root-session/).
         let session_roots = SessionRootsRegistry::new();
         let feature_set_resolver = Arc::new(FeatureSetResolverService::new(
-            deps.inbound_mcp_client_repo.clone(),
             deps.space_repo.clone(),
             deps.workspace_binding_repo.clone(),
+            deps.feature_set_repo.clone(),
             session_roots.clone(),
         ));
 
@@ -132,21 +134,19 @@ impl ServiceContainer {
             deps.settings_repo.clone(),
         );
 
-        // Create space resolver service (DIP: inject repository dependencies)
-        let space_resolver_service = Arc::new(SpaceResolverService::new(
-            deps.inbound_client_repo.clone(),
-            deps.space_repo.clone(),
-        ));
+        // Space resolver — currently just exposes the active Space, but
+        // keeps a stable seam for future session-targeted routing.
+        let space_resolver_service = Arc::new(SpaceResolverService::new(deps.space_repo.clone()));
 
         // Create client metadata service
         let client_metadata_service = deps.client_metadata_service.clone();
 
-        // Create grant service (centralized grant management with domain events)
-        // Emits domain events (what happened) instead of implementation-specific events (what to do)
+        // Feature-set change broadcaster — emits FeatureSetMembersChanged so
+        // the MCP notifier can fan list_changed out to every peer that
+        // resolves into the affected set.
         let grant_service = Arc::new(GrantService::new(
-            deps.inbound_client_repo.clone(), // Concrete type (pragmatic)
-            deps.feature_set_repo.clone(),    // Trait (DIP)
-            domain_event_tx.clone(),          // Direct event bus (decoupled)
+            deps.feature_set_repo.clone(),
+            domain_event_tx.clone(),
         ));
 
         Self {

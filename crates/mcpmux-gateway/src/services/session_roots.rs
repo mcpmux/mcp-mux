@@ -15,16 +15,23 @@ use dashmap::DashMap;
 use mcpmux_core::normalize_workspace_root;
 
 /// Thread-safe registry mapping `mcp-session-id` to the caller's reported
-/// workspace roots.
+/// workspace roots, plus the most recently resolved feature-set id so the
+/// gateway can tell when a session's resolution flips and emit a per-peer
+/// `list_changed` to that one session only.
 #[derive(Debug, Default)]
 pub struct SessionRootsRegistry {
     map: DashMap<String, Vec<String>>,
+    /// `session_id -> last-resolved feature-set id` (or `None` for "deny").
+    /// We compare each fresh resolution to this snapshot; a different value
+    /// means the client's effective tools changed and we must notify it.
+    last_resolution: DashMap<String, Option<String>>,
 }
 
 impl SessionRootsRegistry {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             map: DashMap::new(),
+            last_resolution: DashMap::new(),
         })
     }
 
@@ -51,6 +58,36 @@ impl SessionRootsRegistry {
     /// Drop a session's roots — call on client disconnect.
     pub fn remove(&self, session_id: &str) {
         self.map.remove(session_id);
+        self.last_resolution.remove(session_id);
+    }
+
+    /// Compare-and-set the session's resolved feature-set id. Returns `true`
+    /// when the value actually changed (caller should fire `list_changed`),
+    /// `false` when it's the same as before.
+    pub fn record_resolution(&self, session_id: &str, fs_id: Option<&str>) -> bool {
+        let new_val: Option<String> = fs_id.map(|s| s.to_string());
+        match self.last_resolution.get(session_id) {
+            Some(prev) if *prev == new_val => false,
+            _ => {
+                self.last_resolution.insert(session_id.to_string(), new_val);
+                true
+            }
+        }
+    }
+
+    /// Returns every reported root across every active session, de-duplicated
+    /// and sorted for stable presentation. Used by the UI's "Detected
+    /// workspaces" panel so the user can act on folders that clients have
+    /// surfaced but haven't been bound yet.
+    pub fn list_all_roots(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .map
+            .iter()
+            .flat_map(|entry| entry.value().clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Current number of tracked sessions. Test helper; cheap to call but
@@ -58,6 +95,13 @@ impl SessionRootsRegistry {
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    /// Whether no sessions are tracked. Paired with [`Self::len`] — clippy
+    /// requires this when `len` is present.
+    #[cfg(test)]
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 }
 
@@ -93,5 +137,30 @@ mod tests {
         assert_eq!(reg.len(), 1);
         reg.remove("sess-1");
         assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn test_record_resolution_flips_on_change() {
+        let reg = SessionRootsRegistry::default();
+        // First sighting always counts as a change so the caller emits the
+        // initial list_changed for whoever subscribed late.
+        assert!(reg.record_resolution("sess-1", Some("fs-fallback")));
+        // Same value → no change.
+        assert!(!reg.record_resolution("sess-1", Some("fs-fallback")));
+        // Different value → change.
+        assert!(reg.record_resolution("sess-1", Some("fs-bound")));
+        // None ↔ Some both count.
+        assert!(reg.record_resolution("sess-1", None));
+        assert!(!reg.record_resolution("sess-1", None));
+    }
+
+    #[test]
+    fn test_remove_clears_resolution_too() {
+        let reg = SessionRootsRegistry::default();
+        reg.record_resolution("sess-1", Some("fs-a"));
+        reg.remove("sess-1");
+        // After remove, recording the same value should be considered a
+        // change (no prior entry).
+        assert!(reg.record_resolution("sess-1", Some("fs-a")));
     }
 }

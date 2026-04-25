@@ -48,6 +48,26 @@ const MIGRATIONS: &[Migration] = &[
         name: "drop_legacy_grants",
         sql: include_str!("migrations/003_drop_legacy_grants.sql"),
     },
+    Migration {
+        version: 4,
+        name: "workspace_modes",
+        sql: include_str!("migrations/004_workspace_modes.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "drop_client_pin",
+        sql: include_str!("migrations/005_drop_client_pin.sql"),
+    },
+    Migration {
+        version: 6,
+        name: "collapse_feature_sets",
+        sql: include_str!("migrations/006_collapse_feature_sets.sql"),
+    },
+    Migration {
+        version: 7,
+        name: "concrete_binding",
+        sql: include_str!("migrations/007_concrete_binding.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

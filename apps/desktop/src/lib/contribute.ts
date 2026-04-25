@@ -19,24 +19,32 @@ export const CONTRIBUTE = {
   serversRepo: 'https://github.com/mcpmux/mcp-servers',
   /** Marketing site. */
   site: 'https://mcpmux.com',
-  /** New bug report, pre-labelled. */
-  bug: 'https://github.com/mcpmux/mcp-mux/issues/new?labels=bug',
-  /** Feature request for the app itself. */
+  /** New bug report, pre-filled with the bug_report template. */
+  bug: 'https://github.com/mcpmux/mcp-mux/issues/new?template=bug_report.yml',
+  /** Feature request for the app itself, pre-filled with the feature_request template. */
   featureRequest:
-    'https://github.com/mcpmux/mcp-mux/issues/new?labels=enhancement',
+    'https://github.com/mcpmux/mcp-mux/issues/new?template=feature_request.yml',
   /**
-   * Request a new server definition in the community registry. Encodes the
-   * user's search term into the issue title when provided.
+   * Request a new server definition in the community registry. Opens the
+   * `request-server.yml` issue template and encodes the user's search term
+   * into the title when provided.
    */
   requestServer(searchTerm?: string): string {
     const base =
-      'https://github.com/mcpmux/mcp-servers/issues/new?labels=server-request';
+      'https://github.com/mcpmux/mcp-servers/issues/new?template=request-server.yml';
     if (!searchTerm) return base;
-    const title = encodeURIComponent(`Request: ${searchTerm.slice(0, 120)}`);
+    const title = encodeURIComponent(`[Request] ${searchTerm.slice(0, 120)}`);
     return `${base}&title=${title}`;
   },
-  /** Root of the server-definitions contributing guide. */
+  /**
+   * Contribute a new server definition — points at the registry's
+   * CONTRIBUTING guide. Server definitions are JSON files landed via PR,
+   * not issues, so we send users straight down the fork → PR path.
+   */
   contributeServer: 'https://github.com/mcpmux/mcp-servers/blob/main/CONTRIBUTING.md',
+  /** Report a bug in an existing server definition. */
+  serverDefinitionBug:
+    'https://github.com/mcpmux/mcp-servers/issues/new?template=bug-report.yml',
 } as const;
 
 /**

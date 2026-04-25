@@ -14,7 +14,9 @@ use tracing::{debug, error, info, warn};
 
 use super::{GatewayState, ServiceContainer};
 use crate::auth::{create_access_token, create_refresh_token};
-use crate::oauth::{process_dcr_request, DcrError, DcrRequest, DcrResponse};
+use crate::oauth::{
+    is_redirect_uri_allowed, process_dcr_request, DcrError, DcrRequest, DcrResponse,
+};
 
 /// App State structure holding both GatewayState and ServiceContainer
 #[derive(Clone)]
@@ -214,8 +216,11 @@ pub async fn oauth_authorize(
             }
         };
 
-        // Validate redirect_uri against resolved client
-        if !client.redirect_uris.contains(&params.redirect_uri) {
+        // Validate redirect_uri against resolved client.
+        // Per RFC 8252 §7.3, loopback redirect URIs are matched ignoring the port,
+        // since native public clients use an ephemeral OS-assigned port at request
+        // time that may differ from the one captured at DCR.
+        if !is_redirect_uri_allowed(&client.redirect_uris, &params.redirect_uri) {
             warn!(
                 "[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})",
                 params.redirect_uri, client.redirect_uris
@@ -941,9 +946,6 @@ pub struct OAuthClientInfoResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_cache_ttl: Option<i64>,
 
-    // MCP client preferences
-    pub connection_mode: String,
-    pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
 }
@@ -979,8 +981,6 @@ pub async fn oauth_list_clients(
                     metadata_url: c.metadata_url,
                     metadata_cached_at: c.metadata_cached_at,
                     metadata_cache_ttl: c.metadata_cache_ttl,
-                    connection_mode: c.connection_mode,
-                    locked_space_id: c.locked_space_id,
                     last_seen: c.last_seen,
                     created_at: c.created_at,
                 })
@@ -999,8 +999,6 @@ pub async fn oauth_list_clients(
 #[derive(Debug, Deserialize)]
 pub struct UpdateClientRequest {
     pub client_alias: Option<String>,
-    pub connection_mode: Option<String>,
-    pub locked_space_id: Option<String>,
 }
 
 /// Update client settings (connection mode, alias, etc.)
@@ -1051,8 +1049,8 @@ pub async fn oauth_get_client_features(
 
     // Step 2: Get client grants via the resolver.
     // No MCP session context here (this is an HTTP API endpoint for the
-    // desktop UI), so workspace-binding resolution is skipped; we fall
-    // through to Space.active_feature_set_id.
+    // desktop UI), so workspace-binding resolution is skipped; the
+    // resolver falls back to the Space's Default FeatureSet.
     let feature_set_ids = match state
         .services
         .authorization_service
@@ -1178,35 +1176,7 @@ pub async fn oauth_update_client(
         return (StatusCode::SERVICE_UNAVAILABLE, "Database not available").into_response();
     };
 
-    // Validate connection_mode if provided
-    if let Some(ref mode) = req.connection_mode {
-        if !["follow_active", "locked", "ask_on_change"].contains(&mode.as_str()) {
-            return (StatusCode::BAD_REQUEST, "Invalid connection_mode").into_response();
-        }
-    }
-
-    // Handle locked_space_id: convert to Option<Option<String>>
-    let locked_space_id = if req.connection_mode.as_deref() == Some("locked") {
-        Some(req.locked_space_id.clone())
-    } else if req.connection_mode.as_deref() == Some("follow_active")
-        || req.connection_mode.as_deref() == Some("ask_on_change")
-    {
-        // Clear locked_space_id when switching away from locked mode
-        Some(None)
-    } else {
-        // Don't change if not explicitly setting mode
-        None
-    };
-
-    match repo
-        .update_client_settings(
-            &client_id,
-            req.client_alias,
-            req.connection_mode,
-            locked_space_id,
-        )
-        .await
-    {
+    match repo.update_client_alias(&client_id, req.client_alias).await {
         Ok(Some(client)) => {
             let response = OAuthClientInfoResponse {
                 client_id: client.client_id,
@@ -1222,8 +1192,6 @@ pub async fn oauth_update_client(
                 metadata_url: client.metadata_url,
                 metadata_cached_at: client.metadata_cached_at,
                 metadata_cache_ttl: client.metadata_cache_ttl,
-                connection_mode: client.connection_mode,
-                locked_space_id: client.locked_space_id,
                 last_seen: client.last_seen,
                 created_at: client.created_at,
             };

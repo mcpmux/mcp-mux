@@ -27,13 +27,6 @@ pub struct Space {
     /// Sort order for display
     pub sort_order: i32,
 
-    /// Active FeatureSet id — the default FS applied to every client in this
-    /// Space when neither an access-key pin nor a workspace-root binding matches.
-    ///
-    /// `None` means "deny by default" — routing returns an empty toolset.
-    #[serde(default)]
-    pub active_feature_set_id: Option<Uuid>,
-
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 
@@ -52,7 +45,6 @@ impl Space {
             description: None,
             is_default: false,
             sort_order: 0,
-            active_feature_set_id: None,
             created_at: now,
             updated_at: now,
         }

@@ -1,9 +1,19 @@
-//! SQLite implementation of WorkspaceBindingRepository.
+//! SQLite implementation of [`WorkspaceBindingRepository`].
 //!
-//! See the trait docs on [`mcpmux_core::WorkspaceBindingRepository`] for the
-//! semantics of "longest-prefix-wins" matching — paths are expected to be
-//! already normalized by [`mcpmux_core::normalize_workspace_root`] before being
-//! stored or queried.
+//! Schema after migration 007 (concrete-pointers model):
+//!
+//! ```text
+//! workspace_bindings
+//!   id              TEXT PK
+//!   workspace_root  TEXT UNIQUE      — routing key, globally unique
+//!   space_id        TEXT NOT NULL    — FK → spaces(id)
+//!   feature_set_id  TEXT NOT NULL    — FK → feature_sets(id)
+//!   created_at      TEXT NOT NULL
+//!   updated_at      TEXT NOT NULL
+//! ```
+//!
+//! Longest-prefix matching (used by the resolver) is done in-memory against
+//! `list()` since a mcpmux DB is expected to hold O(tens) of bindings.
 
 use std::sync::Arc;
 
@@ -38,17 +48,24 @@ impl SqliteWorkspaceBindingRepository {
 
     fn row_to_binding(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceBinding> {
         let id_str: String = row.get(0)?;
-        let space_id_str: String = row.get(1)?;
-        let fs_id_str: String = row.get(3)?;
+        let workspace_root: String = row.get(1)?;
+        let space_id_str: String = row.get(2)?;
+        let feature_set_id: String = row.get(3)?;
+        let created_at: String = row.get(4)?;
+        let updated_at: String = row.get(5)?;
+
         Ok(WorkspaceBinding {
             id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
-            space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
-            workspace_root: row.get(2)?,
-            feature_set_id: fs_id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
-            created_at: Self::parse_datetime(&row.get::<_, String>(4)?),
-            updated_at: Self::parse_datetime(&row.get::<_, String>(5)?),
+            workspace_root,
+            space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::nil()),
+            feature_set_id,
+            created_at: Self::parse_datetime(&created_at),
+            updated_at: Self::parse_datetime(&updated_at),
         })
     }
+
+    const SELECT_COLS: &'static str =
+        "id, workspace_root, space_id, feature_set_id, created_at, updated_at";
 }
 
 #[async_trait]
@@ -56,13 +73,11 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
     async fn list(&self) -> Result<Vec<WorkspaceBinding>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-
-        let mut stmt = conn.prepare(
-            "SELECT id, space_id, workspace_root, feature_set_id, created_at, updated_at
-             FROM workspace_bindings
-             ORDER BY space_id, workspace_root",
-        )?;
-
+        let sql = format!(
+            "SELECT {} FROM workspace_bindings ORDER BY workspace_root",
+            Self::SELECT_COLS
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let bindings = stmt
             .query_map([], Self::row_to_binding)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -72,14 +87,11 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
     async fn list_for_space(&self, space_id: &Uuid) -> Result<Vec<WorkspaceBinding>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-
-        let mut stmt = conn.prepare(
-            "SELECT id, space_id, workspace_root, feature_set_id, created_at, updated_at
-             FROM workspace_bindings
-             WHERE space_id = ?
-             ORDER BY workspace_root",
-        )?;
-
+        let sql = format!(
+            "SELECT {} FROM workspace_bindings WHERE space_id = ? ORDER BY workspace_root",
+            Self::SELECT_COLS
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let bindings = stmt
             .query_map(params![space_id.to_string()], Self::row_to_binding)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -89,12 +101,11 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
     async fn get(&self, id: &Uuid) -> Result<Option<WorkspaceBinding>> {
         let db = self.db.lock().await;
         let conn = db.connection();
-
-        let mut stmt = conn.prepare(
-            "SELECT id, space_id, workspace_root, feature_set_id, created_at, updated_at
-             FROM workspace_bindings
-             WHERE id = ?",
-        )?;
+        let sql = format!(
+            "SELECT {} FROM workspace_bindings WHERE id = ?",
+            Self::SELECT_COLS
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let binding = stmt
             .query_row(params![id.to_string()], Self::row_to_binding)
             .optional()?;
@@ -106,13 +117,14 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let conn = db.connection();
 
         conn.execute(
-            "INSERT INTO workspace_bindings (id, space_id, workspace_root, feature_set_id, created_at, updated_at)
+            "INSERT INTO workspace_bindings
+                (id, workspace_root, space_id, feature_set_id, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 binding.id.to_string(),
-                binding.space_id.to_string(),
                 binding.workspace_root,
-                binding.feature_set_id.to_string(),
+                binding.space_id.to_string(),
+                binding.feature_set_id,
                 binding.created_at.to_rfc3339(),
                 binding.updated_at.to_rfc3339(),
             ],
@@ -127,13 +139,13 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
 
         let rows_affected = conn.execute(
             "UPDATE workspace_bindings
-             SET space_id = ?2, workspace_root = ?3, feature_set_id = ?4, updated_at = ?5
+             SET workspace_root = ?2, space_id = ?3, feature_set_id = ?4, updated_at = ?5
              WHERE id = ?1",
             params![
                 binding.id.to_string(),
-                binding.space_id.to_string(),
                 binding.workspace_root,
-                binding.feature_set_id.to_string(),
+                binding.space_id.to_string(),
+                binding.feature_set_id,
                 binding.updated_at.to_rfc3339(),
             ],
         )?;
@@ -148,27 +160,27 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
     async fn delete(&self, id: &Uuid) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
-
         conn.execute(
             "DELETE FROM workspace_bindings WHERE id = ?",
             params![id.to_string()],
         )?;
-
         Ok(())
     }
 
     async fn find_longest_prefix_match(
         &self,
-        space_id: &Uuid,
+        // `space_id` is no longer used for lookup — routing is keyed on root
+        // alone and each binding already carries its target space. Kept in
+        // the signature for trait compatibility with callers that still hold
+        // onto a "caller's space" hint.
+        _space_id: &Uuid,
         candidate_roots: &[String],
     ) -> Result<Option<WorkspaceBinding>> {
         if candidate_roots.is_empty() {
             return Ok(None);
         }
 
-        // Load all bindings for this space up-front. In practice a Space holds
-        // O(10) bindings, so SQL-side prefix matching is unnecessary complexity.
-        let bindings = self.list_for_space(space_id).await?;
+        let bindings = self.list().await?;
         if bindings.is_empty() {
             return Ok(None);
         }
@@ -176,8 +188,6 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let candidate_strings: Vec<&str> =
             bindings.iter().map(|b| b.workspace_root.as_str()).collect();
 
-        // For each reported root, find the longest binding prefix.
-        // Across multiple roots, pick whichever winning prefix is longest.
         let mut best: Option<&WorkspaceBinding> = None;
         for root in candidate_roots {
             if let Some(winner) = longest_prefix_match(root, candidate_strings.iter().copied()) {
@@ -201,73 +211,84 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mcpmux_core::FeatureSet;
 
-    async fn make_repo() -> (SqliteWorkspaceBindingRepository, Uuid, Uuid) {
+    async fn fixture() -> (SqliteWorkspaceBindingRepository, Uuid, String) {
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
         let repo = SqliteWorkspaceBindingRepository::new(db.clone());
-        let default_space = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-        // The default space has a default FS seeded by migration 001; use it.
-        let fs_id = Uuid::parse_str(
-            format!("fs_default_{}", default_space).trim_start_matches("fs_default_"),
-        )
-        .unwrap_or_else(|_| Uuid::new_v4());
-        // The migration inserts a feature_set with id "fs_default_..." (not a UUID);
-        // for test purposes create a custom FS we control.
+        let space_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+
+        // Seed a real FeatureSet so FK constraints are satisfied.
+        let fs = FeatureSet::new_custom("test", space_id.to_string());
+        let fs_id = fs.id.clone();
+        let now = Utc::now().to_rfc3339();
         {
-            let db_guard = db.lock().await;
-            let now = Utc::now().to_rfc3339();
-            db_guard
+            let guard = db.lock().await;
+            guard
                 .connection()
                 .execute(
                     "INSERT INTO feature_sets (id, name, feature_set_type, space_id, is_builtin, created_at, updated_at)
-                     VALUES (?1, 'Test FS', 'custom', ?2, 0, ?3, ?3)",
-                    params![fs_id.to_string(), default_space.to_string(), now],
+                     VALUES (?1, 'test', 'custom', ?2, 0, ?3, ?3)",
+                    params![fs.id, space_id.to_string(), now],
                 )
                 .unwrap();
         }
-        (repo, default_space, fs_id)
+        (repo, space_id, fs_id)
     }
 
     #[tokio::test]
-    async fn test_crud_and_prefix_match() {
-        let (repo, space_id, fs_id) = make_repo().await;
+    async fn test_crud_round_trip() {
+        let (repo, space_id, fs_id) = fixture().await;
+        let root = if cfg!(windows) { "d:\\proj" } else { "/proj" };
+        let binding = WorkspaceBinding::new(root, space_id, fs_id.clone());
+        repo.create(&binding).await.unwrap();
 
-        #[cfg(windows)]
-        let (root_parent, root_child) = ("d:\\projects", "d:\\projects\\foo");
-        #[cfg(not(windows))]
-        let (root_parent, root_child) = ("/home/user/projects", "/home/user/projects/foo");
+        let got = repo.get(&binding.id).await.unwrap().unwrap();
+        assert_eq!(got.workspace_root, root);
+        assert_eq!(got.space_id, space_id);
+        assert_eq!(got.feature_set_id, fs_id);
+    }
 
-        let parent = WorkspaceBinding::new(space_id, root_parent, fs_id);
-        let child = WorkspaceBinding::new(space_id, root_child, fs_id);
-        repo.create(&parent).await.unwrap();
-        repo.create(&child).await.unwrap();
-
-        let all = repo.list_for_space(&space_id).await.unwrap();
-        assert_eq!(all.len(), 2);
-
-        // Exact match on child
-        let found = repo
-            .find_longest_prefix_match(&space_id, &[root_child.to_string()])
+    #[tokio::test]
+    async fn test_list_for_space_filters_by_pointer() {
+        let (repo, space_id, fs_id) = fixture().await;
+        let root = if cfg!(windows) { "d:\\proj" } else { "/proj" };
+        repo.create(&WorkspaceBinding::new(root, space_id, fs_id))
             .await
             .unwrap();
-        assert_eq!(found.unwrap().workspace_root, root_child);
 
-        // Deeper path should still hit child (longest prefix)
-        #[cfg(windows)]
-        let deeper = "d:\\projects\\foo\\src";
-        #[cfg(not(windows))]
-        let deeper = "/home/user/projects/foo/src";
-        let found = repo
-            .find_longest_prefix_match(&space_id, &[deeper.to_string()])
+        let hits = repo.list_for_space(&space_id).await.unwrap();
+        assert_eq!(hits.len(), 1);
+
+        let other = Uuid::new_v4();
+        let hits_other = repo.list_for_space(&other).await.unwrap();
+        assert!(hits_other.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_longest_prefix_match_picks_nested_root() {
+        let (repo, space_id, fs_id) = fixture().await;
+        let (outer, inner) = if cfg!(windows) {
+            ("d:\\work", "d:\\work\\proj")
+        } else {
+            ("/work", "/work/proj")
+        };
+        repo.create(&WorkspaceBinding::new(outer, space_id, fs_id.clone()))
             .await
             .unwrap();
-        assert_eq!(found.unwrap().workspace_root, root_child);
+        let b_inner = WorkspaceBinding::new(inner, space_id, fs_id);
+        repo.create(&b_inner).await.unwrap();
 
-        // Empty candidates returns None
-        let found = repo
-            .find_longest_prefix_match(&space_id, &[])
+        let deep = if cfg!(windows) {
+            "d:\\work\\proj\\src"
+        } else {
+            "/work/proj/src"
+        };
+        let hit = repo
+            .find_longest_prefix_match(&space_id, &[deep.to_string()])
             .await
-            .unwrap();
-        assert!(found.is_none());
+            .unwrap()
+            .expect("match");
+        assert_eq!(hit.workspace_root, inner);
     }
 }

@@ -29,11 +29,11 @@ impl ToolDiff {
     pub async fn compute(
         feature_service: &FeatureService,
         space_id: Uuid,
-        before_fs_id: Option<Uuid>,
-        after_fs_id: Option<Uuid>,
+        before_fs_id: Option<String>,
+        after_fs_id: Option<String>,
     ) -> anyhow::Result<ToolDiff> {
-        let before = Self::tools_for(feature_service, space_id, before_fs_id).await?;
-        let after = Self::tools_for(feature_service, space_id, after_fs_id).await?;
+        let before = Self::tools_for(feature_service, space_id, before_fs_id.as_deref()).await?;
+        let after = Self::tools_for(feature_service, space_id, after_fs_id.as_deref()).await?;
 
         let before_set: std::collections::HashSet<&String> = before.iter().collect();
         let after_set: std::collections::HashSet<&String> = after.iter().collect();
@@ -59,7 +59,7 @@ impl ToolDiff {
     async fn tools_for(
         feature_service: &FeatureService,
         space_id: Uuid,
-        fs_id: Option<Uuid>,
+        fs_id: Option<&str>,
     ) -> anyhow::Result<Vec<String>> {
         let Some(fs) = fs_id else { return Ok(vec![]) };
         let space_id_str = space_id.to_string();

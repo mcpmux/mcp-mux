@@ -1,24 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
-import {
-  ChevronDown,
-  Check,
-  Plus,
-  Loader2,
-} from 'lucide-react';
+import { ChevronDown, Check, Plus, Loader2 } from 'lucide-react';
 import { Button, useToast, ToastContainer } from '@mcpmux/ui';
-import {
-  useAppStore,
-  useActiveSpace,
-  useViewSpace,
-  useSpaces,
-  useIsLoading,
-} from '@/stores';
-import { createSpace, setActiveSpace as setActiveSpaceAPI } from '@/lib/api/spaces';
+import { useAppStore, useViewSpace, useSpaces, useIsLoading } from '@/stores';
+import { createSpace } from '@/lib/api/spaces';
 
 interface SpaceSwitcherProps {
   className?: string;
 }
 
+/**
+ * Sidebar dropdown for switching which Space the desktop UI is currently
+ * viewing. Pure UI navigation — does not affect gateway routing. The
+ * "Default" badge marks the system fallback Space (the one used when a
+ * session has no matching WorkspaceBinding).
+ */
 export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -28,14 +23,11 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
   const { toasts, success, error: showError, dismiss } = useToast();
 
   const spaces = useSpaces();
-  const activeSpace = useActiveSpace();
   const viewSpace = useViewSpace();
   const isLoadingSpaces = useIsLoading('spaces');
-  const setActiveSpaceInStore = useAppStore((state) => state.setActiveSpace);
   const setViewSpaceInStore = useAppStore((state) => state.setViewSpace);
   const addSpace = useAppStore((state) => state.addSpace);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -52,31 +44,17 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
     setIsOpen(false);
   };
 
-  const handleSetActiveSpace = async (spaceId: string) => {
-    try {
-      await setActiveSpaceAPI(spaceId);
-      setActiveSpaceInStore(spaceId);
-      setIsOpen(false);
-      const activatedSpace = spaces.find(s => s.id === spaceId);
-      success('Space activated', `Switched to "${activatedSpace?.name || 'Space'}"`);
-    } catch (e) {
-      showError('Failed to switch space', e instanceof Error ? e.message : String(e));
-    }
-  };
-
   const handleCreateSpace = async () => {
     if (!newName.trim()) return;
     setIsCreating(true);
     try {
       const space = await createSpace(newName.trim(), '🌐');
       addSpace(space);
-      await setActiveSpaceAPI(space.id);
-      setActiveSpaceInStore(space.id);
       setViewSpaceInStore(space.id);
       setNewName('');
       setShowCreateInput(false);
       setIsOpen(false);
-      success('Space created', `"${space.name}" has been created and activated`);
+      success('Space created', `"${space.name}" has been created`);
     } catch (e) {
       showError('Failed to create space', e instanceof Error ? e.message : String(e));
     } finally {
@@ -99,13 +77,14 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
             <span className="text-xl">{viewSpace?.icon || '🌐'}</span>
           )}
           <span className="font-medium text-sm truncate">
-            {isLoadingSpaces 
-              ? 'Loading...' 
-              : viewSpace?.name || (spaces.length > 0 ? 'Select Space' : 'No Spaces')
-            }
+            {isLoadingSpaces
+              ? 'Loading...'
+              : viewSpace?.name || (spaces.length > 0 ? 'Select Space' : 'No Spaces')}
           </span>
         </span>
-        <ChevronDown className={`h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] group-hover:text-[rgb(var(--foreground))] transition-all duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] group-hover:text-[rgb(var(--foreground))] transition-all duration-200 ${isOpen ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {/* Dropdown */}
@@ -128,40 +107,28 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
                   key={space.id}
                   onClick={() => handleSelectSpace(space.id)}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-all duration-150
-                    ${viewSpace?.id === space.id 
-                      ? 'bg-[rgb(var(--primary))/12] text-[rgb(var(--primary))]' 
-                      : 'hover:bg-[rgb(var(--surface-hover))]'
+                    ${
+                      viewSpace?.id === space.id
+                        ? 'bg-[rgb(var(--primary))/12] text-[rgb(var(--primary))]'
+                        : 'hover:bg-[rgb(var(--surface-hover))]'
                     }`}
+                  data-testid={`space-switcher-item-${space.id}`}
                 >
-                  <span className="flex items-center gap-3">
-                    <span className="text-xl">{space.icon || '🌐'}</span>
-                    <div>
-                      <div className="font-medium text-sm">{space.name}</div>
+                  <span className="flex items-center gap-3 min-w-0">
+                    <span className="text-xl flex-shrink-0">{space.icon || '🌐'}</span>
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm truncate">{space.name}</div>
                       {space.is_default && (
-                        <div className="text-xs text-[rgb(var(--muted))]">Default</div>
+                        <div
+                          className="text-xs text-[rgb(var(--muted))]"
+                          title="Routing fallback when no WorkspaceBinding matches"
+                        >
+                          Default
+                        </div>
                       )}
                     </div>
                   </span>
-                  <span className="flex items-center gap-2">
-                    {activeSpace?.id === space.id && (
-                      <span className="text-xs text-[rgb(var(--muted))]">Active</span>
-                    )}
-                    {viewSpace?.id === space.id && (
-                      <Check className="h-4 w-4" />
-                    )}
-                    {activeSpace?.id !== space.id && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSetActiveSpace(space.id);
-                        }}
-                      >
-                        Set Active
-                      </Button>
-                    )}
-                  </span>
+                  {viewSpace?.id === space.id && <Check className="h-4 w-4 flex-shrink-0" />}
                 </button>
               ))
             )}

@@ -121,6 +121,18 @@ impl GatewayPortService {
             .map_err(|e| PortAllocationError::PersistFailed(e.to_string()))
     }
 
+    /// Clear the persisted gateway port.
+    ///
+    /// After clearing, [`resolve`] falls back to [`DEFAULT_GATEWAY_PORT`] (or
+    /// a dynamic port if the default is in use). Use this to reset the user's
+    /// override and return to default behavior.
+    pub async fn clear_persisted_port(&self) -> Result<(), PortAllocationError> {
+        self.settings
+            .delete(keys::gateway::PORT)
+            .await
+            .map_err(|e| PortAllocationError::PersistFailed(e.to_string()))
+    }
+
     /// Resolve which port to use based on the fallback strategy.
     ///
     /// Strategy:
@@ -311,6 +323,21 @@ mod tests {
         // Save and load
         service.save_port(12345).await.unwrap();
         assert_eq!(service.load_persisted_port().await, Some(12345));
+    }
+
+    #[tokio::test]
+    async fn test_clear_persisted_port() {
+        let settings = Arc::new(InMemorySettings::new());
+        let service = GatewayPortService::new(settings);
+
+        service.save_port(54321).await.unwrap();
+        assert_eq!(service.load_persisted_port().await, Some(54321));
+
+        service.clear_persisted_port().await.unwrap();
+        assert!(service.load_persisted_port().await.is_none());
+
+        // Clearing again is a no-op
+        service.clear_persisted_port().await.unwrap();
     }
 
     #[tokio::test]

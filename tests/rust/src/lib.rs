@@ -162,23 +162,9 @@ pub mod fixtures {
             .with_description(format!("Test feature set: {}", name))
     }
 
-    /// Create an "all features" feature set
-    pub fn all_features_set(space_id: &str) -> FeatureSet {
-        FeatureSet::new_all(space_id)
-    }
-
     /// Create a "default" feature set
     pub fn default_feature_set(space_id: &str) -> FeatureSet {
         FeatureSet::new_default(space_id)
-    }
-
-    /// Create a server-all feature set
-    pub fn server_all_feature_set(
-        space_id: &str,
-        server_id: &str,
-        server_name: &str,
-    ) -> FeatureSet {
-        FeatureSet::new_server_all(space_id, server_id, server_name)
     }
 
     /// Generate a random UUID string

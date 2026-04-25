@@ -1,11 +1,24 @@
 import { Space } from '@/lib/api/spaces';
 
-export type NavItem = 'home' | 'registry' | 'servers' | 'spaces' | 'featuresets' | 'clients' | 'settings';
+export type NavItem =
+  | 'home'
+  | 'registry'
+  | 'servers'
+  | 'spaces'
+  | 'featuresets'
+  | 'workspaces'
+  | 'clients'
+  | 'settings';
 
 export interface AppState {
   // Spaces
   spaces: Space[];
-  activeSpaceId: string | null;
+  /**
+   * The space the user is currently viewing in the desktop app. Pure
+   * UI navigation state — has no effect on gateway routing, which always
+   * resolves via reported workspace root → WorkspaceBinding (or the
+   * built-in default Space when no binding matches).
+   */
   viewSpaceId: string | null;
 
   // Navigation
@@ -28,7 +41,6 @@ export interface AppState {
 export interface AppActions {
   // Spaces
   setSpaces: (spaces: Space[]) => void;
-  setActiveSpace: (id: string | null) => void;
   setViewSpace: (id: string | null) => void;
   addSpace: (space: Space) => void;
   removeSpace: (id: string) => void;
@@ -48,4 +60,3 @@ export interface AppActions {
 }
 
 export type AppStore = AppState & AppActions;
-

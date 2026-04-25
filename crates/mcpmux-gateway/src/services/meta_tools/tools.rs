@@ -14,7 +14,6 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::approval::{ApprovalPayload, ApprovalScope};
-use super::diff::ToolDiff;
 use super::registry::{MetaTool, MetaToolCall, MetaToolError};
 
 /// Fire a `FeatureSetMembersChanged` event so MCPNotifier pushes a
@@ -40,19 +39,10 @@ fn text_result(v: Value) -> CallToolResult {
     CallToolResult::success(vec![Content::text(v.to_string())])
 }
 
-/// Resolve the caller's effective Space id, using the pin if set, else the
-/// default space. Returns `None` only in pathological "no-default-space"
-/// setups, which the meta tools treat as errors.
+/// Resolve the caller's effective Space id — always the default/active space
+/// in the current (no-client-pinning) model. Returns an error only in the
+/// pathological "no default space" setup.
 async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError> {
-    let client = call
-        .ctx
-        .client_repo
-        .get(call.client_id)
-        .await?
-        .ok_or_else(|| MetaToolError::Internal("client not found".into()))?;
-    if let Some(id) = client.pinned_space_id {
-        return Ok(id);
-    }
     let default_space = call
         .ctx
         .space_repo
@@ -140,8 +130,6 @@ impl MetaTool for ListFeatureSetsTool {
             .get(&space_id)
             .await?
             .ok_or_else(|| MetaToolError::Internal("space missing".into()))?;
-        let client = call.ctx.client_repo.get(call.client_id).await?;
-        let pinned_fs = client.as_ref().and_then(|c| c.pinned_feature_set_id);
         let sets = call
             .ctx
             .feature_set_repo
@@ -151,26 +139,17 @@ impl MetaTool for ListFeatureSetsTool {
             .iter()
             .filter(|fs| !fs.is_deleted)
             .map(|fs| {
-                let id_uuid = Uuid::parse_str(&fs.id).ok();
                 json!({
                     "id": fs.id,
                     "name": fs.name,
                     "description": fs.description,
                     "type": fs.feature_set_type,
                     "is_builtin": fs.is_builtin,
-                    "is_active": id_uuid
-                        .zip(space.active_feature_set_id)
-                        .map(|(a, b)| a == b)
-                        .unwrap_or(false),
-                    "is_pinned": id_uuid
-                        .zip(pinned_fs)
-                        .map(|(a, b)| a == b)
-                        .unwrap_or(false),
                 })
             })
             .collect();
         Ok(text_result(
-            json!({ "space_id": space_id, "feature_sets": sets }),
+            json!({ "space_id": space.id, "feature_sets": sets }),
         ))
     }
 }
@@ -198,21 +177,14 @@ impl MetaTool for DescribeResolutionTool {
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let resolved = call
-            .ctx
-            .resolver
-            .resolve(call.client_id, call.session_id)
-            .await?;
-        let fs_name = if let Some(id) = resolved.feature_set_id {
-            call.ctx
-                .feature_set_repo
-                .get(&id.to_string())
-                .await?
-                .map(|fs| fs.name)
+        let resolved = call.ctx.resolver.resolve(call.session_id).await?;
+        let fs_id = resolved.feature_set_id.clone();
+        let fs_name = if let Some(id) = fs_id.as_deref() {
+            call.ctx.feature_set_repo.get(id).await?.map(|fs| fs.name)
         } else {
             None
         };
-        let tool_count = if let Some(id) = resolved.feature_set_id {
+        let tool_count = if let Some(id) = fs_id.as_deref() {
             let space_id = caller_space_id(&call).await?;
             call.ctx
                 .feature_service
@@ -225,7 +197,7 @@ impl MetaTool for DescribeResolutionTool {
             0
         };
         Ok(text_result(json!({
-            "feature_set_id": resolved.feature_set_id,
+            "feature_set_id": fs_id,
             "feature_set_name": fs_name,
             "source": resolved.source,
             "resolved_tool_count": tool_count,
@@ -276,6 +248,7 @@ impl MetaTool for DescribeWorkspaceTool {
             "matched_binding": matched.map(|b| json!({
                 "id": b.id,
                 "workspace_root": b.workspace_root,
+                "space_id": b.space_id,
                 "feature_set_id": b.feature_set_id,
             })),
         })))
@@ -324,98 +297,6 @@ fn parse_uuid_arg(args: &Value, field: &str) -> Result<Uuid, MetaToolError> {
         .ok_or_else(|| MetaToolError::InvalidArgument(format!("missing `{field}`")))?;
     Uuid::parse_str(s)
         .map_err(|_| MetaToolError::InvalidArgument(format!("`{field}` is not a UUID: {s}")))
-}
-
-// ---------------------------------------------------------------------------
-// mcpmux_pin_this_session — write (caller-scope)
-// ---------------------------------------------------------------------------
-
-pub struct PinThisSessionTool;
-
-#[async_trait]
-impl MetaTool for PinThisSessionTool {
-    fn name(&self) -> &'static str {
-        "mcpmux_pin_this_session"
-    }
-
-    fn description(&self) -> &'static str {
-        "Pin THIS caller's access key to the given FeatureSet. Affects only \
-         the calling client; does not touch other connections. Requires user \
-         approval. After approval the gateway emits tools/list_changed so \
-         the trimmed toolset appears on the next list_tools."
-    }
-
-    fn input_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "required": ["feature_set_id"],
-            "properties": {
-                "feature_set_id": { "type": "string", "description": "FeatureSet UUID" }
-            }
-        })
-    }
-
-    fn is_write(&self) -> bool {
-        true
-    }
-
-    async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let new_fs = parse_uuid_arg(&call.args, "feature_set_id")?;
-        let space_id = caller_space_id(&call).await?;
-
-        // Current resolution — becomes the `before` side of the diff.
-        let before_resolved = call
-            .ctx
-            .resolver
-            .resolve(call.client_id, call.session_id)
-            .await?;
-        let diff = ToolDiff::compute(
-            &call.ctx.feature_service,
-            space_id,
-            before_resolved.feature_set_id,
-            Some(new_fs),
-        )
-        .await?;
-
-        let fs_name = call
-            .ctx
-            .feature_set_repo
-            .get(&new_fs.to_string())
-            .await?
-            .map(|fs| fs.name)
-            .unwrap_or_else(|| new_fs.to_string());
-        let summary = format!(
-            "Pin this connection to FeatureSet '{fs_name}' ({} tools)",
-            diff.after.len()
-        );
-
-        let client_id = *call.client_id;
-        let client_repo = call.ctx.client_repo.clone();
-        let event_tx = call.ctx.domain_event_tx.clone();
-        with_approval(
-            &call,
-            "mcpmux_pin_this_session",
-            summary,
-            Some(serde_json::to_value(&diff).unwrap_or(Value::Null)),
-            false,
-            call.args.clone(),
-            || async move {
-                client_repo
-                    .set_pin(&client_id, &space_id, Some(&new_fs))
-                    .await?;
-                info!(%client_id, new_fs = %new_fs, "[meta_tools] pin_this_session applied");
-                // Trigger a list_changed notification so the caller
-                // re-fetches the trimmed toolset immediately.
-                emit_tools_list_changed(&event_tx, space_id);
-                Ok(text_result(json!({
-                    "ok": true,
-                    "pinned_feature_set_id": new_fs,
-                    "tool_count": diff.after.len(),
-                })))
-            },
-        )
-        .await
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -616,7 +497,8 @@ impl MetaTool for BindCurrentWorkspaceTool {
             true,
             call.args.clone(),
             || async move {
-                let binding = WorkspaceBinding::new(space_id, normalized.clone(), fs_id);
+                let binding =
+                    WorkspaceBinding::new(normalized.clone(), space_id, fs_id.to_string());
                 binding_repo.create(&binding).await?;
                 info!(
                     %space_id,
@@ -630,99 +512,6 @@ impl MetaTool for BindCurrentWorkspaceTool {
                     "binding_id": binding.id,
                     "workspace_root": normalized,
                     "feature_set_id": fs_id,
-                })))
-            },
-        )
-        .await
-    }
-}
-
-// ---------------------------------------------------------------------------
-// mcpmux_set_space_active — write (affects every client in the Space)
-// ---------------------------------------------------------------------------
-
-pub struct SetSpaceActiveTool;
-
-#[async_trait]
-impl MetaTool for SetSpaceActiveTool {
-    fn name(&self) -> &'static str {
-        "mcpmux_set_space_active"
-    }
-
-    fn description(&self) -> &'static str {
-        "Change the Space's ACTIVE FeatureSet — the fallback applied to every \
-         connected client that has no pin and no matching workspace binding. \
-         This affects OTHER clients beyond the caller; use sparingly. Requires \
-         user approval."
-    }
-
-    fn input_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "required": ["feature_set_id"],
-            "properties": {
-                "feature_set_id": { "type": "string" }
-            }
-        })
-    }
-
-    fn is_write(&self) -> bool {
-        true
-    }
-
-    async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let fs_id = parse_uuid_arg(&call.args, "feature_set_id")?;
-        let space_id = caller_space_id(&call).await?;
-
-        let space = call
-            .ctx
-            .space_repo
-            .get(&space_id)
-            .await?
-            .ok_or_else(|| MetaToolError::Internal("space missing".into()))?;
-
-        let fs_name = call
-            .ctx
-            .feature_set_repo
-            .get(&fs_id.to_string())
-            .await?
-            .map(|fs| fs.name)
-            .unwrap_or_else(|| fs_id.to_string());
-
-        let diff = ToolDiff::compute(
-            &call.ctx.feature_service,
-            space_id,
-            space.active_feature_set_id,
-            Some(fs_id),
-        )
-        .await?;
-
-        let summary = format!(
-            "Set the Space's active FeatureSet to '{fs_name}' ({} tools). \
-             Affects every connection in this Space that has no pin and no workspace binding.",
-            diff.after.len(),
-        );
-
-        let space_repo = call.ctx.space_repo.clone();
-        let event_tx = call.ctx.domain_event_tx.clone();
-        with_approval(
-            &call,
-            "mcpmux_set_space_active",
-            summary,
-            Some(serde_json::to_value(&diff).unwrap_or(Value::Null)),
-            true,
-            call.args.clone(),
-            || async move {
-                space_repo
-                    .set_active_feature_set(&space_id, Some(&fs_id))
-                    .await?;
-                info!(%space_id, feature_set_id = %fs_id, "[meta_tools] set_space_active applied");
-                emit_tools_list_changed(&event_tx, space_id);
-                Ok(text_result(json!({
-                    "ok": true,
-                    "space_id": space_id,
-                    "active_feature_set_id": fs_id,
-                    "tool_count": diff.after.len(),
                 })))
             },
         )

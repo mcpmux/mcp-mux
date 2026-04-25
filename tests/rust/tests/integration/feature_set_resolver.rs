@@ -1,279 +1,176 @@
-//! Decision-table tests for the FeatureSet resolver (pin > workspace > space-active > deny).
+//! Decision-table tests for the FeatureSet resolver.
 //!
-//! Uses real SQLite repositories (via in-memory Database) rather than mocks so
-//! we exercise the same code paths the gateway will at runtime.
+//! Post-simplification the resolver has exactly two outcomes:
+//!
+//!   1. **WorkspaceBinding** — session reports roots AND a binding matches.
+//!      Both `space_id` and `feature_set_id` are pulled directly from the
+//!      binding row — no "active FS" indirection.
+//!   2. **Default** — no roots / no match. Returns the default Space's
+//!      auto-seeded `fs_default_<space>` FeatureSet.
 
 use std::sync::Arc;
 
 use mcpmux_core::{
-    normalize_workspace_root, Client, FeatureSet, FeatureSetRepository, InboundMcpClientRepository,
-    Space, SpaceRepository, WorkspaceBinding, WorkspaceBindingRepository,
+    normalize_workspace_root, FeatureSet, FeatureSetRepository, SpaceRepository, WorkspaceBinding,
+    WorkspaceBindingRepository,
 };
 use mcpmux_gateway::services::{FeatureSetResolverService, ResolutionSource, SessionRootsRegistry};
 use mcpmux_storage::{
-    Database, SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteSpaceRepository,
-    SqliteWorkspaceBindingRepository,
+    Database, SqliteFeatureSetRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-/// Fixture wiring up real SQLite-backed repos + a resolver, with a Space that
-/// already has an `active_feature_set_id` so the SpaceActive tier works.
 struct Fixture {
     resolver: FeatureSetResolverService,
     session_roots: Arc<SessionRootsRegistry>,
-    client_repo: Arc<dyn InboundMcpClientRepository>,
-    space_repo: Arc<dyn SpaceRepository>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
     space_id: Uuid,
-    active_fs_id: Uuid,
-    other_fs_id: Uuid,
-    client_id: Uuid,
+    default_fs_id: String,
+    fs_a_id: String,
+    fs_b_id: String,
 }
 
 impl Fixture {
     async fn new() -> Self {
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-
         let space_repo: Arc<dyn SpaceRepository> = Arc::new(SqliteSpaceRepository::new(db.clone()));
         let fs_repo: Arc<dyn FeatureSetRepository> =
             Arc::new(SqliteFeatureSetRepository::new(db.clone()));
-        let client_repo: Arc<dyn InboundMcpClientRepository> =
-            Arc::new(SqliteInboundMcpClientRepository::new(db.clone()));
         let binding_repo: Arc<dyn WorkspaceBindingRepository> =
             Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
 
-        // Use the default space (created by migration 001).
         let default_space = space_repo.get_default().await.unwrap().unwrap();
         let space_id = default_space.id;
 
-        // Create two custom FSes so we can distinguish Pin from SpaceActive.
-        let active_fs = FeatureSet::new_custom("Space Active FS", &space_id.to_string());
-        let other_fs = FeatureSet::new_custom("Pinned FS", &space_id.to_string());
-        fs_repo.create(&active_fs).await.unwrap();
-        fs_repo.create(&other_fs).await.unwrap();
-        let active_fs_id = Uuid::parse_str(&active_fs.id).unwrap();
-        let other_fs_id = Uuid::parse_str(&other_fs.id).unwrap();
-
-        // Set Space's active FS.
-        space_repo
-            .set_active_feature_set(&space_id, Some(&active_fs_id))
+        // Migration seeds exactly one builtin per space: Default.
+        let default_fs_id = fs_repo
+            .get_default_for_space(&space_id.to_string())
             .await
-            .unwrap();
+            .unwrap()
+            .expect("Default FS seeded by migration")
+            .id;
 
-        // Create a test client with pinned_space_id set.
-        let mut client = Client::new("test", "test-type");
-        client.pinned_space_id = Some(space_id);
-        client_repo.create(&client).await.unwrap();
-        // set_pin ensures the DB columns are actually populated (create() uses
-        // the legacy columns by default).
-        client_repo
-            .set_pin(&client.id, &space_id, None)
-            .await
-            .unwrap();
+        let a = FeatureSet::new_custom("A", space_id.to_string());
+        let b = FeatureSet::new_custom("B", space_id.to_string());
+        fs_repo.create(&a).await.unwrap();
+        fs_repo.create(&b).await.unwrap();
+        let fs_a_id = a.id.clone();
+        let fs_b_id = b.id.clone();
 
         let session_roots = SessionRootsRegistry::new();
         let resolver = FeatureSetResolverService::new(
-            client_repo.clone(),
             space_repo.clone(),
             binding_repo.clone(),
+            fs_repo.clone(),
             session_roots.clone(),
         );
 
         Self {
             resolver,
             session_roots,
-            client_repo,
-            space_repo,
             binding_repo,
             space_id,
-            active_fs_id,
-            other_fs_id,
-            client_id: client.id,
+            default_fs_id,
+            fs_a_id,
+            fs_b_id,
         }
     }
+}
 
-    async fn set_pin(&self, fs: Option<Uuid>) {
-        self.client_repo
-            .set_pin(&self.client_id, &self.space_id, fs.as_ref())
-            .await
-            .unwrap();
+fn test_root() -> &'static str {
+    if cfg!(windows) {
+        "d:\\work\\proj"
+    } else {
+        "/work/proj"
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tier 2: Default fallback
+// ---------------------------------------------------------------------------
+
 #[tokio::test]
-async fn resolve_falls_through_to_space_active_when_no_pin_and_no_roots() {
+async fn default_when_no_session_id() {
     let f = Fixture::new().await;
-    let r = f.resolver.resolve(&f.client_id, None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceActive);
-    assert_eq!(r.feature_set_id, Some(f.active_fs_id));
+    let r = f.resolver.resolve(None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::Default);
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_id, Some(f.default_fs_id));
 }
 
 #[tokio::test]
-async fn resolve_pin_wins_over_space_active() {
+async fn default_when_session_has_no_roots() {
     let f = Fixture::new().await;
-    f.set_pin(Some(f.other_fs_id)).await;
-
-    let r = f.resolver.resolve(&f.client_id, None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::Pin);
-    assert_eq!(r.feature_set_id, Some(f.other_fs_id));
+    let r = f.resolver.resolve(Some("orphan")).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::Default);
+    assert_eq!(r.feature_set_id, Some(f.default_fs_id));
 }
 
 #[tokio::test]
-async fn resolve_pin_wins_over_workspace_binding() {
+async fn default_when_no_binding_matches_reported_root() {
     let f = Fixture::new().await;
-
-    // Binding matches our session root, but pin should still win.
-    let root = if cfg!(windows) {
-        "d:\\work\\proj"
-    } else {
-        "/work/proj"
-    };
-    f.binding_repo
-        .create(&WorkspaceBinding::new(
-            f.space_id,
-            normalize_workspace_root(root),
-            f.other_fs_id,
-        ))
-        .await
-        .unwrap();
-    f.session_roots.set("sess-1", [root]);
-
-    f.set_pin(Some(f.active_fs_id)).await;
-    let r = f
-        .resolver
-        .resolve(&f.client_id, Some("sess-1"))
-        .await
-        .unwrap();
-    assert_eq!(r.source, ResolutionSource::Pin);
-    assert_eq!(r.feature_set_id, Some(f.active_fs_id));
+    let other = if cfg!(windows) { "d:\\tmp" } else { "/tmp" };
+    f.session_roots.set("sess", [other]);
+    let r = f.resolver.resolve(Some("sess")).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::Default);
+    assert_eq!(r.feature_set_id, Some(f.default_fs_id));
 }
 
+// ---------------------------------------------------------------------------
+// Tier 1: WorkspaceBinding — concrete (space_id, feature_set_id) pointers
+// ---------------------------------------------------------------------------
+
 #[tokio::test]
-async fn resolve_workspace_binding_beats_space_active_when_no_pin() {
+async fn binding_routes_to_its_target_space_and_fs() {
     let f = Fixture::new().await;
+    let binding = WorkspaceBinding::new(
+        normalize_workspace_root(test_root()),
+        f.space_id,
+        f.fs_a_id.clone(),
+    );
+    f.binding_repo.create(&binding).await.unwrap();
+    f.session_roots.set("s", [test_root()]);
 
-    let root = if cfg!(windows) {
-        "d:\\work\\proj"
-    } else {
-        "/work/proj"
-    };
-    f.binding_repo
-        .create(&WorkspaceBinding::new(
-            f.space_id,
-            normalize_workspace_root(root),
-            f.other_fs_id,
-        ))
-        .await
-        .unwrap();
-    f.session_roots.set("sess-2", [root]);
-
-    let r = f
-        .resolver
-        .resolve(&f.client_id, Some("sess-2"))
-        .await
-        .unwrap();
+    let r = f.resolver.resolve(Some("s")).await.unwrap();
     assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
-    assert_eq!(r.feature_set_id, Some(f.other_fs_id));
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_id, Some(f.fs_a_id));
 }
 
 #[tokio::test]
-async fn resolve_deny_when_no_pin_no_binding_no_space_active() {
+async fn longest_prefix_wins_across_nested_bindings() {
     let f = Fixture::new().await;
-    // Clear the Space's active FS — last tier becomes Deny.
-    f.space_repo
-        .set_active_feature_set(&f.space_id, None)
-        .await
-        .unwrap();
-
-    let r = f.resolver.resolve(&f.client_id, None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::Deny);
-    assert_eq!(r.feature_set_id, None);
-}
-
-#[tokio::test]
-async fn resolve_longest_prefix_wins_across_multiple_bindings() {
-    let f = Fixture::new().await;
-
-    // Add two nested bindings in the same Space.
-    let (outer_root, inner_root) = if cfg!(windows) {
+    let (outer, inner) = if cfg!(windows) {
         ("d:\\work", "d:\\work\\proj")
     } else {
         ("/work", "/work/proj")
     };
-    // outer -> active_fs (just any FS we have), inner -> other_fs
     f.binding_repo
         .create(&WorkspaceBinding::new(
+            normalize_workspace_root(outer),
             f.space_id,
-            normalize_workspace_root(outer_root),
-            f.active_fs_id,
+            f.fs_a_id.clone(),
         ))
         .await
         .unwrap();
     f.binding_repo
         .create(&WorkspaceBinding::new(
+            normalize_workspace_root(inner),
             f.space_id,
-            normalize_workspace_root(inner_root),
-            f.other_fs_id,
+            f.fs_b_id.clone(),
         ))
         .await
         .unwrap();
 
-    // Caller reports a path inside the inner binding — longest prefix wins.
     let deep = if cfg!(windows) {
         "d:\\work\\proj\\src"
     } else {
         "/work/proj/src"
     };
-    f.session_roots.set("sess-deep", [deep]);
+    f.session_roots.set("s", [deep]);
 
-    let r = f
-        .resolver
-        .resolve(&f.client_id, Some("sess-deep"))
-        .await
-        .unwrap();
+    let r = f.resolver.resolve(Some("s")).await.unwrap();
     assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
-    assert_eq!(r.feature_set_id, Some(f.other_fs_id));
-}
-
-#[tokio::test]
-async fn resolve_falls_through_when_roots_dont_match_any_binding() {
-    let f = Fixture::new().await;
-
-    let bound = if cfg!(windows) {
-        "d:\\android"
-    } else {
-        "/android"
-    };
-    let reported = if cfg!(windows) {
-        "d:\\cloudflare"
-    } else {
-        "/cloudflare"
-    };
-    f.binding_repo
-        .create(&WorkspaceBinding::new(
-            f.space_id,
-            normalize_workspace_root(bound),
-            f.other_fs_id,
-        ))
-        .await
-        .unwrap();
-    f.session_roots.set("sess-3", [reported]);
-
-    let r = f
-        .resolver
-        .resolve(&f.client_id, Some("sess-3"))
-        .await
-        .unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceActive);
-    assert_eq!(r.feature_set_id, Some(f.active_fs_id));
-}
-
-#[tokio::test]
-async fn resolve_returns_deny_for_unknown_client() {
-    let f = Fixture::new().await;
-    let unknown = Uuid::new_v4();
-    let r = f.resolver.resolve(&unknown, None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::Deny);
-    assert!(r.feature_set_id.is_none());
+    assert_eq!(r.feature_set_id, Some(f.fs_b_id));
 }

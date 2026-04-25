@@ -25,7 +25,8 @@
 //! - PKCE required for all authorization requests (RFC 7636)
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use mcpmux_core::branding;
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,45 @@ use super::gateway::GatewayAppState;
 // ============================================================================
 // Deep Link Handling
 // ============================================================================
+
+/// Holds a deep-link URL the app was cold-started with (Windows/Linux) until
+/// the webview has mounted its listeners. Emitting `oauth-consent-request`
+/// before React has subscribed drops the event — Tauri events are fire-and-
+/// forget with no replay. The frontend calls `flush_pending_deep_link` once
+/// its listener is live to process any buffered URL.
+#[derive(Default)]
+pub struct PendingInitialDeepLink {
+    pub url: Mutex<Option<String>>,
+    pub webview_ready: AtomicBool,
+}
+
+/// Called from `on_open_url`: route immediately if the webview has signalled
+/// ready, otherwise buffer for later flush. Falls back to direct routing
+/// if the state isn't managed yet (shouldn't happen after setup).
+pub fn route_or_buffer_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &str) {
+    match app.try_state::<PendingInitialDeepLink>() {
+        Some(pending) if !pending.webview_ready.load(Ordering::Acquire) => {
+            info!("[DeepLink] Webview not ready — buffering URL: {}", url);
+            if let Ok(mut guard) = pending.url.lock() {
+                *guard = Some(url.to_string());
+            }
+        }
+        _ => handle_deep_link(app, url),
+    }
+}
+
+/// Invoked by the frontend once the `oauth-consent-request` listener is live.
+/// Marks the webview ready so subsequent URLs route immediately, and drains
+/// any URL that arrived before mount.
+#[tauri::command]
+pub fn flush_pending_deep_link(app: tauri::AppHandle, pending: State<'_, PendingInitialDeepLink>) {
+    pending.webview_ready.store(true, Ordering::Release);
+    let buffered = pending.url.lock().ok().and_then(|mut g| g.take());
+    if let Some(url) = buffered {
+        info!("[DeepLink] Flushing buffered cold-start URL: {}", url);
+        handle_deep_link(&app, &url);
+    }
+}
 
 /// Event name for OAuth consent requests sent to frontend
 /// Now only contains request_id - frontend must call get_pending_consent
@@ -408,12 +448,8 @@ pub struct ConsentApprovalRequest {
     /// Cryptographic consent token (must match the one issued via get_pending_consent).
     /// This proves the caller obtained the token through Tauri IPC, not HTTP scraping.
     pub consent_token: String,
-    /// Optional alias name for the client
+    /// Optional alias name for the client (set during approval).
     pub client_alias: Option<String>,
-    /// Connection mode: "follow_active", "locked", or "ask_on_change"
-    pub connection_mode: Option<String>,
-    /// Space ID to lock to (only used when connection_mode is "locked")
-    pub locked_space_id: Option<String>,
 }
 
 /// Response from consent approval
@@ -548,59 +584,30 @@ pub async fn approve_oauth_consent(
 
         state.store_pending_authorization(&code, new_pending);
 
-        // Mark client as approved and store settings
+        // Mark client as approved and store any alias override.
         if let Some(repo) = state.inbound_client_repository() {
-            // Mark as approved for clients tab visibility
             if let Err(e) = repo.approve_client(&pending.client_id).await {
                 error!("[OAuth] Failed to approve client: {}", e);
             } else {
                 info!("[OAuth] Client approved: {}", pending.client_id);
             }
 
-            // Update client settings (alias, connection_mode, locked_space_id)
-            if let Ok(Some(mut client)) = repo.get_client(&pending.client_id).await {
-                let mut changed = false;
-
-                // Set alias if provided
-                if let Some(alias) = &request.client_alias {
-                    if !alias.is_empty() {
-                        client.client_alias = Some(alias.clone());
-                        changed = true;
-                        info!(
-                            "[OAuth] Set client alias '{}' for: {}",
-                            alias, pending.client_id
-                        );
-                    }
-                }
-
-                // Set connection mode if provided
-                if let Some(mode) = &request.connection_mode {
-                    client.connection_mode = mode.clone();
-                    changed = true;
+            if let Some(alias) = request
+                .client_alias
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+            {
+                if let Err(e) = repo
+                    .update_client_alias(&pending.client_id, Some(alias.clone()))
+                    .await
+                {
+                    error!("[OAuth] Failed to save client alias: {}", e);
+                } else {
                     info!(
-                        "[OAuth] Set connection mode '{}' for: {}",
-                        mode, pending.client_id
+                        "[OAuth] Set client alias '{}' for: {}",
+                        alias, pending.client_id
                     );
-                }
-
-                // Set locked space if provided (only meaningful when mode is "locked")
-                if let Some(space_id) = &request.locked_space_id {
-                    client.locked_space_id = Some(space_id.clone());
-                    changed = true;
-                    info!(
-                        "[OAuth] Locked to space '{}' for: {}",
-                        space_id, pending.client_id
-                    );
-                } else if request.connection_mode.as_deref() == Some("follow_active") {
-                    // Clear locked space if switching to follow_active
-                    client.locked_space_id = None;
-                    changed = true;
-                }
-
-                if changed {
-                    if let Err(e) = repo.save_client(&client).await {
-                        error!("[OAuth] Failed to save client settings: {}", e);
-                    }
                 }
             }
         }
@@ -683,8 +690,6 @@ pub async fn get_oauth_clients(
             metadata_url: client.metadata_url,
             metadata_cached_at: client.metadata_cached_at,
             metadata_cache_ttl: client.metadata_cache_ttl,
-            connection_mode: client.connection_mode,
-            locked_space_id: client.locked_space_id,
             last_seen: client.last_seen,
             created_at: client.created_at,
         })
@@ -755,19 +760,17 @@ pub struct OAuthClientInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_cache_ttl: Option<i64>,
 
-    // MCP client preferences
-    pub connection_mode: String,
-    pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
 }
 
-/// Request to update client settings
+/// Request to update client settings.
+///
+/// Only the alias is user-editable now — connection mode / space pin no
+/// longer exist.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateClientSettingsRequest {
     pub client_alias: Option<String>,
-    pub connection_mode: Option<String>,
-    pub locked_space_id: Option<String>,
 }
 
 /// Update an OAuth client's settings (direct service access)
@@ -789,31 +792,22 @@ pub async fn update_oauth_client(
         return Err("Database not available".to_string());
     };
 
-    // Update client directly via repository
-    repo.update_client_settings(
-        &client_id,
-        settings.client_alias,
-        settings.connection_mode,
-        settings.locked_space_id.map(Some),
-    )
-    .await
-    .map_err(|e| format!("Failed to update client: {}", e))?;
+    repo.update_client_alias(&client_id, settings.client_alias)
+        .await
+        .map_err(|e| format!("Failed to update client: {}", e))?;
 
     info!("[OAuth] Updated client: {}", client_id);
 
-    // Emit domain event
     state.emit_domain_event(mcpmux_core::DomainEvent::ClientUpdated {
         client_id: client_id.clone(),
     });
 
-    // Get updated client
     let updated_client = repo
         .get_client(&client_id)
         .await
         .map_err(|e| format!("Failed to get updated client: {}", e))?
         .ok_or("Client not found after update")?;
 
-    // Map to response format
     Ok(OAuthClientInfo {
         client_id: updated_client.client_id,
         registration_type: updated_client.registration_type.as_str().to_string(),
@@ -829,283 +823,8 @@ pub async fn update_oauth_client(
         metadata_url: updated_client.metadata_url,
         metadata_cached_at: updated_client.metadata_cached_at,
         metadata_cache_ttl: updated_client.metadata_cache_ttl,
-        connection_mode: updated_client.connection_mode,
-        locked_space_id: updated_client.locked_space_id,
         last_seen: updated_client.last_seen,
         created_at: updated_client.created_at,
-    })
-}
-
-/// Get grants for an OAuth client in a specific space
-///
-/// Returns the effective grants: explicit grants + the default feature set
-/// This matches the authorization behavior used by MCP handlers
-#[tauri::command]
-pub async fn get_oauth_client_grants(
-    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
-    app_state: State<'_, crate::AppState>,
-    client_id: String,
-    space_id: String,
-) -> Result<Vec<String>, String> {
-    let gw_app_state = gateway_state.read().await;
-
-    // Get gateway state and inbound client repository
-    let Some(ref gw_state) = gw_app_state.gateway_state else {
-        return Err("Gateway not running".to_string());
-    };
-
-    let state = gw_state.read().await;
-    let Some(repo) = state.inbound_client_repository() else {
-        return Err("Database not available".to_string());
-    };
-
-    // Get explicit grants from DB
-    let mut grants = repo
-        .get_grants_for_space(&client_id, &space_id)
-        .await
-        .map_err(|e| format!("Failed to get grants: {}", e))?;
-
-    // Add default feature set (layered resolution - same as MCP handlers)
-    if let Ok(Some(default_fs)) = app_state
-        .feature_set_repository
-        .get_default_for_space(&space_id)
-        .await
-    {
-        if !grants.contains(&default_fs.id) {
-            grants.push(default_fs.id);
-        }
-    }
-
-    Ok(grants)
-}
-
-/// Grant a feature set to an OAuth client in a specific space
-#[tauri::command]
-pub async fn grant_oauth_client_feature_set(
-    app_handle: tauri::AppHandle,
-    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
-    client_id: String,
-    space_id: String,
-    feature_set_id: String,
-) -> Result<(), String> {
-    info!("[OAuth] grant_oauth_client_feature_set called: client_id={}, space_id={}, feature_set_id={}", 
-        client_id, space_id, feature_set_id);
-
-    let app_state = gateway_state.read().await;
-
-    info!("[OAuth] Gateway running: {}", app_state.running);
-    info!(
-        "[OAuth] Gateway state exists: {}",
-        app_state.gateway_state.is_some()
-    );
-    info!(
-        "[OAuth] Grant service exists: {}",
-        app_state.grant_service.is_some()
-    );
-
-    // Get GrantService (centralized grant management with auto-notifications)
-    let Some(ref grant_service) = app_state.grant_service else {
-        error!(
-            "[OAuth] Grant service is None! Gateway running={}, gateway_state={}",
-            app_state.running,
-            app_state.gateway_state.is_some()
-        );
-        return Err("Gateway not running".to_string());
-    };
-
-    // Single call handles: DB update + validation + automatic notifications (DRY!)
-    grant_service
-        .grant_feature_set(&client_id, &space_id, &feature_set_id)
-        .await
-        .map_err(|e| format!("Failed to grant feature set: {}", e))?;
-
-    // Notify UI
-    if let Err(e) = app_handle.emit(
-        "oauth-client-changed",
-        serde_json::json!({
-            "action": "grants_updated",
-            "client_id": client_id,
-        }),
-    ) {
-        error!("[OAuth] Failed to emit oauth-client-changed event: {}", e);
-    }
-
-    Ok(())
-}
-
-/// Revoke a feature set from an OAuth client in a specific space
-#[tauri::command]
-pub async fn revoke_oauth_client_feature_set(
-    app_handle: tauri::AppHandle,
-    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
-    client_id: String,
-    space_id: String,
-    feature_set_id: String,
-) -> Result<(), String> {
-    let app_state = gateway_state.read().await;
-
-    // Get GrantService (centralized grant management with auto-notifications)
-    let Some(ref grant_service) = app_state.grant_service else {
-        return Err("Gateway not running".to_string());
-    };
-
-    // Single call handles: DB update + validation + automatic notifications (DRY!)
-    grant_service
-        .revoke_feature_set(&client_id, &space_id, &feature_set_id)
-        .await
-        .map_err(|e| format!("Failed to revoke feature set: {}", e))?;
-
-    // Notify UI
-    if let Err(e) = app_handle.emit(
-        "oauth-client-changed",
-        serde_json::json!({
-            "action": "grants_updated",
-            "client_id": client_id,
-        }),
-    ) {
-        error!("[OAuth] Failed to emit oauth-client-changed event: {}", e);
-    }
-
-    Ok(())
-}
-
-/// Resolved client features response
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ResolvedClientFeatures {
-    pub space_id: String,
-    pub feature_set_ids: Vec<String>,
-    pub tools: Vec<serde_json::Value>,
-    pub prompts: Vec<serde_json::Value>,
-    pub resources: Vec<serde_json::Value>,
-}
-
-/// Get resolved features for an OAuth client in a specific space
-///
-/// Returns the granted feature sets and resolved capabilities for a client.
-/// This is used by the UI to display what a client has access to.
-///
-/// The frontend is responsible for determining which space to query:
-/// - For locked clients: pass the client's locked_space_id
-/// - For follow_active clients: pass the currently active space_id
-///
-/// This keeps space resolution logic in ONE place (frontend/SpaceResolverService)
-/// rather than duplicating it here.
-#[tauri::command]
-pub async fn get_oauth_client_resolved_features(
-    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
-    app_state: State<'_, crate::AppState>,
-    client_id: String,
-    space_id: String, // Required - frontend must resolve which space to use
-) -> Result<ResolvedClientFeatures, String> {
-    let gw_app_state = gateway_state.read().await;
-
-    // Get gateway state
-    let Some(ref gw_state) = gw_app_state.gateway_state else {
-        return Err("Gateway not running".to_string());
-    };
-
-    // Get feature service
-    let Some(ref feature_service) = gw_app_state.feature_service else {
-        return Err("Feature service not available".to_string());
-    };
-
-    // Get inbound client repository for grants
-    let state = gw_state.read().await;
-    let Some(repo) = state.inbound_client_repository() else {
-        return Err("Database not available".to_string());
-    };
-
-    // Get explicit grants for this client in this space
-    let mut feature_set_ids = repo
-        .get_grants_for_space(&client_id, &space_id)
-        .await
-        .map_err(|e| format!("Failed to get grants: {}", e))?;
-
-    // Add default feature set (layered resolution - same as MCP handlers)
-    if let Ok(Some(default_fs)) = app_state
-        .feature_set_repository
-        .get_default_for_space(&space_id)
-        .await
-    {
-        if !feature_set_ids.contains(&default_fs.id) {
-            feature_set_ids.push(default_fs.id);
-        }
-    }
-
-    info!(
-        "[OAuth] Client {} has {} effective grants in space {}",
-        client_id,
-        feature_set_ids.len(),
-        space_id
-    );
-
-    // Release the lock before calling feature service
-    drop(state);
-
-    // Resolve features from feature sets using FeatureService
-    let tools = feature_service
-        .get_tools_for_grants(&space_id, &feature_set_ids)
-        .await
-        .unwrap_or_default();
-
-    let prompts = feature_service
-        .get_prompts_for_grants(&space_id, &feature_set_ids)
-        .await
-        .unwrap_or_default();
-
-    let resources = feature_service
-        .get_resources_for_grants(&space_id, &feature_set_ids)
-        .await
-        .unwrap_or_default();
-
-    info!(
-        "[OAuth] Resolved features for client {}: {} tools, {} prompts, {} resources",
-        client_id,
-        tools.len(),
-        prompts.len(),
-        resources.len()
-    );
-
-    // Convert to response format
-    let tools_response: Vec<_> = tools
-        .iter()
-        .map(|f| {
-            serde_json::json!({
-                "name": f.feature_name,
-                "description": f.description,
-                "server_id": f.server_id,
-            })
-        })
-        .collect();
-
-    let prompts_response: Vec<_> = prompts
-        .iter()
-        .map(|f| {
-            serde_json::json!({
-                "name": f.feature_name,
-                "description": f.description,
-                "server_id": f.server_id,
-            })
-        })
-        .collect();
-
-    let resources_response: Vec<_> = resources
-        .iter()
-        .map(|f| {
-            serde_json::json!({
-                "name": f.feature_name,
-                "description": f.description,
-                "server_id": f.server_id,
-            })
-        })
-        .collect();
-
-    Ok(ResolvedClientFeatures {
-        space_id,
-        feature_set_ids,
-        tools: tools_response,
-        prompts: prompts_response,
-        resources: resources_response,
     })
 }
 

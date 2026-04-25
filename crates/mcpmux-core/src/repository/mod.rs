@@ -37,16 +37,6 @@ pub trait SpaceRepository: Send + Sync {
 
     /// Set a space as default
     async fn set_default(&self, id: &Uuid) -> RepoResult<()>;
-
-    /// Set (or clear, with `None`) the active FeatureSet for a Space.
-    ///
-    /// The active FS is the fallback applied when a connected client has
-    /// no pinned FS and no matching workspace binding.
-    async fn set_active_feature_set(
-        &self,
-        id: &Uuid,
-        feature_set_id: Option<&Uuid>,
-    ) -> RepoResult<()>;
 }
 
 /// InstalledServer repository trait
@@ -167,35 +157,14 @@ pub trait FeatureSetRepository: Send + Sync {
     /// Delete a feature set (soft delete)
     async fn delete(&self, id: &str) -> RepoResult<()>;
 
-    /// Get builtin feature sets for a space
-    async fn list_builtin(&self, space_id: &str) -> RepoResult<Vec<FeatureSet>>;
-
-    /// Get server-all featureset for a server in a space
-    async fn get_server_all(
-        &self,
-        space_id: &str,
-        server_id: &str,
-    ) -> RepoResult<Option<FeatureSet>>;
-
-    /// Create server-all featureset if it doesn't exist
-    async fn ensure_server_all(
-        &self,
-        space_id: &str,
-        server_id: &str,
-        server_name: &str,
-    ) -> RepoResult<FeatureSet>;
-
     /// Get the "Default" featureset for a space
     async fn get_default_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>>;
 
-    /// Get the "All" featureset for a space
-    async fn get_all_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>>;
-
-    /// Ensure builtin feature sets exist for a space (All + Default)
+    /// Ensure the built-in Default feature set exists for a space.
+    ///
+    /// Called during Space creation and any time the resolver falls back and
+    /// cannot find a Default to route to (defensive re-seed).
     async fn ensure_builtin_for_space(&self, space_id: &str) -> RepoResult<()>;
-
-    /// Delete server-all feature set for a server (used when uninstalling)
-    async fn delete_server_all(&self, space_id: &str, server_id: &str) -> RepoResult<()>;
 
     /// Add an individual feature as a member of a feature set
     async fn add_feature_member(
@@ -217,6 +186,9 @@ pub trait FeatureSetRepository: Send + Sync {
 ///
 /// Manages MCP client entities (apps connecting TO McpMux).
 /// Works with the unified `inbound_clients` table.
+///
+/// Only identity is persisted here — routing is resolved per-session
+/// via WorkspaceBinding and each Space's Default feature set.
 #[async_trait]
 pub trait InboundMcpClientRepository: Send + Sync {
     /// Get all clients
@@ -236,58 +208,6 @@ pub trait InboundMcpClientRepository: Send + Sync {
 
     /// Delete a client
     async fn delete(&self, id: &Uuid) -> RepoResult<()>;
-
-    /// Grant a feature set to a client for a specific space
-    async fn grant_feature_set(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> RepoResult<()>;
-
-    /// Revoke a feature set from a client for a specific space
-    async fn revoke_feature_set(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> RepoResult<()>;
-
-    /// Get all feature set IDs granted to a client for a specific space
-    async fn get_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-    ) -> RepoResult<Vec<String>>;
-
-    /// Get all grants for a client (all spaces)
-    async fn get_all_grants(
-        &self,
-        client_id: &Uuid,
-    ) -> RepoResult<std::collections::HashMap<String, Vec<String>>>;
-
-    /// Set all grants for a client in a space (replaces existing)
-    async fn set_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_ids: &[String],
-    ) -> RepoResult<()>;
-
-    /// Check if client has any grants for a space
-    async fn has_grants_for_space(&self, client_id: &Uuid, space_id: &str) -> RepoResult<bool>;
-
-    /// Set the pinned Space + optional pinned FeatureSet for a client.
-    ///
-    /// This is the new (FeatureSet Resolver V2) path: each client row is an
-    /// independent approval bound to one Space. `pinned_feature_set_id = None`
-    /// means the client follows workspace-binding / space-active FS.
-    async fn set_pin(
-        &self,
-        client_id: &Uuid,
-        pinned_space_id: &Uuid,
-        pinned_feature_set_id: Option<&Uuid>,
-    ) -> RepoResult<()>;
 }
 
 /// Workspace binding repository trait
@@ -315,11 +235,13 @@ pub trait WorkspaceBindingRepository: Send + Sync {
     /// Delete a binding by id.
     async fn delete(&self, id: &Uuid) -> RepoResult<()>;
 
-    /// Resolve which FeatureSet applies for a set of candidate workspace roots.
+    /// Resolve which binding applies for a set of candidate workspace roots.
     ///
     /// Every candidate MUST already be normalized. Returns the binding whose
-    /// `workspace_root` is the longest prefix of any candidate, or `None`
-    /// when no binding matches.
+    /// `workspace_root` is the longest prefix of any candidate, scoped to the
+    /// given Space (so bindings in unrelated spaces don't leak across). The
+    /// caller is responsible for then following the binding's space_mode and
+    /// fs_mode to compute the effective Space + FeatureSet.
     async fn find_longest_prefix_match(
         &self,
         space_id: &Uuid,

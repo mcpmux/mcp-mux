@@ -55,12 +55,10 @@ export async function listSpaces(): Promise<Space[]> {
   return invoke<Space[]>('list_spaces');
 }
 
-export async function getActiveSpace(): Promise<Space | null> {
-  return invoke<Space | null>('get_active_space');
-}
-
-export async function setActiveSpace(id: string): Promise<void> {
-  return invoke<void>('set_active_space', { id });
+/** The system's `is_default` Space — the gateway's routing fallback. */
+export async function getDefaultSpace(): Promise<Space | null> {
+  const spaces = await listSpaces();
+  return spaces.find((s) => s.is_default) ?? null;
 }
 
 // ============================================================================
@@ -71,16 +69,12 @@ export interface Client {
   id: string;
   name: string;
   client_type: string;
-  connection_mode: 'locked' | 'follow_active' | 'ask_on_change';
-  locked_space_id: string | null;
-  grants: Record<string, string[]>;
+  last_seen: string | null;
 }
 
 export interface CreateClientInput {
   name: string;
   client_type: string;
-  connection_mode: string;
-  locked_space_id?: string;
 }
 
 export async function createClient(input: CreateClientInput): Promise<Client> {
@@ -95,23 +89,6 @@ export async function listClients(): Promise<Client[]> {
   return invoke<Client[]>('list_clients');
 }
 
-export async function grantFeatureSetToClient(
-  clientId: string,
-  spaceId: string,
-  featureSetId: string
-): Promise<void> {
-  return invoke<void>('grant_feature_set_to_client', { clientId, spaceId, featureSetId });
-}
-
-/** Grant a feature set to an OAuth/inbound client (Cursor, VS Code, etc.) */
-export async function grantOAuthClientFeatureSet(
-  clientId: string,
-  spaceId: string,
-  featureSetId: string
-): Promise<void> {
-  return invoke<void>('grant_oauth_client_feature_set', { clientId, spaceId, featureSetId });
-}
-
 // ============================================================================
 // FeatureSet API
 // ============================================================================
@@ -119,7 +96,7 @@ export async function grantOAuthClientFeatureSet(
 export interface FeatureSet {
   id: string;
   name: string;
-  feature_set_type: 'all' | 'default' | 'server-all' | 'custom';
+  feature_set_type: 'default' | 'custom';
   server_id: string | null;
   is_builtin: boolean;
 }
@@ -275,4 +252,44 @@ export interface GatewayStatus {
 
 export async function getGatewayStatus(): Promise<GatewayStatus> {
   return invoke<GatewayStatus>('get_gateway_status');
+}
+
+// ============================================================================
+// Workspace Binding API (primary routing config)
+// ============================================================================
+
+export interface WorkspaceBinding {
+  id: string;
+  workspace_root: string;
+  space_id: string;
+  feature_set_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceBindingInput {
+  workspace_root: string;
+  space_id: string;
+  feature_set_id: string;
+}
+
+export async function listWorkspaceBindings(): Promise<WorkspaceBinding[]> {
+  return invoke<WorkspaceBinding[]>('list_workspace_bindings');
+}
+
+export async function createWorkspaceBinding(
+  input: WorkspaceBindingInput
+): Promise<WorkspaceBinding> {
+  return invoke<WorkspaceBinding>('create_workspace_binding', { input });
+}
+
+export async function updateWorkspaceBinding(
+  id: string,
+  input: WorkspaceBindingInput
+): Promise<WorkspaceBinding> {
+  return invoke<WorkspaceBinding>('update_workspace_binding', { id, input });
+}
+
+export async function deleteWorkspaceBinding(id: string): Promise<void> {
+  return invoke<void>('delete_workspace_binding', { id });
 }

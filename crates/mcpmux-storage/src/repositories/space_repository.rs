@@ -26,18 +26,31 @@ impl SqliteSpaceRepository {
     /// Parse a datetime string to DateTime<Utc>.
     /// Handles both RFC3339 format and SQLite's `datetime('now')` format.
     fn parse_datetime(s: &str) -> DateTime<Utc> {
-        // Try RFC3339 first (e.g., "2024-01-01T00:00:00Z")
         if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
             return dt.with_timezone(&Utc);
         }
-
-        // Try SQLite's datetime format (e.g., "2024-01-01 00:00:00")
         if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
             return dt.and_utc();
         }
-
-        // Fallback to current time
         Utc::now()
+    }
+
+    /// Columns selected for every `Space` read. Order must match `map_row`.
+    const COLUMNS: &'static str =
+        "id, name, icon, description, is_default, sort_order, created_at, updated_at";
+
+    fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Space> {
+        let id_str: String = row.get(0)?;
+        Ok(Space {
+            id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
+            name: row.get(1)?,
+            icon: row.get(2)?,
+            description: row.get(3)?,
+            is_default: row.get::<_, i32>(4)? == 1,
+            sort_order: row.get(5)?,
+            created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
+            updated_at: Self::parse_datetime(&row.get::<_, String>(7)?),
+        })
     }
 }
 
@@ -47,44 +60,14 @@ impl SpaceRepository for SqliteSpaceRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        tracing::debug!("[SpaceRepository::list] Querying spaces...");
-
-        let mut stmt = conn.prepare(
-            "SELECT id, name, icon, description, is_default, sort_order, created_at, updated_at, active_feature_set_id
-             FROM spaces
-             ORDER BY sort_order ASC, name ASC",
-        )?;
-
+        let sql = format!(
+            "SELECT {} FROM spaces ORDER BY sort_order ASC, name ASC",
+            Self::COLUMNS
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let spaces = stmt
-            .query_map([], |row| {
-                let id_str: String = row.get(0)?;
-                let name: String = row.get(1)?;
-                tracing::debug!("[SpaceRepository::list] Found space: {} ({})", name, id_str);
-
-                Ok(Space {
-                    id: id_str.parse().unwrap_or_else(|e| {
-                        tracing::warn!(
-                            "[SpaceRepository::list] Failed to parse UUID '{}': {}",
-                            id_str,
-                            e
-                        );
-                        Uuid::new_v4()
-                    }),
-                    name,
-                    icon: row.get(2)?,
-                    description: row.get(3)?,
-                    is_default: row.get::<_, i32>(4)? == 1,
-                    sort_order: row.get(5)?,
-                    active_feature_set_id: row
-                        .get::<_, Option<String>>(8)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
-                    created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(7)?),
-                })
-            })?
+            .query_map([], Self::map_row)?
             .collect::<Result<Vec<_>, _>>()?;
-
-        tracing::info!("[SpaceRepository::list] Returning {} spaces", spaces.len());
 
         Ok(spaces)
     }
@@ -93,31 +76,10 @@ impl SpaceRepository for SqliteSpaceRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        let mut stmt = conn.prepare(
-            "SELECT id, name, icon, description, is_default, sort_order, created_at, updated_at, active_feature_set_id
-             FROM spaces
-             WHERE id = ?",
-        )?;
-
+        let sql = format!("SELECT {} FROM spaces WHERE id = ?", Self::COLUMNS);
+        let mut stmt = conn.prepare(&sql)?;
         let space = stmt
-            .query_row(params![id.to_string()], |row| {
-                Ok(Space {
-                    id: row
-                        .get::<_, String>(0)?
-                        .parse()
-                        .unwrap_or_else(|_| Uuid::new_v4()),
-                    name: row.get(1)?,
-                    icon: row.get(2)?,
-                    description: row.get(3)?,
-                    is_default: row.get::<_, i32>(4)? == 1,
-                    sort_order: row.get(5)?,
-                    active_feature_set_id: row
-                        .get::<_, Option<String>>(8)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
-                    created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(7)?),
-                })
-            })
+            .query_row(params![id.to_string()], Self::map_row)
             .optional()?;
 
         Ok(space)
@@ -144,22 +106,12 @@ impl SpaceRepository for SqliteSpaceRepository {
             ],
         )?;
 
-        // Auto-create builtin featuresets for this space
-        // "All Features" - contains all features from all servers in this space
+        // Auto-create the builtin "Default" featureset for this space.
+        // It's the fallback FS when no WorkspaceBinding matches. No other
+        // builtin sets are seeded — user can create Custom sets as needed.
         conn.execute(
             "INSERT OR IGNORE INTO feature_sets (id, name, description, icon, space_id, feature_set_type, is_builtin, created_at, updated_at)
-             VALUES (?1, 'All Features', 'All features from all connected MCP servers in this space', '🌐', ?2, 'all', 1, ?3, ?3)",
-            params![
-                format!("fs_all_{}", space_id),
-                space_id,
-                now,
-            ],
-        )?;
-
-        // "Default" - auto-granted to all clients in this space
-        conn.execute(
-            "INSERT OR IGNORE INTO feature_sets (id, name, description, icon, space_id, feature_set_type, is_builtin, created_at, updated_at)
-             VALUES (?1, 'Default', 'Features automatically granted to all connected clients in this space', '⭐', ?2, 'default', 1, ?3, ?3)",
+             VALUES (?1, 'Default', 'The fallback feature set for this space', '⭐', ?2, 'default', 1, ?3, ?3)",
             params![
                 format!("fs_default_{}", space_id),
                 space_id,
@@ -176,7 +128,7 @@ impl SpaceRepository for SqliteSpaceRepository {
 
         let rows_affected = conn.execute(
             "UPDATE spaces
-             SET name = ?2, icon = ?3, description = ?4, is_default = ?5, sort_order = ?6, updated_at = ?7, active_feature_set_id = ?8
+             SET name = ?2, icon = ?3, description = ?4, is_default = ?5, sort_order = ?6, updated_at = ?7
              WHERE id = ?1",
             params![
                 space.id.to_string(),
@@ -186,7 +138,6 @@ impl SpaceRepository for SqliteSpaceRepository {
                 if space.is_default { 1 } else { 0 },
                 space.sort_order,
                 space.updated_at.to_rfc3339(),
-                space.active_feature_set_id.map(|u| u.to_string()),
             ],
         )?;
 
@@ -210,33 +161,12 @@ impl SpaceRepository for SqliteSpaceRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        let mut stmt = conn.prepare(
-            "SELECT id, name, icon, description, is_default, sort_order, created_at, updated_at, active_feature_set_id
-             FROM spaces
-             WHERE is_default = 1
-             LIMIT 1",
-        )?;
-
-        let space = stmt
-            .query_row([], |row| {
-                let id_str: String = row.get(0)?;
-                let name: String = row.get(1)?;
-
-                Ok(Space {
-                    id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
-                    name,
-                    icon: row.get(2)?,
-                    description: row.get(3)?,
-                    is_default: true,
-                    sort_order: row.get(5)?,
-                    active_feature_set_id: row
-                        .get::<_, Option<String>>(8)?
-                        .and_then(|s| Uuid::parse_str(&s).ok()),
-                    created_at: Self::parse_datetime(&row.get::<_, String>(6)?),
-                    updated_at: Self::parse_datetime(&row.get::<_, String>(7)?),
-                })
-            })
-            .optional()?;
+        let sql = format!(
+            "SELECT {} FROM spaces WHERE is_default = 1 LIMIT 1",
+            Self::COLUMNS
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let space = stmt.query_row([], Self::map_row).optional()?;
 
         Ok(space)
     }
@@ -245,13 +175,8 @@ impl SpaceRepository for SqliteSpaceRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        // Use a transaction to ensure atomicity
         let tx = conn.unchecked_transaction()?;
-
-        // Clear all defaults
         tx.execute("UPDATE spaces SET is_default = 0", [])?;
-
-        // Set the new default
         let rows_affected = tx.execute(
             "UPDATE spaces SET is_default = 1 WHERE id = ?",
             params![id.to_string()],
@@ -262,25 +187,6 @@ impl SpaceRepository for SqliteSpaceRepository {
         }
 
         tx.commit()?;
-
-        Ok(())
-    }
-
-    async fn set_active_feature_set(&self, id: &Uuid, feature_set_id: Option<&Uuid>) -> Result<()> {
-        let db = self.db.lock().await;
-        let conn = db.connection();
-
-        let fs_str = feature_set_id.map(|u| u.to_string());
-        let now = Utc::now().to_rfc3339();
-
-        let rows_affected = conn.execute(
-            "UPDATE spaces SET active_feature_set_id = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id.to_string(), fs_str, now],
-        )?;
-
-        if rows_affected == 0 {
-            anyhow::bail!("Space not found: {}", id);
-        }
 
         Ok(())
     }
@@ -298,25 +204,20 @@ mod tests {
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
         let repo = SqliteSpaceRepository::new(db);
 
-        // Migration creates default space, so we start with 1
         let initial = repo.list().await.unwrap();
         assert_eq!(initial.len(), 1);
         assert_eq!(initial[0].name, "My Space");
 
-        // Create
         let space = Space::new("Test Space").with_icon("🧪");
         repo.create(&space).await.unwrap();
 
-        // Read
         let found = repo.get(&space.id).await.unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "Test Space");
 
-        // List (default + new = 2)
         let all = repo.list().await.unwrap();
         assert_eq!(all.len(), 2);
 
-        // Update
         let mut updated = space.clone();
         updated.name = "Updated Space".to_string();
         repo.update(&updated).await.unwrap();
@@ -324,7 +225,6 @@ mod tests {
         let found = repo.get(&space.id).await.unwrap().unwrap();
         assert_eq!(found.name, "Updated Space");
 
-        // Delete
         repo.delete(&space.id).await.unwrap();
         let found = repo.get(&space.id).await.unwrap();
         assert!(found.is_none());
@@ -335,22 +235,18 @@ mod tests {
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
         let repo = SqliteSpaceRepository::new(db);
 
-        // Migration creates "My Space" as default
         let default = repo.get_default().await.unwrap();
         assert!(default.is_some());
         assert_eq!(default.unwrap().name, "My Space");
 
-        // Create a new space and set as default
         let space2 = Space::new("Space 2");
         repo.create(&space2).await.unwrap();
 
-        // Change default
         repo.set_default(&space2.id).await.unwrap();
         let default = repo.get_default().await.unwrap();
         assert!(default.is_some());
         assert_eq!(default.unwrap().name, "Space 2");
 
-        // Change back to original
         let default_uuid = Uuid::parse_str(DEFAULT_SPACE_ID).unwrap();
         repo.set_default(&default_uuid).await.unwrap();
         let default = repo.get_default().await.unwrap();

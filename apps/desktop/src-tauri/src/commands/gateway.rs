@@ -4,10 +4,11 @@
 
 use crate::commands::server_manager::ServerManagerState;
 use crate::AppState;
+use mcpmux_core::service::{allocate_dynamic_port, is_port_available};
 use mcpmux_core::DomainEvent;
 use mcpmux_gateway::{
-    ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, PoolService,
-    ResolvedTransport, ServerKey,
+    ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, OAuthCompleteEvent,
+    PoolService, ResolvedTransport, ServerKey, ServerManager,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -37,6 +38,16 @@ pub struct BackendStatusResponse {
     pub tools_count: usize,
 }
 
+/// Information about an auto-start attempt that was aborted because the
+/// preferred port was busy. The frontend reads this on mount and triggers
+/// the port-conflict confirm dialog.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingPortConflict {
+    pub preferred_port: u16,
+    pub source: &'static str,
+}
+
 /// Gateway state managed by Tauri
 #[derive(Default)]
 pub struct GatewayAppState {
@@ -44,8 +55,10 @@ pub struct GatewayAppState {
     pub running: bool,
     /// Gateway URL
     pub url: Option<String>,
-    /// Gateway task handle
-    pub handle: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    /// Gateway task + graceful-shutdown signal. `shutdown()` + awaiting
+    /// `task` (with a timeout) lets the OS reclaim the listener socket
+    /// cleanly; `.abort()` alone can leave an orphaned kernel-level bind.
+    pub handle: Option<mcpmux_gateway::GatewayServerHandle>,
     /// Gateway state reference for accessing backends
     pub gateway_state: Option<Arc<RwLock<mcpmux_gateway::GatewayState>>>,
     /// Server connection pool service (initialized when gateway starts)
@@ -58,6 +71,157 @@ pub struct GatewayAppState {
     pub grant_service: Option<Arc<mcpmux_gateway::GrantService>>,
     /// Approval broker for meta-tool writes (publisher attached on gateway start)
     pub approval_broker: Option<Arc<mcpmux_gateway::services::ApprovalBroker>>,
+    /// Set when auto-start couldn't bind the preferred port; the UI will
+    /// read this on mount and prompt the user.
+    pub pending_port_conflict: Option<PendingPortConflict>,
+    /// Live map of `mcp-session-id → reported workspace roots`. Populated
+    /// by the gateway handler when clients declare the `roots` capability.
+    /// Surfaced to the desktop Workspaces tab so users can see + act on
+    /// every folder connected clients are currently operating in.
+    pub session_roots: Option<Arc<mcpmux_gateway::services::SessionRootsRegistry>>,
+}
+
+/// Gracefully shuts down a running gateway and waits for the axum task
+/// to finish so the TCP listener is released back to the OS.
+///
+/// Without this, `handle.abort()` alone can leave an orphaned
+/// kernel-level bind — a listener socket that netstat still reports even
+/// though no process exists — preventing the next `start_gateway` from
+/// binding the same port.
+///
+/// Flow:
+/// 1. Send the graceful-shutdown signal (axum drains in-flight requests).
+/// 2. Await the task up to 2s so Rust Drop closes the listener fd.
+/// 3. If the task hasn't returned by then, abort as a last resort.
+pub(crate) async fn shutdown_gateway_handle(mut handle: mcpmux_gateway::GatewayServerHandle) {
+    let abort = handle.task.abort_handle();
+    handle.shutdown();
+    match tokio::time::timeout(std::time::Duration::from_secs(2), handle.task).await {
+        Ok(Ok(Ok(()))) => info!("[Gateway] Gateway task exited cleanly"),
+        Ok(Ok(Err(e))) => warn!(
+            "[Gateway] Gateway task returned error during shutdown: {}",
+            e
+        ),
+        Ok(Err(e)) if e.is_cancelled() => info!("[Gateway] Gateway task was already cancelled"),
+        Ok(Err(e)) => warn!("[Gateway] Gateway task join error: {}", e),
+        Err(_) => {
+            warn!(
+                "[Gateway] Graceful shutdown timed out after 2s — aborting task \
+                 (listener socket may briefly linger in kernel)"
+            );
+            abort.abort();
+        }
+    }
+}
+
+/// Wires up ServerManager state + the OAuth completion handler + the
+/// periodic refresh loop after a GatewayServer has been spawned.
+///
+/// Both the auto-start path (in `lib.rs`) and the `start_gateway` Tauri
+/// command must call this — without it, ServerManagerState.manager stays
+/// None and the Servers page shows every server stuck on "Connecting..."
+/// because `get_server_statuses` can't reach the ServerManager.
+///
+/// Call order matters: **subscribe to OAuth events before spawning the
+/// gateway** (the subscription is passed in already-created), and call
+/// this helper before or after `server.spawn()` — but always before any
+/// user-facing code queries server statuses.
+pub(crate) async fn init_gateway_runtime(
+    pool_service: Arc<PoolService>,
+    server_manager: Arc<ServerManager>,
+    oauth_completion_rx: tokio::sync::broadcast::Receiver<OAuthCompleteEvent>,
+    sm_state: Arc<RwLock<ServerManagerState>>,
+) {
+    // Store ServerManager + PoolService so the Servers page commands can
+    // read them. A fresh Arc per start — old handlers on a stopped gateway
+    // become orphans and drop naturally.
+    {
+        let mut sm = sm_state.write().await;
+        sm.manager = Some(server_manager.clone());
+        sm.pool_service = Some(pool_service.clone());
+    }
+    info!("[Gateway] ServerManager + PoolService attached to state");
+
+    // OAuth completion handler — reconnects servers after the user finishes
+    // the OAuth flow in the browser. Spawned as a detached task; lives as
+    // long as the broadcast channel is alive (drops naturally when pool is
+    // dropped on next gateway start).
+    let sm_for_oauth = server_manager.clone();
+    let pool_for_oauth = pool_service.clone();
+    tokio::spawn(async move {
+        let mut rx = oauth_completion_rx;
+        info!("[OAuth Handler] Listening for OAuth completions");
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    info!(
+                        "[OAuth Handler] Completion received: server={} success={}",
+                        event.server_id, event.success
+                    );
+                    if event.success {
+                        let sm = sm_for_oauth.clone();
+                        let pool = pool_for_oauth.clone();
+                        let server_id = event.server_id.clone();
+                        let space_id = event.space_id;
+                        tokio::spawn(async move {
+                            let key = ServerKey::new(space_id, &server_id);
+                            info!("[OAuth Handler] Reconnecting {} after OAuth", server_id);
+                            sm.set_connecting(&key).await;
+                            match pool.reconnect_instance(space_id, &server_id).await {
+                                ConnectionResult::Connected { features, .. } => {
+                                    info!(
+                                        "[OAuth Handler] Reconnected {} — {} features",
+                                        server_id,
+                                        features.tools.len()
+                                    );
+                                    sm.set_connected(&key, features).await;
+                                }
+                                ConnectionResult::OAuthRequired { .. } => {
+                                    warn!(
+                                        "[OAuth Handler] {} still needs OAuth after completion",
+                                        server_id
+                                    );
+                                    sm.set_auth_required(
+                                        &key,
+                                        Some("OAuth still required".to_string()),
+                                    )
+                                    .await;
+                                }
+                                ConnectionResult::Failed { error } => {
+                                    error!(
+                                        "[OAuth Handler] Reconnect failed for {}: {}",
+                                        server_id, error
+                                    );
+                                    sm.set_error(&key, error).await;
+                                }
+                            }
+                        });
+                    } else {
+                        let key = ServerKey::new(event.space_id, &event.server_id);
+                        let err = event.error.unwrap_or_else(|| "OAuth failed".to_string());
+                        warn!(
+                            "[OAuth Handler] OAuth failed for {}: {}",
+                            event.server_id, err
+                        );
+                        sm_for_oauth.set_auth_required(&key, Some(err)).await;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("[OAuth Handler] Lagged {} messages", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    info!("[OAuth Handler] Channel closed, stopping");
+                    break;
+                }
+            }
+        }
+    });
+    info!("[Gateway] OAuth completion handler spawned");
+
+    // Periodic refresh loop — re-fetches features from each connected
+    // server every ~60s so long-running sessions don't drift.
+    let _refresh = server_manager.clone().start_periodic_refresh();
+    info!("[Gateway] Periodic refresh loop started");
 }
 
 /// Start domain event bridge from Gateway to Tauri
@@ -131,20 +295,6 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "space_id": space_id,
             }),
         ),
-        DomainEvent::SpaceActivated {
-            from_space_id,
-            to_space_id,
-            to_space_name,
-        } => (
-            "space-changed",
-            serde_json::json!({
-                "action": "activated",
-                "from_space_id": from_space_id,
-                "to_space_id": to_space_id,
-                "to_space_name": to_space_name,
-            }),
-        ),
-
         // Server lifecycle events
         DomainEvent::ServerInstalled {
             space_id,
@@ -365,47 +515,6 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
             }),
         ),
 
-        // Grant events
-        DomainEvent::GrantIssued {
-            client_id,
-            space_id,
-            feature_set_id,
-        } => (
-            "grants-changed",
-            serde_json::json!({
-                "action": "granted",
-                "client_id": client_id,
-                "space_id": space_id,
-                "feature_set_id": feature_set_id,
-            }),
-        ),
-        DomainEvent::GrantRevoked {
-            client_id,
-            space_id,
-            feature_set_id,
-        } => (
-            "grants-changed",
-            serde_json::json!({
-                "action": "revoked",
-                "client_id": client_id,
-                "space_id": space_id,
-                "feature_set_id": feature_set_id,
-            }),
-        ),
-        DomainEvent::ClientGrantsUpdated {
-            client_id,
-            space_id,
-            feature_set_ids,
-        } => (
-            "grants-changed",
-            serde_json::json!({
-                "action": "batch_updated",
-                "client_id": client_id,
-                "space_id": space_id,
-                "feature_set_ids": feature_set_ids,
-            }),
-        ),
-
         // Gateway events
         DomainEvent::GatewayStarted { url, port } => (
             "gateway-changed",
@@ -475,6 +584,41 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "resolved_feature_set_id": resolved_feature_set_id,
                 "summary": summary,
                 "timestamp": chrono::Utc::now().to_rfc3339(),
+            }),
+        ),
+
+        // Workspace binding write → tell the UI to re-load the bindings
+        // table. The MCP `list_changed` notifications are handled separately
+        // by MCPNotifier subscribing to the same event.
+        DomainEvent::WorkspaceBindingChanged {
+            space_id,
+            workspace_root,
+        } => (
+            "workspace-binding-changed",
+            serde_json::json!({
+                "space_id": space_id,
+                "workspace_root": workspace_root,
+            }),
+        ),
+
+        // The set of live reported session roots changed — the Workspaces
+        // tab re-fetches so unbound folders stay visible.
+        DomainEvent::SessionRootsChanged => ("session-roots-changed", serde_json::json!({})),
+
+        // A session resolved via `source=Default` and no binding exists for
+        // any of its reported roots. Front-end shows the binding sheet.
+        DomainEvent::WorkspaceNeedsBinding {
+            client_id,
+            session_id,
+            space_id,
+            workspace_root,
+        } => (
+            "workspace-needs-binding",
+            serde_json::json!({
+                "client_id": client_id,
+                "session_id": session_id,
+                "space_id": space_id,
+                "workspace_root": workspace_root,
             }),
         ),
     }
@@ -570,11 +714,25 @@ pub async fn get_gateway_status(
     })
 }
 
-/// Start the gateway server
+/// Start the gateway server.
+///
+/// `port` forces a specific port (used for ad-hoc overrides from a test or
+/// power-user flow). When `port` is None, the preferred port is whatever
+/// the user has configured, falling back to the shipped default.
+///
+/// `allow_dynamic_fallback` controls what happens when the preferred port
+/// is busy:
+/// - **None / false (strict, default):** return an error prefixed with
+///   `PORT_IN_USE:<port>:<source>`. The UI should probe first and prompt
+///   the user before retrying with fallback enabled.
+/// - **true:** silently allocate an OS-assigned port instead. Used by the
+///   auto-start path where there's no UI to prompt.
 #[tauri::command]
 pub async fn start_gateway(
     port: Option<u16>,
+    allow_dynamic_fallback: Option<bool>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    sm_state: State<'_, Arc<RwLock<ServerManagerState>>>,
     app_state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -584,12 +742,47 @@ pub async fn start_gateway(
         return Err("Gateway is already running".to_string());
     }
 
-    // Single Responsibility: Delegate port resolution to GatewayPortService
-    let final_port = app_state
-        .gateway_port_service
-        .resolve_with_override(port)
-        .await
-        .map_err(|e| e.to_string())?;
+    let (preferred_port, source) = resolve_preferred_port(&app_state, port).await;
+    let allow_fallback = allow_dynamic_fallback.unwrap_or(false);
+
+    let final_port = if is_port_available(preferred_port) {
+        // Persist first-run default so the Settings UI shows it explicitly.
+        if matches!(source, PortSource::Default)
+            && app_state
+                .gateway_port_service
+                .load_persisted_port()
+                .await
+                .is_none()
+        {
+            if let Err(e) = app_state
+                .gateway_port_service
+                .save_port(preferred_port)
+                .await
+            {
+                warn!("[Gateway] Failed to persist default port: {}", e);
+            }
+        }
+        preferred_port
+    } else if allow_fallback {
+        let dyn_port = allocate_dynamic_port().map_err(|e| e.to_string())?;
+        warn!(
+            "[Gateway] Preferred port {} unavailable, falling back to dynamic port {} (not persisted — next start retries {})",
+            preferred_port, dyn_port, preferred_port
+        );
+        // Intentionally do NOT persist the fallback port — the user's
+        // configured/default preference must survive so the next launch
+        // retries it. Persisting here would silently overwrite what the
+        // Settings page shows.
+        dyn_port
+    } else {
+        // Strict mode — caller must retry with allow_dynamic_fallback=true or
+        // free the port. The UI parses this sentinel to render its popup.
+        return Err(format!(
+            "PORT_IN_USE:{}:{}",
+            preferred_port,
+            source.as_str()
+        ));
+    };
 
     let url = format!("http://localhost:{}", final_port);
 
@@ -614,10 +807,17 @@ pub async fn start_gateway(
     let pool_service = server.pool_service();
     let feature_service = server.feature_service();
     let event_emitter = server.event_emitter();
-
-    info!("[Gateway] Getting grant_service from server...");
+    let server_manager = server.server_manager();
     let grant_service = server.grant_service();
-    info!("[Gateway] Got grant_service: {:p}", &*grant_service);
+    let session_roots = server.session_roots();
+
+    // Subscribe to OAuth completions BEFORE spawn so we don't miss early
+    // events emitted during initial auto-connect.
+    let oauth_completion_rx = pool_service.oauth_manager().subscribe();
+    info!(
+        "[Gateway] Services resolved — port={}, server_manager={:p}",
+        final_port, &*server_manager
+    );
 
     // Meta-tool approval broker — attach a Tauri-event publisher so
     // incoming approval requests reach the React dialog.
@@ -650,10 +850,26 @@ pub async fn start_gateway(
     // Start domain event bridge (clean architecture)
     start_domain_event_bridge(&app_handle, gw_state.clone());
 
+    // Wire ServerManager into state + spawn OAuth handler + periodic
+    // refresh. MUST happen here, otherwise the Servers page sees every
+    // server stuck on "Connecting..." because `get_server_statuses` can't
+    // reach the ServerManager.
+    let sm_state_inner: Arc<RwLock<ServerManagerState>> = sm_state.inner().clone();
+    init_gateway_runtime(
+        pool_service.clone(),
+        server_manager.clone(),
+        oauth_completion_rx,
+        sm_state_inner,
+    )
+    .await;
+
     // Spawn gateway (runs in background, auto-connects servers)
     let handle = server.spawn();
 
-    info!("[Gateway] Setting state fields...");
+    info!(
+        "[Gateway] Setting GatewayAppState fields — port={}, url={}",
+        final_port, url
+    );
     state.running = true;
     state.url = Some(url.clone());
     state.handle = Some(handle);
@@ -661,23 +877,30 @@ pub async fn start_gateway(
     state.pool_service = Some(pool_service);
     state.feature_service = Some(feature_service);
     state.event_emitter = Some(event_emitter);
-    info!(
-        "[Gateway] About to set grant_service: {:p}",
-        &*grant_service
-    );
     state.grant_service = Some(grant_service);
     state.approval_broker = Some(approval_broker);
+    state.session_roots = Some(session_roots);
     info!(
-        "[Gateway] grant_service set! Checking: {}",
-        state.grant_service.is_some()
-    );
-
-    info!(
-        "[Gateway] Started successfully - EventEmitter initialized: {}, GrantService initialized: {}",
+        "[Gateway] Started — url={}, event_emitter={}, grant_service={}",
+        url,
         state.event_emitter.is_some(),
         state.grant_service.is_some()
     );
-    info!("[Gateway] Auto-connect will run in background");
+
+    // Notify every frontend subscriber (status-bar footer, Dashboard,
+    // Servers page, Settings). Without this, only the caller sees the new
+    // URL; the footer would stay on "Gateway: Stopped" until the user
+    // changes Space and retriggers a manual reload.
+    if let Err(e) = app_handle.emit(
+        "gateway-changed",
+        serde_json::json!({
+            "action": "started",
+            "url": url,
+            "port": final_port,
+        }),
+    ) {
+        warn!("[Gateway] Failed to emit gateway-changed(started): {}", e);
+    }
 
     Ok(url)
 }
@@ -686,44 +909,232 @@ pub async fn start_gateway(
 #[tauri::command]
 pub async fn stop_gateway(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut state = gateway_state.write().await;
+    // Take the handle out under the lock, then drop the guard BEFORE
+    // awaiting the shutdown — otherwise the lock is held for up to 2s
+    // and every concurrent status query blocks.
+    let handle = {
+        let mut state = gateway_state.write().await;
+        if !state.running {
+            return Err("Gateway is not running".to_string());
+        }
+        let handle = state.handle.take();
+        state.running = false;
+        state.url = None;
+        handle
+    };
 
-    if !state.running {
-        return Err("Gateway is not running".to_string());
+    if let Some(h) = handle {
+        info!("[Gateway] Stop requested — shutting down gracefully");
+        shutdown_gateway_handle(h).await;
     }
 
-    if let Some(handle) = state.handle.take() {
-        handle.abort();
-        info!("Gateway stopped");
+    if let Err(e) = app_handle.emit("gateway-changed", serde_json::json!({"action": "stopped"})) {
+        warn!("[Gateway] Failed to emit gateway-changed(stopped): {}", e);
     }
-
-    state.running = false;
-    state.url = None;
 
     Ok(())
 }
 
-/// Restart the gateway server
+/// Gateway port configuration response.
+///
+/// - `configured_port` is the user's persisted override (None = "follow default").
+/// - `default_port` is the built-in default the app ships with.
+/// - `active_port` is the port the currently-running gateway is bound to
+///   (None when stopped). When it differs from `configured_port`, the UI
+///   should nudge the user to restart the gateway.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayPortSettings {
+    pub configured_port: Option<u16>,
+    pub default_port: u16,
+    pub active_port: Option<u16>,
+}
+
+fn parse_port_from_url(url: &str) -> Option<u16> {
+    // URL shape is always "http://localhost:PORT" — parse defensively.
+    let after_scheme = url.split("://").nth(1)?;
+    let host_port = after_scheme.split('/').next()?;
+    host_port.rsplit(':').next()?.parse().ok()
+}
+
+/// Get the persisted gateway port setting, plus the currently-active port.
+#[tauri::command]
+pub async fn get_gateway_port_settings(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    app_state: State<'_, AppState>,
+) -> Result<GatewayPortSettings, String> {
+    let configured_port = app_state.gateway_port_service.load_persisted_port().await;
+
+    let active_port = {
+        let state = gateway_state.read().await;
+        state.url.as_deref().and_then(parse_port_from_url)
+    };
+
+    Ok(GatewayPortSettings {
+        configured_port,
+        default_port: mcpmux_core::DEFAULT_GATEWAY_PORT,
+        active_port,
+    })
+}
+
+/// Persist a custom gateway port. Takes effect on the next gateway start.
+///
+/// Does NOT touch a running gateway — the UI is expected to offer a
+/// "Restart gateway" action. The port must be in the user-space range
+/// (1024–65535). Ports ≤ 1023 are rejected to avoid privileged-port
+/// surprises on Unix.
+#[tauri::command]
+pub async fn set_gateway_port(port: u16, app_state: State<'_, AppState>) -> Result<(), String> {
+    if port < 1024 {
+        return Err(format!(
+            "Port {} is in the privileged range (≤ 1023). Choose a port between 1024 and 65535.",
+            port
+        ));
+    }
+
+    app_state
+        .gateway_port_service
+        .save_port(port)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    info!("[Gateway] Persisted custom gateway port: {}", port);
+    Ok(())
+}
+
+/// Clear the persisted gateway port override. The next gateway start will
+/// use the built-in default (or a dynamically-allocated port if the default
+/// is in use).
+#[tauri::command]
+pub async fn reset_gateway_port(app_state: State<'_, AppState>) -> Result<(), String> {
+    app_state
+        .gateway_port_service
+        .clear_persisted_port()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    info!("[Gateway] Cleared persisted gateway port — reverting to default on next start");
+    Ok(())
+}
+
+/// Which port source a startup attempt would use.
+///
+/// Kept as a string-valued enum for clean JSON serialization to the UI.
+#[derive(Debug, Clone, Copy)]
+enum PortSource {
+    Override,
+    Configured,
+    Default,
+}
+
+impl PortSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            PortSource::Override => "override",
+            PortSource::Configured => "configured",
+            PortSource::Default => "default",
+        }
+    }
+}
+
+/// Result of probing whether the gateway can start on its preferred port.
+///
+/// - `preferred_port` is the port that _would_ be used — explicit override
+///   wins over configured persisted port, which wins over the shipped default.
+/// - `preferred_available` is false when something else is bound to it.
+/// - `source` tells the UI which tier was chosen, so messages can reference
+///   "your configured port" vs. "the default port".
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayStartProbe {
+    pub preferred_port: u16,
+    pub preferred_available: bool,
+    pub source: &'static str,
+}
+
+async fn resolve_preferred_port(
+    app_state: &AppState,
+    explicit_port: Option<u16>,
+) -> (u16, PortSource) {
+    if let Some(p) = explicit_port {
+        return (p, PortSource::Override);
+    }
+    if let Some(p) = app_state.gateway_port_service.load_persisted_port().await {
+        return (p, PortSource::Configured);
+    }
+    (mcpmux_core::DEFAULT_GATEWAY_PORT, PortSource::Default)
+}
+
+/// Probe whether the gateway's preferred port is free, without starting it.
+///
+/// Frontends should call this before invoking `start_gateway` so they can
+/// prompt the user when a fallback would be required.
+#[tauri::command]
+pub async fn probe_gateway_start(
+    port: Option<u16>,
+    app_state: State<'_, AppState>,
+) -> Result<GatewayStartProbe, String> {
+    let (preferred_port, source) = resolve_preferred_port(&app_state, port).await;
+    let preferred_available = is_port_available(preferred_port);
+    Ok(GatewayStartProbe {
+        preferred_port,
+        preferred_available,
+        source: source.as_str(),
+    })
+}
+
+/// Atomically read **and clear** any deferred auto-start port conflict.
+///
+/// The "take" semantic matters: React StrictMode double-mounts components
+/// in dev, and without atomic consumption both mounts would read the same
+/// conflict and double-prompt the user. Only the first caller wins.
+#[tauri::command]
+pub async fn take_pending_port_conflict(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<Option<PendingPortConflict>, String> {
+    let mut state = gateway_state.write().await;
+    Ok(state.pending_port_conflict.take())
+}
+
+/// Restart the gateway server.
+///
+/// Both `port` and `allow_dynamic_fallback` are forwarded to `start_gateway`
+/// — see its docs for semantics.
 #[tauri::command]
 pub async fn restart_gateway(
     port: Option<u16>,
+    allow_dynamic_fallback: Option<bool>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    sm_state: State<'_, Arc<RwLock<ServerManagerState>>>,
     app_state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    // Stop if running
-    {
+    info!("[Gateway] Restart requested — tearing down current state");
+    // Take handle out under lock; drop lock before awaiting shutdown so
+    // start_gateway below can re-acquire it.
+    let handle = {
         let mut state = gateway_state.write().await;
-        if let Some(handle) = state.handle.take() {
-            handle.abort();
-        }
+        let handle = state.handle.take();
         state.running = false;
         state.url = None;
+        handle
+    };
+    if let Some(h) = handle {
+        shutdown_gateway_handle(h).await;
     }
 
     // Start with new config
-    start_gateway(port, gateway_state, app_state, app_handle).await
+    start_gateway(
+        port,
+        allow_dynamic_fallback,
+        gateway_state,
+        sm_state,
+        app_state,
+        app_handle,
+    )
+    .await
 }
 
 /// Generate gateway config for a client
@@ -774,14 +1185,14 @@ pub async fn generate_gateway_config(
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
 }
 
-/// Get the active/default space ID
+/// Resolve the system's default space id (the `is_default` Space).
 async fn get_default_space_id(app_state: &AppState) -> Result<String, String> {
     let space = app_state
         .space_service
-        .get_active()
+        .get_default()
         .await
         .map_err(|e: anyhow::Error| e.to_string())?
-        .ok_or("No active space found")?;
+        .ok_or("No default space found")?;
     Ok(space.id.to_string())
 }
 
@@ -857,9 +1268,6 @@ pub async fn connect_server(
                 features.total_count()
             );
 
-            // Ensure server-all featureset exists
-            ensure_server_featureset(&app_state, &server_id, &server_definition, &installed).await;
-
             Ok(())
         }
         ConnectionResult::Failed { error } => {
@@ -881,25 +1289,6 @@ pub async fn connect_server(
                 auth_url
             ))
         }
-    }
-}
-
-/// Ensure server-all featureset exists after connection
-///
-/// Note: Server state is now managed by ServerManager/PoolService, not GatewayState
-async fn ensure_server_featureset(
-    app_state: &AppState,
-    server_id: &str,
-    registry_entry: &mcpmux_core::ServerDefinition,
-    installed: &mcpmux_core::InstalledServer,
-) {
-    let space_id_str = installed.space_id.clone();
-    if let Err(e) = app_state
-        .feature_set_repository
-        .ensure_server_all(&space_id_str, server_id, &registry_entry.name)
-        .await
-    {
-        warn!("[Gateway] Failed to create server-all featureset: {}", e);
     }
 }
 
@@ -1123,7 +1512,7 @@ pub async fn connect_all_enabled_servers(
         errors: vec![],
     };
 
-    for (server_info, transport, server_definition, installed) in servers_to_connect {
+    for (server_info, transport, _server_definition, _installed) in servers_to_connect {
         let space_uuid = server_info.space_id;
         let server_id = server_info.server_id.clone();
 
@@ -1142,10 +1531,6 @@ pub async fn connect_all_enabled_servers(
                     reused,
                     features.total_count()
                 );
-
-                // Ensure server-all featureset exists
-                ensure_server_featureset(&app_state, &server_id, &server_definition, &installed)
-                    .await;
             }
             ConnectionResult::OAuthRequired { auth_url: _ } => {
                 result.oauth_required += 1;

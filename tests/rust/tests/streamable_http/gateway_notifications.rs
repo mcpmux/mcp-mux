@@ -109,7 +109,6 @@ impl TestGateway {
             description: None,
             is_default: true,
             sort_order: 0,
-            active_feature_set_id: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -141,8 +140,6 @@ impl TestGateway {
             metadata_url: None,
             metadata_cached_at: None,
             metadata_cache_ttl: None,
-            connection_mode: "follow_active".to_string(),
-            locked_space_id: None,
             last_seen: None,
             created_at: now.clone(),
             updated_at: now,
@@ -480,12 +477,14 @@ async fn test_gateway_forwards_server_disconnect_to_client() {
 // ============================================================================
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_gateway_forwards_grant_change_to_client() {
+async fn test_gateway_forwards_feature_set_member_change_to_client() {
+    // Replaces the old "grant change" test. Per-client grants are gone, so
+    // the corresponding signal now is `FeatureSetMembersChanged` — emitted
+    // when a user edits which features a Space's FS exposes.
     let space_id = Uuid::new_v4();
     let client_id = Uuid::new_v4().to_string();
     let gw = TestGateway::start(&client_id, space_id).await;
 
-    // Seed a feature so hash has content
     let tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool1");
     gw.feature_repo.upsert(&tool).await.unwrap();
 
@@ -495,15 +494,14 @@ async fn test_gateway_forwards_grant_change_to_client() {
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Add another feature so hash changes
     let new_tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool2");
     gw.feature_repo.upsert(&new_tool).await.unwrap();
 
-    // Emit GrantIssued event
-    gw.emit(DomainEvent::GrantIssued {
-        client_id: client_id.clone(),
+    gw.emit(DomainEvent::FeatureSetMembersChanged {
         space_id,
         feature_set_id: "fs-test".to_string(),
+        added_count: 1,
+        removed_count: 0,
     });
 
     let result =
@@ -511,7 +509,51 @@ async fn test_gateway_forwards_grant_change_to_client() {
 
     assert!(
         result.is_ok(),
-        "Client should receive list_changed when grant is issued"
+        "Client should receive list_changed when a FS's members change"
+    );
+
+    client.cancel().await.ok();
+    gw.shutdown();
+}
+
+// ============================================================================
+// B4b: Gateway forwards WorkspaceBindingChanged to every peer in the space
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_gateway_forwards_workspace_binding_change_to_client() {
+    // User just created / updated / deleted a binding. Every connected MCP
+    // client that resolves into this Space must re-fetch its tool list,
+    // since the binding could have flipped the root → (space, FS) mapping.
+    let space_id = Uuid::new_v4();
+    let client_id = Uuid::new_v4().to_string();
+    let gw = TestGateway::start(&client_id, space_id).await;
+
+    // Seed then add another tool so the content hash changes and the
+    // notifier actually forwards the event (it dedupes on identical hash).
+    let tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool1");
+    gw.feature_repo.upsert(&tool).await.unwrap();
+
+    let client_handler = GatewayTestClient::new();
+    let tools_changed = client_handler.tools_changed.clone();
+    let client = connect_client(&gw.url, client_handler).await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let new_tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool2");
+    gw.feature_repo.upsert(&new_tool).await.unwrap();
+
+    gw.emit(DomainEvent::WorkspaceBindingChanged {
+        space_id,
+        workspace_root: "/abs/proj".to_string(),
+    });
+
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(5), tools_changed.notified()).await;
+
+    assert!(
+        result.is_ok(),
+        "Client should receive list_changed when a WorkspaceBinding is changed",
     );
 
     client.cancel().await.ok();

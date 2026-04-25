@@ -80,9 +80,7 @@ pub fn build_default_registry(
     registry.register(Box::new(tools::DescribeResolutionTool));
     registry.register(Box::new(tools::DescribeWorkspaceTool));
     // Writes — gated by ApprovalBroker.
-    registry.register(Box::new(tools::PinThisSessionTool));
     registry.register(Box::new(tools::CreateFeatureSetTool));
     registry.register(Box::new(tools::BindCurrentWorkspaceTool));
-    registry.register(Box::new(tools::SetSpaceActiveTool));
     std::sync::Arc::new(registry)
 }

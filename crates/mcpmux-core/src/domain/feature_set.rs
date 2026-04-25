@@ -1,28 +1,24 @@
 //! FeatureSet entity - permission bundles for tools/prompts/resources
 //!
-//! The new featureset model uses explicit feature selection instead of glob patterns.
-//! Each featureset is scoped to a space and can be one of:
-//! - All: All features from all connected servers in the space
-//! - Default: Features auto-granted to all clients in the space
-//! - ServerAll: All features from a specific server
-//! - Custom: User-defined composition of features and other featuresets
+//! Each featureset is scoped to a space and is one of two types:
+//! - Default: auto-created per space; the fallback when no workspace binding applies
+//! - Custom: user-defined composition of features and other featuresets
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The type of a FeatureSet
+/// The type of a FeatureSet.
+///
+/// `Default` is auto-created once per space and acts as the no-binding
+/// fallback. `Custom` sets are always user-created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[derive(Default)]
 pub enum FeatureSetType {
-    /// All features from all connected servers in this space
-    All,
-    /// Features auto-granted to all clients in this space
+    /// Auto-created per space. The fallback FS when no WorkspaceBinding matches.
     Default,
-    /// All features from a specific server
-    ServerAll,
-    /// Custom user-defined featureset
+    /// User-defined featureset.
     #[default]
     Custom,
 }
@@ -30,18 +26,14 @@ pub enum FeatureSetType {
 impl FeatureSetType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::All => "all",
             Self::Default => "default",
-            Self::ServerAll => "server-all",
             Self::Custom => "custom",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "all" => Some(Self::All),
             "default" => Some(Self::Default),
-            "server-all" => Some(Self::ServerAll),
             "custom" => Some(Self::Custom),
             _ => None,
         }
@@ -154,12 +146,9 @@ impl FeatureSetMember {
 
 /// FeatureSet defines a bundle of permissions using explicit feature selection.
 ///
-/// Each featureset is scoped to a space and can contain:
-/// - Other featuresets (composition)
-/// - Specific features (tools, prompts, resources)
-///
-/// For builtin types (All, Default, ServerAll), the effective features are
-/// computed dynamically based on connected servers and their discovered features.
+/// Scoped to a space. Can contain other featuresets (composition) or specific
+/// features (tools, prompts, resources). The `Default` type is auto-created per
+/// space; its effective members can be edited by the user just like a Custom set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureSet {
     /// Unique identifier
@@ -222,68 +211,21 @@ impl FeatureSet {
         }
     }
 
-    /// Create the "All Features" featureset for a space
-    pub fn new_all(space_id: impl Into<String>) -> Self {
-        let space_id = space_id.into();
-        let now = Utc::now();
-        Self {
-            id: format!("fs_all_{}", space_id),
-            name: "All Features".to_string(),
-            description: Some(
-                "All features from all connected MCP servers in this space".to_string(),
-            ),
-            icon: Some("🌐".to_string()),
-            space_id: Some(space_id),
-            feature_set_type: FeatureSetType::All,
-            server_id: None,
-            is_builtin: true,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            members: vec![],
-        }
-    }
-
-    /// Create the "Default" featureset for a space
+    /// Create the "Default" featureset for a space.
+    ///
+    /// Uses a deterministic id (`fs_default_<space_id>`) so repositories can
+    /// upsert this row without having to remember a mapping.
     pub fn new_default(space_id: impl Into<String>) -> Self {
         let space_id = space_id.into();
         let now = Utc::now();
         Self {
             id: format!("fs_default_{}", space_id),
             name: "Default".to_string(),
-            description: Some(
-                "Features automatically granted to all connected clients in this space".to_string(),
-            ),
+            description: Some("The fallback feature set for this space".to_string()),
             icon: Some("⭐".to_string()),
             space_id: Some(space_id),
             feature_set_type: FeatureSetType::Default,
             server_id: None,
-            is_builtin: true,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            members: vec![],
-        }
-    }
-
-    /// Create a "Server-All" featureset for a specific server in a space
-    pub fn new_server_all(
-        space_id: impl Into<String>,
-        server_id: impl Into<String>,
-        server_name: impl Into<String>,
-    ) -> Self {
-        let space_id = space_id.into();
-        let server_id = server_id.into();
-        let server_name = server_name.into();
-        let now = Utc::now();
-        Self {
-            id: format!("fs_server_{}_{}", server_id, space_id),
-            name: format!("{} - All", server_name),
-            description: Some(format!("All features from the {} server", server_name)),
-            icon: Some("📦".to_string()),
-            space_id: Some(space_id),
-            feature_set_type: FeatureSetType::ServerAll,
-            server_id: Some(server_id),
             is_builtin: true,
             is_deleted: false,
             created_at: now,
@@ -304,19 +246,9 @@ impl FeatureSet {
         self
     }
 
-    /// Check if this featureset is the "All" type for a space
-    pub fn is_all_type(&self) -> bool {
-        self.feature_set_type == FeatureSetType::All
-    }
-
     /// Check if this featureset is the "Default" type for a space
     pub fn is_default_type(&self) -> bool {
         self.feature_set_type == FeatureSetType::Default
-    }
-
-    /// Check if this featureset is the "ServerAll" type
-    pub fn is_server_all_type(&self) -> bool {
-        self.feature_set_type == FeatureSetType::ServerAll
     }
 }
 
@@ -325,31 +257,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_all_featureset() {
-        let fs = FeatureSet::new_all("space_123");
-        assert_eq!(fs.id, "fs_all_space_123");
-        assert_eq!(fs.feature_set_type, FeatureSetType::All);
-        assert!(fs.is_builtin);
-        assert!(fs.is_all_type());
-    }
-
-    #[test]
     fn test_new_default_featureset() {
         let fs = FeatureSet::new_default("space_123");
         assert_eq!(fs.id, "fs_default_space_123");
         assert_eq!(fs.feature_set_type, FeatureSetType::Default);
         assert!(fs.is_builtin);
         assert!(fs.is_default_type());
-    }
-
-    #[test]
-    fn test_new_server_all_featureset() {
-        let fs = FeatureSet::new_server_all("space_123", "github-mcp", "GitHub");
-        assert_eq!(fs.id, "fs_server_github-mcp_space_123");
-        assert_eq!(fs.feature_set_type, FeatureSetType::ServerAll);
-        assert_eq!(fs.server_id, Some("github-mcp".to_string()));
-        assert!(fs.is_builtin);
-        assert!(fs.is_server_all_type());
     }
 
     #[test]
@@ -369,14 +282,9 @@ mod tests {
     // FeatureSetType parse tests
     #[test]
     fn test_feature_set_type_parse() {
-        assert_eq!(FeatureSetType::parse("all"), Some(FeatureSetType::All));
         assert_eq!(
             FeatureSetType::parse("default"),
             Some(FeatureSetType::Default)
-        );
-        assert_eq!(
-            FeatureSetType::parse("server-all"),
-            Some(FeatureSetType::ServerAll)
         );
         assert_eq!(
             FeatureSetType::parse("custom"),
@@ -384,24 +292,20 @@ mod tests {
         );
         assert_eq!(FeatureSetType::parse("invalid"), None);
         assert_eq!(FeatureSetType::parse(""), None);
+        // Legacy variants no longer exist
+        assert_eq!(FeatureSetType::parse("all"), None);
+        assert_eq!(FeatureSetType::parse("server-all"), None);
     }
 
     #[test]
     fn test_feature_set_type_as_str() {
-        assert_eq!(FeatureSetType::All.as_str(), "all");
         assert_eq!(FeatureSetType::Default.as_str(), "default");
-        assert_eq!(FeatureSetType::ServerAll.as_str(), "server-all");
         assert_eq!(FeatureSetType::Custom.as_str(), "custom");
     }
 
     #[test]
     fn test_feature_set_type_roundtrip() {
-        for fs_type in [
-            FeatureSetType::All,
-            FeatureSetType::Default,
-            FeatureSetType::ServerAll,
-            FeatureSetType::Custom,
-        ] {
+        for fs_type in [FeatureSetType::Default, FeatureSetType::Custom] {
             let s = fs_type.as_str();
             let parsed = FeatureSetType::parse(s).expect("should parse");
             assert_eq!(parsed, fs_type);

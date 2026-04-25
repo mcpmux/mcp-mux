@@ -7,12 +7,8 @@ import { byTestId, safeClick } from '../helpers/selectors';
 import {
   createSpace,
   deleteSpace,
-  getActiveSpace,
-  setActiveSpace,
+  getDefaultSpace,
   listSpaces,
-  createClient,
-  deleteClient,
-  listClients,
   listFeatureSetsBySpace,
   createFeatureSet,
   deleteFeatureSet,
@@ -22,7 +18,6 @@ import {
   enableServerV2,
   disableServerV2,
   getGatewayStatus,
-  grantFeatureSetToClient,
 } from '../helpers/tauri-api';
 
 // ============================================================================
@@ -37,8 +32,8 @@ describe('Comprehensive: Space Isolation', () => {
 
   before(async () => {
     // Get default space
-    const activeSpace = await getActiveSpace();
-    defaultSpaceId = activeSpace?.id || '';
+    const defaultSpace = await getDefaultSpace();
+    defaultSpaceId = defaultSpace?.id || '';
     console.log('[setup] Default space:', defaultSpaceId);
 
     // Create test spaces
@@ -69,9 +64,8 @@ describe('Comprehensive: Space Isolation', () => {
   });
 
   it('TC-COMP-SP-002: Enable server and verify FeatureSet created', async () => {
-    // Set Work space as active
-    await setActiveSpace(workSpaceId);
-    await browser.pause(500);
+    // Server-enable / FS-listing APIs are scoped by spaceId arg — no
+    // "active space" switch needed. Routing is per workspace root now.
 
     // Enable server - MCP handshake can fail on CI, so wrap in try-catch
     try {
@@ -93,8 +87,6 @@ describe('Comprehensive: Space Isolation', () => {
   });
 
   it('TC-COMP-SP-003: Verify UI shows correct space servers', async () => {
-    await setActiveSpace(workSpaceId);
-    await browser.pause(500);
     await browser.refresh();
     await browser.pause(2000);
 
@@ -112,11 +104,8 @@ describe('Comprehensive: Space Isolation', () => {
   });
 
   it('TC-COMP-SP-004: Switch space and verify server not visible', async () => {
-    // Switch to Personal space
-    await setActiveSpace(personalSpaceId);
-    await browser.pause(500);
-
-    // Refresh UI
+    // Server isolation is verified via the spaceId-bound API — no UI
+    // active-space switch needed.
     await browser.refresh();
     await browser.pause(2000);
 
@@ -141,57 +130,15 @@ describe('Comprehensive: Space Isolation', () => {
     try {
       await deleteSpace(personalSpaceId);
     } catch (e) { /* ignore */ }
-
-    // Reset to default space
-    if (defaultSpaceId) {
-      await setActiveSpace(defaultSpaceId);
-    }
   });
 });
 
 // ============================================================================
-// Test Suite: Client Grants
+// Test Suite: Connections page (observability — no more per-client grants)
 // ============================================================================
 
-describe('Comprehensive: Client Grants', () => {
-  let defaultSpaceId: string;
-  let testClientId: string;
-  let defaultFeatureSetId: string;
-
-  before(async () => {
-    // Get default space
-    const activeSpace = await getActiveSpace();
-    defaultSpaceId = activeSpace?.id || '';
-
-    // Create test client
-    const client = await createClient({
-      name: 'Test Client for Grants',
-      client_type: 'test',
-      connection_mode: 'follow_active',
-    });
-    testClientId = client.id;
-    console.log('[setup] Created client:', testClientId);
-
-    // Get default feature set
-    const featureSets = await listFeatureSetsBySpace(defaultSpaceId);
-    const defaultFs = featureSets.find(fs => fs.feature_set_type === 'default');
-    defaultFeatureSetId = defaultFs?.id || '';
-    console.log('[setup] Default FeatureSet:', defaultFeatureSetId);
-  });
-
-  it('TC-COMP-CL-001: Grant FeatureSet to client', async () => {
-    // Grant default feature set
-    await grantFeatureSetToClient(testClientId, defaultSpaceId, defaultFeatureSetId);
-
-    // Verify client has grants
-    const clients = await listClients();
-    const ourClient = clients.find(c => c.id === testClientId);
-
-    expect(ourClient).toBeDefined();
-    console.log('[test] Client grants:', JSON.stringify(ourClient?.grants));
-  });
-
-  it('TC-COMP-CL-002: Verify Clients page loads', async () => {
+describe('Comprehensive: Connections page', () => {
+  it('TC-COMP-CL-001: Verify Connections page loads', async () => {
     const clientsBtn = await byTestId('nav-clients');
     await safeClick(clientsBtn);
     await browser.pause(2000);
@@ -199,16 +146,10 @@ describe('Comprehensive: Client Grants', () => {
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-03-clients.png');
 
     const pageSource = await browser.getPageSource();
-    expect(pageSource.includes('Clients') || pageSource.includes('Client')).toBe(true);
-  });
-
-  after(async () => {
-    // Cleanup
-    if (testClientId) {
-      try {
-        await deleteClient(testClientId);
-      } catch (e) { /* ignore */ }
-    }
+    // Heading changed from "Connected Clients" to "Connections".
+    expect(pageSource.includes('Connections')).toBe(true);
+    // And routing is advertised as workspace-driven, not per-client.
+    expect(pageSource.includes('Workspaces')).toBe(true);
   });
 });
 
@@ -221,9 +162,8 @@ describe('Comprehensive: Server Lifecycle with API', () => {
   const serverId = 'github-server'; // From mock bundle
 
   before(async () => {
-    const activeSpace = await getActiveSpace();
-    defaultSpaceId = activeSpace?.id || '';
-    await setActiveSpace(defaultSpaceId);
+    const defaultSpace = await getDefaultSpace();
+    defaultSpaceId = defaultSpace?.id || '';
     // Uninstall if already present (from earlier specs) to ensure clean state
     try {
       await uninstallServer(serverId, defaultSpaceId);
@@ -413,7 +353,6 @@ describe('Comprehensive: Multi-Space Server Management', () => {
 
   it('TC-COMP-MS-002: Enable server in first space only', async () => {
     // Enable in first space - MCP handshake can fail on CI
-    await setActiveSpace(testSpaces[0]);
     try {
       await enableServerV2(testSpaces[0], serverId);
       await browser.pause(5000); // Longer wait for CI
@@ -461,11 +400,6 @@ describe('Comprehensive: Multi-Space Server Management', () => {
       try {
         await deleteSpace(spaceId);
       } catch (e) { /* ignore */ }
-    }
-
-    // Reset to default space
-    if (defaultSpaceId) {
-      await setActiveSpace(defaultSpaceId);
     }
   });
 });

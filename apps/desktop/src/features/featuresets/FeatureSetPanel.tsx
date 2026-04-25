@@ -15,7 +15,6 @@ import {
   Settings,
   Trash2,
   Check,
-  Globe,
   Star,
   Shield,
   Save,
@@ -57,40 +56,15 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
     features: true,
   });
 
-  // Determine if this is a configurable feature set
-  const isConfigurable = featureSet.feature_set_type === 'default' || featureSet.feature_set_type === 'custom';
+  // Both FS types are member-driven now.
+  const isConfigurable = true;
   const isDefault = featureSet.feature_set_type === 'default';
   const isCustom = featureSet.feature_set_type === 'custom';
-  const isAll = featureSet.feature_set_type === 'all';
-  const isServerAll = featureSet.feature_set_type === 'server-all';
-  
-  // For special feature sets, compute actual member count
-  const getActualMemberCount = () => {
-    if (isAll) {
-      // "All Features" includes everything
-      return allFeatures.length;
-    }
-    if (isServerAll && featureSet.server_id) {
-      // "Server All" - use server_id from feature set
-      return allFeatures.filter(f => f.server_id === featureSet.server_id).length;
-    }
-    // For configurable sets, use selectedFeatureIds
-    return selectedFeatureIds.size;
-  };
-  
-  // Check if a feature should be shown as selected
-  const isFeatureSelected = (featureId: string, feature: ServerFeature) => {
-    if (isAll) {
-      // All features are selected
-      return true;
-    }
-    if (isServerAll && featureSet.server_id) {
-      // Only features from the target server
-      return feature.server_id === featureSet.server_id;
-    }
-    // For configurable sets, check selectedFeatureIds
-    return selectedFeatureIds.has(featureId);
-  };
+
+  const getActualMemberCount = () => selectedFeatureIds.size;
+
+  const isFeatureSelected = (featureId: string, _feature: ServerFeature) =>
+    selectedFeatureIds.has(featureId);
 
   useEffect(() => {
     const loadFeatures = async () => {
@@ -99,29 +73,14 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         const features = await listServerFeatures(spaceId);
         setAllFeatures(features);
         
-        // Initialize selected features from current members
+        // Seed from the set's include-mode feature members.
         const currentIds = new Set<string>();
-        
-        // For special feature sets, compute selection dynamically
-        if (featureSet.feature_set_type === 'all') {
-          // All features are selected
-          features.forEach(f => currentIds.add(f.id));
-        } else if (featureSet.feature_set_type === 'server-all' && featureSet.server_id) {
-          // All features from this server are selected
-          features.forEach(f => {
-            if (f.server_id === featureSet.server_id) {
-              currentIds.add(f.id);
-            }
-          });
-        } else {
-          // For configurable sets (default/custom), use members array
-          featureSet.members?.forEach((m) => {
-            if (m.member_type === 'feature' && m.mode === 'include') {
-              currentIds.add(m.member_id);
-            }
-          });
-        }
-        
+        featureSet.members?.forEach((m) => {
+          if (m.member_type === 'feature' && m.mode === 'include') {
+            currentIds.add(m.member_id);
+          }
+        });
+
         setSelectedFeatureIds(currentIds);
         
         // Start with all servers collapsed
@@ -259,10 +218,10 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const getFeatureSetIcon = () => {
     if (featureSet.icon) return <span className="text-xl">{featureSet.icon}</span>;
     switch (featureSet.feature_set_type) {
-      case 'all': return <Globe className="h-6 w-6 text-green-500" />;
       case 'default': return <Star className="h-6 w-6 text-yellow-500" />;
-      case 'server-all': return <Server className="h-6 w-6 text-blue-500" />;
-      case 'custom': default: return <Package className="h-6 w-6 text-purple-500" />;
+      case 'custom':
+      default:
+        return <Package className="h-6 w-6 text-purple-500" />;
     }
   };
 

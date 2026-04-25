@@ -183,14 +183,6 @@ pub enum DomainEvent {
     /// A space was deleted
     SpaceDeleted { space_id: Uuid },
 
-    /// Active space changed
-    SpaceActivated {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        from_space_id: Option<Uuid>,
-        to_space_id: Uuid,
-        to_space_name: String,
-    },
-
     // ════════════════════════════════════════════════════════════════════════
     // SERVER LIFECYCLE (Configuration)
     // ════════════════════════════════════════════════════════════════════════
@@ -315,27 +307,6 @@ pub enum DomainEvent {
     /// A client was issued an access token
     ClientTokenIssued { client_id: String },
 
-    /// A feature set was granted to a client in a space
-    GrantIssued {
-        client_id: String,
-        space_id: Uuid,
-        feature_set_id: String,
-    },
-
-    /// A feature set was revoked from a client in a space
-    GrantRevoked {
-        client_id: String,
-        space_id: Uuid,
-        feature_set_id: String,
-    },
-
-    /// Client's grants were batch-updated for a space
-    ClientGrantsUpdated {
-        client_id: String,
-        space_id: Uuid,
-        feature_set_ids: Vec<String>,
-    },
-
     // ════════════════════════════════════════════════════════════════════════
     // GATEWAY
     // ════════════════════════════════════════════════════════════════════════
@@ -356,6 +327,42 @@ pub enum DomainEvent {
 
     /// Backend server notified that its resources changed
     ResourcesChanged { space_id: Uuid, server_id: String },
+
+    // ════════════════════════════════════════════════════════════════════════
+    // WORKSPACE BINDINGS (root → FeatureSet resolution)
+    // ════════════════════════════════════════════════════════════════════════
+    /// A workspace binding was created, updated, or deleted.
+    ///
+    /// Emitted by the WorkspaceBinding application service. MCPNotifier
+    /// listens for this and broadcasts `notifications/tools/list_changed`
+    /// (plus prompts + resources) to every peer in the affected space so
+    /// clients re-fetch their tool list under the new routing decision.
+    WorkspaceBindingChanged {
+        space_id: Uuid,
+        workspace_root: String,
+    },
+
+    /// A client session resolved via `source=Default` because no binding
+    /// matched any of its reported roots. The desktop UI uses this to
+    /// prompt the user once per new (space, root) pair to pick a FeatureSet
+    /// (or explicitly commit to the default and stop re-prompting).
+    ///
+    /// NOT fired for rootless sessions — nothing to bind.
+    WorkspaceNeedsBinding {
+        client_id: String,
+        session_id: String,
+        space_id: Uuid,
+        workspace_root: String,
+    },
+
+    /// The live set of reported session roots changed (a client connected
+    /// and surfaced new folders, or an existing client's roots moved). The
+    /// desktop Workspaces tab listens for this and re-fetches the detected
+    /// roots list so unbound folders stay visible to the user.
+    ///
+    /// Payload-less on purpose — the consumer always re-queries; embedding
+    /// the roots here would be redundant and race with disconnect cleanup.
+    SessionRootsChanged,
 
     // ════════════════════════════════════════════════════════════════════════
     // META-TOOL AUDIT TRAIL
@@ -389,7 +396,6 @@ impl DomainEvent {
             Self::SpaceCreated { .. } => "space_created",
             Self::SpaceUpdated { .. } => "space_updated",
             Self::SpaceDeleted { .. } => "space_deleted",
-            Self::SpaceActivated { .. } => "space_activated",
             Self::ServerInstalled { .. } => "server_installed",
             Self::ServerUninstalled { .. } => "server_uninstalled",
             Self::ServerConfigUpdated { .. } => "server_config_updated",
@@ -407,14 +413,14 @@ impl DomainEvent {
             Self::ClientUpdated { .. } => "client_updated",
             Self::ClientDeleted { .. } => "client_deleted",
             Self::ClientTokenIssued { .. } => "client_token_issued",
-            Self::GrantIssued { .. } => "grant_issued",
-            Self::GrantRevoked { .. } => "grant_revoked",
-            Self::ClientGrantsUpdated { .. } => "client_grants_updated",
             Self::GatewayStarted { .. } => "gateway_started",
             Self::GatewayStopped => "gateway_stopped",
             Self::ToolsChanged { .. } => "tools_changed",
             Self::PromptsChanged { .. } => "prompts_changed",
             Self::ResourcesChanged { .. } => "resources_changed",
+            Self::WorkspaceBindingChanged { .. } => "workspace_binding_changed",
+            Self::WorkspaceNeedsBinding { .. } => "workspace_needs_binding",
+            Self::SessionRootsChanged => "session_roots_changed",
             Self::MetaToolInvoked { .. } => "meta_tool_invoked",
         }
     }
@@ -433,16 +439,16 @@ impl DomainEvent {
             }
             // Feature refresh directly affects capabilities
             Self::ServerFeaturesRefreshed { .. } => true,
-            // Grant changes affect what client can access
-            Self::GrantIssued { .. }
-            | Self::GrantRevoked { .. }
-            | Self::ClientGrantsUpdated { .. } => true,
             // Feature set member changes affect granted capabilities
             Self::FeatureSetMembersChanged { .. } => true,
             // Backend server notifications
             Self::ToolsChanged { .. }
             | Self::PromptsChanged { .. }
             | Self::ResourcesChanged { .. } => true,
+            // Binding changes reshuffle every peer's resolution in the space
+            Self::WorkspaceBindingChanged { .. } => true,
+            // WorkspaceNeedsBinding is a UI prompt — doesn't itself change what
+            // tools a client sees, just invites the user to configure.
             // All other events don't affect MCP capabilities
             _ => false,
         }
@@ -466,14 +472,11 @@ impl DomainEvent {
             | Self::FeatureSetUpdated { space_id, .. }
             | Self::FeatureSetDeleted { space_id, .. }
             | Self::FeatureSetMembersChanged { space_id, .. }
-            | Self::GrantIssued { space_id, .. }
-            | Self::GrantRevoked { space_id, .. }
-            | Self::ClientGrantsUpdated { space_id, .. }
             | Self::ToolsChanged { space_id, .. }
             | Self::PromptsChanged { space_id, .. }
-            | Self::ResourcesChanged { space_id, .. } => Some(*space_id),
-
-            Self::SpaceActivated { to_space_id, .. } => Some(*to_space_id),
+            | Self::ResourcesChanged { space_id, .. }
+            | Self::WorkspaceBindingChanged { space_id, .. }
+            | Self::WorkspaceNeedsBinding { space_id, .. } => Some(*space_id),
 
             Self::ClientRegistered { .. }
             | Self::ClientReconnected { .. }
@@ -482,9 +485,12 @@ impl DomainEvent {
             | Self::ClientTokenIssued { .. }
             | Self::GatewayStarted { .. }
             | Self::GatewayStopped
+            | Self::SessionRootsChanged
             | Self::MetaToolInvoked { .. } => None,
         }
     }
+
+    // (grant events removed — routing is via WorkspaceBinding + Space.default FS only)
 
     /// Get the server_id if this event is server-scoped
     pub fn server_id(&self) -> Option<&str> {
@@ -511,9 +517,7 @@ impl DomainEvent {
             | Self::ClientUpdated { client_id, .. }
             | Self::ClientDeleted { client_id, .. }
             | Self::ClientTokenIssued { client_id, .. }
-            | Self::GrantIssued { client_id, .. }
-            | Self::GrantRevoked { client_id, .. }
-            | Self::ClientGrantsUpdated { client_id, .. } => Some(client_id),
+            | Self::WorkspaceNeedsBinding { client_id, .. } => Some(client_id),
             _ => None,
         }
     }
@@ -524,9 +528,7 @@ impl DomainEvent {
             Self::FeatureSetCreated { feature_set_id, .. }
             | Self::FeatureSetUpdated { feature_set_id, .. }
             | Self::FeatureSetDeleted { feature_set_id, .. }
-            | Self::FeatureSetMembersChanged { feature_set_id, .. }
-            | Self::GrantIssued { feature_set_id, .. }
-            | Self::GrantRevoked { feature_set_id, .. } => Some(feature_set_id),
+            | Self::FeatureSetMembersChanged { feature_set_id, .. } => Some(feature_set_id),
             _ => None,
         }
     }
@@ -601,13 +603,14 @@ mod tests {
 
     #[test]
     fn test_affects_mcp_capabilities() {
-        // Grant events affect capabilities
-        let grant = DomainEvent::GrantIssued {
-            client_id: "test".to_string(),
+        // Feature-set member changes affect every peer that resolves into that set
+        let members = DomainEvent::FeatureSetMembersChanged {
             space_id: Uuid::new_v4(),
             feature_set_id: "fs1".to_string(),
+            added_count: 1,
+            removed_count: 0,
         };
-        assert!(grant.affects_mcp_capabilities());
+        assert!(members.affects_mcp_capabilities());
 
         // Space creation doesn't affect capabilities
         let space = DomainEvent::SpaceCreated {
@@ -654,5 +657,58 @@ mod tests {
 
         assert!(ConnectionStatus::Connected.is_terminal());
         assert!(!ConnectionStatus::Connecting.is_terminal());
+    }
+
+    #[test]
+    fn test_workspace_binding_changed_affects_capabilities() {
+        // Binding writes reshuffle what every peer in the space resolves to
+        // — MCPNotifier must broadcast list_changed for this event.
+        let e = DomainEvent::WorkspaceBindingChanged {
+            space_id: Uuid::new_v4(),
+            workspace_root: "/proj/foo".to_string(),
+        };
+        assert!(e.affects_mcp_capabilities());
+        assert_eq!(e.type_name(), "workspace_binding_changed");
+        assert!(e.space_id().is_some());
+    }
+
+    #[test]
+    fn test_workspace_needs_binding_is_ui_only() {
+        // The "hey, pick a FeatureSet" prompt is a UI event — it does not
+        // itself change tool visibility and must NOT trigger list_changed.
+        let e = DomainEvent::WorkspaceNeedsBinding {
+            client_id: "client-1".to_string(),
+            session_id: "sess-1".to_string(),
+            space_id: Uuid::new_v4(),
+            workspace_root: "/proj/foo".to_string(),
+        };
+        assert!(!e.affects_mcp_capabilities());
+        assert!(e.is_ui_only());
+        assert_eq!(e.type_name(), "workspace_needs_binding");
+        assert!(e.space_id().is_some());
+        assert_eq!(e.client_id(), Some("client-1"));
+    }
+
+    #[test]
+    fn test_workspace_events_roundtrip_through_json() {
+        // The Tauri bridge serializes these to JSON for the webview; verify
+        // the serde tag + fields match what the frontend expects.
+        let changed = DomainEvent::WorkspaceBindingChanged {
+            space_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
+            workspace_root: "d:\\proj".to_string(),
+        };
+        let json = serde_json::to_string(&changed).unwrap();
+        assert!(json.contains("\"type\":\"workspace_binding_changed\""));
+        assert!(json.contains("\"workspace_root\":\"d:\\\\proj\""));
+
+        let needs = DomainEvent::WorkspaceNeedsBinding {
+            client_id: "c".into(),
+            session_id: "s".into(),
+            space_id: Uuid::nil(),
+            workspace_root: "/r".into(),
+        };
+        let json = serde_json::to_string(&needs).unwrap();
+        assert!(json.contains("\"type\":\"workspace_needs_binding\""));
+        assert!(json.contains("\"session_id\":\"s\""));
     }
 }

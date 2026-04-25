@@ -128,28 +128,10 @@ pub async fn list_feature_sets_by_space(
         .await
         .map_err(|e: anyhow::Error| e.to_string())?;
 
-    let enabled_server_ids: std::collections::HashSet<String> = installed_servers
-        .into_iter()
-        .filter(|s| s.enabled)
-        .map(|s| s.server_id)
-        .collect();
-
-    // Filter out server-all feature sets for servers that are not enabled
-    let filtered = feature_sets
-        .into_iter()
-        .filter(|fs| {
-            if fs.feature_set_type == mcpmux_core::FeatureSetType::ServerAll {
-                // Only include if server is enabled
-                fs.server_id
-                    .as_ref()
-                    .is_some_and(|sid| enabled_server_ids.contains(sid))
-            } else {
-                true
-            }
-        })
-        .map(Into::into)
-        .collect();
-
+    // `server-all` feature sets no longer exist, so nothing to filter;
+    // installed_servers lookup kept for future per-server filtering hooks.
+    let _ = installed_servers;
+    let filtered = feature_sets.into_iter().map(Into::into).collect();
     Ok(filtered)
 }
 
@@ -264,38 +246,6 @@ pub async fn delete_feature_set(
     }
 
     Ok(())
-}
-
-/// Get builtin feature sets for a space.
-#[tauri::command]
-pub async fn get_builtin_feature_sets(
-    space_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<FeatureSetResponse>, String> {
-    let feature_sets = state
-        .feature_set_repository
-        .list_builtin(&space_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(feature_sets.into_iter().map(Into::into).collect())
-}
-
-/// Ensure server-all featureset exists for a server in a space.
-#[tauri::command]
-pub async fn ensure_server_all_feature_set(
-    space_id: String,
-    server_id: String,
-    server_name: String,
-    state: State<'_, AppState>,
-) -> Result<FeatureSetResponse, String> {
-    let feature_set = state
-        .feature_set_repository
-        .ensure_server_all(&space_id, &server_id, &server_name)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(feature_set.into())
 }
 
 /// Update a feature set (name, description, icon).

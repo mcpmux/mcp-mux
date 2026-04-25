@@ -31,17 +31,15 @@ use uuid::Uuid;
 struct Fixture {
     registry: Arc<MetaToolRegistry>,
     broker: Arc<ApprovalBroker>,
+    #[allow(dead_code)]
     client_repo: Arc<dyn InboundMcpClientRepository>,
-    space_repo: Arc<dyn SpaceRepository>,
     feature_set_repo: Arc<dyn FeatureSetRepository>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
-    server_feature_repo: Arc<dyn ServerFeatureRepository>,
     session_roots: Arc<SessionRootsRegistry>,
     space_id: Uuid,
     client_id: Uuid,
     session_id: String,
     fs_android_id: Uuid,
-    fs_full_id: Uuid,
 }
 
 impl Fixture {
@@ -82,29 +80,22 @@ impl Fixture {
         server_feature_repo.upsert(&feature1).await.unwrap();
         server_feature_repo.upsert(&feature2).await.unwrap();
 
-        // Start the Space with `fs_full` as its active FS — the baseline the
-        // caller resolves to before any meta-tool action.
-        space_repo
-            .set_active_feature_set(&space_id, Some(&fs_full_id))
-            .await
-            .unwrap();
+        // The space's auto-seeded Default FS is the resolver's baseline
+        // when no binding matches — no "set active FS" step needed.
+        let _ = fs_full_id;
 
-        // Create test client with `pinned_space_id` set.
+        // Create test client — routing is per-session-root now, not per-client.
         let client = Client::new("TestClient", "test-type");
         let client_id = client.id;
         client_repo.create(&client).await.unwrap();
-        client_repo
-            .set_pin(&client_id, &space_id, None)
-            .await
-            .unwrap();
 
         let session_roots = SessionRootsRegistry::new();
         let session_id = "sess-meta".to_string();
 
         let resolver = Arc::new(FeatureSetResolverService::new(
-            client_repo.clone(),
             space_repo.clone(),
             binding_repo.clone(),
+            feature_set_repo.clone(),
             session_roots.clone(),
         ));
 
@@ -136,16 +127,13 @@ impl Fixture {
             registry,
             broker,
             client_repo,
-            space_repo,
             feature_set_repo,
             binding_repo,
-            server_feature_repo,
             session_roots,
             space_id,
             client_id,
             session_id,
             fs_android_id,
-            fs_full_id,
         }
     }
 
@@ -240,7 +228,7 @@ async fn list_all_tools_returns_unfiltered_across_servers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn list_feature_sets_marks_active_fs() {
+async fn list_feature_sets_returns_space_contents() {
     let f = Fixture::new().await;
     let result = f
         .registry
@@ -254,23 +242,15 @@ async fn list_feature_sets_marks_active_fs() {
         .unwrap();
     let body = Fixture::result_json(&result);
     let sets = body.get("feature_sets").unwrap().as_array().unwrap();
-    let active: Vec<_> = sets
-        .iter()
-        .filter(|fs| {
-            fs.get("is_active")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-        .collect();
-    assert_eq!(active.len(), 1, "exactly one Active FS expected");
-    assert_eq!(
-        active[0].get("id").unwrap().as_str().unwrap(),
-        f.fs_full_id.to_string()
-    );
+    // Seed created 2 custom FSes + the auto-seeded Default.
+    assert_eq!(sets.len(), 3, "Default + 2 custom expected");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn describe_resolution_reports_space_active_baseline() {
+async fn describe_resolution_reports_default_baseline() {
+    // With no bindings and no reported roots, the resolver falls through
+    // to the Default tier and returns the space's auto-seeded
+    // `fs_default_<space>` FS.
     let f = Fixture::new().await;
     let result = f
         .registry
@@ -283,13 +263,11 @@ async fn describe_resolution_reports_space_active_baseline() {
         .await
         .unwrap();
     let body = Fixture::result_json(&result);
-    assert_eq!(
-        body.get("source").unwrap().as_str().unwrap(),
-        "space_active"
-    );
-    assert_eq!(
-        body.get("feature_set_id").unwrap().as_str().unwrap(),
-        f.fs_full_id.to_string()
+    assert_eq!(body.get("source").unwrap().as_str().unwrap(), "default");
+    let fs_id = body.get("feature_set_id").unwrap().as_str().unwrap();
+    assert!(
+        fs_id.starts_with("fs_default_"),
+        "default tier should surface the Default FS, got {fs_id}"
     );
 }
 
@@ -326,9 +304,15 @@ async fn describe_workspace_reports_reported_roots() {
 #[tokio::test(flavor = "multi_thread")]
 async fn write_without_publisher_returns_approval_required() {
     let f = Fixture::new().await;
+    let input = if cfg!(windows) {
+        "D:\\Projects\\Approval\\"
+    } else {
+        "/proj/approval"
+    };
+    f.session_roots.set(&f.session_id, [input]);
     let result = f
         .call_tool_as_handler_would(
-            "mcpmux_pin_this_session",
+            "mcpmux_bind_current_workspace",
             json!({ "feature_set_id": f.fs_android_id.to_string() }),
         )
         .await;
@@ -341,34 +325,21 @@ async fn write_without_publisher_returns_approval_required() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn pin_this_session_writes_state_on_allow() {
-    let f = Fixture::new().await;
-    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
-
-    let result = f
-        .registry
-        .call(
-            "mcpmux_pin_this_session",
-            &f.client_id,
-            Some(&f.session_id),
-            json!({ "feature_set_id": f.fs_android_id.to_string() }),
-        )
-        .await
-        .unwrap();
-    assert!(!Fixture::is_error(&result));
-
-    let client = f.client_repo.get(&f.client_id).await.unwrap().unwrap();
-    assert_eq!(client.pinned_feature_set_id, Some(f.fs_android_id));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn pin_this_session_rejected_on_deny_leaves_state_unchanged() {
+async fn write_rejected_on_deny_leaves_state_unchanged() {
     let f = Fixture::new().await;
     f.attach_auto_publisher(ApprovalDecision::Deny);
 
+    let before_bindings = f.binding_repo.list().await.unwrap().len();
+
+    let input = if cfg!(windows) {
+        "D:\\Projects\\Denied\\"
+    } else {
+        "/proj/denied"
+    };
+    f.session_roots.set(&f.session_id, [input]);
     let result = f
         .call_tool_as_handler_would(
-            "mcpmux_pin_this_session",
+            "mcpmux_bind_current_workspace",
             json!({ "feature_set_id": f.fs_android_id.to_string() }),
         )
         .await;
@@ -379,47 +350,8 @@ async fn pin_this_session_rejected_on_deny_leaves_state_unchanged() {
         "approval_denied"
     );
 
-    let client = f.client_repo.get(&f.client_id).await.unwrap().unwrap();
-    assert_eq!(client.pinned_feature_set_id, None);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn always_allow_bypasses_subsequent_dialogs() {
-    let f = Fixture::new().await;
-    f.attach_auto_publisher(ApprovalDecision::AlwaysForThisSessionAndClient);
-
-    // First call pops the dialog and banks the always-allow.
-    let r1 = f
-        .registry
-        .call(
-            "mcpmux_pin_this_session",
-            &f.client_id,
-            Some(&f.session_id),
-            json!({ "feature_set_id": f.fs_android_id.to_string() }),
-        )
-        .await
-        .unwrap();
-    assert!(!Fixture::is_error(&r1));
-
-    // Detach publisher — any further prompt would fail. Second call must
-    // short-circuit via always-allow.
-    let noop_publisher: ApprovalPublisher = Arc::new(move |_req| async move { true }.boxed());
-    f.broker.set_publisher(noop_publisher).await;
-
-    let r2 = f
-        .registry
-        .call(
-            "mcpmux_pin_this_session",
-            &f.client_id,
-            Some(&f.session_id),
-            json!({ "feature_set_id": f.fs_full_id.to_string() }),
-        )
-        .await
-        .unwrap();
-    assert!(!Fixture::is_error(&r2));
-
-    let client = f.client_repo.get(&f.client_id).await.unwrap().unwrap();
-    assert_eq!(client.pinned_feature_set_id, Some(f.fs_full_id));
+    let after_bindings = f.binding_repo.list().await.unwrap().len();
+    assert_eq!(after_bindings, before_bindings);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -504,35 +436,23 @@ async fn bind_current_workspace_creates_binding_with_normalized_root() {
     // Drive-letter lowercased, trailing separator trimmed.
     assert_eq!(stored, &normalize_workspace_root(input));
     assert!(!stored.ends_with('/') && !stored.ends_with('\\'));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn set_space_active_updates_space_fallback() {
-    let f = Fixture::new().await;
-    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
-
-    let result = f
-        .registry
-        .call(
-            "mcpmux_set_space_active",
-            &f.client_id,
-            Some(&f.session_id),
-            json!({ "feature_set_id": f.fs_android_id.to_string() }),
-        )
-        .await
-        .unwrap();
-    assert!(!Fixture::is_error(&result));
-
-    let space = f.space_repo.get(&f.space_id).await.unwrap().unwrap();
-    assert_eq!(space.active_feature_set_id, Some(f.fs_android_id));
+    // Binding points at the concrete FS we passed in.
+    assert_eq!(bindings[0].space_id, f.space_id);
+    assert_eq!(bindings[0].feature_set_id, f.fs_android_id.to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_feature_set_argument_rejected() {
     let f = Fixture::new().await;
+    let input = if cfg!(windows) {
+        "D:\\Projects\\Invalid\\"
+    } else {
+        "/proj/invalid"
+    };
+    f.session_roots.set(&f.session_id, [input]);
     let result = f
         .call_tool_as_handler_would(
-            "mcpmux_pin_this_session",
+            "mcpmux_bind_current_workspace",
             json!({ "feature_set_id": "not-a-uuid" }),
         )
         .await;
@@ -558,20 +478,18 @@ async fn registry_advertises_every_default_tool_with_annotations() {
         "mcpmux_list_feature_sets",
         "mcpmux_describe_resolution",
         "mcpmux_describe_workspace",
-        "mcpmux_pin_this_session",
         "mcpmux_create_feature_set",
         "mcpmux_bind_current_workspace",
-        "mcpmux_set_space_active",
     ] {
         assert!(names.iter().any(|n| n == expected), "missing {expected}");
     }
     // Writes carry the destructive_hint annotation.
-    let pin = tools
+    let bind = tools
         .iter()
-        .find(|t| t.name == "mcpmux_pin_this_session")
+        .find(|t| t.name == "mcpmux_bind_current_workspace")
         .unwrap();
     assert_eq!(
-        pin.annotations.as_ref().and_then(|a| a.destructive_hint),
+        bind.annotations.as_ref().and_then(|a| a.destructive_hint),
         Some(true)
     );
 }
@@ -601,19 +519,15 @@ async fn bare_registry(
     let server_feature_repo: Arc<dyn ServerFeatureRepository> =
         Arc::new(SqliteServerFeatureRepository::new(db.clone()));
 
-    let space = space_repo.get_default().await.unwrap().unwrap();
+    let _space = space_repo.get_default().await.unwrap().unwrap();
     let client = Client::new("c", "t");
     let client_id = client.id;
     client_repo.create(&client).await.unwrap();
-    client_repo
-        .set_pin(&client_id, &space.id, None)
-        .await
-        .unwrap();
 
     let resolver = Arc::new(FeatureSetResolverService::new(
-        client_repo.clone(),
         space_repo.clone(),
         binding_repo.clone(),
+        feature_set_repo.clone(),
         SessionRootsRegistry::new(),
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());
@@ -678,7 +592,7 @@ async fn denied_write_emits_meta_tool_invoked_with_decision_deny() {
     // registry's central audit-logger records as `approval_required`.
     let _ = registry
         .call(
-            "mcpmux_pin_this_session",
+            "mcpmux_bind_current_workspace",
             &client_id,
             Some("s"),
             json!({ "feature_set_id": Uuid::new_v4().to_string() }),
@@ -694,8 +608,11 @@ async fn denied_write_emits_meta_tool_invoked_with_decision_deny() {
             tool_name,
             ..
         } => {
-            assert_eq!(tool_name, "mcpmux_pin_this_session");
-            assert_eq!(decision, "approval_required");
+            assert_eq!(tool_name, "mcpmux_bind_current_workspace");
+            // bind_current_workspace bails on "invalid_args" (missing reported
+            // roots) before it reaches the approval broker — the audit
+            // logger records the bail-out reason, not approval_required.
+            assert_eq!(decision, "invalid_args");
         }
         other => panic!("unexpected event: {other:?}"),
     }
@@ -724,9 +641,9 @@ async fn master_switch_toggles_registry_visibility() {
     let server_feature_repo: Arc<dyn ServerFeatureRepository> =
         Arc::new(SqliteServerFeatureRepository::new(db.clone()));
     let resolver = Arc::new(FeatureSetResolverService::new(
-        client_repo.clone(),
         space_repo.clone(),
         binding_repo.clone(),
+        feature_set_repo.clone(),
         SessionRootsRegistry::new(),
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());

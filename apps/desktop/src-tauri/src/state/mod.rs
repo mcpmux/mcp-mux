@@ -4,9 +4,9 @@
 //! between Tauri commands.
 
 use mcpmux_core::{
-    AppSettingsRepository, AppSettingsService, ClientService, CredentialRepository,
-    FeatureSetRepository, GatewayPortService, InboundMcpClientRepository,
-    InstalledServerRepository, LogConfig, OutboundOAuthRepository, ServerDiscoveryService,
+    AppSettingsRepository, AppSettingsService, CredentialRepository, FeatureSetRepository,
+    GatewayPortService, InboundMcpClientRepository, InstalledServerRepository, LogConfig,
+    OutboundOAuthRepository, ServerDiscoveryService,
     ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager, SpaceRepository,
     SpaceService, WorkspaceBindingRepository,
 };
@@ -33,8 +33,6 @@ pub struct AppState {
     pub gateway_port_service: Arc<GatewayPortService>,
     /// Service for managing spaces
     pub space_service: SpaceService,
-    /// Service for managing clients (auto-grants, etc.)
-    pub client_service: ClientService,
     /// Server discovery service for loading servers from API/bundled/user spaces
     pub server_discovery: Arc<ServerDiscoveryService>,
     /// Server log manager for file-based logging
@@ -124,8 +122,6 @@ impl AppState {
             space_repository,
             feature_set_repository.clone(),
         );
-        let client_service =
-            ClientService::new(client_repository.clone(), feature_set_repository.clone());
 
         // Create server discovery service
         // Spaces directory is relative to app data_dir (single source of truth)
@@ -160,7 +156,6 @@ impl AppState {
             settings_repository,
             gateway_port_service,
             space_service,
-            client_service,
             server_discovery,
             server_log_manager,
             installed_server_repository,

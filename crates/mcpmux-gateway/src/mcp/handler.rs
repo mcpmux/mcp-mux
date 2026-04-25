@@ -81,31 +81,77 @@ impl McpMuxGatewayHandler {
         }
     }
 
-    /// Shadow-mode log for the new FeatureSet resolver.
+    /// Log resolver decision, emit `WorkspaceNeedsBinding` when a session
+    /// reports roots but no binding matched (`source=Default`), and — when
+    /// the session's resolved FS *flipped* from a prior value — fire a
+    /// per-peer `list_changed` so the client re-pulls its tools.
     ///
-    /// Does not affect routing; prints the resolver's decision so operators
-    /// can compare against the legacy `get_client_grants` path before we
-    /// flip the switch.
-    async fn shadow_log_resolution(
-        resolver: &crate::services::FeatureSetResolverService,
-        client_id: &uuid::Uuid,
+    /// `notifier` is optional: callers from contexts where peer notification
+    /// doesn't apply (e.g. rootless init paths) can pass `None`.
+    ///
+    /// Rootless sessions never trigger the binding prompt — there's nothing
+    /// to bind (caller passes `root_for_prompt = None`).
+    async fn log_and_notify_resolution(
+        services: &std::sync::Arc<crate::server::ServiceContainer>,
+        notifier: Option<&MCPNotifier>,
+        client_id: &str,
         session_id: Option<&str>,
+        root_for_prompt: Option<&str>,
     ) {
-        match resolver.resolve(client_id, session_id).await {
+        let resolver = &services.feature_set_resolver;
+        match resolver.resolve(session_id).await {
             Ok(resolved) => {
                 info!(
                     %client_id,
                     session_id = session_id.unwrap_or("<none>"),
-                    feature_set_id = resolved.feature_set_id.map(|u| u.to_string()).unwrap_or_else(|| "<deny>".into()),
+                    feature_set_id = resolved.feature_set_id.clone().unwrap_or_else(|| "<deny>".into()),
+                    space_id = resolved.space_id.map(|u| u.to_string()).unwrap_or_else(|| "<none>".into()),
                     source = ?resolved.source,
-                    "[FeatureSetResolver][shadow] resolved",
+                    "[FeatureSetResolver] resolved",
                 );
+
+                // Track the resolved FS per session so we can detect flips.
+                // The very first sighting (no prior entry) counts as a flip
+                // — that's the case where the client's `tools/list` at init
+                // saw the fallback set but roots arriving later may have
+                // landed on a different binding. Firing once on first sight
+                // is safe (idempotent re-list); the dedup protects against
+                // repeated identical resolutions.
+                if let (Some(sid), Some(notifier)) = (session_id, notifier) {
+                    let changed = services
+                        .session_roots
+                        .record_resolution(sid, resolved.feature_set_id.as_deref());
+                    if changed {
+                        notifier.notify_peer_lists_changed(client_id).await;
+                    }
+                }
+
+                // Prompt only when the session reported a root AND no binding
+                // matched (source=Default). `session_id` must be Some too so
+                // the UI can correlate back to this peer.
+                let should_prompt =
+                    matches!(resolved.source, crate::services::ResolutionSource::Default);
+                if let (true, Some(sid), Some(space_id), Some(root)) = (
+                    should_prompt,
+                    session_id,
+                    resolved.space_id,
+                    root_for_prompt,
+                ) {
+                    services.gateway_state.read().await.emit_domain_event(
+                        mcpmux_core::DomainEvent::WorkspaceNeedsBinding {
+                            client_id: client_id.to_string(),
+                            session_id: sid.to_string(),
+                            space_id,
+                            workspace_root: root.to_string(),
+                        },
+                    );
+                }
             }
             Err(e) => {
                 warn!(
                     %client_id,
                     error = %e,
-                    "[FeatureSetResolver][shadow] resolve failed",
+                    "[FeatureSetResolver] resolve failed",
                 );
             }
         }
@@ -200,10 +246,9 @@ impl ServerHandler for McpMuxGatewayHandler {
             .prime_hashes_for_space(oauth_ctx.space_id)
             .await;
 
-        // Resolver v2 (shadow mode): if the peer advertised the `roots`
-        // capability, fetch its reported workspace roots and stash them in the
-        // session registry. We then run the resolver and log its decision —
-        // the legacy grants path is still authoritative for routing.
+        // If the peer advertised the `roots` capability, fetch its reported
+        // workspace roots into the session registry so the resolver can pick
+        // a binding. Then log + (if no binding matched) prompt the UI.
         if let Some(session_id) = extract_session_id(&context.extensions) {
             let declares_roots = peer
                 .peer_info()
@@ -212,7 +257,8 @@ impl ServerHandler for McpMuxGatewayHandler {
             if declares_roots {
                 let peer_for_roots = peer.clone();
                 let session_roots = self.services.session_roots.clone();
-                let resolver = self.services.feature_set_resolver.clone();
+                let services = self.services.clone();
+                let notifier = self.notification_bridge.clone();
                 let client_id_str = oauth_ctx.client_id.clone();
                 let session_id_for_task = session_id.clone();
                 tokio::spawn(async move {
@@ -228,31 +274,58 @@ impl ServerHandler for McpMuxGatewayHandler {
                                 roots = ?uris,
                                 "[FeatureSetResolver] fetched MCP roots",
                             );
-                            if let Ok(client_uuid) = uuid::Uuid::parse_str(&client_id_str) {
-                                Self::shadow_log_resolution(
-                                    &resolver,
-                                    &client_uuid,
-                                    Some(&session_id_for_task),
-                                )
-                                .await;
-                            }
+
+                            // Tell the desktop UI the detected-roots list may
+                            // have grown so the Workspaces tab refreshes
+                            // without waiting for a polling cycle.
+                            services
+                                .gateway_state
+                                .read()
+                                .await
+                                .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+
+                            // Pick the longest (most specific) normalized
+                            // root for the sheet. The resolver has already
+                            // normalized them on insert. Passing `Some(root)`
+                            // lets log_and_notify_resolution emit
+                            // `WorkspaceNeedsBinding` if the resolver ended
+                            // up at `source = Default` (i.e. no binding yet).
+                            let root_for_prompt =
+                                session_roots.get(&session_id_for_task).and_then(|roots| {
+                                    roots
+                                        .into_iter()
+                                        .filter(|r| !r.is_empty())
+                                        .max_by_key(|r| r.len())
+                                });
+
+                            Self::log_and_notify_resolution(
+                                &services,
+                                Some(&notifier),
+                                &client_id_str,
+                                Some(&session_id_for_task),
+                                root_for_prompt.as_deref(),
+                            )
+                            .await;
                         }
                         Err(e) => {
                             debug!(
                                 client_id = %client_id_str,
                                 session_id = %session_id_for_task,
                                 error = %e,
-                                "[FeatureSetResolver] peer.list_roots() failed — falling back to Space active FS",
+                                "[FeatureSetResolver] peer.list_roots() failed — falling back to active Space default",
                             );
                         }
                     }
                 });
-            } else if let Ok(client_uuid) = uuid::Uuid::parse_str(&oauth_ctx.client_id) {
-                // No roots declared — resolve immediately against pin / space active FS.
-                Self::shadow_log_resolution(
-                    &self.services.feature_set_resolver,
-                    &client_uuid,
+            } else {
+                // No roots declared — silent default, never prompt
+                // (root_for_prompt = None suppresses the emit).
+                Self::log_and_notify_resolution(
+                    &self.services,
+                    Some(&self.notification_bridge),
+                    &oauth_ctx.client_id,
                     Some(&session_id),
+                    None,
                 )
                 .await;
             }
@@ -263,6 +336,79 @@ impl ServerHandler for McpMuxGatewayHandler {
             space_id = %oauth_ctx.space_id,
             "Client initialized - peer registered for notifications"
         );
+    }
+
+    /// The client told us its roots list changed (e.g. VS Code added a
+    /// folder to a multi-root workspace). Re-fetch via `list_roots`,
+    /// update the session registry, and re-run the resolver — if any root
+    /// is still unbound, `log_and_notify_resolution` fires a fresh
+    /// `WorkspaceNeedsBinding` so the sheet pops for the newly-surfaced
+    /// folder.
+    async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) {
+        let oauth_ctx = match self.get_oauth_context(&context.extensions) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                warn!(
+                    "Failed to extract OAuth context on_roots_list_changed: {}",
+                    e
+                );
+                return;
+            }
+        };
+        let Some(session_id) = extract_session_id(&context.extensions) else {
+            debug!("[FeatureSetResolver] roots/list_changed with no session id — skipping");
+            return;
+        };
+        let peer = std::sync::Arc::new(context.peer);
+        let session_roots = self.services.session_roots.clone();
+        let services = self.services.clone();
+        let notifier = self.notification_bridge.clone();
+        let client_id_str = oauth_ctx.client_id.clone();
+        let session_id_for_task = session_id.clone();
+        tokio::spawn(async move {
+            match peer.list_roots().await {
+                Ok(result) => {
+                    let uris: Vec<String> =
+                        result.roots.iter().map(|r| r.uri.to_string()).collect();
+                    session_roots.set(&session_id_for_task, uris.iter().map(|s| s.as_str()));
+                    debug!(
+                        client_id = %client_id_str,
+                        session_id = %session_id_for_task,
+                        roots = ?uris,
+                        "[FeatureSetResolver] refreshed MCP roots (roots/list_changed)",
+                    );
+                    services
+                        .gateway_state
+                        .read()
+                        .await
+                        .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+
+                    let root_for_prompt =
+                        session_roots.get(&session_id_for_task).and_then(|roots| {
+                            roots
+                                .into_iter()
+                                .filter(|r| !r.is_empty())
+                                .max_by_key(|r| r.len())
+                        });
+                    Self::log_and_notify_resolution(
+                        &services,
+                        Some(&notifier),
+                        &client_id_str,
+                        Some(&session_id_for_task),
+                        root_for_prompt.as_deref(),
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    debug!(
+                        client_id = %client_id_str,
+                        session_id = %session_id_for_task,
+                        error = %e,
+                        "[FeatureSetResolver] refresh list_roots failed — silent",
+                    );
+                }
+            }
+        });
     }
 
     async fn list_tools(

@@ -29,17 +29,27 @@ import {
   Lightbulb,
   Package,
   Heart,
+  Network,
+  RotateCcw,
+  AlertCircle,
 } from 'lucide-react';
 import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
 import { getMetaToolsEnabled, setMetaToolsEnabled } from '@/lib/api/metaTools';
 import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
+import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
 
 interface StartupSettings {
   autoLaunch: boolean;
   startMinimized: boolean;
   closeToTray: boolean;
+}
+
+interface GatewayPortSettings {
+  configuredPort: number | null;
+  defaultPort: number;
+  activePort: number | null;
 }
 
 export function SettingsPage() {
@@ -50,6 +60,7 @@ export function SettingsPage() {
   const [logsPath, setLogsPath] = useState<string>('');
   const [openingLogs, setOpeningLogs] = useState(false);
   const { toasts, success, error } = useToast();
+  const gatewayControl = useGatewayControl();
 
   // Startup settings state
   const [startupSettings, setStartupSettings] = useState<StartupSettings>({
@@ -67,6 +78,103 @@ export function SettingsPage() {
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
   const [metaToolsEnabled, setMetaToolsEnabledState] = useState<boolean>(true);
   const [loadingMetaTools, setLoadingMetaTools] = useState(true);
+
+  // Gateway port — persisted user override, the default the app ships
+  // with, and the port the currently-running gateway is bound to. When
+  // saved ≠ active, the user has to restart the gateway to apply.
+  const [portSettings, setPortSettings] = useState<GatewayPortSettings | null>(null);
+  const [portDraft, setPortDraft] = useState<string>('');
+  const [portError, setPortError] = useState<string | null>(null);
+  const [savingPort, setSavingPort] = useState(false);
+  const [resettingPort, setResettingPort] = useState(false);
+
+  const loadPortSettings = async () => {
+    try {
+      const s = await invoke<GatewayPortSettings>('get_gateway_port_settings');
+      setPortSettings(s);
+      setPortDraft(String(s.configuredPort ?? s.defaultPort));
+      setPortError(null);
+    } catch (err) {
+      console.error('Failed to load gateway port settings:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadPortSettings();
+  }, []);
+
+  const validatePort = (raw: string): { port: number } | { error: string } => {
+    const trimmed = raw.trim();
+    if (!trimmed) return { error: 'Enter a port number' };
+    if (!/^\d+$/.test(trimmed)) return { error: 'Port must be a number' };
+    const n = Number(trimmed);
+    if (n < 1024 || n > 65535) {
+      return { error: 'Port must be between 1024 and 65535' };
+    }
+    return { port: n };
+  };
+
+  const handleSavePort = async () => {
+    const parsed = validatePort(portDraft);
+    if ('error' in parsed) {
+      setPortError(parsed.error);
+      return;
+    }
+    setPortError(null);
+    setSavingPort(true);
+    try {
+      await invoke('set_gateway_port', { port: parsed.port });
+      await loadPortSettings();
+      success(
+        'Gateway port saved',
+        portSettings?.activePort && portSettings.activePort !== parsed.port
+          ? `Restart the gateway for port ${parsed.port} to take effect.`
+          : `Next gateway start will use port ${parsed.port}.`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPortError(msg);
+      error('Failed to save port', msg);
+    } finally {
+      setSavingPort(false);
+    }
+  };
+
+  const handleResetPort = async () => {
+    setResettingPort(true);
+    try {
+      await invoke('reset_gateway_port');
+      await loadPortSettings();
+      success(
+        'Reset to default',
+        portSettings && portSettings.activePort !== portSettings.defaultPort
+          ? `Restart the gateway for port ${portSettings.defaultPort} to take effect.`
+          : `Next gateway start will use port ${portSettings?.defaultPort ?? ''}.`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      error('Failed to reset port', msg);
+    } finally {
+      setResettingPort(false);
+    }
+  };
+
+  const handleRestartGateway = async () => {
+    try {
+      const outcome = await gatewayControl.restart();
+      await loadPortSettings();
+      if (outcome.status === 'cancelled') return;
+      success(
+        'Gateway restarted',
+        outcome.fellBackToDynamic
+          ? `Saved port was unavailable — now running on :${outcome.port} instead.`
+          : 'The new port is now active.'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      error('Failed to restart gateway', msg);
+    }
+  };
 
   useEffect(() => {
     getMetaToolsEnabled()
@@ -197,6 +305,7 @@ export function SettingsPage() {
   return (
     <>
       <ToastContainer toasts={toasts} onClose={(id) => toasts.find(t => t.id === id)?.onClose(id)} />
+      {gatewayControl.ConfirmDialogElement}
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold">Settings</h1>
@@ -295,6 +404,154 @@ export function SettingsPage() {
                 </div>
               )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Gateway Section — port override + reset to default */}
+      <Card data-testid="settings-gateway-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Network className="h-5 w-5" />
+            Gateway
+          </CardTitle>
+          <CardDescription>
+            The local port every AI client connects to. Changing it takes effect on the next
+            gateway start — existing IDE configs pointing at the old port will need updating.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {portSettings === null ? (
+            <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading…
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <Network className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <label
+                    htmlFor="gateway-port-input"
+                    className="text-sm font-medium"
+                  >
+                    Gateway port
+                  </label>
+                  <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                    Default is <span className="font-mono">{portSettings.defaultPort}</span>.
+                    Use a port between 1024 and 65535.
+                    {portSettings.activePort !== null ? (
+                      <>
+                        {' '}Currently running on{' '}
+                        <span
+                          className="font-mono"
+                          data-testid="gateway-active-port"
+                        >
+                          :{portSettings.activePort}
+                        </span>
+                        .
+                      </>
+                    ) : (
+                      ' Gateway is stopped.'
+                    )}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <input
+                      id="gateway-port-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={1024}
+                      max={65535}
+                      value={portDraft}
+                      onChange={(e) => {
+                        setPortDraft(e.target.value);
+                        if (portError) setPortError(null);
+                      }}
+                      disabled={savingPort || resettingPort}
+                      className="w-28 px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+                      data-testid="gateway-port-input"
+                    />
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSavePort}
+                      disabled={
+                        savingPort ||
+                        resettingPort ||
+                        portDraft.trim() === String(portSettings.configuredPort ?? portSettings.defaultPort)
+                      }
+                      data-testid="gateway-port-save-btn"
+                    >
+                      {savingPort ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : null}
+                      Save
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleResetPort}
+                      disabled={
+                        savingPort ||
+                        resettingPort ||
+                        portSettings.configuredPort === null
+                      }
+                      data-testid="gateway-port-reset-btn"
+                      title={
+                        portSettings.configuredPort === null
+                          ? 'Already using the default port'
+                          : `Reset to ${portSettings.defaultPort}`
+                      }
+                    >
+                      {resettingPort ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                      )}
+                      Reset to default
+                    </Button>
+                  </div>
+                  {portError ? (
+                    <p
+                      className="text-xs text-red-600 dark:text-red-400 mt-2"
+                      data-testid="gateway-port-error"
+                    >
+                      {portError}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              {portSettings.activePort !== null &&
+              portSettings.configuredPort !== null &&
+              portSettings.configuredPort !== portSettings.activePort ? (
+                <div
+                  className="flex items-start gap-2 p-3 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 text-xs"
+                  data-testid="gateway-port-restart-hint"
+                >
+                  <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="font-semibold text-amber-800 dark:text-amber-200">
+                      Restart required
+                    </p>
+                    <p className="text-amber-700 dark:text-amber-300 mt-0.5">
+                      Saved port <span className="font-mono">:{portSettings.configuredPort}</span>{' '}
+                      doesn't match the running port{' '}
+                      <span className="font-mono">:{portSettings.activePort}</span>. Restart the
+                      gateway to apply — your IDE configs will need to point at the new URL.
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleRestartGateway}
+                    data-testid="gateway-restart-btn"
+                  >
+                    Restart gateway
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          )}
         </CardContent>
       </Card>
 

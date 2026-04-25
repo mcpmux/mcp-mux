@@ -14,9 +14,9 @@ mod state;
 mod tray;
 
 // Re-export deep link handler
-use commands::oauth::handle_deep_link;
+use commands::oauth::{route_or_buffer_deep_link, PendingInitialDeepLink};
 
-use commands::gateway::GatewayAppState;
+use commands::gateway::{GatewayAppState, PendingPortConflict};
 use commands::server_manager::ServerManagerState;
 use state::AppState;
 
@@ -223,6 +223,42 @@ pub fn run() {
     info!("Logs directory: {}", logs_dir.display());
 
     tauri::Builder::default()
+        // single_instance MUST be registered BEFORE deep_link so its `deep-link`
+        // feature can forward cold-start URLs (Windows argv[1]) through the
+        // deep_link plugin's on_open_url handler. Registering deep_link first
+        // orphans the initial URL — no on_open_url fires, no consent popup.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            // Fires when a SECOND instance is launched (e.g. browser deep link
+            // click while mcpmux is already running). The `deep-link` feature
+            // on this plugin hands argv off to the deep_link plugin's
+            // on_open_url on cold-start; this callback only needs to focus
+            // the window and handle any deep-link arg that single-instance
+            // did NOT forward (belt-and-suspenders for platforms or versions
+            // where the auto-forward doesn't trigger).
+            info!("Second instance detected, focusing existing window");
+            info!("Args: {:?}, CWD: {:?}", args, cwd);
+
+            for arg in &args {
+                if branding::is_deep_link(arg) {
+                    info!("Deep link received via second instance: {}", arg);
+                    route_or_buffer_deep_link(app, arg);
+                }
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(e) = window.show() {
+                    warn!("Failed to show window: {}", e);
+                }
+                if let Err(e) = window.unminimize() {
+                    warn!("Failed to unminimize window: {}", e);
+                }
+                if let Err(e) = window.set_focus() {
+                    warn!("Failed to focus window: {}", e);
+                }
+            } else {
+                warn!("Main window not found");
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_deep_link::init())
@@ -232,37 +268,6 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            // This callback is called when a second instance is launched
-            info!("Second instance detected, focusing existing window");
-            info!("Args: {:?}, CWD: {:?}", args, cwd);
-
-            // Check if any arg is a deep link URL
-            for arg in &args {
-                if branding::is_deep_link(arg) {
-                    info!("Deep link received via second instance: {}", arg);
-                    handle_deep_link(app, arg);
-                }
-            }
-
-            // Try to focus the main window
-            if let Some(window) = app.get_webview_window("main") {
-                // Show window if hidden
-                if let Err(e) = window.show() {
-                    warn!("Failed to show window: {}", e);
-                }
-                // Unminimize if minimized
-                if let Err(e) = window.unminimize() {
-                    warn!("Failed to unminimize window: {}", e);
-                }
-                // Focus the window
-                if let Err(e) = window.set_focus() {
-                    warn!("Failed to focus window: {}", e);
-                }
-            } else {
-                warn!("Main window not found");
-            }
-        }))
         .setup(|app| {
             info!("Initializing application state...");
 
@@ -281,6 +286,41 @@ pub fn run() {
 
             app.manage(state);
 
+            // Backfill the auto-seeded Default FeatureSet for any space that
+            // predates the seeding code path. Runs once per app boot; idempotent.
+            //
+            // Must run inside an async context (the repo uses tokio locks
+            // internally) — the setup closure runs before the user-facing
+            // tokio runtime starts, so we use Tauri's own runtime here.
+            {
+                let app_state_for_backfill: tauri::State<'_, AppState> = app.state();
+                // We can't borrow `app_state_for_backfill` across the await
+                // inside block_on, so snapshot the two repo handles we need.
+                let fs_repo = app_state_for_backfill.feature_set_repository.clone();
+                let db_for_backfill = app_state_for_backfill.database();
+                tauri::async_runtime::block_on(async move {
+                    use mcpmux_core::SpaceRepository;
+                    let space_repo = mcpmux_storage::SqliteSpaceRepository::new(db_for_backfill);
+                    let spaces = space_repo.list().await.unwrap_or_default();
+                    for s in &spaces {
+                        if let Err(e) =
+                            fs_repo.ensure_builtin_for_space(&s.id.to_string()).await
+                        {
+                            warn!(
+                                space_id = %s.id,
+                                space_name = %s.name,
+                                error = %e,
+                                "[Startup] failed to backfill Default FS",
+                            );
+                        }
+                    }
+                    info!(
+                        "[Startup] Default FS backfill complete across {} space(s)",
+                        spaces.len()
+                    );
+                });
+            }
+
             // Create event bus and ServerAppService
             let app_state: tauri::State<'_, AppState> = app.state();
             let event_bus = mcpmux_core::create_shared_event_bus();
@@ -288,7 +328,6 @@ pub fn run() {
 
             let server_app_service = mcpmux_core::ServerAppService::new(
                 app_state.installed_server_repository.clone(),
-                Some(app_state.feature_set_repository.clone()),
                 Some(app_state.server_feature_repository_core.clone()),
                 Some(app_state.credential_repository.clone()),
                 event_sender,
@@ -326,15 +365,49 @@ pub fn run() {
                     return;
                 }
 
-                // Resolve port using the service (Single Responsibility)
-                let final_port = match port_service.resolve_and_allocate().await {
-                    Ok(port) => port,
-                    Err(e) => {
-                        warn!("[Gateway] Failed to allocate port: {}", e);
-                        return;
-                    }
+                // Strict port probe — if the preferred port is busy, defer
+                // to the user instead of silently binding to a random port.
+                // IDE configs assume the configured port, so a silent
+                // fallback breaks every connected client.
+                let persisted = port_service.load_persisted_port().await;
+                let (preferred_port, source): (u16, &'static str) = match persisted {
+                    Some(p) => (p, "configured"),
+                    None => (mcpmux_core::DEFAULT_GATEWAY_PORT, "default"),
                 };
 
+                if !mcpmux_core::service::is_port_available(preferred_port) {
+                    warn!(
+                        "[Gateway] Auto-start preferred port {} ({}) unavailable — deferring to user",
+                        preferred_port, source
+                    );
+                    {
+                        let mut state = gw_state_clone.write().await;
+                        state.pending_port_conflict = Some(PendingPortConflict {
+                            preferred_port,
+                            source,
+                        });
+                    }
+                    // Emit in case the UI is already listening; the UI also
+                    // checks via `get_pending_port_conflict` on mount.
+                    let _ = app_handle_for_sm.emit(
+                        "gateway-autostart-port-conflict",
+                        serde_json::json!({
+                            "preferredPort": preferred_port,
+                            "source": source,
+                        }),
+                    );
+                    return;
+                }
+
+                // Persist default port on first run so the Settings UI
+                // reflects the active choice.
+                if persisted.is_none() {
+                    if let Err(e) = port_service.save_port(preferred_port).await {
+                        warn!("[Gateway] Failed to persist default port: {}", e);
+                    }
+                }
+
+                let final_port = preferred_port;
                 let url = format!("http://localhost:{}", final_port);
                 info!("Auto-starting gateway on {}", url);
 
@@ -399,6 +472,7 @@ pub fn run() {
                 let server_manager_arc = server.server_manager();
                 let event_emitter = server.event_emitter();
                 let grant_service = server.grant_service();
+                let session_roots = server.session_roots();
 
                 // Start domain event bridge
                 crate::commands::gateway::start_domain_event_bridge(&app_handle_for_sm, gw_inner_state.clone());
@@ -406,88 +480,24 @@ pub fn run() {
                 // Subscribe to OAuth completion events
                 let oauth_completion_rx = pool_service.oauth_manager().subscribe();
 
-                info!("[Gateway] Services initialized via DI");
+                info!(
+                    "[Gateway] Auto-start services resolved — port={}, server_manager={:p}",
+                    final_port, &*server_manager_arc
+                );
 
-                // Store ServerManager and PoolService in state
-                {
-                    let mut sm_state = sm_state_clone.write().await;
-                    sm_state.manager = Some(server_manager_arc.clone());
-                    sm_state.pool_service = Some(pool_service.clone());
-                }
-                info!("[Gateway] ServerManager initialized with event bridge");
-
-                // Start OAuth completion handler - reconnects servers after OAuth completes
-                // IMPORTANT: Each reconnection is spawned as a separate task to allow parallel connections
-                let sm_for_oauth = server_manager_arc.clone();
-                let pool_for_oauth = pool_service.clone();
-                tokio::spawn(async move {
-                    use mcpmux_gateway::{ServerKey, ConnectionResult};
-                    let mut rx = oauth_completion_rx;
-
-                    info!("[OAuth Handler] Started listening for OAuth completions");
-
-                    loop {
-                        match rx.recv().await {
-                            Ok(event) => {
-                                info!(
-                                    "[OAuth Handler] Received completion for {}: success={}",
-                                    event.server_id, event.success
-                                );
-
-                                if event.success {
-                                    // OAuth succeeded - spawn reconnection in separate task for parallelism
-                                    let sm = sm_for_oauth.clone();
-                                    let pool = pool_for_oauth.clone();
-                                    let server_id = event.server_id.clone();
-                                    let space_id = event.space_id;
-
-                                    tokio::spawn(async move {
-                                        let key = ServerKey::new(space_id, &server_id);
-
-                                        info!("[OAuth Handler] Attempting reconnection for {}", server_id);
-                                        sm.set_connecting(&key).await;
-
-                                        match pool.reconnect_instance(space_id, &server_id).await {
-                                            ConnectionResult::Connected { features, .. } => {
-                                                info!("[OAuth Handler] Reconnection successful for {}", server_id);
-                                                sm.set_connected(&key, features).await;
-                                            }
-                                            ConnectionResult::OAuthRequired { .. } => {
-                                                warn!("[OAuth Handler] Still requires OAuth after completion: {}", server_id);
-                                                sm.set_auth_required(&key, Some("OAuth still required".to_string())).await;
-                                            }
-                                            ConnectionResult::Failed { error } => {
-                                                error!("[OAuth Handler] Reconnection failed for {}: {}", server_id, error);
-                                                sm.set_error(&key, error).await;
-                                            }
-                                        }
-                                    });
-                                } else {
-                                    // OAuth failed - handle synchronously (fast operation)
-                                    let key = ServerKey::new(event.space_id, &event.server_id);
-                                    let error_msg = event.error.unwrap_or_else(|| "OAuth failed".to_string());
-                                    warn!("[OAuth Handler] OAuth failed for {}: {}", event.server_id, error_msg);
-                                    sm_for_oauth.set_auth_required(&key, Some(error_msg)).await;
-                                }
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                warn!("[OAuth Handler] Lagged {} messages", n);
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                info!("[OAuth Handler] Channel closed, stopping");
-                                break;
-                            }
-                        }
-                    }
-                });
-                info!("[Gateway] OAuth completion handler started");
-
-                // Start periodic refresh loop (every 60s for connected servers)
-                let _refresh_handle = server_manager_arc.clone().start_periodic_refresh();
-                info!("[Gateway] Periodic refresh service started");
+                // Wire ServerManager into state + spawn OAuth handler +
+                // periodic refresh. Shared with start_gateway command so
+                // both paths leave the app in an identical post-start
+                // configuration.
+                crate::commands::gateway::init_gateway_runtime(
+                    pool_service.clone(),
+                    server_manager_arc.clone(),
+                    oauth_completion_rx,
+                    sm_state_clone.clone(),
+                )
+                .await;
 
                 // Note: Auto-connect happens in the frontend via useEffect calling connect_all_enabled_servers
-                // This keeps the backend service clean and follows React best practices
 
                 let handle = server.spawn();
 
@@ -500,12 +510,27 @@ pub fn run() {
                 state.feature_service = Some(feature_service);
                 state.event_emitter = Some(event_emitter);
                 state.grant_service = Some(grant_service);
+                state.session_roots = Some(session_roots);
 
                 info!(
                     "Gateway auto-started successfully on {} - GrantService initialized: {}",
                     url,
                     state.grant_service.is_some()
                 );
+
+                // Broadcast the started event to the webview. Must happen
+                // even on auto-start so the status-bar footer and every
+                // other subscriber reflect the running gateway.
+                if let Err(e) = app_handle_for_sm.emit(
+                    "gateway-changed",
+                    serde_json::json!({
+                        "action": "started",
+                        "url": url,
+                        "port": final_port,
+                    }),
+                ) {
+                    warn!("[Gateway] Failed to emit gateway-changed(started): {}", e);
+                }
             });
 
             app.manage(gateway_state);
@@ -714,12 +739,91 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 let app_handle = app.handle().clone();
 
-                // Register the deep link handler
+                // Buffer state for cold-start URLs that arrive before the
+                // frontend listener is registered (the common Windows case:
+                // browser → mcpmux:// → new mcpmux.exe with URL in argv[1]).
+                app.manage(PendingInitialDeepLink::default());
+
+                // Route URLs through the buffer-aware helper so cold-start
+                // URLs are held until the webview signals ready via
+                // `flush_pending_deep_link`.
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
                         info!("[DeepLink] Received URL: {}", url);
-                        handle_deep_link(&app_handle, url.as_str());
+                        route_or_buffer_deep_link(&app_handle, url.as_str());
                     }
+                });
+            }
+
+            // Terminal-close / Ctrl+C graceful shutdown.
+            //
+            // Without this, when the user hits Ctrl+C on `pnpm run dev` or
+            // closes the terminal window, the process dies before axum
+            // can drain and release the TCP socket. On a fast restart the
+            // kernel may still have the listener bound, so the next run
+            // fails with "port in use".
+            //
+            // We translate every termination signal into `app_handle.exit(0)`
+            // which fires `RunEvent::ExitRequested` — the existing handler
+            // below then runs the gateway's graceful shutdown.
+            //
+            // Windows console control events (CTRL_CLOSE_EVENT,
+            // CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT) give the process
+            // ~5 seconds before force-kill, which is plenty for the
+            // ~2.5s graceful drain downstream.
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    #[cfg(unix)]
+                    {
+                        use tokio::signal::unix::{signal, SignalKind};
+                        let mut sigterm = match signal(SignalKind::terminate()) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                warn!("[Signal] Failed to install SIGTERM handler: {}", e);
+                                return;
+                            }
+                        };
+                        let mut sigint = match signal(SignalKind::interrupt()) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                warn!("[Signal] Failed to install SIGINT handler: {}", e);
+                                return;
+                            }
+                        };
+                        tokio::select! {
+                            _ = sigterm.recv() => info!("[Signal] SIGTERM — requesting exit"),
+                            _ = sigint.recv() => info!("[Signal] SIGINT — requesting exit"),
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        use tokio::signal::windows::{
+                            ctrl_break, ctrl_c, ctrl_close, ctrl_logoff, ctrl_shutdown,
+                        };
+                        let (mut c_c, mut c_break, mut c_close, mut c_logoff, mut c_shutdown) =
+                            match (
+                                ctrl_c(),
+                                ctrl_break(),
+                                ctrl_close(),
+                                ctrl_logoff(),
+                                ctrl_shutdown(),
+                            ) {
+                                (Ok(a), Ok(b), Ok(c), Ok(d), Ok(e)) => (a, b, c, d, e),
+                                _ => {
+                                    warn!("[Signal] Failed to install console handlers");
+                                    return;
+                                }
+                            };
+                        tokio::select! {
+                            _ = c_c.recv() => info!("[Signal] Ctrl+C — requesting exit"),
+                            _ = c_break.recv() => info!("[Signal] Ctrl+Break — requesting exit"),
+                            _ = c_close.recv() => info!("[Signal] Console close — requesting exit"),
+                            _ = c_logoff.recv() => info!("[Signal] Logoff — requesting exit"),
+                            _ = c_shutdown.recv() => info!("[Signal] Shutdown — requesting exit"),
+                        }
+                    }
+                    app_handle.exit(0);
                 });
             }
 
@@ -734,9 +838,6 @@ pub fn run() {
             commands::get_space,
             commands::create_space,
             commands::delete_space,
-            commands::get_active_space,
-            commands::set_active_space,
-            commands::set_space_active_feature_set,
             commands::open_space_config_file,
             commands::read_space_config,
             commands::save_space_config,
@@ -765,8 +866,6 @@ pub fn run() {
             commands::create_feature_set,
             commands::update_feature_set,
             commands::delete_feature_set,
-            commands::get_builtin_feature_sets,
-            commands::ensure_server_all_feature_set,
             commands::add_feature_set_member,
             commands::remove_feature_set_member,
             commands::set_feature_set_members,
@@ -775,7 +874,6 @@ pub fn run() {
             commands::remove_feature_from_set,
             commands::get_feature_set_members,
             // Client custom feature sets
-            commands::find_or_create_client_custom_feature_set,
             // Server feature commands
             commands::list_server_features,
             commands::list_server_features_by_server,
@@ -787,20 +885,16 @@ pub fn run() {
             commands::get_client,
             commands::create_client,
             commands::delete_client,
-            commands::update_client_grants,
-            commands::update_client_mode,
             commands::init_preset_clients,
-            commands::get_client_grants,
-            commands::get_all_client_grants,
-            commands::grant_feature_set_to_client,
-            commands::revoke_feature_set_from_client,
-            commands::update_client_pin,
             // Workspace binding commands (resolver v2)
             commands::list_workspace_bindings,
             commands::list_workspace_bindings_for_space,
+            commands::list_reported_workspace_roots,
             commands::create_workspace_binding,
             commands::update_workspace_binding,
             commands::delete_workspace_binding,
+            commands::validate_workspace_root,
+            commands::get_workspace_effective_features,
             // Meta-tool approval (self-management mcpmux_* tools)
             commands::respond_to_meta_tool_approval,
             commands::list_meta_tool_grants,
@@ -818,6 +912,11 @@ pub fn run() {
             commands::add_to_cursor,
             // Gateway commands
             commands::get_gateway_status,
+            commands::get_gateway_port_settings,
+            commands::set_gateway_port,
+            commands::reset_gateway_port,
+            commands::probe_gateway_start,
+            commands::take_pending_port_conflict,
             commands::start_gateway,
             commands::stop_gateway,
             commands::restart_gateway,
@@ -831,14 +930,11 @@ pub fn run() {
             // OAuth commands
             commands::approve_oauth_consent,
             commands::get_pending_consent,
+            commands::flush_pending_deep_link,
             commands::get_oauth_clients,
             commands::approve_oauth_client,
             commands::update_oauth_client,
             commands::delete_oauth_client,
-            commands::get_oauth_client_grants,
-            commands::grant_oauth_client_feature_set,
-            commands::revoke_oauth_client_feature_set,
-            commands::get_oauth_client_resolved_features,
             commands::open_url,
             // Server Manager commands (event-driven v2)
             commands::get_server_statuses,
@@ -862,6 +958,36 @@ pub fn run() {
             commands::get_startup_settings,
             commands::update_startup_settings,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running McpMux application");
+        .build(tauri::generate_context!())
+        .expect("error while building McpMux application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                // Graceful gateway shutdown on app exit. Without this, the
+                // axum listener gets dropped without a close signal, and
+                // Windows can leave the TCP socket bound in the kernel —
+                // which is what orphan PID 21408 on :45818 was.
+                //
+                // We block for up to ~2.5s to let the listener close. Any
+                // longer and Windows would kill us with a "process not
+                // responding" dialog. Any shorter and we race with axum's
+                // drain.
+                if let Some(gw_state) =
+                    app_handle.try_state::<Arc<RwLock<GatewayAppState>>>()
+                {
+                    let gw_state = gw_state.inner().clone();
+                    tauri::async_runtime::block_on(async move {
+                        let handle = {
+                            let mut state = gw_state.write().await;
+                            state.running = false;
+                            state.url = None;
+                            state.handle.take()
+                        };
+                        if let Some(h) = handle {
+                            info!("[Gateway] ExitRequested — gracefully shutting down gateway");
+                            crate::commands::gateway::shutdown_gateway_handle(h).await;
+                        }
+                    });
+                }
+            }
+        });
 }

@@ -28,6 +28,7 @@ import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverMan
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
 import { useViewSpace, useNavigateTo } from '@/stores';
 import { useServerManager } from '@/hooks/useServerManager';
+import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { useGatewayEvents, useDomainEvents } from '@/hooks/useDomainEvents';
 import type { GatewayChangedPayload, ServerChangedPayload } from '@/hooks/useDomainEvents';
 import type { FeaturesUpdatedEvent } from '@/lib/api/serverManager';
@@ -166,6 +167,7 @@ export function ServersPage() {
   const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const gatewayControl = useGatewayControl();
   // Bottom toast notifications
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [configModal, setConfigModal] = useState<ConfigModalState>({
@@ -741,18 +743,25 @@ export function ServersPage() {
 
   const handleStartGateway = async () => {
     try {
-      const { startGateway, connectAllEnabledServers } = await import('@/lib/api/gateway');
-      const url = await startGateway();
+      const outcome = await gatewayControl.start();
+      if (outcome.status === 'cancelled') return;
       setGatewayRunning(true);
-      setGatewayUrl(url);
-      
+      setGatewayUrl(outcome.url);
+      if (outcome.fellBackToDynamic) {
+        showToast(
+          `Preferred port was in use — gateway is now on :${outcome.port}. Update IDE configs.`,
+          'info'
+        );
+      }
+
       // Auto-connect all enabled servers
       try {
+        const { connectAllEnabledServers } = await import('@/lib/api/gateway');
         await connectAllEnabledServers();
       } catch (e) {
         console.warn('[ServersPage] Failed to auto-connect servers:', e);
       }
-      
+
       await loadData();
     } catch (e) {
       showToast(String(e), 'error');
@@ -836,6 +845,7 @@ export function ServersPage() {
 
   return (
     <div className="space-y-6" data-testid="servers-page">
+      {gatewayControl.ConfirmDialogElement}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

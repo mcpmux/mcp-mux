@@ -1,24 +1,25 @@
-//! FeatureSet Resolver Service (V2 — pin > workspace > space active).
+//! FeatureSet Resolver Service.
 //!
-//! Replaces the per-client-grants lookup in [`super::AuthorizationService`]
-//! with a single deterministic resolution:
+//! Two-tier resolution, keyed by the caller's reported workspace roots:
 //!
 //! ```text
-//! resolve(client, session_id):
-//!     if client.pinned_feature_set_id:       source = Pin
-//!     else if workspace binding matches:     source = WorkspaceBinding
-//!     else:                                  source = SpaceActive (may be None = Deny)
+//! resolve(session_id):
+//!     if session reported roots AND a binding matches:
+//!         return (binding.space_id, binding.feature_set_id, WorkspaceBinding)
+//!     default_space = SpaceRepository.get_default()
+//!     return (default_space.id, default_space's Default FS id, Default)
 //! ```
 //!
-//! The service runs alongside `AuthorizationService` in **shadow mode**: the
-//! gateway still honours the legacy grants path for now, but the resolver's
-//! decision is logged on every call so we can verify divergence before
-//! flipping the switch.
+//! The caller's client identity is deliberately NOT used for routing — two
+//! VS Code windows share one OAuth identity but open different folders;
+//! routing must come from the session's reported root, not from the shared
+//! client. See `mcpmux.space/diagrams/workppace-root-session/` for the full
+//! design.
 
 use std::sync::Arc;
 
 use anyhow::Result;
-use mcpmux_core::{InboundMcpClientRepository, SpaceRepository, WorkspaceBindingRepository};
+use mcpmux_core::{FeatureSetRepository, SpaceRepository, WorkspaceBindingRepository};
 use serde::Serialize;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -29,113 +30,90 @@ use super::session_roots::SessionRootsRegistry;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResolutionSource {
-    /// Client's `pinned_feature_set_id` was set.
-    Pin,
     /// A [`WorkspaceBinding`](mcpmux_core::WorkspaceBinding) matched one of
     /// the session's reported MCP roots.
     WorkspaceBinding,
-    /// No pin and no workspace match; fell through to `Space.active_feature_set_id`.
-    SpaceActive,
-    /// No pin, no workspace match, and the Space has no active FS — deny.
-    Deny,
+    /// No binding matched (or the session reported no roots); fell through
+    /// to the default Space's Default FeatureSet.
+    Default,
 }
 
 /// Output of [`FeatureSetResolverService::resolve`].
+///
+/// `feature_set_id` is a `String` (not `Uuid`) because built-in FeatureSets
+/// use stable stringy ids like `fs_default_<space>` that aren't valid UUIDs.
 #[derive(Debug, Clone)]
 pub struct ResolvedFeatureSet {
-    /// Chosen FeatureSet id, or `None` when `source == Deny`.
-    pub feature_set_id: Option<Uuid>,
+    /// Chosen FeatureSet id. `None` only when every fallback tier failed
+    /// (no default space, no Default FS in that space — a pathological setup).
+    pub feature_set_id: Option<String>,
+    /// Resolved Space id. Used by the routing layer when filtering features.
+    pub space_id: Option<Uuid>,
     pub source: ResolutionSource,
 }
 
-/// Resolves which FeatureSet applies for a given (client, session).
+/// Resolves which FeatureSet applies for a given session.
 ///
 /// Cheap to clone via `Arc`; inject one instance into the gateway's service
 /// container and reuse across requests.
 pub struct FeatureSetResolverService {
-    client_repo: Arc<dyn InboundMcpClientRepository>,
     space_repo: Arc<dyn SpaceRepository>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
+    feature_set_repo: Arc<dyn FeatureSetRepository>,
     session_roots: Arc<SessionRootsRegistry>,
 }
 
 impl FeatureSetResolverService {
     pub fn new(
-        client_repo: Arc<dyn InboundMcpClientRepository>,
         space_repo: Arc<dyn SpaceRepository>,
         binding_repo: Arc<dyn WorkspaceBindingRepository>,
+        feature_set_repo: Arc<dyn FeatureSetRepository>,
         session_roots: Arc<SessionRootsRegistry>,
     ) -> Self {
         Self {
-            client_repo,
             space_repo,
             binding_repo,
+            feature_set_repo,
             session_roots,
         }
     }
 
-    /// Read the client's pin + the caller's reported roots + the Space's
-    /// active FS, and return the winning FeatureSet with its source.
+    /// Resolve the effective (Space, FeatureSet) pair for a session.
     ///
     /// `session_id` is the client's `mcp-session-id` header (or `None` for
-    /// stateless callers) — used to look up reported MCP roots.
-    pub async fn resolve(
-        &self,
-        client_id: &Uuid,
-        session_id: Option<&str>,
-    ) -> Result<ResolvedFeatureSet> {
-        let Some(client) = self.client_repo.get(client_id).await? else {
-            warn!(%client_id, "[FeatureSetResolver] client not found");
-            return Ok(ResolvedFeatureSet {
-                feature_set_id: None,
-                source: ResolutionSource::Deny,
-            });
+    /// stateless callers) — used to look up MCP roots reported on
+    /// `on_initialized`.
+    pub async fn resolve(&self, session_id: Option<&str>) -> Result<ResolvedFeatureSet> {
+        let default_space_id = match self.space_repo.get_default().await? {
+            Some(s) => s.id,
+            None => {
+                warn!("[FeatureSetResolver] no default space — deny");
+                return Ok(ResolvedFeatureSet {
+                    feature_set_id: None,
+                    space_id: None,
+                    source: ResolutionSource::Default,
+                });
+            }
         };
 
-        // 1. Pin wins outright.
-        if let Some(fs) = client.pinned_feature_set_id {
-            debug!(%client_id, feature_set = %fs, "[FeatureSetResolver] resolved via Pin");
-            return Ok(ResolvedFeatureSet {
-                feature_set_id: Some(fs),
-                source: ResolutionSource::Pin,
-            });
-        }
-
-        // Determine which Space the caller belongs to. We prefer the explicit
-        // pinned_space_id; if it's missing (legacy client pre-migration),
-        // fall back to the active/default Space.
-        let space_id = match client.pinned_space_id {
-            Some(id) => id,
-            None => match self.space_repo.get_default().await? {
-                Some(s) => s.id,
-                None => {
-                    warn!(%client_id, "[FeatureSetResolver] no pinned_space_id and no default space");
-                    return Ok(ResolvedFeatureSet {
-                        feature_set_id: None,
-                        source: ResolutionSource::Deny,
-                    });
-                }
-            },
-        };
-
-        // 2. Workspace-root match, only when the session reported roots.
+        // Tier 1: session has roots AND a binding matches.
         if let Some(sid) = session_id {
             if let Some(roots) = self.session_roots.get(sid) {
                 if !roots.is_empty() {
                     if let Some(binding) = self
                         .binding_repo
-                        .find_longest_prefix_match(&space_id, &roots)
+                        .find_longest_prefix_match(&default_space_id, &roots)
                         .await?
                     {
                         debug!(
-                            %client_id,
-                            session_id = sid,
+                            workspace_root = %binding.workspace_root,
+                            space_id = %binding.space_id,
                             feature_set = %binding.feature_set_id,
-                            workspace_root = binding.workspace_root,
                             "[FeatureSetResolver] resolved via WorkspaceBinding",
                         );
                         return Ok(ResolvedFeatureSet {
                             feature_set_id: Some(binding.feature_set_id),
+                            space_id: Some(binding.space_id),
                             source: ResolutionSource::WorkspaceBinding,
                         });
                     }
@@ -143,33 +121,25 @@ impl FeatureSetResolverService {
             }
         }
 
-        // 3. Space active FS is the fallback.
-        let space = self.space_repo.get(&space_id).await?;
-        match space.and_then(|s| s.active_feature_set_id) {
-            Some(fs) => {
-                debug!(
-                    %client_id,
-                    %space_id,
-                    feature_set = %fs,
-                    "[FeatureSetResolver] resolved via SpaceActive",
-                );
-                Ok(ResolvedFeatureSet {
-                    feature_set_id: Some(fs),
-                    source: ResolutionSource::SpaceActive,
-                })
-            }
-            None => {
-                debug!(
-                    %client_id,
-                    %space_id,
-                    "[FeatureSetResolver] no pin / no binding / no active FS — deny",
-                );
-                Ok(ResolvedFeatureSet {
-                    feature_set_id: None,
-                    source: ResolutionSource::Deny,
-                })
-            }
-        }
+        // Tier 2: default — the default Space's seeded Default FS.
+        let default_fs = self
+            .feature_set_repo
+            .get_default_for_space(&default_space_id.to_string())
+            .await
+            .unwrap_or_default()
+            .map(|fs| fs.id);
+
+        debug!(
+            space_id = %default_space_id,
+            feature_set = ?default_fs,
+            "[FeatureSetResolver] resolved via Default (default space's Default FS)",
+        );
+
+        Ok(ResolvedFeatureSet {
+            feature_set_id: default_fs,
+            space_id: Some(default_space_id),
+            source: ResolutionSource::Default,
+        })
     }
 }
 

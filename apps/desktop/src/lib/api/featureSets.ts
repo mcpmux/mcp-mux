@@ -1,9 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 
 /**
- * FeatureSet type determines how features are resolved.
+ * FeatureSet type.
+ *
+ * - `default`: auto-created per Space. Fallback when no WorkspaceBinding matches.
+ * - `custom`: user-defined.
  */
-export type FeatureSetType = 'all' | 'default' | 'server-all' | 'custom';
+export type FeatureSetType = 'default' | 'custom';
 
 /**
  * Member type in a feature set.
@@ -103,24 +106,6 @@ export async function createFeatureSet(input: CreateFeatureSetInput): Promise<Fe
  */
 export async function deleteFeatureSet(id: string): Promise<void> {
   return invoke('delete_feature_set', { id });
-}
-
-/**
- * Get builtin feature sets for a space.
- */
-export async function getBuiltinFeatureSets(spaceId: string): Promise<FeatureSet[]> {
-  return invoke('get_builtin_feature_sets', { spaceId });
-}
-
-/**
- * Ensure a server-all featureset exists for a server in a space.
- */
-export async function ensureServerAllFeatureSet(
-  spaceId: string,
-  serverId: string,
-  serverName: string
-): Promise<FeatureSet> {
-  return invoke('ensure_server_all_feature_set', { spaceId, serverId, serverName });
 }
 
 /**

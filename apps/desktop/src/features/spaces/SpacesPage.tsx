@@ -1,13 +1,5 @@
 import { useState } from 'react';
-import {
-  Plus,
-  Trash2,
-  Loader2,
-  Check,
-  Search,
-  Layout,
-  AlertCircle,
-} from 'lucide-react';
+import { Plus, Trash2, Loader2, Search, Layout, AlertCircle } from 'lucide-react';
 import {
   Card,
   CardHeader,
@@ -18,23 +10,16 @@ import {
   ToastContainer,
   useConfirm,
 } from '@mcpmux/ui';
-import {
-  useAppStore,
-  useActiveSpace,
-  useSpaces,
-  useIsLoading,
-} from '@/stores';
-import { createSpace, deleteSpace, setActiveSpace as setActiveSpaceAPI } from '@/lib/api/spaces';
+import { useAppStore, useSpaces, useIsLoading } from '@/stores';
+import { createSpace, deleteSpace } from '@/lib/api/spaces';
 
 export function SpacesPage() {
   const spaces = useSpaces();
-  const activeSpace = useActiveSpace();
   const isLoading = useIsLoading('spaces');
-  
+
   // Store actions
   const addSpace = useAppStore((state) => state.addSpace);
   const removeSpace = useAppStore((state) => state.removeSpace);
-  const setActiveSpaceInStore = useAppStore((state) => state.setActiveSpace);
 
   // Local state
   const [searchQuery, setSearchQuery] = useState('');
@@ -90,23 +75,6 @@ export function SpacesPage() {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       showError('Failed to delete space', msg);
-    } finally {
-      setIsActionLoading(null);
-    }
-  };
-
-  const handleSetActive = async (id: string) => {
-    setIsActionLoading(id);
-    setError(null);
-    try {
-      await setActiveSpaceAPI(id);
-      setActiveSpaceInStore(id);
-      const activatedSpace = spaces.find(s => s.id === id);
-      success('Active space changed', `"${activatedSpace?.name || 'Space'}" is now active`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      showError('Failed to set active space', msg);
     } finally {
       setIsActionLoading(null);
     }
@@ -198,71 +166,46 @@ export function SpacesPage() {
           ) : (
             <div className="grid gap-5 auto-fill-cards">
               {filteredSpaces.map((space) => {
-                const isActive = activeSpace?.id === space.id;
                 const isProcessing = isActionLoading === space.id;
 
                 return (
-                  <Card 
+                  <Card
                     key={space.id}
-                    className={`transition-all hover:shadow-lg hover:scale-[1.01] ${
-                      isActive ? 'ring-2 ring-primary-500 shadow-lg' : ''
-                    }`}
+                    className="transition-all hover:shadow-lg hover:scale-[1.01]"
                     data-testid={`space-card-${space.id}`}
                   >
                     <CardContent className="p-4">
-                      {/* Header */}
                       <div className="flex items-start gap-2.5 mb-3">
                         <div className="w-9 h-9 flex items-center justify-center bg-[rgb(var(--surface))] rounded-lg text-xl border border-[rgb(var(--border-subtle))] flex-shrink-0">
                           {space.icon || '🌐'}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-base truncate">
-                            {space.name}
-                          </h3>
+                          <h3 className="font-semibold text-base truncate">{space.name}</h3>
                           <p className="text-sm text-[rgb(var(--muted))] line-clamp-1">
                             {space.description || 'No description'}
                           </p>
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
-                          {isActive && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                              <Check className="h-3 w-3" /> Active
+                          {space.is_default && (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
+                              title="Default home for sessions whose reported root has no binding"
+                            >
+                              Default
                             </span>
                           )}
                           {!space.is_default && (
-                             <button
-                               onClick={() => handleDelete(space.id)}
-                               disabled={isProcessing || isActive}
-                               className="p-1.5 text-[rgb(var(--muted))] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                               title="Delete Space"
-                               data-testid={`delete-space-${space.id}`}
-                             >
-                               <Trash2 className="h-4 w-4" />
-                             </button>
+                            <button
+                              onClick={() => handleDelete(space.id)}
+                              disabled={isProcessing}
+                              className="p-1.5 text-[rgb(var(--muted))] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Delete Space"
+                              data-testid={`delete-space-${space.id}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           )}
                         </div>
-                      </div>
-
-                      {/* Footer Actions */}
-                      <div className="flex items-center justify-end pt-3 border-t border-[rgb(var(--border-subtle))]">
-                         {!isActive ? (
-                           <Button
-                             size="sm"
-                             variant="secondary"
-                             onClick={() => handleSetActive(space.id)}
-                             disabled={isProcessing}
-                             data-testid={`set-active-space-${space.id}`}
-                           >
-                             {isProcessing ? (
-                               <Loader2 className="h-3 w-3 animate-spin mr-2" />
-                             ) : null}
-                             Set Active
-                           </Button>
-                         ) : (
-                           <span className="text-xs font-medium text-[rgb(var(--muted))]">
-                             Current Context
-                           </span>
-                         )}
                       </div>
                     </CardContent>
                   </Card>

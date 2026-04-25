@@ -103,29 +103,8 @@ describe('Space Management - Create and Delete', () => {
     }
   });
 
-  it('TC-SP-003: Set a space as active', async () => {
-    await dismissCreateModalIfOpen();
-    const setActiveButtons = await $$('[data-testid^="set-active-space-"]');
-    
-    if (setActiveButtons.length > 0) {
-      const firstButton = setActiveButtons[0];
-      const isDisplayed = await firstButton.isDisplayed().catch(() => false);
-      if (isDisplayed) {
-        await browser.saveScreenshot('./tests/e2e/screenshots/sp-04-before-set-active.png');
-        await firstButton.click();
-        await browser.pause(2000);
-        await browser.saveScreenshot('./tests/e2e/screenshots/sp-05-after-set-active.png');
-      }
-    }
-    
-    // Verify page has active space indicator
-    const pageSource = await browser.getPageSource();
-    const hasActiveIndicator = 
-      pageSource.includes('Active') || 
-      pageSource.includes('active');
-    
-    expect(hasActiveIndicator).toBe(true);
-  });
+  // TC-SP-003 removed: there's no "Set Active" affordance — gateway routing
+  // is decided per reported workspace root via WorkspaceBinding.
 
   it('TC-SP-011: Verify spaces are listed on page', async () => {
     await dismissCreateModalIfOpen();

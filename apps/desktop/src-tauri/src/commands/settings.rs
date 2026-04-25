@@ -172,9 +172,9 @@ mod tests {
     #[test]
     fn test_startup_settings_default() {
         let settings = StartupSettings::default();
-        assert_eq!(settings.auto_launch, true);
-        assert_eq!(settings.start_minimized, true);
-        assert_eq!(settings.close_to_tray, true);
+        assert!(settings.auto_launch);
+        assert!(settings.start_minimized);
+        assert!(settings.close_to_tray);
     }
 
     #[test]
@@ -196,9 +196,9 @@ mod tests {
         let json = r#"{"autoLaunch":true,"startMinimized":true,"closeToTray":false}"#;
         let settings: StartupSettings = serde_json::from_str(json).unwrap();
 
-        assert_eq!(settings.auto_launch, true);
-        assert_eq!(settings.start_minimized, true);
-        assert_eq!(settings.close_to_tray, false);
+        assert!(settings.auto_launch);
+        assert!(settings.start_minimized);
+        assert!(!settings.close_to_tray);
     }
 
     #[test]

@@ -9,9 +9,7 @@ import {
   Settings,
   Sun,
   Moon,
-  Loader2,
   FolderOpen,
-  FileText,
   Download,
   X,
 } from 'lucide-react';
@@ -23,25 +21,26 @@ import {
   Card,
   CardHeader,
   CardTitle,
-  CardDescription,
   CardContent,
-  Button,
 } from '@mcpmux/ui';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { OAuthConsentModal } from '@/components/OAuthConsentModal';
 import { ServerInstallModal } from '@/components/ServerInstallModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
-import { ConnectIDEs } from '@/components/ConnectIDEs';
+import { ConnectionCard } from '@/components/ConnectionCard';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { initAnalytics, capture, optIn, optOut } from '@/lib/analytics';
-import { useAppStore, useActiveSpace, useViewSpace, useTheme, useAnalyticsEnabled, useActiveNav, useNavigateTo } from '@/stores';
+import { useAppStore, useViewSpace, useTheme, useAnalyticsEnabled, useActiveNav, useNavigateTo } from '@/stores';
 import { RegistryPage } from '@/features/registry';
 import { FeatureSetsPage } from '@/features/featuresets';
 import { ClientsPage } from '@/features/clients';
 import { ServersPage } from '@/features/servers';
 import { SpacesPage } from '@/features/spaces';
+import { WorkspacesPage } from '@/features/workspaces';
 import { SettingsPage } from '@/features/settings';
+import { AutoStartConflictResolver } from '@/features/gateway/AutoStartConflictResolver';
+import { WorkspaceBindingSheet } from '@/features/workspaces';
 import { MetaToolApprovalDialog } from '@/features/metaTools';
 import { useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
 
@@ -111,7 +110,6 @@ function AppContent() {
   // Get state from store
   const theme = useTheme();
   const setTheme = useAppStore((state) => state.setTheme);
-  const activeSpace = useActiveSpace();
   const viewSpace = useViewSpace();
   const analyticsEnabled = useAnalyticsEnabled();
 
@@ -182,16 +180,20 @@ function AppContent() {
     setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
+  const gatewayRunning = gatewayUrl !== null;
+  const gatewayPort = (() => {
+    if (!gatewayUrl) return null;
+    try {
+      return new URL(gatewayUrl).port || null;
+    } catch {
+      return null;
+    }
+  })();
+
   const sidebar = (
     <Sidebar
       header={
         <SpaceSwitcher />
-      }
-      footer={
-        <div className="text-xs text-[rgb(var(--muted))]">
-          <div>McpMux{appVersion ? ` v${appVersion}` : ''}</div>
-          <div>Gateway: {gatewayUrl ?? 'Not running'}</div>
-        </div>
       }
     >
       <SidebarSection>
@@ -237,6 +239,13 @@ function AppContent() {
 
       <SidebarSection title="Connections">
         <SidebarItem
+          icon={<FolderOpen className="h-4 w-4" />}
+          label="Workspaces"
+          active={activeNav === 'workspaces'}
+          onClick={() => navigateTo('workspaces')}
+          data-testid="nav-workspaces"
+        />
+        <SidebarItem
           icon={<Monitor className="h-4 w-4" />}
           label="Clients"
           active={activeNav === 'clients'}
@@ -260,15 +269,29 @@ function AppContent() {
   const statusBar = (
     <div className="flex h-full items-center justify-between text-xs text-[rgb(var(--muted))]">
       <div className="flex items-center gap-4">
-        <span className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-green-500" />
-          Gateway Active
+        <button
+          type="button"
+          onClick={() => navigateTo('home')}
+          className="flex items-center gap-1.5 hover:text-[rgb(var(--foreground))] transition-colors"
+          data-testid="statusbar-gateway"
+          title="View connection details on the dashboard"
+        >
+          <span
+            className={`h-2 w-2 rounded-full ${
+              gatewayRunning ? 'bg-green-500' : 'bg-zinc-400 dark:bg-zinc-600'
+            }`}
+          />
+          {gatewayRunning
+            ? `Gateway${gatewayPort ? ` · :${gatewayPort}` : ''}`
+            : 'Gateway stopped'}
+        </button>
+        <span>Space: {viewSpace?.name || 'None'}</span>
+      </div>
+      {appVersion && (
+        <span className="opacity-70" data-testid="statusbar-version">
+          v{appVersion}
         </span>
-        <span>Active Space: {activeSpace?.name || 'None'}</span>
-      </div>
-      <div className="flex items-center gap-4">
-        <span>5 Servers • 97 Tools</span>
-      </div>
+      )}
     </div>
   );
 
@@ -339,6 +362,7 @@ function AppContent() {
         {activeNav === 'servers' && <ServersPage />}
         {activeNav === 'spaces' && <SpacesPage />}
         {activeNav === 'featuresets' && <FeatureSetsPage />}
+        {activeNav === 'workspaces' && <WorkspacesPage />}
         {activeNav === 'clients' && <ClientsPage />}
         {activeNav === 'settings' && <SettingsPage />}
       </div>
@@ -350,8 +374,13 @@ function App() {
   return (
     <ThemeProvider>
       <AppContent />
+      {/* Resolves deferred auto-start port conflicts — runs once on mount */}
+      <AutoStartConflictResolver />
       {/* OAuth consent modal - shown when MCP clients request authorization */}
       <OAuthConsentModal />
+      {/* Workspace binding sheet - slides in when a session reports a root
+          that has no binding yet and resolved via the Space default */}
+      <WorkspaceBindingSheet />
       {/* Server install modal - shown when install deep link is received */}
       <ServerInstallModal />
       {/* Meta-tool approval dialog — gates every mcpmux_* write tool */}
@@ -368,10 +397,6 @@ function DashboardView() {
     clients: 0,
     featureSets: 0,
   });
-  const [gatewayStatus, setGatewayStatus] = useState<{
-    running: boolean;
-    url: string | null;
-  }>({ running: false, url: null });
   const viewSpace = useViewSpace();
 
   // Load stats on mount and when gateway changes
@@ -385,7 +410,6 @@ function DashboardView() {
         import('@/lib/api/gateway').then((m) => m.getGatewayStatus(viewSpace?.id)),
         import('@/lib/api/registry').then((m) => m.listInstalledServers(viewSpace?.id)),
       ]);
-      console.log('[Dashboard] Gateway status received:', gateway);
       setStats({
         installedServers: installedServers.length,
         connectedServers: gateway.connected_backends,
@@ -393,7 +417,6 @@ function DashboardView() {
         clients: clients.length,
         featureSets: featureSets.length,
       });
-      setGatewayStatus({ running: gateway.running, url: gateway.url });
     } catch (e) {
       console.error('Failed to load dashboard stats:', e);
     }
@@ -404,15 +427,13 @@ function DashboardView() {
     loadStats();
   }, [viewSpace?.id]);
 
-  // Subscribe to gateway events for reactive updates (no polling!)
+  // Reload stats when gateway starts/stops so `Servers: X/Y` stays honest.
+  // ConnectionCard owns the actual running/URL UI.
   useGatewayEvents((payload) => {
     if (payload.action === 'started') {
-      setGatewayStatus({ running: true, url: payload.url || null });
-      // Reload stats to get updated counts
       loadStats();
     } else if (payload.action === 'stopped') {
-      setGatewayStatus({ running: false, url: null });
-      setStats({ installedServers: 0, connectedServers: 0, tools: 0, clients: 0, featureSets: 0 });
+      setStats((prev) => ({ ...prev, connectedServers: 0 }));
     }
   });
 
@@ -423,24 +444,6 @@ function DashboardView() {
     }
   });
 
-  const handleToggleGateway = async () => {
-    try {
-      if (gatewayStatus.running) {
-        const { stopGateway } = await import('@/lib/api/gateway');
-        await stopGateway();
-        setGatewayStatus({ running: false, url: null });
-      } else {
-        const { startGateway } = await import('@/lib/api/gateway');
-        const url = await startGateway();
-        setGatewayStatus({ running: true, url });
-        // After starting gateway, reload stats to get updated connected count
-        setTimeout(loadStats, 500);
-      }
-    } catch (e) {
-      console.error('Gateway toggle failed:', e);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div>
@@ -450,37 +453,10 @@ function DashboardView() {
         </p>
       </div>
 
-      {/* Gateway Status Banner */}
-      <Card className={gatewayStatus.running ? 'border-green-500' : 'border-orange-500'} data-testid="gateway-status-card">
-        <CardContent className="flex items-center justify-between py-3">
-          <div className="flex items-center gap-3">
-            <span
-              className={`h-3 w-3 rounded-full ${
-                gatewayStatus.running ? 'bg-green-500' : 'bg-orange-500'
-              }`}
-              data-testid="gateway-status-indicator"
-            />
-            <div>
-              <span className="font-medium" data-testid="gateway-status-text">
-                Gateway: {gatewayStatus.running ? 'Running' : 'Stopped'}
-              </span>
-              {gatewayStatus.url && (
-                <span className="text-sm text-[rgb(var(--muted))] ml-2" data-testid="gateway-url">
-                  {gatewayStatus.url}
-                </span>
-              )}
-            </div>
-          </div>
-          <Button
-            variant={gatewayStatus.running ? 'ghost' : 'primary'}
-            size="sm"
-            onClick={handleToggleGateway}
-            data-testid="gateway-toggle-btn"
-          >
-            {gatewayStatus.running ? 'Stop' : 'Start'}
-          </Button>
-        </CardContent>
-      </Card>
+      {/* Canonical connection surface — owns URL, Start/Stop, IDE grid,
+          pending-approval nudge. Replaces the old status banner + the
+          separate ConnectIDEs card that duplicated the URL. */}
+      <ConnectionCard />
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="dashboard-stats-grid">
@@ -527,23 +503,17 @@ function DashboardView() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Globe className="h-5 w-5 text-primary-500" />
-              Active Space
+              Workspace
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-xl font-bold truncate" data-testid="stat-active-space-value">
               {viewSpace?.icon} {viewSpace?.name || 'None'}
             </div>
-            <div className="text-sm text-[rgb(var(--muted))]">Current context</div>
+            <div className="text-sm text-[rgb(var(--muted))]">Currently viewing</div>
           </CardContent>
         </Card>
       </div>
-
-      {/* Connect IDEs — one-click install */}
-      <ConnectIDEs
-        gatewayUrl={gatewayStatus.url || 'http://localhost:3100'}
-        gatewayRunning={gatewayStatus.running}
-      />
     </div>
   );
 }

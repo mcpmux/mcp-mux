@@ -37,10 +37,9 @@ import fs from 'fs';
 import { byTestId, safeClick } from '../helpers/selectors';
 import {
   createSpace,
-  setActiveSpace,
   createFeatureSet,
   installServer,
-  getActiveSpace,
+  getDefaultSpace,
   refreshRegistry,
   enableServerV2,
   emitEvent,
@@ -285,8 +284,8 @@ describe('Screenshot Capture', function () {
     // ---- Seed data from preseed config ----
 
     // Get default space
-    const activeSpace = await getActiveSpace();
-    defaultSpaceId = activeSpace?.id || '';
+    const defaultSpace = await getDefaultSpace();
+    defaultSpaceId = defaultSpace?.id || '';
     console.log('[setup] Default space:', defaultSpaceId);
 
     // Create additional spaces
@@ -486,8 +485,7 @@ describe('Screenshot Capture', function () {
       console.warn('[setup] OAuth client feature set grant failed:', e);
     }
 
-    // Set active space back to default
-    await setActiveSpace(defaultSpaceId);
+    // (Active-space concept removed — routing is per workspace root.)
 
     // Reload the page so the frontend store picks up all seeded data
     // (spaces, feature sets, etc. created via Tauri invoke aren't in the Zustand store yet)

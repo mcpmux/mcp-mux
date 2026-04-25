@@ -5,7 +5,6 @@ import { AppStore, AppState } from './types';
 
 const initialState: AppState = {
   spaces: [],
-  activeSpaceId: null,
   viewSpaceId: null,
   activeNav: 'home',
   pendingClientId: null,
@@ -27,28 +26,13 @@ export const useAppStore = create<AppStore>()(
       setSpaces: (spaces) =>
         set((state) => {
           state.spaces = spaces;
-          // Validate persisted activeSpaceId still exists, reset to default if not
-          const activeExists = state.activeSpaceId
-            ? spaces.some((s) => s.id === state.activeSpaceId)
-            : false;
-          if (!activeExists && spaces.length > 0) {
-            const defaultSpace = spaces.find((s) => s.is_default);
-            state.activeSpaceId = defaultSpace?.id ?? spaces[0].id;
-          }
+          // Validate persisted viewSpaceId still exists; reset to default if not
           const viewExists = state.viewSpaceId
             ? spaces.some((s) => s.id === state.viewSpaceId)
             : false;
-          if (!viewExists) {
-            state.viewSpaceId = state.activeSpaceId;
-          }
-        }),
-
-      setActiveSpace: (id) =>
-        set((state) => {
-          const shouldFollow = !state.viewSpaceId || state.viewSpaceId === state.activeSpaceId;
-          state.activeSpaceId = id;
-          if (shouldFollow) {
-            state.viewSpaceId = id;
+          if (!viewExists && spaces.length > 0) {
+            const defaultSpace = spaces.find((s) => s.is_default);
+            state.viewSpaceId = defaultSpace?.id ?? spaces[0].id;
           }
         }),
 
@@ -60,22 +44,18 @@ export const useAppStore = create<AppStore>()(
       addSpace: (space) =>
         set((state) => {
           state.spaces.push(space);
-          if (space.is_default || state.spaces.length === 1) {
-            state.activeSpaceId = space.id;
-          }
-          if (!state.viewSpaceId) {
-            state.viewSpaceId = state.activeSpaceId;
+          if (!state.viewSpaceId || space.is_default) {
+            state.viewSpaceId = space.id;
           }
         }),
 
       removeSpace: (id) =>
         set((state) => {
           state.spaces = state.spaces.filter((s) => s.id !== id);
-          if (state.activeSpaceId === id) {
-            state.activeSpaceId = state.spaces[0]?.id ?? null;
-          }
           if (state.viewSpaceId === id) {
-            state.viewSpaceId = state.activeSpaceId;
+            const fallback =
+              state.spaces.find((s) => s.is_default) ?? state.spaces[0];
+            state.viewSpaceId = fallback?.id ?? null;
           }
         }),
 
@@ -124,9 +104,7 @@ export const useAppStore = create<AppStore>()(
       name: 'mcpmux-storage',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        // Only persist these fields
-        // Note: viewSpaceId is NOT persisted - always starts as activeSpaceId on launch
-        activeSpaceId: state.activeSpaceId,
+        viewSpaceId: state.viewSpaceId,
         sidebarCollapsed: state.sidebarCollapsed,
         theme: state.theme,
         analyticsEnabled: state.analyticsEnabled,
@@ -134,4 +112,3 @@ export const useAppStore = create<AppStore>()(
     }
   )
 );
-

@@ -1,32 +1,28 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Space,
-  listSpaces,
-  createSpace,
-  deleteSpace,
-  setActiveSpace,
-  getActiveSpace,
-} from '@/lib/api/spaces';
+import { Space, listSpaces, createSpace, deleteSpace } from '@/lib/api/spaces';
 
 /**
  * Hook for managing spaces (isolated environments).
+ *
+ * Note: there's no longer an "active space" concept — gateway routing is
+ * decided per reported workspace root via WorkspaceBinding, with the
+ * `is_default` Space as the fallback. The desktop UI still tracks which
+ * space the user is *viewing* via `viewSpaceId` in the Zustand store.
  */
 export function useSpaces() {
   const [spaces, setSpaces] = useState<Space[]>([]);
-  const [activeSpace, setActiveSpaceState] = useState<Space | null>(null);
+  const [defaultSpace, setDefaultSpace] = useState<Space | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Refresh the list of spaces
   const refresh = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const [spacesList, active] = await Promise.all([listSpaces(), getActiveSpace()]);
-
+      const spacesList = await listSpaces();
       setSpaces(spacesList);
-      setActiveSpaceState(active);
+      setDefaultSpace(spacesList.find((s) => s.is_default) ?? null);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
@@ -36,12 +32,10 @@ export function useSpaces() {
     }
   }, []);
 
-  // Load spaces on mount
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  // Create a new space
   const create = useCallback(
     async (name: string, icon?: string): Promise<Space> => {
       const space = await createSpace(name, icon);
@@ -51,7 +45,6 @@ export function useSpaces() {
     [refresh]
   );
 
-  // Delete a space
   const remove = useCallback(
     async (id: string): Promise<void> => {
       await deleteSpace(id);
@@ -60,23 +53,13 @@ export function useSpaces() {
     [refresh]
   );
 
-  // Set the active space
-  const setActive = useCallback(
-    async (id: string): Promise<void> => {
-      await setActiveSpace(id);
-      await refresh();
-    },
-    [refresh]
-  );
-
   return {
     spaces,
-    activeSpace,
+    defaultSpace,
     loading,
     error,
     refresh,
     create,
     remove,
-    setActive,
   };
 }

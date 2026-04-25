@@ -163,24 +163,8 @@ test.describe('Space Toast Notifications', () => {
     expect(toastText).toContain('Space created');
   });
 
-  // Skip in web mode - requires Tauri API
-  test.skip('should show success toast on set active space', async ({ page }) => {
-    const dashboard = new DashboardPage(page);
-    const spacesPage = new SpacesPage(page);
-    await dashboard.navigate();
-    
-    await goToSpaces(page);
-    
-    // Find a non-active space and click "Set Active"
-    const setActiveBtn = page.locator('[data-testid^="set-active-space-"]').first();
-    if (await setActiveBtn.isVisible()) {
-      await setActiveBtn.click();
-      
-      await spacesPage.waitForToast('success');
-      const toastText = await spacesPage.getToastText();
-      expect(toastText).toContain('Active space changed');
-    }
-  });
+  // Removed: "Set Active" toast test — gateway routing is workspace-root-driven,
+  // there is no per-Space active toggle anymore.
 
   // Skip in web mode - requires Tauri API
   test.skip('should show success toast on space deletion', async ({ page }) => {

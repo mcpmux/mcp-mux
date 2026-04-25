@@ -89,19 +89,19 @@ test.describe('Post-Action User Guidance', () => {
 
   test.describe('OAuth consent post-approval guidance', () => {
     // Skip in web mode - OAuth consent requires Tauri deep link events
-    test.skip('should show success state with Manage Permissions button after approval', async ({ page }) => {
-      // This test requires the OAuthConsentModal to be triggered via a deep link event
-      // which is only available in the full Tauri desktop app
+    test.skip('should show success state with Open Workspaces button after approval', async ({
+      page,
+    }) => {
+      // This test requires the OAuthConsentModal to be triggered via a deep link
+      // event, which is only available in the full Tauri desktop app.
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      // After approval, the modal should show:
-      // - "Client Approved" heading
-      // - "Manage Permissions" button
-      // - "Later" button
-      const manageBtn = page.locator('[data-testid="go-to-clients-btn"]');
-      await expect(manageBtn).toBeVisible();
-      await expect(manageBtn).toContainText('Manage Permissions');
+      // In the v2 flow the post-approval screen sends users to Workspaces
+      // (where routing per folder lives), not to a per-client permissions page.
+      const openWorkspacesBtn = page.locator('[data-testid="go-to-workspaces-btn"]');
+      await expect(openWorkspacesBtn).toBeVisible();
+      await expect(openWorkspacesBtn).toContainText('Open Workspaces');
     });
   });
 });

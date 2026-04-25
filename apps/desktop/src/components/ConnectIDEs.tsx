@@ -27,12 +27,17 @@ interface GridEntry {
   nextStep: string;
 }
 
-interface ConnectIDEsProps {
+interface ConnectIDEsGridProps {
   gatewayUrl: string;
   gatewayRunning: boolean;
 }
 
-export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
+/**
+ * Chromeless grid of IDE connect shortcuts. Used directly by the dashboard
+ * ConnectionCard (which owns the surrounding chrome) and wrapped by
+ * `ConnectIDEs` below for the Clients page standalone usage.
+ */
+export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -155,6 +160,115 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
   };
 
   return (
+    <div className="flex flex-wrap gap-3" data-testid="client-grid">
+      {entries.map((entry) => {
+        const isActive = activeId === entry.id;
+        const isCopied = copiedId === entry.id;
+
+        return (
+          <div
+            key={entry.id}
+            className="relative flex flex-col items-center gap-1"
+            ref={isActive ? popoverRef : undefined}
+          >
+            <button
+              type="button"
+              className={`flex items-center justify-center h-10 w-10 rounded-lg border transition-all
+                ${
+                  isActive
+                    ? 'border-primary-500 bg-primary-500/10 ring-1 ring-primary-500/30'
+                    : 'border-[rgb(var(--border))] bg-[var(--surface)] hover:border-primary-400 hover:bg-primary-500/5'
+                }`}
+              title={entry.name}
+              onClick={() => setActiveId(isActive ? null : entry.id)}
+              data-testid={`client-icon-${entry.id}`}
+            >
+              {entry.icon ? (
+                <img
+                  src={entry.icon}
+                  alt={entry.name}
+                  className="h-5 w-5 object-contain"
+                />
+              ) : (
+                <Braces className="h-4 w-4 text-[rgb(var(--muted))]" />
+              )}
+            </button>
+            <span className="text-[10px] text-[rgb(var(--muted))] leading-none">
+              {entry.label}
+            </span>
+
+            {/* Popover — opens UPWARD. The grid usually sits at the
+                bottom of a Card (Dashboard + Clients empty state), so
+                opening downward put the action button below the scroll
+                viewport on first paint, forcing users to scroll to find
+                it. Anchor to the bottom of the trigger button instead. */}
+            {isActive && (
+              <div
+                className="absolute bottom-full left-0 mb-2 z-10 w-64 rounded-lg border border-[rgb(var(--border))] bg-white dark:bg-zinc-900 shadow-lg p-3"
+                data-testid="client-popover"
+              >
+                <p className="text-xs font-semibold mb-1 relative">{entry.name}</p>
+
+                {/* Per-IDE instructions. Not a switch on action type —
+                    each IDE's post-install step is meaningfully different
+                    (VS Code auto-starts, Cursor needs explicit toggle,
+                    JetBrains needs a full restart, etc.). */}
+                <p className="text-[11px] leading-snug text-[rgb(var(--muted))] mb-2.5">
+                  {entry.nextStep}
+                </p>
+
+                {entry.action === 'deep_link' ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="w-full h-7 text-xs relative"
+                    disabled={!gatewayRunning}
+                    onClick={() => handleDeepLink(entry)}
+                  >
+                    Add to {entry.name}
+                  </Button>
+                ) : isCopied ? (
+                  <div className="flex items-center justify-center gap-1 text-xs text-green-600 h-7 relative">
+                    <Check className="h-3 w-3" />
+                    Copied — paste &amp; follow above
+                  </div>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full h-7 text-xs gap-1 relative"
+                    onClick={() => handleCopy(entry)}
+                    data-testid={entry.id === 'copy-config' ? 'copy-config-btn' : undefined}
+                  >
+                    <Copy className="h-3 w-3" />
+                    {entry.action === 'copy_config' ? 'Copy config' : 'Copy command'}
+                  </Button>
+                )}
+
+                {/* Arrow — points down from the popover to the trigger
+                    icon below. */}
+                <div className="absolute -bottom-1.5 left-4 h-3 w-3 rotate-45 border-r border-b border-[rgb(var(--border))] bg-white dark:bg-zinc-900" />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+interface ConnectIDEsProps {
+  gatewayUrl: string;
+  gatewayRunning: boolean;
+}
+
+/**
+ * Standalone Card-wrapped IDE grid. Used by the Clients page where it lives
+ * on its own. The dashboard uses the chromeless `ConnectIDEsGrid` inside the
+ * canonical ConnectionCard instead.
+ */
+export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
+  return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
@@ -175,95 +289,7 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-wrap gap-3" data-testid="client-grid">
-          {entries.map((entry) => {
-            const isActive = activeId === entry.id;
-            const isCopied = copiedId === entry.id;
-
-            return (
-              <div key={entry.id} className="relative flex flex-col items-center gap-1" ref={isActive ? popoverRef : undefined}>
-                <button
-                  type="button"
-                  className={`flex items-center justify-center h-10 w-10 rounded-lg border transition-all
-                    ${isActive
-                      ? 'border-primary-500 bg-primary-500/10 ring-1 ring-primary-500/30'
-                      : 'border-[rgb(var(--border))] bg-[var(--surface)] hover:border-primary-400 hover:bg-primary-500/5'
-                    }`}
-                  title={entry.name}
-                  onClick={() => setActiveId(isActive ? null : entry.id)}
-                  data-testid={`client-icon-${entry.id}`}
-                >
-                  {entry.icon ? (
-                    <img
-                      src={entry.icon}
-                      alt={entry.name}
-                      className="h-5 w-5 object-contain"
-                    />
-                  ) : (
-                    <Braces className="h-4 w-4 text-[rgb(var(--muted))]" />
-                  )}
-                </button>
-                <span className="text-[10px] text-[rgb(var(--muted))] leading-none">
-                  {entry.label}
-                </span>
-
-                {/* Popover — opens UPWARD. The grid usually sits at the
-                    bottom of a Card (Dashboard + Clients empty state), so
-                    opening downward put the action button below the scroll
-                    viewport on first paint, forcing users to scroll to find
-                    it. Anchor to the bottom of the trigger button instead. */}
-                {isActive && (
-                  <div
-                    className="absolute bottom-full left-0 mb-2 z-10 w-64 rounded-lg border border-[rgb(var(--border))] bg-white dark:bg-zinc-900 shadow-lg p-3"
-                    data-testid="client-popover"
-                  >
-                    <p className="text-xs font-semibold mb-1 relative">{entry.name}</p>
-
-                    {/* Per-IDE instructions. Not a switch on action type —
-                        each IDE's post-install step is meaningfully different
-                        (VS Code auto-starts, Cursor needs explicit toggle,
-                        JetBrains needs a full restart, etc.). */}
-                    <p className="text-[11px] leading-snug text-[rgb(var(--muted))] mb-2.5">
-                      {entry.nextStep}
-                    </p>
-
-                    {entry.action === 'deep_link' ? (
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        className="w-full h-7 text-xs relative"
-                        disabled={!gatewayRunning}
-                        onClick={() => handleDeepLink(entry)}
-                      >
-                        Add to {entry.name}
-                      </Button>
-                    ) : isCopied ? (
-                      <div className="flex items-center justify-center gap-1 text-xs text-green-600 h-7 relative">
-                        <Check className="h-3 w-3" />
-                        Copied — paste &amp; follow above
-                      </div>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="w-full h-7 text-xs gap-1 relative"
-                        onClick={() => handleCopy(entry)}
-                        data-testid={entry.id === 'copy-config' ? 'copy-config-btn' : undefined}
-                      >
-                        <Copy className="h-3 w-3" />
-                        {entry.action === 'copy_config' ? 'Copy config' : 'Copy command'}
-                      </Button>
-                    )}
-
-                    {/* Arrow — points down from the popover to the trigger
-                        icon below. */}
-                    <div className="absolute -bottom-1.5 left-4 h-3 w-3 rotate-45 border-r border-b border-[rgb(var(--border))] bg-white dark:bg-zinc-900" />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        <ConnectIDEsGrid gatewayUrl={gatewayUrl} gatewayRunning={gatewayRunning} />
       </CardContent>
     </Card>
   );

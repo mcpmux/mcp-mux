@@ -3,13 +3,12 @@
 //! Tests for DCR registration, OAuth authorization codes, tokens, and client grants.
 //! These test the INBOUND flow: AI clients (Cursor, Claude) connecting TO McpMux.
 
-use mcpmux_core::repository::SpaceRepository;
 use mcpmux_storage::{
-    AuthorizationCode, InboundClient, InboundClientRepository, RegistrationType,
-    SqliteSpaceRepository, TokenRecord, TokenType,
+    AuthorizationCode, InboundClient, InboundClientRepository, RegistrationType, TokenRecord,
+    TokenType,
 };
 use std::sync::Arc;
-use tests::{db::TestDatabase, fixtures};
+use tests::db::TestDatabase;
 use tokio::sync::Mutex;
 
 fn create_test_client(name: &str) -> InboundClient {
@@ -35,8 +34,6 @@ fn create_test_client(name: &str) -> InboundClient {
         metadata_url: None,
         metadata_cached_at: None,
         metadata_cache_ttl: None,
-        connection_mode: "follow_active".to_string(),
-        locked_space_id: None,
         last_seen: None,
         created_at: now.clone(),
         updated_at: now,
@@ -561,35 +558,21 @@ async fn test_revoke_client_tokens() {
 // =============================================================================
 
 #[tokio::test]
-async fn test_update_client_settings() {
+async fn test_update_client_alias() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
+    let repo = InboundClientRepository::new(db);
 
-    // Create a space for locking
-    let space = fixtures::test_space("Locked Space");
-    SpaceRepository::create(&space_repo, &space).await.unwrap();
-
-    let client = create_test_client("Settings Test");
+    let client = create_test_client("Alias Test");
     repo.save_client(&client).await.unwrap();
 
-    // Update settings
     let updated = repo
-        .update_client_settings(
-            &client.client_id,
-            Some("My Cursor".to_string()),    // alias
-            Some("locked".to_string()),       // connection_mode
-            Some(Some(space.id.to_string())), // locked_space_id
-        )
+        .update_client_alias(&client.client_id, Some("My Cursor".to_string()))
         .await
-        .expect("Failed to update settings");
+        .expect("Failed to update alias");
 
-    assert!(updated.is_some());
-    let updated = updated.unwrap();
+    let updated = updated.expect("client should exist after alias update");
     assert_eq!(updated.client_alias, Some("My Cursor".to_string()));
-    assert_eq!(updated.connection_mode, "locked");
-    assert_eq!(updated.locked_space_id, Some(space.id.to_string()));
 }
 
 #[tokio::test]

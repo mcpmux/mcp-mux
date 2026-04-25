@@ -7,8 +7,8 @@ use tracing::debug;
 
 use crate::services::PrefixCacheService;
 use mcpmux_core::{
-    FeatureSet, FeatureSetRepository, FeatureSetType, FeatureType, MemberMode, MemberType,
-    ServerFeature, ServerFeatureRepository,
+    FeatureSet, FeatureSetRepository, FeatureType, MemberMode, MemberType, ServerFeature,
+    ServerFeatureRepository,
 };
 
 /// Helper to apply include/exclude mode (DRY)
@@ -82,7 +82,6 @@ impl FeatureResolutionService {
     ) -> Result<Vec<ServerFeature>> {
         let mut allowed_feature_ids: HashSet<String> = HashSet::new();
         let mut excluded_feature_ids: HashSet<String> = HashSet::new();
-        let mut has_all_grant = false;
 
         let all_features = self.feature_repo.list_for_space(space_id).await?;
 
@@ -107,87 +106,40 @@ impl FeatureResolutionService {
                 }
             };
 
-            match feature_set.feature_set_type {
-                FeatureSetType::All => {
-                    has_all_grant = true;
-                }
-                FeatureSetType::Default => {
-                    // Default feature set uses explicit members only
-                    // Empty default = no features (secure by default)
-                    self.resolve_members(
-                        &feature_set,
-                        &all_features,
-                        &mut allowed_feature_ids,
-                        &mut excluded_feature_ids,
-                    )
-                    .await?;
-                }
-                FeatureSetType::ServerAll => {
-                    if let Some(ref server_id) = feature_set.server_id {
-                        debug!(
-                            "[FeatureResolution] ServerAll: querying features for server_id={} in space={}",
-                            server_id, space_id
-                        );
-                        let server_features = self
-                            .feature_repo
-                            .list_for_server(space_id, server_id)
-                            .await?;
-                        debug!(
-                            "[FeatureResolution] ServerAll: found {} features for server {}",
-                            server_features.len(),
-                            server_id
-                        );
-                        for f in &server_features {
-                            debug!(
-                                "[FeatureResolution] ServerAll: adding feature id={}, name={}, available={}",
-                                f.id, f.feature_name, f.is_available
-                            );
-                            allowed_feature_ids.insert(f.id.to_string());
-                        }
-                    } else {
-                        debug!("[FeatureResolution] ServerAll: feature_set.server_id is None!");
-                    }
-                }
-                FeatureSetType::Custom => {
-                    self.resolve_members(
-                        &feature_set,
-                        &all_features,
-                        &mut allowed_feature_ids,
-                        &mut excluded_feature_ids,
-                    )
-                    .await?;
-                }
-            }
+            // Both Default and Custom sets use explicit members; the
+            // resolution is identical — walk the members and build up
+            // allow/exclude sets.
+            self.resolve_members(
+                &feature_set,
+                &all_features,
+                &mut allowed_feature_ids,
+                &mut excluded_feature_ids,
+            )
+            .await?;
         }
 
-        // Apply filters
         debug!(
-            "[FeatureResolution] Filtering: has_all_grant={}, all_features={}, allowed_ids={}, excluded_ids={}",
-            has_all_grant, all_features.len(), allowed_feature_ids.len(), excluded_feature_ids.len()
+            "[FeatureResolution] Filtering: all_features={}, allowed_ids={}, excluded_ids={}",
+            all_features.len(),
+            allowed_feature_ids.len(),
+            excluded_feature_ids.len()
         );
 
-        let mut result: Vec<ServerFeature> = if has_all_grant {
-            all_features
-                .into_iter()
-                .filter(|f| f.is_available)
-                .collect()
-        } else {
-            all_features
-                .into_iter()
-                .filter(|f| {
-                    let in_allowed = allowed_feature_ids.contains(&f.id.to_string());
-                    let in_excluded = excluded_feature_ids.contains(&f.id.to_string());
-                    let passes = f.is_available && in_allowed && !in_excluded;
-                    if !passes && in_allowed {
-                        debug!(
-                            "[FeatureResolution] Feature {} (server={}) filtered out: is_available={}, in_allowed={}, in_excluded={}",
-                            f.feature_name, f.server_id, f.is_available, in_allowed, in_excluded
-                        );
-                    }
-                    passes
-                })
-                .collect()
-        };
+        let mut result: Vec<ServerFeature> = all_features
+            .into_iter()
+            .filter(|f| {
+                let in_allowed = allowed_feature_ids.contains(&f.id.to_string());
+                let in_excluded = excluded_feature_ids.contains(&f.id.to_string());
+                let passes = f.is_available && in_allowed && !in_excluded;
+                if !passes && in_allowed {
+                    debug!(
+                        "[FeatureResolution] Feature {} (server={}) filtered out: is_available={}, in_allowed={}, in_excluded={}",
+                        f.feature_name, f.server_id, f.is_available, in_allowed, in_excluded
+                    );
+                }
+                passes
+            })
+            .collect();
 
         debug!(
             "[FeatureResolution] After filter: {} features",
@@ -229,38 +181,16 @@ impl FeatureResolutionService {
                     );
                 }
                 MemberType::FeatureSet => {
+                    // Composition: recurse into the nested FS, walking its
+                    // members the same way. Both Default and Custom sets
+                    // are purely member-driven now.
                     if let Some(nested_fs) = self
                         .feature_set_repo
                         .get_with_members(&member.member_id)
                         .await?
                     {
-                        match nested_fs.feature_set_type {
-                            FeatureSetType::All => {
-                                let ids = all_features
-                                    .iter()
-                                    .filter(|f| f.is_available)
-                                    .map(|f| f.id.to_string());
-                                apply_mode_to_set(member.mode, ids, allowed, excluded);
-                            }
-                            FeatureSetType::ServerAll => {
-                                if let Some(ref server_id) = nested_fs.server_id {
-                                    let ids = all_features
-                                        .iter()
-                                        .filter(|f| f.server_id == *server_id && f.is_available)
-                                        .map(|f| f.id.to_string());
-                                    apply_mode_to_set(member.mode, ids, allowed, excluded);
-                                }
-                            }
-                            _ => {
-                                Box::pin(self.resolve_members(
-                                    &nested_fs,
-                                    all_features,
-                                    allowed,
-                                    excluded,
-                                ))
-                                .await?;
-                            }
-                        }
+                        Box::pin(self.resolve_members(&nested_fs, all_features, allowed, excluded))
+                            .await?;
                     }
                 }
             }

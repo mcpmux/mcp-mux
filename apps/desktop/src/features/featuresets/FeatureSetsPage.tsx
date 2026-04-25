@@ -2,12 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Plus,
   Loader2,
-  Server,
   Package,
   Settings,
   X,
   RefreshCw,
-  Globe,
   Star,
   Search,
   AlertCircle,
@@ -30,21 +28,16 @@ import {
   deleteFeatureSet,
   getFeatureSetWithMembers,
 } from '@/lib/api/featureSets';
-import { setSpaceActiveFeatureSet, getSpace } from '@/lib/api/spaces';
 import { useViewSpace } from '@/stores';
 import { FeatureSetPanel } from './FeatureSetPanel';
 
 // Get icon for feature set type
 const getFeatureSetIcon = (fs: FeatureSet) => {
   if (fs.icon) return <span className="text-xl">{fs.icon}</span>;
-  
+
   switch (fs.feature_set_type) {
-    case 'all':
-      return <Globe className="h-8 w-8 text-green-500" />;
     case 'default':
       return <Star className="h-8 w-8 text-yellow-500" />;
-    case 'server-all':
-      return <Server className="h-8 w-8 text-blue-500" />;
     case 'custom':
     default:
       return <Package className="h-8 w-8 text-purple-500" />;
@@ -54,12 +47,8 @@ const getFeatureSetIcon = (fs: FeatureSet) => {
 // Get display name for feature set type
 const getFeatureSetTypeName = (type: string) => {
   switch (type) {
-    case 'all':
-      return 'All Features';
     case 'default':
       return 'Default';
-    case 'server-all':
-      return 'Server All';
     case 'custom':
     default:
       return 'Custom';
@@ -84,15 +73,6 @@ export function FeatureSetsPage() {
   // Panel state
   const [selectedFeatureSet, setSelectedFeatureSet] = useState<FeatureSet | null>(null);
 
-  // Resolver v2: which FS is the Space's active fallback.
-  // Tracked locally so the "Active" badge updates immediately after clicking
-  // "Set Active" without waiting for a refetch of the whole viewSpace.
-  const [activeFeatureSetId, setActiveFeatureSetId] = useState<string | null>(null);
-  // Id of the FS whose "Set Active" button is mid-flight, so we can render
-  // a spinner in its place (otherwise the optimistic update swaps the button
-  // for the Active badge immediately and a slow backend feels like a no-op).
-  const [activatingId, setActivatingId] = useState<string | null>(null);
-
   const loadData = useCallback(async (spaceId?: string) => {
     setIsLoading(true);
     setError(null);
@@ -101,49 +81,14 @@ export function FeatureSetsPage() {
         setFeatureSets([]);
         return;
       }
-      
-      // Backend filters out server-all feature sets for disabled servers
       const data = await listFeatureSetsBySpace(spaceId);
       setFeatureSets(data);
-
-      // Fetch the Space's active FS for the "Active" badge. The
-      // viewSpace from the store may be stale, so we fetch fresh here.
-      const space = await getSpace(spaceId);
-      setActiveFeatureSetId(space?.active_feature_set_id ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsLoading(false);
     }
   }, []);
-
-  const handleSetActive = async (fs: FeatureSet, event: React.MouseEvent) => {
-    // Belt and suspenders: stop both the synthetic event AND the native
-    // event so the wrapping Card's onClick can't open the panel.
-    event.stopPropagation();
-    event.preventDefault();
-    event.nativeEvent?.stopImmediatePropagation?.();
-
-    if (!viewSpace) return;
-    if (activatingId) return; // Debounce double-clicks.
-
-    const previous = activeFeatureSetId;
-    setActivatingId(fs.id);
-    setActiveFeatureSetId(fs.id); // Optimistic.
-    try {
-      await setSpaceActiveFeatureSet(viewSpace.id, fs.id);
-      success(
-        `${fs.name} is now Active`,
-        'Applied to every connected client in this Space without a pin or workspace binding.'
-      );
-    } catch (e) {
-      setActiveFeatureSetId(previous);
-      const msg = e instanceof Error ? e.message : String(e);
-      showError('Failed to set Active FeatureSet', msg);
-    } finally {
-      setActivatingId(null);
-    }
-  };
 
   useEffect(() => {
     setSelectedFeatureSet(null);
@@ -233,11 +178,12 @@ export function FeatureSetsPage() {
       );
     })
     .sort((a, b) => {
-      // Sort order: all → default → custom → server-all
-      const order: Record<string, number> = { all: 0, default: 1, custom: 2, 'server-all': 3 };
-      const aOrder = order[a.feature_set_type] ?? 2;
-      const bOrder = order[b.feature_set_type] ?? 2;
-      return aOrder - bOrder;
+      // Default FS first (pinned to top), then Custom sets alphabetically
+      const order: Record<string, number> = { default: 0, custom: 1 };
+      const aOrder = order[a.feature_set_type] ?? 1;
+      const bOrder = order[b.feature_set_type] ?? 1;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.name.localeCompare(b.name);
     });
 
   return (
@@ -292,8 +238,7 @@ export function FeatureSetsPage() {
         </div>
       </div>
 
-      {/* Active FeatureSet explainer — helps users understand what the green
-          ribbon / "Set Active" button actually does before they click around. */}
+      {/* Feature-set model explainer */}
       <div className="flex-shrink-0 px-8 pt-6">
         <div className="max-w-[2000px] mx-auto flex items-start gap-3 p-4 rounded-xl border border-emerald-200/70 dark:border-emerald-800/40 bg-gradient-to-r from-emerald-50/60 to-transparent dark:from-emerald-900/15">
           <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-green-500 text-white shadow-[0_4px_10px_-2px_rgb(16_185_129/0.45)]">
@@ -301,11 +246,12 @@ export function FeatureSetsPage() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-[rgb(var(--foreground))]">
-              One <span className="text-emerald-600 dark:text-emerald-400">Active</span> FeatureSet per Space
+              FeatureSets are bound to <span className="text-emerald-600 dark:text-emerald-400">workspace roots</span>
             </p>
             <p className="text-xs text-[rgb(var(--muted))] mt-0.5 leading-relaxed">
-              The Active set is applied to every connected MCP client in this Space that doesn&apos;t
-              have an explicit pin or a matching workspace binding. Click <span className="font-medium text-emerald-700 dark:text-emerald-300">Set Active</span> on any card to make it the default.
+              Each Space gets one auto-created Default set. Routing is decided per
+              reported folder via <span className="font-medium">Workspaces</span> — sessions
+              whose root isn&apos;t bound fall back to the default Space&apos;s Default set.
             </p>
           </div>
         </div>
@@ -354,9 +300,7 @@ export function FeatureSetsPage() {
               {filteredSets.map((fs) => {
                 const isSelected = selectedFeatureSet?.id === fs.id;
                 const isBuiltin = fs.is_builtin;
-                const isActive = activeFeatureSetId === fs.id;
-
-                const isActivating = activatingId === fs.id;
+                const isDefault = fs.feature_set_type === 'default';
 
                 return (
                   <Card
@@ -364,35 +308,27 @@ export function FeatureSetsPage() {
                     className={`relative overflow-hidden cursor-pointer transition-all duration-300 hover:shadow-lg hover:scale-[1.01] ${
                       isSelected ? 'ring-2 ring-primary-500 shadow-lg' : ''
                     } ${
-                      isActive
-                        ? 'ring-2 ring-emerald-400 shadow-[0_0_0_4px_rgb(16_185_129/0.08),0_12px_24px_-8px_rgb(16_185_129/0.35)] bg-gradient-to-br from-emerald-50/60 via-transparent to-transparent dark:from-emerald-900/20 dark:via-transparent dark:to-transparent'
+                      isDefault
+                        ? 'ring-1 ring-emerald-300 dark:ring-emerald-700/60 bg-gradient-to-br from-emerald-50/40 via-transparent to-transparent dark:from-emerald-900/15'
                         : ''
                     }`}
                     onClick={() => handleOpenPanel(fs)}
                     data-testid={`featureset-card-${fs.id}`}
                   >
-                    {/* Active ribbon — top-right corner badge, premium feel */}
-                    {isActive && (
+                    {isDefault && (
                       <div
                         className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-green-500 text-white text-[10px] font-bold uppercase tracking-wider shadow-[0_4px_12px_-2px_rgb(16_185_129/0.5)]"
-                        title="Applied to every client in this Space with no pin or workspace binding"
-                        data-testid={`featureset-active-badge-${fs.id}`}
+                        title="Auto-seeded fallback; applied when a reported workspace root has no binding"
+                        data-testid={`featureset-default-badge-${fs.id}`}
                       >
-                        <Zap className="h-3 w-3 fill-current" />
-                        Active
+                        <CheckCircle2 className="h-3 w-3" />
+                        Default
                       </div>
                     )}
 
                     <CardContent className="p-6">
-                      {/* Header */}
                       <div className="flex items-start gap-4 mb-5">
-                        <div
-                          className={`w-16 h-16 flex items-center justify-center rounded-xl flex-shrink-0 border transition-colors ${
-                            isActive
-                              ? 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800/60'
-                              : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))]'
-                          }`}
-                        >
+                        <div className="w-16 h-16 flex items-center justify-center rounded-xl flex-shrink-0 border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
                           {getFeatureSetIcon(fs)}
                         </div>
                         <div className="flex-1 min-w-0 pr-16">
@@ -409,58 +345,15 @@ export function FeatureSetsPage() {
                         </div>
                       </div>
 
-                      {/* Description */}
                       <p className="text-sm text-[rgb(var(--muted))] line-clamp-2 mb-4 h-10">
                         {fs.description || 'No description provided.'}
                       </p>
 
-                      {/* Footer — Set Active is now a prominent gradient button; Active state gets its own caption */}
                       <div className="flex items-center justify-between gap-3 text-xs text-[rgb(var(--muted))] border-t border-[rgb(var(--border-subtle))] pt-4">
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          {fs.feature_set_type === 'server-all' ? (
-                            <span className="truncate max-w-[150px]">{fs.server_id}</span>
-                          ) : fs.feature_set_type === 'all' ? (
-                            <span className="italic">All features</span>
-                          ) : (
-                            <span>{fs.members?.length || 0} members</span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isActive ? (
-                            <span
-                              className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-xs"
-                              title="This FeatureSet is the Space's fallback"
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              Applied to this Space
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => handleSetActive(fs, e)}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              disabled={isActivating}
-                              className="group relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/60 hover:text-white hover:bg-gradient-to-r hover:from-emerald-500 hover:to-green-500 hover:border-transparent hover:shadow-[0_6px_16px_-4px_rgb(16_185_129/0.5)] disabled:opacity-60 disabled:cursor-wait transition-all duration-200"
-                              title="Make this the default FeatureSet for every connected client in this Space"
-                              data-testid={`featureset-set-active-${fs.id}`}
-                            >
-                              {isActivating ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Zap className="h-3 w-3 group-hover:fill-current transition-all" />
-                              )}
-                              {isActivating ? 'Activating…' : 'Set Active'}
-                            </button>
-                          )}
-                          {isBuiltin && fs.feature_set_type !== 'default' ? (
-                            <span className="italic flex-shrink-0">Auto-managed</span>
-                          ) : (
-                            <span className="hidden md:flex items-center gap-1 hover:text-primary-500 transition-colors flex-shrink-0">
-                              Configure <Settings className="h-3 w-3" />
-                            </span>
-                          )}
-                        </div>
+                        <span>{fs.members?.length || 0} members</span>
+                        <span className="hidden md:flex items-center gap-1 hover:text-primary-500 transition-colors flex-shrink-0">
+                          Configure <Settings className="h-3 w-3" />
+                        </span>
                       </div>
                     </CardContent>
                   </Card>

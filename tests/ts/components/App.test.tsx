@@ -40,6 +40,10 @@ vi.mock('@/features/spaces', () => ({
 vi.mock('@/features/settings', () => ({
   SettingsPage: () => <div data-testid="settings-page" />,
 }));
+vi.mock('@/features/workspaces', () => ({
+  WorkspacesPage: () => <div data-testid="workspaces-page" />,
+  WorkspaceBindingSheet: () => null,
+}));
 
 // Mock non-essential components
 vi.mock('@/components/OAuthConsentModal', () => ({
@@ -89,6 +93,21 @@ vi.mock('@/lib/api/gateway', () => ({
   startGateway: vi.fn().mockResolvedValue('http://localhost:45818'),
   stopGateway: vi.fn().mockResolvedValue(undefined),
   restartGateway: vi.fn().mockResolvedValue(undefined),
+  // AutoStartConflictResolver polls these on mount; default to a
+  // "no conflict" state so the resolver no-ops in tests.
+  takePendingPortConflict: vi.fn().mockResolvedValue(null),
+  probeGatewayStart: vi.fn().mockResolvedValue({
+    preferred_port: 45818,
+    preferred_available: true,
+    source: 'Default',
+  }),
+  getGatewayPortSettings: vi.fn().mockResolvedValue({
+    configured_port: null,
+    default_port: 45818,
+    active_port: null,
+  }),
+  openUrl: vi.fn().mockResolvedValue(undefined),
+  parsePortInUseError: vi.fn().mockReturnValue(null),
 }));
 vi.mock('@/lib/api/clients', () => ({
   listClients: vi.fn().mockResolvedValue([]),
@@ -149,34 +168,30 @@ describe('App – dynamic version display', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent('McpMux v1.2.3');
+      expect(screen.getByTestId('statusbar-version')).toHaveTextContent('v1.2.3');
     });
   });
 
-  it('should display "McpMux" without version suffix while loading', () => {
+  it('should hide the version span while loading', () => {
     // invoke never resolves
     mockInvoke.mockImplementation(() => new Promise(() => {}));
 
     render(<App />);
 
-    const sidebar = screen.getByTestId('sidebar');
-    expect(sidebar).toHaveTextContent('McpMux');
-    expect(sidebar).not.toHaveTextContent('McpMux v');
+    // The span only renders once `appVersion` has a value.
+    expect(screen.queryByTestId('statusbar-version')).toBeNull();
   });
 
-  it('should display "McpMux" without crashing when version fetch fails', async () => {
+  it('should not crash and should omit the version when fetch fails', async () => {
     setupInvoke({ get_version: new Error('command failed') });
 
     render(<App />);
 
-    // Wait for the rejected promise to be handled
+    // App still renders (sidebar is present) even if version lookup errored.
     await waitFor(() => {
-      const sidebar = screen.getByTestId('sidebar');
-      expect(sidebar).toHaveTextContent('McpMux');
+      expect(screen.getByTestId('sidebar')).toBeInTheDocument();
     });
-
-    // Should not show a version number
-    expect(screen.getByTestId('sidebar')).not.toHaveTextContent('McpMux v');
+    expect(screen.queryByTestId('statusbar-version')).toBeNull();
   });
 });
 
@@ -186,74 +201,87 @@ describe('App – dynamic gateway URL display', () => {
     setupInvoke({ get_version: '0.1.2' });
   });
 
-  it('should show "Not running" as default gateway state', async () => {
+  it('should show "Gateway stopped" as default gateway state', async () => {
     setupGateway({ running: false, url: null });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent('Gateway: Not running');
+      expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
+        'Gateway stopped'
+      );
     });
   });
 
-  it('should show "Not running" when gateway is running but url is null', async () => {
+  it('should show "Gateway stopped" when gateway is running but url is null', async () => {
     setupGateway({ running: true, url: null });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent('Gateway: Not running');
+      expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
+        'Gateway stopped'
+      );
     });
   });
 
-  it('should update URL when gateway-started event fires', async () => {
+  it('should flip to running state when gateway-started event fires', async () => {
     setupGateway({ running: false, url: null });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent('Gateway: Not running');
+      expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
+        'Gateway stopped'
+      );
     });
 
-    // Simulate gateway started event
+    // Simulate gateway started event with a port.
     act(() => {
-      fireGatewayEvent({ action: 'started', url: 'http://localhost:9999' });
+      fireGatewayEvent({ action: 'started', url: 'http://localhost:9999', port: 9999 });
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent(
-        'Gateway: http://localhost:9999'
+      expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent('Gateway');
+      expect(screen.getByTestId('statusbar-gateway')).not.toHaveTextContent(
+        'stopped'
       );
     });
   });
 
-  it('should show "Not running" when gateway-stopped event fires', async () => {
+  it('should flip back to stopped when gateway-stopped event fires', async () => {
     setupGateway({ running: false, url: null });
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent('Gateway: Not running');
-    });
-
-    // Start the gateway via event, then stop it
-    act(() => {
-      fireGatewayEvent({ action: 'started', url: 'http://localhost:45818' });
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent(
-        'Gateway: http://localhost:45818'
+      expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
+        'Gateway stopped'
       );
     });
 
-    // Simulate gateway stopped event
+    act(() => {
+      fireGatewayEvent({
+        action: 'started',
+        url: 'http://localhost:45818',
+        port: 45818,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('statusbar-gateway')).not.toHaveTextContent(
+        'stopped'
+      );
+    });
+
     act(() => {
       fireGatewayEvent({ action: 'stopped' });
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('sidebar')).toHaveTextContent('Gateway: Not running');
+      expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
+        'Gateway stopped'
+      );
     });
   });
 });

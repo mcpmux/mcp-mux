@@ -175,6 +175,16 @@ impl GatewayServer {
         self.services.approval_broker.clone()
     }
 
+    /// Session-roots registry (MCP roots reported by connected peers).
+    ///
+    /// The desktop Workspaces tab reads this to surface every folder
+    /// clients are currently operating in — both bound and unbound — so
+    /// users can configure mappings even for roots they missed the
+    /// one-shot prompt for.
+    pub fn session_roots(&self) -> Arc<crate::services::SessionRootsRegistry> {
+        self.services.session_roots.clone()
+    }
+
     /// Get the OAuth manager
     pub fn oauth_manager(&self) -> Arc<crate::pool::OutboundOAuthManager> {
         self.services.pool_services.oauth_manager.clone()
@@ -376,6 +386,21 @@ impl GatewayServer {
     /// 1. Starts auto-connect in background
     /// 2. Starts the HTTP server
     pub async fn run(self) -> anyhow::Result<()> {
+        // No external shutdown signal — axum will run until the process
+        // exits or its future is dropped. Prefer `spawn()` for anything
+        // that wants a clean stop without orphaning the listener socket.
+        self.run_with_shutdown(std::future::pending::<()>()).await
+    }
+
+    /// Same as `run`, but accepts a shutdown future. When the future
+    /// resolves, axum stops accepting new connections, drains in-flight
+    /// requests, and closes the TCP listener. Rust `Drop` on the
+    /// `TcpListener` then releases the port on the OS — preventing the
+    /// orphaned-socket condition that force-killed processes leave behind.
+    pub async fn run_with_shutdown(
+        self,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> anyhow::Result<()> {
         let addr = self.config.addr();
 
         info!("[Gateway] Starting on {}", addr);
@@ -457,15 +482,65 @@ impl GatewayServer {
 
         info!("[Gateway] Ready to accept connections (servers connecting in background)");
 
-        axum::serve(listener, router).await?;
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                shutdown.await;
+                info!("[Gateway] Graceful shutdown signal received — closing listener");
+            })
+            .await?;
 
+        info!("[Gateway] Listener closed, run_with_shutdown returning");
         Ok(())
     }
 
-    /// Start the server in the background
+    /// Start the server in the background.
     ///
-    /// Returns a JoinHandle that can be used to wait for completion or abort.
-    pub fn spawn(self) -> tokio::task::JoinHandle<anyhow::Result<()>> {
-        tokio::spawn(async move { self.run().await })
+    /// Returns a [`GatewayServerHandle`] with both the `JoinHandle` and a
+    /// one-shot shutdown sender. Call `handle.shutdown()` (and then
+    /// `.await` the join handle with a timeout) to close the listener
+    /// cleanly. Dropping the sender without using it leaves axum running
+    /// until its task is aborted — the old behavior.
+    pub fn spawn(self) -> GatewayServerHandle {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn(async move {
+            self.run_with_shutdown(async move {
+                // If the sender is dropped without being used, `rx.await`
+                // resolves with `Err` and we treat that as "shut down now"
+                // — this makes accidental Drop of the handle release the
+                // port instead of orphaning it.
+                let _ = rx.await;
+            })
+            .await
+        });
+        GatewayServerHandle {
+            task,
+            shutdown: Some(tx),
+        }
+    }
+}
+
+/// Handle returned by [`GatewayServer::spawn`] — carries the task's
+/// `JoinHandle` plus a one-shot shutdown sender for graceful stop.
+///
+/// Sending on `shutdown` tells axum to drain in-flight requests and close
+/// the listener. After sending, await `task` (with a timeout) to let Rust
+/// `Drop` release the socket on the OS — otherwise the port stays bound
+/// in the kernel until the process exits.
+pub struct GatewayServerHandle {
+    pub task: tokio::task::JoinHandle<anyhow::Result<()>>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl GatewayServerHandle {
+    /// Send the graceful-shutdown signal. No-op if already sent (idempotent).
+    pub fn shutdown(&mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+    }
+
+    /// True when no shutdown signal has been sent yet.
+    pub fn is_active(&self) -> bool {
+        self.shutdown.is_some()
     }
 }

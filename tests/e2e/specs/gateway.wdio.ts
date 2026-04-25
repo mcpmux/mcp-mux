@@ -36,9 +36,9 @@ describe('Gateway Status - Dashboard', () => {
     const pageSource = await browser.getPageSource();
     
     // Gateway should be running by default
-    const isRunning = 
-      pageSource.includes('Gateway: Running') ||
-      pageSource.includes('border-green-500');
+    const isRunning =
+      pageSource.includes('Gateway running') ||
+      pageSource.includes('bg-green-500');
     
     console.log('[DEBUG] Gateway running:', isRunning);
     expect(isRunning).toBe(true);
@@ -49,9 +49,9 @@ describe('Gateway Status - Dashboard', () => {
     const pageSource = await browser.getPageSource();
     
     // Check for gateway status card
-    const hasGatewayCard = 
-      pageSource.includes('Gateway: Running') || 
-      pageSource.includes('Gateway: Stopped') ||
+    const hasGatewayCard =
+      pageSource.includes('Gateway running') ||
+      pageSource.includes('Gateway stopped') ||
       pageSource.includes('gateway-status-card');
     
     expect(hasGatewayCard).toBe(true);

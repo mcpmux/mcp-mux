@@ -118,6 +118,13 @@ impl FeatureSetResolverService {
         }
     }
 
+    /// Borrow the session-roots registry. The notifier uses this to GC
+    /// dead sessions out of the registry when reaping the corresponding
+    /// peer entries — keeping both stores in sync.
+    pub fn session_roots(&self) -> &Arc<SessionRootsRegistry> {
+        &self.session_roots
+    }
+
     /// Resolve the effective (Space, FS list, source) tuple for a session.
     ///
     /// `session_id`: the client's `mcp-session-id` header (or `None` when

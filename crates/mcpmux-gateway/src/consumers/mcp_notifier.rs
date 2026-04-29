@@ -322,13 +322,61 @@ impl MCPNotifier {
         tracker.insert((space_id, NotificationType::All), timestamp);
     }
 
+    /// Lazy GC for dead sessions.
+    ///
+    /// rmcp's `ServerHandler` doesn't expose a session-close callback, and
+    /// the streamable-HTTP session manager owns the close path internally.
+    /// What we *do* have on every `Peer<R>` is `is_transport_closed()` —
+    /// it flips true once the underlying transport has terminated. So we
+    /// reap lazily: every fanout / probe pass scans for closed peers and
+    /// removes them from both `sessions` and `session_roots`.
+    ///
+    /// Returns the ids that were reaped (for logging / metrics). Callers
+    /// pass the live (snapshot) list of `(session_id, peer)` they were
+    /// about to iterate; this mutates `self.sessions` and the
+    /// `feature_set_resolver`'s session registry.
+    fn reap_dead_sessions(&self, snapshot: &[(String, Arc<Peer<RoleServer>>)]) -> Vec<String> {
+        let dead: Vec<String> = snapshot
+            .iter()
+            .filter_map(|(sid, peer)| {
+                if peer.is_transport_closed() {
+                    Some(sid.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if dead.is_empty() {
+            return dead;
+        }
+        {
+            let mut sessions = self.sessions.write();
+            for sid in &dead {
+                sessions.remove(sid);
+            }
+        }
+        // Also clean the session_roots registry the resolver consults so
+        // it doesn't keep returning stale roots / capability flags for
+        // sessions that no longer exist.
+        for sid in &dead {
+            self.feature_set_resolver.session_roots().remove(sid);
+        }
+        info!(
+            reaped = dead.len(),
+            "[MCPNotifier] 🧹 reaped dead sessions (transport closed)"
+        );
+        dead
+    }
+
     /// Get every peer whose **session** currently routes into `space_id`.
     ///
     /// Iterates the session registry and re-runs the FeatureSet resolver
     /// per session — same logic the request handlers use, so a session
     /// redirected by `WorkspaceBinding` to a non-default space is matched
     /// correctly. Sessions whose stream isn't active yet are skipped (the
-    /// notification would be queued but not delivered).
+    /// notification would be queued but not delivered). Dead sessions
+    /// (transport closed) are GC'd before the resolve pass so we don't
+    /// waste a `feature_set_resolver.resolve()` call on them.
     async fn get_peers_for_space(&self, space_id: Uuid) -> Vec<Arc<Peer<RoleServer>>> {
         let session_list: Vec<(String, String, Arc<Peer<RoleServer>>)> = {
             let sessions = self.sessions.read();
@@ -339,9 +387,22 @@ impl MCPNotifier {
                 .collect()
         };
 
+        // GC dead sessions before resolving — also drops them from the
+        // snapshot so the resolve loop below skips them.
+        let dead = self.reap_dead_sessions(
+            &session_list
+                .iter()
+                .map(|(sid, _, peer)| (sid.clone(), peer.clone()))
+                .collect::<Vec<_>>(),
+        );
+        let dead_set: std::collections::HashSet<&str> = dead.iter().map(String::as_str).collect();
+
         let mut matching_peers = Vec::new();
         let _space_resolver = &self.space_resolver; // kept-but-unused; resolver below is authoritative
         for (session_id, client_id, peer) in session_list {
+            if dead_set.contains(session_id.as_str()) {
+                continue;
+            }
             match self
                 .feature_set_resolver
                 .resolve(Some(&session_id), Some(&client_id))
@@ -811,10 +872,21 @@ impl MCPNotifier {
                 .collect()
         };
 
+        let dead = self.reap_dead_sessions(
+            &session_list
+                .iter()
+                .map(|(sid, _, peer)| (sid.clone(), peer.clone()))
+                .collect::<Vec<_>>(),
+        );
+        let dead_set: std::collections::HashSet<&str> = dead.iter().map(String::as_str).collect();
+
         let mut matching_peers = Vec::new();
         let mut matching_client_ids = Vec::new();
 
         for (session_id, client_id, peer) in session_list {
+            if dead_set.contains(session_id.as_str()) {
+                continue;
+            }
             match self
                 .feature_set_resolver
                 .resolve(Some(&session_id), Some(&client_id))
@@ -995,14 +1067,21 @@ impl MCPNotifier {
         // editors, parallel CLI invocations). Push the notification on
         // every active session for that client_id; client-side dedup is
         // their problem, but missing a session would be ours.
-        let peers: Vec<Arc<Peer<RoleServer>>> = {
+        let snapshot: Vec<(String, Arc<Peer<RoleServer>>)> = {
             let sessions = self.sessions.read();
             sessions
                 .iter()
                 .filter(|(_, e)| e.client_id == client_id && e.has_active_stream)
-                .map(|(_, e)| e.peer.clone())
+                .map(|(sid, e)| (sid.clone(), e.peer.clone()))
                 .collect()
         };
+        let dead = self.reap_dead_sessions(&snapshot);
+        let dead_set: std::collections::HashSet<&str> = dead.iter().map(String::as_str).collect();
+        let peers: Vec<Arc<Peer<RoleServer>>> = snapshot
+            .into_iter()
+            .filter(|(sid, _)| !dead_set.contains(sid.as_str()))
+            .map(|(_, peer)| peer)
+            .collect();
 
         if peers.is_empty() {
             debug!(

@@ -198,7 +198,6 @@ impl TestGateway {
 
         // Create MCPNotifier
         let notifier = Arc::new(MCPNotifier::new(
-            services.space_resolver_service.clone(),
             services.feature_set_resolver.clone(),
             services.pool_services.feature_service.clone(),
         ));

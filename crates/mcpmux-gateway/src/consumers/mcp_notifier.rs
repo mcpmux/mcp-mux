@@ -26,7 +26,7 @@ use tracing::{debug, info, trace, warn};
 use uuid::Uuid;
 
 use crate::pool::FeatureService;
-use crate::services::{FeatureSetResolverService, SpaceResolverService};
+use crate::services::FeatureSetResolverService;
 
 /// MCP Notifier — sends `list_changed` notifications to connected sessions.
 ///
@@ -53,10 +53,6 @@ use crate::services::{FeatureSetResolverService, SpaceResolverService};
 pub struct MCPNotifier {
     /// Map: `mcp-session-id` → session handle.
     sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
-    /// Space resolver for the legacy client-→home-space query (kept for
-    /// callers that don't have a session id; the new fanout paths use
-    /// `feature_set_resolver` instead).
-    space_resolver: Arc<SpaceResolverService>,
     /// FeatureSet resolver — same one the request handlers use. Consulted
     /// per session to decide whether a notification applies.
     feature_set_resolver: Arc<FeatureSetResolverService>,
@@ -112,13 +108,11 @@ impl SessionEntry {
 
 impl MCPNotifier {
     pub fn new(
-        space_resolver: Arc<SpaceResolverService>,
         feature_set_resolver: Arc<FeatureSetResolverService>,
         feature_service: Arc<FeatureService>,
     ) -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            space_resolver,
             feature_set_resolver,
             feature_service,
             throttle_tracker: Arc::new(RwLock::new(HashMap::new())),
@@ -366,78 +360,6 @@ impl MCPNotifier {
             "[MCPNotifier] 🧹 reaped dead sessions (transport closed)"
         );
         dead
-    }
-
-    /// Get every peer whose **session** currently routes into `space_id`.
-    ///
-    /// Iterates the session registry and re-runs the FeatureSet resolver
-    /// per session — same logic the request handlers use, so a session
-    /// redirected by `WorkspaceBinding` to a non-default space is matched
-    /// correctly. Sessions whose stream isn't active yet are skipped (the
-    /// notification would be queued but not delivered). Dead sessions
-    /// (transport closed) are GC'd before the resolve pass so we don't
-    /// waste a `feature_set_resolver.resolve()` call on them.
-    async fn get_peers_for_space(&self, space_id: Uuid) -> Vec<Arc<Peer<RoleServer>>> {
-        let session_list: Vec<(String, String, Arc<Peer<RoleServer>>)> = {
-            let sessions = self.sessions.read();
-            sessions
-                .iter()
-                .filter(|(_, e)| e.has_active_stream)
-                .map(|(sid, entry)| (sid.clone(), entry.client_id.clone(), entry.peer.clone()))
-                .collect()
-        };
-
-        // GC dead sessions before resolving — also drops them from the
-        // snapshot so the resolve loop below skips them.
-        let dead = self.reap_dead_sessions(
-            &session_list
-                .iter()
-                .map(|(sid, _, peer)| (sid.clone(), peer.clone()))
-                .collect::<Vec<_>>(),
-        );
-        let dead_set: std::collections::HashSet<&str> = dead.iter().map(String::as_str).collect();
-
-        let mut matching_peers = Vec::new();
-        let _space_resolver = &self.space_resolver; // kept-but-unused; resolver below is authoritative
-        for (session_id, client_id, peer) in session_list {
-            if dead_set.contains(session_id.as_str()) {
-                continue;
-            }
-            match self
-                .feature_set_resolver
-                .resolve(Some(&session_id), Some(&client_id))
-                .await
-            {
-                Ok(resolved) if resolved.space_id == Some(space_id) => {
-                    debug!(
-                        %session_id,
-                        %client_id,
-                        %space_id,
-                        "[MCPNotifier] Session resolves to target space"
-                    );
-                    matching_peers.push(peer);
-                }
-                Ok(resolved) => {
-                    debug!(
-                        %session_id,
-                        %client_id,
-                        resolved_space = ?resolved.space_id,
-                        %space_id,
-                        "[MCPNotifier] Session is in a different space, skipping"
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        %session_id,
-                        %client_id,
-                        error = %e,
-                        "[MCPNotifier] ⚠️ Failed to resolve space for session"
-                    );
-                }
-            }
-        }
-
-        matching_peers
     }
 
     /// Start listening to domain events and notifying peers
@@ -811,33 +733,47 @@ impl MCPNotifier {
             return;
         }
 
-        // Get peers for this space, filtering to only those with active streams
-        let (peers, _client_ids) = self.get_peers_for_space_with_streams(space_id).await;
+        // Get sessions in this space with active streams, paired with
+        // their session_id + client_id for per-push log attribution.
+        let targets = self.get_peers_for_space_with_streams(space_id).await;
 
-        if peers.is_empty() {
-            debug!(space_id = %space_id, "[MCPNotifier] No peers with active streams to notify about tools");
+        if targets.is_empty() {
+            debug!(
+                space_id = %space_id,
+                "[MCPNotifier] No sessions with active streams to notify about tools"
+            );
             return;
         }
 
         info!(
             space_id = %space_id,
-            peer_count = peers.len(),
-            "[MCPNotifier] 📤 Sending tools/list_changed to {} peers with active streams",
-            peers.len()
+            session_count = targets.len(),
+            "[MCPNotifier] 📤 Sending tools/list_changed to {} session(s) with active streams",
+            targets.len()
         );
 
         let mut success_count = 0;
         let mut failure_count = 0;
 
-        for peer in peers {
+        for (session_id, client_id, peer) in targets {
             match peer.notify_tool_list_changed().await {
                 Ok(_) => {
                     success_count += 1;
-                    debug!("[MCPNotifier] ✅ Sent tools/list_changed notification");
+                    debug!(
+                        %session_id,
+                        %client_id,
+                        %space_id,
+                        "[MCPNotifier] ✅ Sent tools/list_changed to session"
+                    );
                 }
                 Err(e) => {
                     failure_count += 1;
-                    warn!(error = ?e, "[MCPNotifier] Failed to send tools/list_changed");
+                    warn!(
+                        %session_id,
+                        %client_id,
+                        error = ?e,
+                        "[MCPNotifier] Failed to send tools/list_changed to session"
+                    );
                 }
             }
         }
@@ -853,16 +789,20 @@ impl MCPNotifier {
         }
     }
 
-    /// Get peers for a space that have active SSE streams.
+    /// Get the sessions in `space_id` that have an active SSE stream and
+    /// can therefore actually receive a notification.
     ///
     /// Session-keyed: iterates `sessions`, re-runs the FeatureSet resolver
     /// per session (same path as the request handlers), and returns the
-    /// peers whose session resolves into `space_id`. The second tuple
-    /// element is `client_id`s of those sessions, kept for log clarity.
+    /// `(session_id, client_id, peer)` triples whose session resolves into
+    /// `space_id`. Threading session_id through to the call site lets the
+    /// log lines on each `peer.notify_*_list_changed()` prove *which*
+    /// session got the push — important for verifying that two windows of
+    /// the same client routing into different spaces don't cross-talk.
     async fn get_peers_for_space_with_streams(
         &self,
         space_id: Uuid,
-    ) -> (Vec<Arc<Peer<RoleServer>>>, Vec<String>) {
+    ) -> Vec<(String, String, Arc<Peer<RoleServer>>)> {
         let session_list: Vec<(String, String, Arc<Peer<RoleServer>>)> = {
             let sessions = self.sessions.read();
             sessions
@@ -880,8 +820,7 @@ impl MCPNotifier {
         );
         let dead_set: std::collections::HashSet<&str> = dead.iter().map(String::as_str).collect();
 
-        let mut matching_peers = Vec::new();
-        let mut matching_client_ids = Vec::new();
+        let mut matching = Vec::new();
 
         for (session_id, client_id, peer) in session_list {
             if dead_set.contains(session_id.as_str()) {
@@ -899,8 +838,7 @@ impl MCPNotifier {
                         %space_id,
                         "[MCPNotifier] Session in target space with active stream"
                     );
-                    matching_peers.push(peer);
-                    matching_client_ids.push(client_id);
+                    matching.push((session_id, client_id, peer));
                 }
                 Ok(resolved) => {
                     debug!(
@@ -922,7 +860,7 @@ impl MCPNotifier {
             }
         }
 
-        (matching_peers, matching_client_ids)
+        matching
     }
 
     /// Notify all peers in a space that prompts list has changed (with throttling and deduping)
@@ -967,21 +905,33 @@ impl MCPNotifier {
             return;
         }
 
-        let peers = self.get_peers_for_space(space_id).await;
+        let targets = self.get_peers_for_space_with_streams(space_id).await;
 
-        if peers.is_empty() {
+        if targets.is_empty() {
             return;
         }
 
         info!(
             space_id = %space_id,
-            peer_count = peers.len(),
-            "[MCPNotifier] 📤 Sending prompts/list_changed"
+            session_count = targets.len(),
+            "[MCPNotifier] 📤 Sending prompts/list_changed to {} session(s)",
+            targets.len()
         );
 
-        for peer in peers {
-            if let Err(e) = peer.notify_prompt_list_changed().await {
-                warn!(error = ?e, "[MCPNotifier] Failed to send prompts/list_changed");
+        for (session_id, client_id, peer) in targets {
+            match peer.notify_prompt_list_changed().await {
+                Ok(_) => debug!(
+                    %session_id,
+                    %client_id,
+                    %space_id,
+                    "[MCPNotifier] ✅ Sent prompts/list_changed to session"
+                ),
+                Err(e) => warn!(
+                    %session_id,
+                    %client_id,
+                    error = ?e,
+                    "[MCPNotifier] Failed to send prompts/list_changed to session"
+                ),
             }
         }
     }
@@ -1028,21 +978,33 @@ impl MCPNotifier {
             return;
         }
 
-        let peers = self.get_peers_for_space(space_id).await;
+        let targets = self.get_peers_for_space_with_streams(space_id).await;
 
-        if peers.is_empty() {
+        if targets.is_empty() {
             return;
         }
 
         info!(
             space_id = %space_id,
-            peer_count = peers.len(),
-            "[MCPNotifier] 📤 Sending resources/list_changed"
+            session_count = targets.len(),
+            "[MCPNotifier] 📤 Sending resources/list_changed to {} session(s)",
+            targets.len()
         );
 
-        for peer in peers {
-            if let Err(e) = peer.notify_resource_list_changed().await {
-                warn!(error = ?e, "[MCPNotifier] Failed to send resources/list_changed");
+        for (session_id, client_id, peer) in targets {
+            match peer.notify_resource_list_changed().await {
+                Ok(_) => debug!(
+                    %session_id,
+                    %client_id,
+                    %space_id,
+                    "[MCPNotifier] ✅ Sent resources/list_changed to session"
+                ),
+                Err(e) => warn!(
+                    %session_id,
+                    %client_id,
+                    error = ?e,
+                    "[MCPNotifier] Failed to send resources/list_changed to session"
+                ),
             }
         }
     }
@@ -1077,13 +1039,12 @@ impl MCPNotifier {
         };
         let dead = self.reap_dead_sessions(&snapshot);
         let dead_set: std::collections::HashSet<&str> = dead.iter().map(String::as_str).collect();
-        let peers: Vec<Arc<Peer<RoleServer>>> = snapshot
+        let live: Vec<(String, Arc<Peer<RoleServer>>)> = snapshot
             .into_iter()
             .filter(|(sid, _)| !dead_set.contains(sid.as_str()))
-            .map(|(_, peer)| peer)
             .collect();
 
-        if peers.is_empty() {
+        if live.is_empty() {
             debug!(
                 %client_id,
                 "[MCPNotifier] no active session — skipping peer list_changed"
@@ -1093,19 +1054,49 @@ impl MCPNotifier {
 
         info!(
             %client_id,
-            session_count = peers.len(),
+            session_count = live.len(),
             "[MCPNotifier] 📤 per-client list_changed (resolution flipped or grant edited)"
         );
 
-        for peer in &peers {
-            if let Err(e) = peer.notify_tool_list_changed().await {
-                warn!(error = ?e, %client_id, "[MCPNotifier] failed tools/list_changed");
+        for (session_id, peer) in &live {
+            match peer.notify_tool_list_changed().await {
+                Ok(_) => debug!(
+                    %session_id,
+                    %client_id,
+                    "[MCPNotifier] ✅ Sent tools/list_changed to session (per-client)"
+                ),
+                Err(e) => warn!(
+                    %session_id,
+                    %client_id,
+                    error = ?e,
+                    "[MCPNotifier] failed tools/list_changed"
+                ),
             }
-            if let Err(e) = peer.notify_prompt_list_changed().await {
-                warn!(error = ?e, %client_id, "[MCPNotifier] failed prompts/list_changed");
+            match peer.notify_prompt_list_changed().await {
+                Ok(_) => debug!(
+                    %session_id,
+                    %client_id,
+                    "[MCPNotifier] ✅ Sent prompts/list_changed to session (per-client)"
+                ),
+                Err(e) => warn!(
+                    %session_id,
+                    %client_id,
+                    error = ?e,
+                    "[MCPNotifier] failed prompts/list_changed"
+                ),
             }
-            if let Err(e) = peer.notify_resource_list_changed().await {
-                warn!(error = ?e, %client_id, "[MCPNotifier] failed resources/list_changed");
+            match peer.notify_resource_list_changed().await {
+                Ok(_) => debug!(
+                    %session_id,
+                    %client_id,
+                    "[MCPNotifier] ✅ Sent resources/list_changed to session (per-client)"
+                ),
+                Err(e) => warn!(
+                    %session_id,
+                    %client_id,
+                    error = ?e,
+                    "[MCPNotifier] failed resources/list_changed"
+                ),
             }
         }
     }

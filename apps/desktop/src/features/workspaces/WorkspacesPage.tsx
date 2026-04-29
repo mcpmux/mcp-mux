@@ -455,6 +455,23 @@ function formatFsList(names: string[]): string {
   return names.filter((n) => n && n.length > 0).join(' + ');
 }
 
+/**
+ * Structural equality between two binding inputs. The autosave effect
+ * uses this to skip writes when the user re-toggled their way back to
+ * the last-saved state — avoids spamming `WorkspaceBindingChanged` for
+ * a no-op edit. `feature_set_ids` order matters (it's the operator-
+ * chosen render order, not just a set), so we compare positionally.
+ */
+function sameBindingInput(
+  a: WorkspaceBindingInput,
+  b: { workspace_root: string; space_id: string; feature_set_ids: string[] }
+): boolean {
+  if (a.workspace_root.trim() !== b.workspace_root.trim()) return false;
+  if (a.space_id !== b.space_id) return false;
+  if (a.feature_set_ids.length !== b.feature_set_ids.length) return false;
+  return a.feature_set_ids.every((id, i) => id === b.feature_set_ids[i]);
+}
+
 function SegmentedFilter<T extends string>({
   value,
   onChange,
@@ -1638,22 +1655,64 @@ function BindingForm({
     }
   };
 
-  // Auto-save in edit mode — debounced, sequence-numbered to discard stale
-  // saves, and a no-op while the form's contents still match the initial
-  // values so just opening the panel doesn't fire a write.
+  // ---------- Autosave (edit mode) -----------------------------------------
+  //
+  // Debounced (1500 ms) so a burst of FS-toggle clicks coalesces into one
+  // save instead of firing N WorkspaceBindingChanged events back-to-back.
+  // Dedupe is against the **last successfully-saved** payload, not just
+  // `initial` — so re-toggling A → B → A is a no-op (back to last saved),
+  // and once a save lands the next idle window doesn't re-save the same
+  // values.
+  //
+  // Critical: the debounce timer is cleared on dependency change but the
+  // **pending payload survives panel close**. If the user edits then
+  // closes before the debounce fires, the unmount handler flushes the
+  // save synchronously to Tauri — the IPC goes out before React tears
+  // the component down, and the save completes in the background.
   const saveSeqRef = useRef(0);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Snapshot of the last payload we successfully wrote. `null` means
+  // "never saved during this panel session" — fall back to `initial` for
+  // dedupe in that case.
+  const lastSavedRef = useRef<WorkspaceBindingInput | null>(null);
+  // The most recent payload the user produced that has NOT yet been
+  // committed. Cleared on successful save. The unmount handler reads
+  // this to decide whether to flush.
+  const pendingPayloadRef = useRef<WorkspaceBindingInput | null>(null);
+  // Latest closures via ref so the unmount-only effect's empty-deps
+  // cleanup can still call the freshest handlers — closing the panel
+  // mid-edit must use the parent's *current* `onSubmit`, not whatever it
+  // captured on first mount.
+  const onSubmitRef = useRef(onSubmit);
+  const onSaveStatusChangeRef = useRef(onSaveStatusChange);
+  useEffect(() => {
+    onSubmitRef.current = onSubmit;
+    onSaveStatusChangeRef.current = onSaveStatusChange;
+  }, [onSubmit, onSaveStatusChange]);
+
   useEffect(() => {
     if (!isEdit || !initial) return;
-    const sameFs =
-      fsIds.length === initial.feature_set_ids.length &&
-      fsIds.every((id, i) => id === initial.feature_set_ids[i]);
-    const same =
-      root.trim() === initial.workspace_root &&
-      spaceId === initial.space_id &&
-      sameFs;
-    if (same) return;
     if (!canSubmit) return;
+
+    const candidate: WorkspaceBindingInput = {
+      workspace_root: root.trim(),
+      space_id: spaceId,
+      feature_set_ids: fsIds,
+    };
+
+    // Dedupe baseline: last-saved if we've saved during this session,
+    // otherwise the initial payload from when the panel opened.
+    const baseline = lastSavedRef.current ?? {
+      workspace_root: initial.workspace_root,
+      space_id: initial.space_id,
+      feature_set_ids: initial.feature_set_ids,
+    };
+    if (sameBindingInput(candidate, baseline)) {
+      pendingPayloadRef.current = null;
+      return;
+    }
+
+    pendingPayloadRef.current = candidate;
     const seq = ++saveSeqRef.current;
     onSaveStatusChange?.({ kind: 'idle' });
     const handle = setTimeout(async () => {
@@ -1661,12 +1720,10 @@ function BindingForm({
       onSaveStatusChange?.({ kind: 'saving' });
       setSubmitting(true);
       try {
-        await onSubmit({
-          workspace_root: root.trim(),
-          space_id: spaceId,
-          feature_set_ids: fsIds,
-        });
+        await onSubmit(candidate);
         if (saveSeqRef.current !== seq) return;
+        lastSavedRef.current = candidate;
+        pendingPayloadRef.current = null;
         onSaveStatusChange?.({ kind: 'saved' });
         if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
         savedTimerRef.current = setTimeout(() => {
@@ -1680,7 +1737,7 @@ function BindingForm({
       } finally {
         setSubmitting(false);
       }
-    }, 600);
+    }, 1500);
     return () => clearTimeout(handle);
   }, [
     isEdit,
@@ -1693,6 +1750,36 @@ function BindingForm({
     onError,
     onSaveStatusChange,
   ]);
+
+  // Unmount-only flush. If a save was scheduled but the timer hasn't
+  // fired by the time the user closes the panel, fire it now so their
+  // edits aren't silently dropped. Empty-deps so this only runs on
+  // unmount, not on every dep change of the autosave effect above.
+  useEffect(() => {
+    return () => {
+      const pending = pendingPayloadRef.current;
+      if (!pending) return;
+      // Fire-and-forget. Tauri's `invoke` posts the IPC message to the
+      // Rust side immediately; the React tree can unmount in parallel
+      // and the save still completes. Bump the seq so any in-flight
+      // debounced save from before the close is discarded if it lands.
+      saveSeqRef.current += 1;
+      onSaveStatusChangeRef.current?.({ kind: 'saving' });
+      onSubmitRef
+        .current(pending)
+        .then(() => {
+          onSaveStatusChangeRef.current?.({ kind: 'saved' });
+        })
+        .catch((e) => {
+          // Parent's toast bridge is gone with the panel — fall back to
+          // the console so the failure isn't silent in dev.
+          console.warn(
+            '[workspace-binding] flush-on-close save failed:',
+            e instanceof Error ? e.message : String(e)
+          );
+        });
+    };
+  }, []);
 
   const submitLabel =
     mode === 'create-from-live' ? 'Save binding' : 'Create binding';

@@ -183,6 +183,113 @@ impl McpMuxGatewayHandler {
         Ok((space_id, resolved.feature_set_ids))
     }
 
+    /// On-demand `roots/list` probe for sessions that initialized as
+    /// roots-capable but have no roots yet — typically because the first
+    /// `list_roots()` from `on_initialized` raced this request, or its
+    /// retries are still mid-backoff after a transient failure.
+    ///
+    /// Without this, a roots-capable client that fires `tools/list`
+    /// immediately after `notifications/initialized` resolves to
+    /// `PendingRoots` and gets only the meta tools — even though we'd
+    /// have the right answer milliseconds later. The 300 ms timeout
+    /// caps the latency cost of bridging that gap; in steady state
+    /// (`session_roots.get(sid)` already populated) this is a no-op
+    /// early-return.
+    ///
+    /// Rate-limited per session to once per second so a burst of
+    /// `tools/list` + `prompts/list` + `resources/list` doesn't fan out
+    /// three parallel `peer.list_roots()` calls.
+    async fn ensure_roots_probed(
+        &self,
+        peer: &rmcp::service::Peer<RoleServer>,
+        session_id: Option<&str>,
+        client_id: &str,
+    ) {
+        let Some(sid) = session_id else { return };
+        // Already have a definitive answer (Some(roots) — possibly empty).
+        if self.services.session_roots.get(sid).is_some() {
+            return;
+        }
+        // Not roots-capable → resolver routes via client grants, no
+        // probe useful.
+        if !self
+            .services
+            .session_roots
+            .is_roots_capable(sid)
+            .unwrap_or(false)
+        {
+            return;
+        }
+        // Throttle: at most one probe per session per second so a
+        // request burst doesn't multiply upstream calls.
+        if !self
+            .services
+            .session_roots
+            .claim_probe(sid, std::time::Duration::from_secs(1))
+        {
+            return;
+        }
+
+        const PROBE_BUDGET: std::time::Duration = std::time::Duration::from_millis(300);
+        match tokio::time::timeout(PROBE_BUDGET, peer.list_roots()).await {
+            Ok(Ok(result)) => {
+                let uris: Vec<String> = result.roots.iter().map(|r| r.uri.to_string()).collect();
+                self.services
+                    .session_roots
+                    .set(sid, uris.iter().map(|s| s.as_str()));
+                debug!(
+                    %client_id,
+                    session_id = %sid,
+                    roots = ?uris,
+                    "[FeatureSetResolver] on-demand probe populated roots",
+                );
+                // Notify the UI / re-emit `WorkspaceNeedsBinding` if the
+                // session now resolves to Deny because of an unbound
+                // root. Fire-and-forget so the request itself isn't
+                // blocked on the desktop event bus.
+                let services = self.services.clone();
+                let notifier = self.notification_bridge.clone();
+                let client_id = client_id.to_string();
+                let session_id = sid.to_string();
+                let root_for_prompt = uris
+                    .into_iter()
+                    .filter(|r| !r.is_empty())
+                    .max_by_key(|r| r.len());
+                tokio::spawn(async move {
+                    services
+                        .gateway_state
+                        .read()
+                        .await
+                        .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+                    Self::log_and_notify_resolution(
+                        &services,
+                        Some(&notifier),
+                        &client_id,
+                        Some(&session_id),
+                        root_for_prompt.as_deref(),
+                    )
+                    .await;
+                });
+            }
+            Ok(Err(e)) => {
+                debug!(
+                    %client_id,
+                    session_id = %sid,
+                    error = %e,
+                    "[FeatureSetResolver] on-demand probe failed (will retry on next request)",
+                );
+            }
+            Err(_elapsed) => {
+                debug!(
+                    %client_id,
+                    session_id = %sid,
+                    budget_ms = PROBE_BUDGET.as_millis(),
+                    "[FeatureSetResolver] on-demand probe timed out (will retry on next request)",
+                );
+            }
+        }
+    }
+
     /// Build InitializeResult with negotiated protocol version
     fn build_initialize_result(&self, protocol_version: ProtocolVersion) -> InitializeResult {
         let info = self.get_info();
@@ -326,60 +433,95 @@ impl ServerHandler for McpMuxGatewayHandler {
                 let client_id_str = oauth_ctx.client_id.clone();
                 let session_id_for_task = session_id.clone();
                 tokio::spawn(async move {
-                    match peer_for_roots.list_roots().await {
-                        Ok(result) => {
-                            let uris: Vec<String> =
-                                result.roots.iter().map(|r| r.uri.to_string()).collect();
-                            session_roots
-                                .set(&session_id_for_task, uris.iter().map(|s| s.as_str()));
-                            debug!(
-                                client_id = %client_id_str,
-                                session_id = %session_id_for_task,
-                                roots = ?uris,
-                                "[FeatureSetResolver] fetched MCP roots",
-                            );
-
-                            // Tell the desktop UI the detected-roots list may
-                            // have grown so the Workspaces tab refreshes
-                            // without waiting for a polling cycle.
-                            services
-                                .gateway_state
-                                .read()
-                                .await
-                                .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
-
-                            // Pick the longest (most specific) normalized
-                            // root for the sheet. The resolver has already
-                            // normalized them on insert. Passing `Some(root)`
-                            // lets log_and_notify_resolution emit
-                            // `WorkspaceNeedsBinding` if the resolver ended
-                            // up at `source = Default` (i.e. no binding yet).
-                            let root_for_prompt =
-                                session_roots.get(&session_id_for_task).and_then(|roots| {
-                                    roots
-                                        .into_iter()
-                                        .filter(|r| !r.is_empty())
-                                        .max_by_key(|r| r.len())
-                                });
-
-                            Self::log_and_notify_resolution(
-                                &services,
-                                Some(&notifier),
-                                &client_id_str,
-                                Some(&session_id_for_task),
-                                root_for_prompt.as_deref(),
-                            )
-                            .await;
+                    // Retry list_roots() on transport errors with bounded
+                    // backoff. Without roots a roots-capable session is
+                    // useless (resolver returns PendingRoots → empty
+                    // tools list), so it's worth being aggressive about
+                    // recovering from transient failures. Empty results
+                    // (`Ok([])`) are NOT retried — that's a valid answer
+                    // ("client has no folder open right now") and the
+                    // client will notify us via `roots/list_changed` if
+                    // they open one.
+                    //
+                    // Total budget ≈ 8.2 s wall-clock if every attempt
+                    // hits a transport error before timing out.
+                    const BACKOFFS_MS: &[u64] = &[100, 300, 800, 2000, 5000];
+                    let max_attempts = BACKOFFS_MS.len() + 1; // 6 total = 1 initial + 5 retries
+                    let mut attempt: usize = 0;
+                    let result = loop {
+                        match peer_for_roots.list_roots().await {
+                            Ok(r) => break Some(r),
+                            Err(e) => {
+                                attempt += 1;
+                                if attempt >= max_attempts {
+                                    warn!(
+                                        client_id = %client_id_str,
+                                        session_id = %session_id_for_task,
+                                        attempts = attempt,
+                                        error = %e,
+                                        "[FeatureSetResolver] peer.list_roots() exhausted retries; session left unresolved (next list/get request will re-probe)",
+                                    );
+                                    break None;
+                                }
+                                let backoff = BACKOFFS_MS[attempt - 1];
+                                warn!(
+                                    client_id = %client_id_str,
+                                    session_id = %session_id_for_task,
+                                    attempt,
+                                    max_attempts,
+                                    next_backoff_ms = backoff,
+                                    error = %e,
+                                    "[FeatureSetResolver] peer.list_roots() failed; retrying after backoff",
+                                );
+                                tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+                            }
                         }
-                        Err(e) => {
-                            debug!(
-                                client_id = %client_id_str,
-                                session_id = %session_id_for_task,
-                                error = %e,
-                                "[FeatureSetResolver] peer.list_roots() failed — falling back to active Space default",
-                            );
-                        }
-                    }
+                    };
+
+                    let Some(result) = result else { return };
+
+                    let uris: Vec<String> =
+                        result.roots.iter().map(|r| r.uri.to_string()).collect();
+                    session_roots.set(&session_id_for_task, uris.iter().map(|s| s.as_str()));
+                    debug!(
+                        client_id = %client_id_str,
+                        session_id = %session_id_for_task,
+                        roots = ?uris,
+                        attempts = attempt + 1,
+                        "[FeatureSetResolver] fetched MCP roots",
+                    );
+
+                    // Tell the desktop UI the detected-roots list may
+                    // have grown so the Workspaces tab refreshes
+                    // without waiting for a polling cycle.
+                    services
+                        .gateway_state
+                        .read()
+                        .await
+                        .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+
+                    // Pick the longest (most specific) normalized
+                    // root for the sheet. The resolver has already
+                    // normalized them on insert. Passing `Some(root)`
+                    // lets log_and_notify_resolution emit
+                    // `WorkspaceNeedsBinding` if the resolver ended
+                    // up at `source = Deny` (i.e. no binding yet).
+                    let root_for_prompt =
+                        session_roots.get(&session_id_for_task).and_then(|roots| {
+                            roots
+                                .into_iter()
+                                .filter(|r| !r.is_empty())
+                                .max_by_key(|r| r.len())
+                        });
+
+                    Self::log_and_notify_resolution(
+                        &services,
+                        Some(&notifier),
+                        &client_id_str,
+                        Some(&session_id_for_task),
+                        root_for_prompt.as_deref(),
+                    )
+                    .await;
                 });
             } else {
                 // No roots declared — silent default, never prompt
@@ -483,14 +625,22 @@ impl ServerHandler for McpMuxGatewayHandler {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let session_id_owned = extract_session_id(&context.extensions);
+        // Bridge the init race: roots-capable sessions whose first
+        // `list_roots()` raced this request get a one-shot 300 ms probe
+        // here so they end up at the right routing decision instead of
+        // empty (PendingRoots). Throttled per session.
+        self.ensure_roots_probed(
+            &context.peer,
+            session_id_owned.as_deref(),
+            &oauth_ctx.client_id,
+        )
+        .await;
         // Resolve routing once: the resolver returns the authoritative
         // (Space, FS) for this session — this may differ from oauth_ctx
         // when a WorkspaceBinding redirects to another space.
         let (space_id, feature_set_ids) = self
-            .resolve_routing(
-                extract_session_id(&context.extensions).as_deref(),
-                &oauth_ctx.client_id,
-            )
+            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
         // Get tools via FeatureService — using the *resolved* space.
@@ -668,11 +818,15 @@ impl ServerHandler for McpMuxGatewayHandler {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let session_id_owned = extract_session_id(&context.extensions);
+        self.ensure_roots_probed(
+            &context.peer,
+            session_id_owned.as_deref(),
+            &oauth_ctx.client_id,
+        )
+        .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(
-                extract_session_id(&context.extensions).as_deref(),
-                &oauth_ctx.client_id,
-            )
+            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
         let prompts = self
@@ -775,11 +929,15 @@ impl ServerHandler for McpMuxGatewayHandler {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let session_id_owned = extract_session_id(&context.extensions);
+        self.ensure_roots_probed(
+            &context.peer,
+            session_id_owned.as_deref(),
+            &oauth_ctx.client_id,
+        )
+        .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(
-                extract_session_id(&context.extensions).as_deref(),
-                &oauth_ctx.client_id,
-            )
+            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
         let resources = self

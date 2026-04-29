@@ -10,6 +10,7 @@
 //! re-normalize on every lookup.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use mcpmux_core::normalize_workspace_root;
@@ -35,6 +36,15 @@ pub struct SessionRootsRegistry {
     /// `initialize` for that session — treated as "unknown" by the resolver
     /// and routed via grants.
     roots_capable: DashMap<String, bool>,
+    /// `session_id -> Instant of the last on-demand `list_roots()` probe`.
+    ///
+    /// Used by the request-time re-probe path in the MCP handler to avoid
+    /// firing N parallel `list_roots()` calls when a roots-capable session
+    /// hits a burst of `tools/list` / `prompts/list` / `resources/list` in
+    /// quick succession. The handler calls `claim_probe(sid, throttle)`
+    /// before firing; if it returns false, another probe was attempted
+    /// recently and this one is skipped.
+    last_probe: DashMap<String, Instant>,
 }
 
 impl SessionRootsRegistry {
@@ -43,7 +53,34 @@ impl SessionRootsRegistry {
             map: DashMap::new(),
             last_resolution: DashMap::new(),
             roots_capable: DashMap::new(),
+            last_probe: DashMap::new(),
         })
+    }
+
+    /// Try to claim a probe slot for `session_id`. Returns `true` if it's
+    /// been at least `throttle` since the last attempt for this session
+    /// (or if there's never been one) — and stamps the new attempt
+    /// atomically. Returns `false` if a probe was already attempted
+    /// within the throttle window.
+    ///
+    /// The handler calls this before firing `peer.list_roots()` so a
+    /// burst of three `tools/list` / `prompts/list` / `resources/list`
+    /// calls in 50 ms results in at most one upstream probe.
+    pub fn claim_probe(&self, session_id: &str, throttle: Duration) -> bool {
+        let now = Instant::now();
+        match self.last_probe.entry(session_id.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(mut e) => {
+                if now.duration_since(*e.get()) < throttle {
+                    return false;
+                }
+                e.insert(now);
+                true
+            }
+            dashmap::mapref::entry::Entry::Vacant(e) => {
+                e.insert(now);
+                true
+            }
+        }
     }
 
     /// Record whether a session declared the MCP `roots` capability on
@@ -84,6 +121,7 @@ impl SessionRootsRegistry {
         self.map.remove(session_id);
         self.last_resolution.remove(session_id);
         self.roots_capable.remove(session_id);
+        self.last_probe.remove(session_id);
     }
 
     /// Compare-and-set the session's resolved feature-set id. Returns `true`

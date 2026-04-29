@@ -314,9 +314,14 @@ pub async fn add_feature_set_member(
         .map_err(|e| e.to_string())?
         .ok_or("Feature set not found")?;
 
-    // Only "default" and "custom" types can have their members modified
+    // Both Starter (auto-seeded) and Custom FeatureSets are member-driven
+    // and editable. Reject anything else — there are no other configurable
+    // types today, but the guard stays for forward compatibility.
+    // `'default'` is accepted as a legacy alias because `parse('default')`
+    // resolves to `Starter` and `as_str()` always emits `'starter'` post-
+    // migration 013, but older in-memory data could still surface it.
     let fs_type = feature_set.feature_set_type.as_str();
-    if fs_type != "default" && fs_type != "custom" {
+    if fs_type != "starter" && fs_type != "default" && fs_type != "custom" {
         return Err(format!(
             "Cannot modify members of '{}' type feature set",
             fs_type
@@ -453,12 +458,13 @@ pub async fn set_feature_set_members(
         .map_err(|e| e.to_string())?
         .ok_or("Feature set not found")?;
 
-    // Only "default" and "custom" types can have their members modified
-    // "all" grants everything automatically, "server-all" is also auto-computed
+    // Both Starter (auto-seeded) and Custom FeatureSets are member-driven
+    // and editable. `'default'` is accepted as a legacy alias for the same
+    // reason described in `add_feature_set_member` — see comment there.
     let fs_type = feature_set.feature_set_type.as_str();
-    if fs_type != "default" && fs_type != "custom" {
+    if fs_type != "starter" && fs_type != "default" && fs_type != "custom" {
         return Err(format!(
-            "Cannot modify members of '{}' type feature set. Only 'default' and 'custom' types are configurable.",
+            "Cannot modify members of '{}' type feature set. Only Starter and Custom FeatureSets are configurable.",
             fs_type
         ));
     }

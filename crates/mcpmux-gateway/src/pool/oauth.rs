@@ -255,36 +255,6 @@ impl OutboundOAuthManager {
         scopes.iter().map(|s| s.as_str()).collect()
     }
 
-    /// Add RFC 8707 'resource' parameter to authorization URL.
-    ///
-    /// The resource parameter tells the Authorization Server which protected resource
-    /// (MCP server) the client is requesting access to. This enables the AS to:
-    /// - Issue tokens scoped to the specific resource
-    /// - Apply resource-specific policies
-    /// - Prevent token replay at other resources
-    ///
-    /// Some servers (like Miro) require this parameter.
-    fn add_resource_parameter(auth_url: &str, server_url: &str) -> String {
-        use url::Url;
-
-        match Url::parse(auth_url) {
-            Ok(mut url) => {
-                // Add the resource parameter with the MCP server URL
-                url.query_pairs_mut().append_pair("resource", server_url);
-                info!("[OAuth] Added RFC 8707 resource parameter: {}", server_url);
-                url.to_string()
-            }
-            Err(e) => {
-                warn!(
-                    "[OAuth] Failed to parse auth URL to add resource parameter: {}",
-                    e
-                );
-                // Return original URL if parsing fails
-                auth_url.to_string()
-            }
-        }
-    }
-
     /// Subscribe to OAuth completion events
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<OAuthCompleteEvent> {
         self.completion_tx.subscribe()
@@ -1251,11 +1221,6 @@ impl OutboundOAuthManager {
                 return Err(anyhow::anyhow!("Failed to get auth URL: {}", e));
             }
         };
-
-        // Add RFC 8707 'resource' parameter to the authorization URL.
-        // This tells the Authorization Server which protected resource (MCP server)
-        // the token is being requested for. Some servers (like Miro) require this.
-        let auth_url = Self::add_resource_parameter(&auth_url, server_url);
 
         // Extract state parameter from auth_url
         let state = match Self::extract_state_from_url(&auth_url) {

@@ -206,7 +206,8 @@ impl McpMuxGatewayHandler {
         client_id: &str,
     ) {
         let Some(sid) = session_id else { return };
-        // Already have a definitive answer (Some(roots) — possibly empty).
+        // Fast path: already have a definitive answer (Some(roots),
+        // possibly empty). No probe needed.
         if self.services.session_roots.get(sid).is_some() {
             return;
         }
@@ -220,18 +221,45 @@ impl McpMuxGatewayHandler {
         {
             return;
         }
-        // Throttle: at most one probe per session per second so a
-        // request burst doesn't multiply upstream calls.
-        if !self
+        // Cool-down after a recent failed probe so we don't hammer a
+        // peer whose previous list_roots() errored. Doesn't apply
+        // when a probe is currently *running* — that's the
+        // probe_lock's job below.
+        if self
             .services
             .session_roots
-            .claim_probe(sid, std::time::Duration::from_secs(1))
+            .should_throttle_probe(sid, std::time::Duration::from_secs(1))
         {
             return;
         }
 
+        // Single-flight: serialize concurrent probes per session so a
+        // burst of three list calls (tools/list + prompts/list +
+        // resources/list within milliseconds) doesn't fan out three
+        // upstream `peer.list_roots()` calls. The first request enters
+        // the critical section, fires the probe, populates
+        // session_roots; the second and third await the same lock,
+        // then re-check session_roots and exit early.
+        //
+        // Without this, the followers used to skip the probe entirely
+        // (boolean `claim_probe` flag) and resolve to PendingRoots —
+        // exactly the empty-tools-list bug Claude Code's VS Code
+        // extension was hitting.
+        let lock = self.services.session_roots.probe_lock(sid);
+        let _guard = lock.lock().await;
+
+        // Recheck after acquiring the lock — the predecessor probe may
+        // have already populated the registry.
+        if self.services.session_roots.get(sid).is_some() {
+            return;
+        }
+
         const PROBE_BUDGET: std::time::Duration = std::time::Duration::from_millis(300);
-        match tokio::time::timeout(PROBE_BUDGET, peer.list_roots()).await {
+        let outcome = tokio::time::timeout(PROBE_BUDGET, peer.list_roots()).await;
+        // Stamp completion regardless of success/failure so the
+        // sequential cool-down kicks in for the next caller.
+        self.services.session_roots.mark_probe_completed(sid);
+        match outcome {
             Ok(Ok(result)) => {
                 let uris: Vec<String> = result.roots.iter().map(|r| r.uri.to_string()).collect();
                 self.services
@@ -276,7 +304,7 @@ impl McpMuxGatewayHandler {
                     %client_id,
                     session_id = %sid,
                     error = %e,
-                    "[FeatureSetResolver] on-demand probe failed (will retry on next request)",
+                    "[FeatureSetResolver] on-demand probe failed (will retry on next request after throttle)",
                 );
             }
             Err(_elapsed) => {
@@ -284,7 +312,7 @@ impl McpMuxGatewayHandler {
                     %client_id,
                     session_id = %sid,
                     budget_ms = PROBE_BUDGET.as_millis(),
-                    "[FeatureSetResolver] on-demand probe timed out (will retry on next request)",
+                    "[FeatureSetResolver] on-demand probe timed out (will retry on next request after throttle)",
                 );
             }
         }

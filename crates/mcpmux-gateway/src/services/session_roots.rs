@@ -38,13 +38,27 @@ pub struct SessionRootsRegistry {
     roots_capable: DashMap<String, bool>,
     /// `session_id -> Instant of the last on-demand `list_roots()` probe`.
     ///
-    /// Used by the request-time re-probe path in the MCP handler to avoid
-    /// firing N parallel `list_roots()` calls when a roots-capable session
-    /// hits a burst of `tools/list` / `prompts/list` / `resources/list` in
-    /// quick succession. The handler calls `claim_probe(sid, throttle)`
-    /// before firing; if it returns false, another probe was attempted
-    /// recently and this one is skipped.
+    /// Used by [`Self::should_throttle_probe`] to avoid hammering a
+    /// failing client when its previous probe already errored out
+    /// recently. Only stamped after a probe attempt completes (success
+    /// or failure), not on entry — so concurrent in-flight probes
+    /// coordinate via [`Self::probe_lock`] instead of this throttle.
     last_probe: DashMap<String, Instant>,
+    /// Per-session mutex guarding `peer.list_roots()` probe attempts.
+    ///
+    /// Single-flight semantics: when a burst of three list requests
+    /// (`tools/list` + `prompts/list` + `resources/list`) hits a
+    /// roots-pending session within milliseconds, only one upstream
+    /// `list_roots()` call should be in flight. The other two block on
+    /// the same lock; once the first attempt populates `map`, the
+    /// followers re-check `map.get(sid)` and skip the upstream call
+    /// entirely.
+    ///
+    /// Without this, a boolean "already tried" flag let the followers
+    /// see `roots_pending` and return empty *before* the first probe's
+    /// result landed — exactly the bug that left Claude Code's
+    /// VS Code extension showing only the meta tools.
+    probe_lock: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
 }
 
 impl SessionRootsRegistry {
@@ -54,33 +68,40 @@ impl SessionRootsRegistry {
             last_resolution: DashMap::new(),
             roots_capable: DashMap::new(),
             last_probe: DashMap::new(),
+            probe_lock: DashMap::new(),
         })
     }
 
-    /// Try to claim a probe slot for `session_id`. Returns `true` if it's
-    /// been at least `throttle` since the last attempt for this session
-    /// (or if there's never been one) — and stamps the new attempt
-    /// atomically. Returns `false` if a probe was already attempted
-    /// within the throttle window.
+    /// Get (or create) the per-session probe lock. The returned Arc is
+    /// what the handler awaits to serialize concurrent probes — see
+    /// [`Self::probe_lock`] for the rationale.
+    pub fn probe_lock(&self, session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.probe_lock
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    /// Should we skip an on-demand probe because the previous attempt
+    /// completed (success or failure) within the last `throttle`?
     ///
-    /// The handler calls this before firing `peer.list_roots()` so a
-    /// burst of three `tools/list` / `prompts/list` / `resources/list`
-    /// calls in 50 ms results in at most one upstream probe.
-    pub fn claim_probe(&self, session_id: &str, throttle: Duration) -> bool {
-        let now = Instant::now();
-        match self.last_probe.entry(session_id.to_string()) {
-            dashmap::mapref::entry::Entry::Occupied(mut e) => {
-                if now.duration_since(*e.get()) < throttle {
-                    return false;
-                }
-                e.insert(now);
-                true
-            }
-            dashmap::mapref::entry::Entry::Vacant(e) => {
-                e.insert(now);
-                true
-            }
-        }
+    /// Distinct from `probe_lock`: the lock serializes *concurrent*
+    /// probes; this rate-limit prevents *sequential* probes from
+    /// hammering a peer whose previous attempt errored.
+    pub fn should_throttle_probe(&self, session_id: &str, throttle: Duration) -> bool {
+        let Some(last) = self.last_probe.get(session_id) else {
+            return false;
+        };
+        Instant::now().duration_since(*last) < throttle
+    }
+
+    /// Stamp the completion of an on-demand probe so the next caller
+    /// observes the throttle. Called after the probe returns (regardless
+    /// of success or failure) so successive probes back off only when
+    /// the previous one actually finished.
+    pub fn mark_probe_completed(&self, session_id: &str) {
+        self.last_probe
+            .insert(session_id.to_string(), Instant::now());
     }
 
     /// Record whether a session declared the MCP `roots` capability on
@@ -122,6 +143,7 @@ impl SessionRootsRegistry {
         self.last_resolution.remove(session_id);
         self.roots_capable.remove(session_id);
         self.last_probe.remove(session_id);
+        self.probe_lock.remove(session_id);
     }
 
     /// Compare-and-set the session's resolved feature-set id. Returns `true`

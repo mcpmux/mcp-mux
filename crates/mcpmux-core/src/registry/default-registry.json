@@ -243,6 +243,38 @@
       "auth_type": "api_key"
     },
 
+    "io.github.proompteng/bilig-workpaper": {
+      "id": "io.github.proompteng/bilig-workpaper",
+      "name": "Bilig WorkPaper",
+      "description": "Formula-backed WorkPaper MCP server for agents and backend services. Edit spreadsheet-style cells through an API, recalculate formulas, verify exact readback, and persist WorkPaper JSON without UI automation.",
+      "icon": "📊",
+      "category": "developer-tools",
+      "tags": ["workpaper", "spreadsheet", "formulas", "mcp", "typescript", "agents"],
+      "publisher": {
+        "name": "proompteng",
+        "url": "https://github.com/proompteng",
+        "verified": false
+      },
+      "quality": {
+        "official": false,
+        "verified": false,
+        "github_stars": 24
+      },
+      "links": {
+        "homepage": "https://proompteng.github.io/bilig/",
+        "documentation": "https://proompteng.github.io/bilig/mcp-client-setup.html",
+        "repository": "https://github.com/proompteng/bilig",
+        "issues": "https://github.com/proompteng/bilig/issues"
+      },
+      "inputs": [],
+      "connection": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@bilig/headless", "bilig-workpaper-mcp"]
+      },
+      "auth_type": "none"
+    },
+
     "io.modelcontextprotocol/server-slack": {
       "id": "io.modelcontextprotocol/server-slack",
       "name": "Slack",

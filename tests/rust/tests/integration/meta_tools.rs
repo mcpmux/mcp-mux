@@ -405,8 +405,105 @@ async fn disable_server_removes_tools_from_list() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn enable_server_rejects_workspace_scope() {
+async fn enable_server_workspace_persists_on_binding() {
     let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    bind_github_only_to_session_root(&f).await;
+
+    let result = f
+        .registry
+        .call(
+            "mcpmux_enable_server",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "server_id": "firebase", "scope": "workspace" }),
+        )
+        .await
+        .unwrap();
+    assert!(!Fixture::is_error(&result));
+    let body = Fixture::result_json(&result);
+    assert_eq!(body.get("scope").unwrap().as_str().unwrap(), "workspace");
+
+    let root = normalize_workspace_root("/tmp/mcpmux-list-servers-test");
+    let binding = f
+        .binding_repo
+        .find_longest_prefix_match(&f.space_id, &[root.clone()])
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.feature_set_ids.len(), 2);
+
+    let new_session = "sess-restart-sim";
+    let tools = f
+        .feature_service
+        .get_tools_for_grants(
+            &f.space_id.to_string(),
+            &binding.feature_set_ids,
+            Some(new_session),
+        )
+        .await
+        .unwrap();
+    let servers: std::collections::HashSet<_> =
+        tools.iter().map(|t| t.server_id.as_str()).collect();
+    assert!(servers.contains("github"));
+    assert!(servers.contains("firebase"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn disable_server_workspace_removes_server_all_from_binding() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    bind_github_only_to_session_root(&f).await;
+
+    f.registry
+        .call(
+            "mcpmux_enable_server",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "server_id": "firebase", "scope": "workspace" }),
+        )
+        .await
+        .unwrap();
+
+    f.registry
+        .call(
+            "mcpmux_disable_server",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "server_id": "firebase", "scope": "workspace" }),
+        )
+        .await
+        .unwrap();
+
+    let root = normalize_workspace_root("/tmp/mcpmux-list-servers-test");
+    let binding = f
+        .binding_repo
+        .find_longest_prefix_match(&f.space_id, &[root.clone()])
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.feature_set_ids.len(), 1);
+
+    let tools = f
+        .feature_service
+        .get_tools_for_grants(
+            &f.space_id.to_string(),
+            &binding.feature_set_ids,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].server_id, "github");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn enable_server_workspace_requires_binding() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    f.session_roots.set_roots_capable(&f.session_id, true);
+    f.session_roots.set(&f.session_id, ["/tmp/unbound-workspace"]);
+
     let result = f
         .call_tool_as_handler_would(
             "mcpmux_enable_server",
@@ -414,13 +511,6 @@ async fn enable_server_rejects_workspace_scope() {
         )
         .await;
     assert!(Fixture::is_error(&result));
-    let body = Fixture::result_json(&result);
-    assert!(
-        body.get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("")
-            .contains("Phase 4")
-    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

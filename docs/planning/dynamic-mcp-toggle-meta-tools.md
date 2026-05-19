@@ -1,7 +1,7 @@
 # Dynamic MCP Toggling via Meta Tools
 
 **Last Updated:** May 19, 2026
-**Status:** Phase 3 complete — session-scope enable/disable meta tools; Phases 4–5 pending
+**Status:** Phase 4 complete — workspace-scope enable/disable on bindings; Phase 5 pending
 **Branch:** `feat/dynamic-mcp-toggle-meta-tools`
 **Base branch:** `feat/workspace-root-routing` ([upstream PR #151](https://github.com/mcpmux/mcp-mux/pull/151))
 **Issue:** TBD — file after planning review
@@ -214,17 +214,19 @@ Each write fires `tools/list_changed` per-peer via the existing `MCPNotifier::no
 
 **Outcome:** LLM can toggle servers mid-session; tools appear/disappear on next `tools/list`. No DB writes.
 
-### Phase 4 — Workspace-scope variants
+### Phase 4 — Workspace-scope variants ✅
 
-**Effort:** 1 day
+**Effort:** 1 day  
+**Completed:** May 19, 2026
 
-- Extend `EnableServerTool` / `DisableServerTool` to handle `scope: "workspace"`.
-- Enable + workspace: requires the caller to have reported MCP roots (reuse `caller_space_id` + `session_roots.get` pattern from `BindCurrentWorkspaceTool`). If no binding exists for the first reported root, return `MetaToolError::InvalidArgument("no binding exists for this workspace; create one with mcpmux_create_feature_set + mcpmux_bind_current_workspace first")`. If a binding exists, look up its FS, add a `ServerAll`-typed `FeatureSet` for `server_id`, append its id to the binding's `feature_set_ids` list.
-- Disable + workspace: remove the matching `ServerAll` FS from the binding's `feature_set_ids` if present; if the server's tools come from a custom FS (not a `ServerAll` row), reject with a message pointing the user at the Workspaces UI.
-- Always require approval for workspace scope (no auto-allow setting).
-- Integration test: enable + workspace persists across a session restart; disable + workspace removes from binding row.
+- [x] `scope: "workspace"` on enable/disable — resolves workspace binding from session roots
+- [x] Enable: create/reuse server-all FeatureSet (`server_id` field tagged), append to binding, emit `WorkspaceBindingChanged`
+- [x] Disable: remove server-all FS from binding; reject if server exposed via custom FS (Workspaces UI message)
+- [x] Always requires approval via `ApprovalBroker`
+- [x] Handler skips session `list_changed` for workspace scope (binding event fanout handles it)
+- [x] Integration tests: persist across simulated session restart, disable removes binding layer, unbound workspace rejected
 
-**Outcome:** An LLM in a bound workspace adds a `ServerAll` FS layer to its binding via `mcpmux_enable_server({"server_id": "firebase", "scope": "workspace"})`, approves in the desktop dialog, and the next time it opens that folder Firebase tools are there without re-enabling.
+**Outcome:** Workspace binding gains/loses persistent server-all FeatureSet layers via meta tools.
 
 ### Phase 5 — UI surface for session overrides
 

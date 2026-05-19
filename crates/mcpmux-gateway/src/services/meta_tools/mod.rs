@@ -24,6 +24,7 @@ pub mod approval;
 pub mod diff;
 mod registry;
 mod tools;
+mod workspace_server;
 
 pub use approval::{
     ApprovalBroker, ApprovalDecision, ApprovalPayload, ApprovalPublisher, ApprovalRequest,

@@ -746,6 +746,11 @@ impl ServerHandler for McpMuxGatewayHandler {
                 .arguments
                 .map(|a| serde_json::to_value(a).unwrap_or(serde_json::Value::Null))
                 .unwrap_or(serde_json::Value::Null);
+            let scope = args
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or("session")
+                .to_string();
             return match self
                 .services
                 .meta_tool_registry
@@ -756,7 +761,8 @@ impl ServerHandler for McpMuxGatewayHandler {
                     if matches!(
                         params.name.as_ref(),
                         "mcpmux_enable_server" | "mcpmux_disable_server"
-                    ) {
+                    ) && scope == "session"
+                    {
                         if let Some(sid) = session_id {
                             self.notification_bridge
                                 .notify_session_lists_changed(sid)

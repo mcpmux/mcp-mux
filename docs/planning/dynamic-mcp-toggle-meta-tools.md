@@ -1,7 +1,7 @@
 # Dynamic MCP Toggling via Meta Tools
 
 **Last Updated:** May 19, 2026
-**Status:** Phase 4 complete — workspace-scope enable/disable on bindings; Phase 5 pending
+**Status:** Phase 5 complete — UI surface for session overrides + settings toggle
 **Branch:** `feat/dynamic-mcp-toggle-meta-tools`
 **Base branch:** `feat/workspace-root-routing` ([upstream PR #151](https://github.com/mcpmux/mcp-mux/pull/151))
 **Issue:** TBD — file after planning review
@@ -232,11 +232,11 @@ Each write fires `tools/list_changed` per-peer via the existing `MCPNotifier::no
 
 **Effort:** 1 day
 
-- New "Active session overrides" sub-panel inside `WorkspacesPage.tsx`'s live-session inspector: lists per-session `enabled`/`disabled` server ids alongside the reported roots.
-- "Clear all overrides" button per session — calls the new `clear_session_overrides` Tauri command. Useful when a session got into a weird state and the user wants a clean default-routing read.
-- New Tauri commands: `list_session_overrides(session_id) -> { enabled: string[], disabled: string[] }`, `clear_session_overrides(session_id)`.
-- Settings checkbox under Gateway settings: "Require approval for session-scope overrides" — wires to `gateway.session_overrides_require_approval`.
-- README + CHANGELOG entries describing the new meta-tools and the manifest-driven workflow.
+- [x] New "Active session overrides" sub-panel inside `WorkspacesPage.tsx`'s live-session inspector: lists per-session `enabled`/`disabled` server ids alongside the reported roots.
+- [x] "Clear all overrides" button per session — calls the new `clear_session_overrides` Tauri command. Useful when a session got into a weird state and the user wants a clean default-routing read.
+- [x] New Tauri commands: `list_session_overrides(session_id) -> { enabled: string[], disabled: string[] }`, `clear_session_overrides(session_id)`.
+- [x] Settings checkbox under Gateway settings: "Require approval for session-scope overrides" — wires to `gateway.session_overrides_require_approval`.
+- [ ] README + CHANGELOG entries describing the new meta-tools and the manifest-driven workflow.
 
 **Outcome:** From the Workspaces tab, a user can see at a glance "session abc123 has GitHub enabled (session) and Firebase disabled (session)" and clear them with one click. The new approval-required setting is discoverable in Gateway settings without reading docs.
 

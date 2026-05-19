@@ -165,6 +165,44 @@ pub async fn set_meta_tools_enabled(
     Ok(())
 }
 
+/// Whether session-scope `mcpmux_enable_server` / `mcpmux_disable_server`
+/// calls require approval. Default OFF (auto-allow).
+#[tauri::command]
+pub async fn get_session_overrides_require_approval(
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    match app_state
+        .settings_repository
+        .get("gateway.session_overrides_require_approval")
+        .await
+    {
+        Ok(Some(v)) => Ok(matches!(v.as_str(), "true" | "1")),
+        _ => Ok(false),
+    }
+}
+
+/// Flip the session-override approval gate. Takes effect on the next
+/// session-scope enable/disable meta-tool call.
+#[tauri::command]
+pub async fn set_session_overrides_require_approval(
+    require_approval: bool,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .settings_repository
+        .set(
+            "gateway.session_overrides_require_approval",
+            if require_approval { "true" } else { "false" },
+        )
+        .await
+        .map_err(|e| format!("Failed to save session_overrides_require_approval: {}", e))?;
+    info!(
+        "[Settings] session_overrides_require_approval = {}",
+        require_approval
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -36,6 +36,10 @@ import {
 import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
 import { getMetaToolsEnabled, setMetaToolsEnabled } from '@/lib/api/metaTools';
+import {
+  getSessionOverridesRequireApproval,
+  setSessionOverridesRequireApproval,
+} from '@/lib/api/sessionOverrides';
 import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
@@ -78,6 +82,10 @@ export function SettingsPage() {
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
   const [metaToolsEnabled, setMetaToolsEnabledState] = useState<boolean>(true);
   const [loadingMetaTools, setLoadingMetaTools] = useState(true);
+  const [sessionOverridesRequireApproval, setSessionOverridesRequireApprovalState] =
+    useState<boolean>(false);
+  const [loadingSessionOverrideApproval, setLoadingSessionOverrideApproval] =
+    useState(true);
 
   // Gateway port — persisted user override, the default the app ships
   // with, and the port the currently-running gateway is bound to. When
@@ -181,6 +189,12 @@ export function SettingsPage() {
       .then((v) => setMetaToolsEnabledState(v))
       .catch((e) => console.error('Failed to load meta_tools_enabled', e))
       .finally(() => setLoadingMetaTools(false));
+    getSessionOverridesRequireApproval()
+      .then((v) => setSessionOverridesRequireApprovalState(v))
+      .catch((e) =>
+        console.error('Failed to load session_overrides_require_approval', e)
+      )
+      .finally(() => setLoadingSessionOverrideApproval(false));
   }, []);
 
   const handleToggleMetaTools = async (next: boolean) => {
@@ -196,6 +210,23 @@ export function SettingsPage() {
       );
     } catch (e) {
       setMetaToolsEnabledState(previous);
+      error('Failed to save setting', e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleToggleSessionOverrideApproval = async (next: boolean) => {
+    const previous = sessionOverridesRequireApproval;
+    setSessionOverridesRequireApprovalState(next);
+    try {
+      await setSessionOverridesRequireApproval(next);
+      success(
+        next ? 'Session overrides require approval' : 'Session overrides auto-allowed',
+        next
+          ? 'mcpmux_enable_server / mcpmux_disable_server (session scope) will prompt before applying.'
+          : 'Session-scope enable/disable applies immediately without a dialog.'
+      );
+    } catch (e) {
+      setSessionOverridesRequireApprovalState(previous);
       error('Failed to save setting', e instanceof Error ? e.message : String(e));
     }
   };
@@ -630,6 +661,29 @@ export function SettingsPage() {
               onCheckedChange={handleToggleMetaTools}
               disabled={loadingMetaTools}
               data-testid="meta-tools-enabled-switch"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <AlertCircle className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+              <div>
+                <label className="text-sm font-medium">
+                  Require approval for session-scope overrides
+                </label>
+                <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                  When on,{' '}
+                  <code className="font-mono">mcpmux_enable_server</code> /{' '}
+                  <code className="font-mono">mcpmux_disable_server</code> with{' '}
+                  <code className="font-mono">scope: &quot;session&quot;</code> show the native
+                  approval dialog. Workspace-scope writes always require approval.
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={sessionOverridesRequireApproval}
+              onCheckedChange={handleToggleSessionOverrideApproval}
+              disabled={loadingSessionOverrideApproval || !metaToolsEnabled}
+              data-testid="session-overrides-require-approval-switch"
             />
           </div>
           <MetaToolGrantsPanel />

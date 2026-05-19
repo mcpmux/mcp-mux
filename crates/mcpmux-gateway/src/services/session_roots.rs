@@ -179,6 +179,17 @@ impl SessionRootsRegistry {
         out
     }
 
+    /// Snapshot of every session with reported roots (for UI inspection).
+    pub fn list_all_sessions(&self) -> Vec<(String, Vec<String>)> {
+        let mut out: Vec<(String, Vec<String>)> = self
+            .map
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     /// Current number of tracked sessions. Test helper; cheap to call but
     /// not useful in hot paths.
     #[cfg(test)]

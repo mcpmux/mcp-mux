@@ -84,6 +84,9 @@ pub struct GatewayServer {
     config: GatewayConfig,
     state: Arc<RwLock<GatewayState>>,
     services: ServiceContainer,
+    /// Shared with the MCP handler and the desktop layer for session-scoped
+    /// list_changed pushes after override mutations.
+    notification_bridge: Arc<MCPNotifier>,
 }
 
 impl GatewayServer {
@@ -118,12 +121,19 @@ impl GatewayServer {
         // Initialize all services using DI container (pass domain event sender for non-blocking emission)
         let services = ServiceContainer::initialize(&dependencies, domain_event_tx, state.clone());
 
+        let notification_bridge = Arc::new(MCPNotifier::new(
+            services.feature_set_resolver.clone(),
+            services.pool_services.feature_service.clone(),
+            services.session_overrides.clone(),
+        ));
+
         info!("[Gateway] Services initialized successfully");
 
         Self {
             config,
             state,
             services,
+            notification_bridge,
         }
     }
 
@@ -185,6 +195,16 @@ impl GatewayServer {
         self.services.session_roots.clone()
     }
 
+    /// Session-scoped enable/disable overrides (meta-tool mutations).
+    pub fn session_overrides(&self) -> Arc<crate::services::SessionOverrideRegistry> {
+        self.services.session_overrides.clone()
+    }
+
+    /// Notification bridge for per-session list_changed after override clears.
+    pub fn notification_bridge(&self) -> Arc<MCPNotifier> {
+        self.notification_bridge.clone()
+    }
+
     /// Get the OAuth manager
     pub fn oauth_manager(&self) -> Arc<crate::pool::OutboundOAuthManager> {
         self.services.pool_services.oauth_manager.clone()
@@ -226,19 +246,11 @@ impl GatewayServer {
             base_url: self.config.base_url(),
         };
 
-        // Create MCP notifier (session-keyed fanout, consults the same
-        // FeatureSet resolver the request handlers use).
-        let notification_bridge = Arc::new(MCPNotifier::new(
-            self.services.feature_set_resolver.clone(),
-            self.services.pool_services.feature_service.clone(),
-            self.services.session_overrides.clone(),
-        ));
-
         // Start listening to DomainEvents
         {
             let gw_state = tokio::task::block_in_place(|| state.blocking_read());
             let event_rx = gw_state.subscribe_domain_events();
-            notification_bridge.clone().start(event_rx);
+            self.notification_bridge.clone().start(event_rx);
         }
 
         // Create OAuth event handler (updates oauth_connected flag on OAuth success)
@@ -256,8 +268,10 @@ impl GatewayServer {
         }
 
         // Create MCP handler
-        let handler =
-            McpMuxGatewayHandler::new(Arc::new(self.services.clone()), notification_bridge.clone());
+        let handler = McpMuxGatewayHandler::new(
+            Arc::new(self.services.clone()),
+            self.notification_bridge.clone(),
+        );
 
         // Create STATEFUL MCP service (full Streamable HTTP per spec 2025-11-25)
         // stateful_mode: true means:

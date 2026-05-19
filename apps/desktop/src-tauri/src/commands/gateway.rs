@@ -79,6 +79,10 @@ pub struct GatewayAppState {
     /// Surfaced to the desktop Workspaces tab so users can see + act on
     /// every folder connected clients are currently operating in.
     pub session_roots: Option<Arc<mcpmux_gateway::services::SessionRootsRegistry>>,
+    /// Session-scoped server enable/disable overrides (meta-tool mutations).
+    pub session_overrides: Option<Arc<mcpmux_gateway::services::SessionOverrideRegistry>>,
+    /// Per-session list_changed bridge — used when the UI clears overrides.
+    pub mcp_notifier: Option<Arc<mcpmux_gateway::consumers::MCPNotifier>>,
 }
 
 /// Gracefully shuts down a running gateway and waits for the axum task
@@ -888,6 +892,8 @@ pub async fn start_gateway(
     let server_manager = server.server_manager();
     let grant_service = server.grant_service();
     let session_roots = server.session_roots();
+    let session_overrides = server.session_overrides();
+    let mcp_notifier = server.notification_bridge();
 
     // Subscribe to OAuth completions BEFORE spawn so we don't miss early
     // events emitted during initial auto-connect.
@@ -935,6 +941,8 @@ pub async fn start_gateway(
     state.grant_service = Some(grant_service);
     state.approval_broker = Some(approval_broker);
     state.session_roots = Some(session_roots);
+    state.session_overrides = Some(session_overrides);
+    state.mcp_notifier = Some(mcp_notifier);
     info!(
         "[Gateway] Started — url={}, event_emitter={}, grant_service={}",
         url,

@@ -26,7 +26,7 @@ use tracing::{debug, info, trace, warn};
 use uuid::Uuid;
 
 use crate::pool::FeatureService;
-use crate::services::FeatureSetResolverService;
+use crate::services::{FeatureSetResolverService, SessionOverrideRegistry};
 
 /// MCP Notifier — sends `list_changed` notifications to connected sessions.
 ///
@@ -58,6 +58,8 @@ pub struct MCPNotifier {
     feature_set_resolver: Arc<FeatureSetResolverService>,
     /// Feature service for calculating content hashes
     feature_service: Arc<FeatureService>,
+    /// Session override registry — reaped alongside session roots.
+    session_overrides: Arc<SessionOverrideRegistry>,
     /// Throttle tracker: (space_id, notification_type) -> last_sent_timestamp
     /// Prevents sending duplicate notifications within THROTTLE_WINDOW
     throttle_tracker: Arc<RwLock<HashMap<(Uuid, NotificationType), Instant>>>,
@@ -110,11 +112,13 @@ impl MCPNotifier {
     pub fn new(
         feature_set_resolver: Arc<FeatureSetResolverService>,
         feature_service: Arc<FeatureService>,
+        session_overrides: Arc<SessionOverrideRegistry>,
     ) -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             feature_set_resolver,
             feature_service,
+            session_overrides,
             throttle_tracker: Arc::new(RwLock::new(HashMap::new())),
             state_hashes: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -354,6 +358,7 @@ impl MCPNotifier {
         // sessions that no longer exist.
         for sid in &dead {
             self.feature_set_resolver.session_roots().remove(sid);
+            self.session_overrides.remove(sid);
         }
         info!(
             reaped = dead.len(),

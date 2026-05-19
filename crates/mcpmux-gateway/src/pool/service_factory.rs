@@ -44,6 +44,7 @@ impl ServiceFactory {
         deps: &GatewayDependencies,
         event_tx: tokio::sync::broadcast::Sender<DomainEvent>,
         prefix_cache: Arc<crate::services::PrefixCacheService>,
+        session_overrides: Arc<crate::services::SessionOverrideRegistry>,
     ) -> PoolServices {
         // TokenService - single source of truth for token management
         let token_service = Arc::new(TokenService::new(
@@ -80,7 +81,8 @@ impl ServiceFactory {
         let feature_service = Arc::new(FeatureService::new(
             deps.feature_repo.clone(),
             deps.feature_set_repo.clone(),
-            prefix_cache.clone(), // Clone here since we use it again below
+            prefix_cache.clone(),
+            session_overrides,
         ));
 
         // ServerManager - event-driven orchestrator for server state

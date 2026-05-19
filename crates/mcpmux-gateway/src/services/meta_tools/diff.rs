@@ -65,7 +65,7 @@ impl ToolDiff {
         let space_id_str = space_id.to_string();
         let ids = [fs.to_string()];
         let features = feature_service
-            .get_tools_for_grants(&space_id_str, &ids)
+            .get_tools_for_grants(&space_id_str, &ids, None)
             .await?;
         Ok(features
             .iter()

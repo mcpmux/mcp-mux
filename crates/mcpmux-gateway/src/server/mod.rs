@@ -231,6 +231,7 @@ impl GatewayServer {
         let notification_bridge = Arc::new(MCPNotifier::new(
             self.services.feature_set_resolver.clone(),
             self.services.pool_services.feature_service.clone(),
+            self.services.session_overrides.clone(),
         ));
 
         // Start listening to DomainEvents

@@ -676,7 +676,7 @@ impl ServerHandler for McpMuxGatewayHandler {
             .services
             .pool_services
             .feature_service
-            .get_tools_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_tools_for_grants(&space_id.to_string(), &feature_set_ids, session_id_owned.as_deref())
             .await
             .map_err(|e| McpError::internal_error(format!("Failed to get tools: {}", e), None))?;
 
@@ -861,7 +861,11 @@ impl ServerHandler for McpMuxGatewayHandler {
             .services
             .pool_services
             .feature_service
-            .get_prompts_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_prompts_for_grants(
+                &space_id.to_string(),
+                &feature_set_ids,
+                session_id_owned.as_deref(),
+            )
             .await
             .map_err(|e| McpError::internal_error(format!("Failed to get prompts: {}", e), None))?;
 
@@ -897,11 +901,9 @@ impl ServerHandler for McpMuxGatewayHandler {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let session_id_owned = extract_session_id(&context.extensions);
         let (space_id, feature_set_ids) = self
-            .resolve_routing(
-                extract_session_id(&context.extensions).as_deref(),
-                &oauth_ctx.client_id,
-            )
+            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
         let (server_id, prompt_name) = self
@@ -916,7 +918,11 @@ impl ServerHandler for McpMuxGatewayHandler {
             .services
             .pool_services
             .feature_service
-            .get_prompts_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_prompts_for_grants(
+                &space_id.to_string(),
+                &feature_set_ids,
+                session_id_owned.as_deref(),
+            )
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)
@@ -972,7 +978,11 @@ impl ServerHandler for McpMuxGatewayHandler {
             .services
             .pool_services
             .feature_service
-            .get_resources_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_resources_for_grants(
+                &space_id.to_string(),
+                &feature_set_ids,
+                session_id_owned.as_deref(),
+            )
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Failed to get resources: {}", e), None)
@@ -1006,11 +1016,9 @@ impl ServerHandler for McpMuxGatewayHandler {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let session_id_owned = extract_session_id(&context.extensions);
         let (space_id, feature_set_ids) = self
-            .resolve_routing(
-                extract_session_id(&context.extensions).as_deref(),
-                &oauth_ctx.client_id,
-            )
+            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
         let server_id = self
@@ -1030,7 +1038,11 @@ impl ServerHandler for McpMuxGatewayHandler {
             .services
             .pool_services
             .feature_service
-            .get_resources_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_resources_for_grants(
+                &space_id.to_string(),
+                &feature_set_ids,
+                session_id_owned.as_deref(),
+            )
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)

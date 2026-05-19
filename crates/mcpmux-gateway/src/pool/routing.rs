@@ -84,13 +84,14 @@ impl RoutingService {
         &self,
         space_id: Uuid,
         feature_set_ids: &[String],
+        session_id: Option<&str>,
     ) -> Result<Vec<RoutedTool>> {
         let space_id_str = space_id.to_string();
 
         // Resolve feature sets to allowed features
         let allowed_features = self
             .feature_service
-            .get_tools_for_grants(&space_id_str, feature_set_ids)
+            .get_tools_for_grants(&space_id_str, feature_set_ids, session_id)
             .await?;
 
         // Filter to just tools
@@ -119,12 +120,13 @@ impl RoutingService {
         &self,
         space_id: Uuid,
         feature_set_ids: &[String],
+        session_id: Option<&str>,
     ) -> Result<Vec<RoutedPrompt>> {
         let space_id_str = space_id.to_string();
 
         let allowed_features = self
             .feature_service
-            .get_prompts_for_grants(&space_id_str, feature_set_ids)
+            .get_prompts_for_grants(&space_id_str, feature_set_ids, session_id)
             .await?;
 
         let prompts: Vec<RoutedPrompt> = allowed_features
@@ -151,12 +153,13 @@ impl RoutingService {
         &self,
         space_id: Uuid,
         feature_set_ids: &[String],
+        session_id: Option<&str>,
     ) -> Result<Vec<RoutedResource>> {
         let space_id_str = space_id.to_string();
 
         let allowed_features = self
             .feature_service
-            .get_resources_for_grants(&space_id_str, feature_set_ids)
+            .get_resources_for_grants(&space_id_str, feature_set_ids, session_id)
             .await?;
 
         let resources: Vec<RoutedResource> = allowed_features

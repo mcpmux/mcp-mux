@@ -11,14 +11,15 @@ use std::time::Duration;
 
 use futures::FutureExt;
 use mcpmux_core::{
-    normalize_workspace_root, Client, DomainEvent, FeatureSet, FeatureSetRepository,
-    InboundMcpClientRepository, ServerFeature, ServerFeatureRepository, SpaceRepository,
-    WorkspaceBindingRepository,
+    normalize_workspace_root, Client, DomainEvent, FeatureSet, FeatureSetMember,
+    FeatureSetRepository, InboundMcpClientRepository, MemberMode, MemberType, ServerFeature,
+    ServerFeatureRepository, SpaceRepository, WorkspaceBindingRepository,
 };
 use mcpmux_gateway::pool::FeatureService;
 use mcpmux_gateway::services::{
     meta_tools, ApprovalBroker, ApprovalDecision, ApprovalPayload, ApprovalPublisher,
-    FeatureSetResolverService, MetaToolRegistry, PrefixCacheService, SessionRootsRegistry,
+    FeatureSetResolverService, MetaToolRegistry, PrefixCacheService, SessionOverrideRegistry,
+    SessionRootsRegistry,
 };
 use mcpmux_storage::{
     Database, InboundClientRepository, SqliteFeatureSetRepository,
@@ -37,12 +38,15 @@ struct Fixture {
     feature_set_repo: Arc<dyn FeatureSetRepository>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
     session_roots: Arc<SessionRootsRegistry>,
+    session_overrides: Arc<SessionOverrideRegistry>,
+    feature_service: Arc<FeatureService>,
     space_id: Uuid,
     /// Opaque client identity (UUID-as-string here; in production for DCR
     /// clients this can be a `client_metadata` URL).
     client_id: String,
     session_id: String,
     fs_android_id: Uuid,
+    github_tool_id: Uuid,
 }
 
 impl Fixture {
@@ -82,6 +86,7 @@ impl Fixture {
         feature2.description = Some("Deploy to Firebase".into());
         server_feature_repo.upsert(&feature1).await.unwrap();
         server_feature_repo.upsert(&feature2).await.unwrap();
+        let github_tool_id = feature1.id;
 
         // The space's auto-seeded Default FS is the resolver's baseline
         // when no binding matches — no "set active FS" step needed.
@@ -93,6 +98,7 @@ impl Fixture {
         client_repo.create(&client).await.unwrap();
 
         let session_roots = SessionRootsRegistry::new();
+        let session_overrides = SessionOverrideRegistry::new();
         let session_id = "sess-meta".to_string();
 
         let inbound_client_repo = Arc::new(InboundClientRepository::new(db.clone()));
@@ -108,6 +114,7 @@ impl Fixture {
             server_feature_repo.clone(),
             feature_set_repo.clone(),
             prefix_cache,
+            session_overrides.clone(),
         ));
 
         let broker = Arc::new(ApprovalBroker::new().with_timeout(Duration::from_millis(500)));
@@ -120,7 +127,7 @@ impl Fixture {
             binding_repo.clone(),
             server_feature_repo.clone(),
             resolver,
-            feature_service,
+            feature_service.clone(),
             session_roots.clone(),
             broker.clone(),
             tx,
@@ -134,10 +141,13 @@ impl Fixture {
             feature_set_repo,
             binding_repo,
             session_roots,
+            session_overrides,
+            feature_service,
             space_id,
             client_id,
             session_id,
             fs_android_id,
+            github_tool_id,
         }
     }
 
@@ -503,6 +513,7 @@ async fn bare_registry(
         server_feature_repo.clone(),
         feature_set_repo.clone(),
         prefix_cache,
+        SessionOverrideRegistry::new(),
     ));
     let (tx, rx) = broadcast::channel::<DomainEvent>(32);
     let registry = meta_tools::build_default_registry(
@@ -615,6 +626,7 @@ async fn master_switch_toggles_registry_visibility() {
         server_feature_repo.clone(),
         feature_set_repo.clone(),
         prefix_cache,
+        SessionOverrideRegistry::new(),
     ));
     let (tx, _) = broadcast::channel::<DomainEvent>(16);
     let registry = meta_tools::build_default_registry(
@@ -650,3 +662,78 @@ async fn master_switch_toggles_registry_visibility() {
 // Silence unused-import warnings from helper imports that only some tests exercise.
 #[allow(dead_code)]
 fn _unused(_: ApprovalPayload) {}
+
+// ============================================================================
+// Session override composition (Phase 1)
+// ============================================================================
+
+async fn github_only_fs(f: &Fixture) -> String {
+    let mut fs = FeatureSet::new_custom("GitHub only", f.space_id.to_string());
+    fs.members.push(FeatureSetMember {
+        id: Uuid::new_v4().to_string(),
+        feature_set_id: fs.id.clone(),
+        member_type: MemberType::Feature,
+        member_id: f.github_tool_id.to_string(),
+        mode: MemberMode::Include,
+    });
+    let id = fs.id.clone();
+    f.feature_set_repo.create(&fs).await.unwrap();
+    id
+}
+
+#[tokio::test]
+async fn session_override_deny_bootstrap_enables_server() {
+    let f = Fixture::new().await;
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let tools = f
+        .feature_service
+        .get_tools_for_grants(&f.space_id.to_string(), &[], Some(&f.session_id))
+        .await
+        .unwrap();
+
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].server_id, "github");
+    assert_eq!(tools[0].feature_name, "create_issue");
+}
+
+#[tokio::test]
+async fn session_override_disable_mutes_bound_server() {
+    let f = Fixture::new().await;
+    let fs_id = github_only_fs(&f).await;
+
+    let before = f
+        .feature_service
+        .get_tools_for_grants(&f.space_id.to_string(), &[fs_id.clone()], Some(&f.session_id))
+        .await
+        .unwrap();
+    assert_eq!(before.len(), 1);
+
+    f.session_overrides.disable(&f.session_id, "github");
+
+    let after = f
+        .feature_service
+        .get_tools_for_grants(&f.space_id.to_string(), &[fs_id], Some(&f.session_id))
+        .await
+        .unwrap();
+    assert!(after.is_empty());
+}
+
+#[tokio::test]
+async fn session_override_additive_over_binding() {
+    let f = Fixture::new().await;
+    let fs_id = github_only_fs(&f).await;
+
+    f.session_overrides.enable(&f.session_id, "firebase");
+
+    let tools = f
+        .feature_service
+        .get_tools_for_grants(&f.space_id.to_string(), &[fs_id], Some(&f.session_id))
+        .await
+        .unwrap();
+
+    assert_eq!(tools.len(), 2);
+    let servers: std::collections::HashSet<_> = tools.iter().map(|t| t.server_id.as_str()).collect();
+    assert!(servers.contains("github"));
+    assert!(servers.contains("firebase"));
+}

@@ -151,13 +151,17 @@ impl SessionRootsRegistry {
     /// `false` when it's the same as before.
     pub fn record_resolution(&self, session_id: &str, fs_id: Option<&str>) -> bool {
         let new_val: Option<String> = fs_id.map(|s| s.to_string());
-        match self.last_resolution.get(session_id) {
-            Some(prev) if *prev == new_val => false,
-            _ => {
-                self.last_resolution.insert(session_id.to_string(), new_val);
-                true
-            }
+        let unchanged = self
+            .last_resolution
+            .get(session_id)
+            .map(|prev| *prev == new_val)
+            .unwrap_or(false);
+        if unchanged {
+            return false;
         }
+        self.last_resolution
+            .insert(session_id.to_string(), new_val);
+        true
     }
 
     /// Returns every reported root across every active session, de-duplicated

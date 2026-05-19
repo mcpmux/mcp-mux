@@ -17,7 +17,7 @@ use mcpmux_core::{
     FeatureSet, FeatureSetMember, FeatureSetRepository, FeatureType, MemberMode, MemberType,
     ServerFeature, ServerFeatureRepository,
 };
-use mcpmux_gateway::{FeatureService, PrefixCacheService};
+use mcpmux_gateway::{FeatureService, PrefixCacheService, SessionOverrideRegistry};
 use tests::mocks::{MockFeatureSetRepository, MockServerFeatureRepository};
 
 // Helper functions
@@ -56,6 +56,7 @@ impl TestContext {
             Arc::clone(&feature_repo) as Arc<dyn ServerFeatureRepository>,
             Arc::clone(&feature_set_repo) as Arc<dyn FeatureSetRepository>,
             Arc::clone(&prefix_cache),
+            SessionOverrideRegistry::new(),
         );
 
         Self {
@@ -156,7 +157,7 @@ async fn test_list_tools_with_all_grant() {
     // Simulate tools/list with grant
     let tools = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_tools_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
 
@@ -192,7 +193,7 @@ async fn test_list_tools_with_restricted_grant() {
 
     let tools = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[custom_fs_id])
+        .get_tools_for_grants(&ctx.space_id, &[custom_fs_id], None)
         .await
         .unwrap();
 
@@ -235,7 +236,7 @@ async fn test_call_tool_unauthorized() {
 
     let tools = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[empty_fs_id])
+        .get_tools_for_grants(&ctx.space_id, &[empty_fs_id], None)
         .await
         .unwrap();
 
@@ -261,7 +262,7 @@ async fn test_list_resources_with_grant() {
 
     let resources = ctx
         .service
-        .get_resources_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_resources_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
 
@@ -304,7 +305,7 @@ async fn test_resource_custom_uri_scheme() {
 
     let resources = ctx
         .service
-        .get_resources_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_resources_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
 
@@ -334,7 +335,7 @@ async fn test_list_prompts_with_grant() {
 
     let prompts = ctx
         .service
-        .get_prompts_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_prompts_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
 
@@ -396,17 +397,17 @@ async fn test_server_provides_multiple_feature_types() {
     // Filter by type
     let tools = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[all_fs_id.clone()])
+        .get_tools_for_grants(&ctx.space_id, &[all_fs_id.clone()], None)
         .await
         .unwrap();
     let prompts = ctx
         .service
-        .get_prompts_for_grants(&ctx.space_id, &[all_fs_id.clone()])
+        .get_prompts_for_grants(&ctx.space_id, &[all_fs_id.clone()], None)
         .await
         .unwrap();
     let resources = ctx
         .service
-        .get_resources_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_resources_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
 
@@ -441,7 +442,7 @@ async fn test_aggregate_tools_from_multiple_servers() {
 
     let tools = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_tools_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
 
@@ -471,7 +472,7 @@ async fn test_partial_server_grant() {
 
     let tools = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[server_all_a_id])
+        .get_tools_for_grants(&ctx.space_id, &[server_all_a_id], None)
         .await
         .unwrap();
 
@@ -519,11 +520,12 @@ async fn test_features_dont_leak_between_spaces() {
         feature_repo as Arc<dyn ServerFeatureRepository>,
         feature_set_repo as Arc<dyn FeatureSetRepository>,
         prefix_cache,
+        SessionOverrideRegistry::new(),
     );
 
     // Query work space
     let work_tools = service
-        .get_tools_for_grants(&space_work, &[work_all_id])
+        .get_tools_for_grants(&space_work, &[work_all_id], None)
         .await
         .unwrap();
 
@@ -562,6 +564,7 @@ async fn test_routing_is_space_scoped() {
         feature_repo as Arc<dyn ServerFeatureRepository>,
         feature_set_repo as Arc<dyn FeatureSetRepository>,
         prefix_cache,
+        SessionOverrideRegistry::new(),
     );
 
     // Resolve same qualified name in different spaces
@@ -608,7 +611,7 @@ async fn test_unavailable_features_filtered_out() {
 
     let tools = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_tools_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
 
@@ -630,7 +633,7 @@ async fn test_server_disconnect_marks_features_unavailable() {
     // Initially available
     let tools_before = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[all_fs_id.clone()])
+        .get_tools_for_grants(&ctx.space_id, &[all_fs_id.clone()], None)
         .await
         .unwrap();
     assert_eq!(tools_before.len(), 2);
@@ -644,7 +647,7 @@ async fn test_server_disconnect_marks_features_unavailable() {
     // After disconnect
     let tools_after = ctx
         .service
-        .get_tools_for_grants(&ctx.space_id, &[all_fs_id])
+        .get_tools_for_grants(&ctx.space_id, &[all_fs_id], None)
         .await
         .unwrap();
     assert_eq!(tools_after.len(), 0);

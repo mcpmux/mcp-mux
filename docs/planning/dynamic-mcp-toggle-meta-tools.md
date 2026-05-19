@@ -1,7 +1,7 @@
 # Dynamic MCP Toggling via Meta Tools
 
-**Last Updated:** May 18, 2026
-**Status:** Planning — decisions locked, ready for implementation
+**Last Updated:** May 19, 2026
+**Status:** Phase 1 complete — SessionOverrideRegistry + list-path composition wired; Phases 2–5 pending
 **Branch:** `feat/dynamic-mcp-toggle-meta-tools`
 **Base branch:** `feat/workspace-root-routing` ([upstream PR #151](https://github.com/mcpmux/mcp-mux/pull/151))
 **Issue:** TBD — file after planning review
@@ -145,7 +145,7 @@ Each write fires `tools/list_changed` per-peer via the existing `MCPNotifier::no
 | File | Purpose |
 | ---- | ------- |
 | `crates/mcpmux-gateway/src/services/session_overrides.rs` | `SessionOverrideRegistry` — `DashMap`-backed enable/disable sets, GC hooks, query helpers (`is_enabled`, `is_disabled`, `effective_overlay`) |
-| `tests/rust/tests/integration/session_overrides.rs` | Integration tests: enable adds tool, disable removes tool, composition with binding, GC on session reap, per-peer `list_changed` fires |
+| `tests/rust/tests/integration/meta_tools.rs` | Composition tests: deny bootstrap, disable, additive (Phase 1); meta-tool E2E (existing) |
 | `docs/planning/dynamic-mcp-toggle-meta-tools.md` | This doc |
 
 ## Files to modify
@@ -169,18 +169,23 @@ Each write fires `tools/list_changed` per-peer via the existing `MCPNotifier::no
 
 ## Phasing
 
-### Phase 1 — `SessionOverrideRegistry` + composition wiring
+### Phase 1 — `SessionOverrideRegistry` + composition wiring ✅
 
-**Effort:** 1 evening
+**Effort:** 1 evening  
+**Completed:** May 19, 2026
 
-- Add `crates/mcpmux-gateway/src/services/session_overrides.rs` mirroring `session_roots.rs` shape: `DashMap`-backed, `Arc<Self>` factory, `set_enabled`, `set_disabled`, `clear_enabled`, `clear_disabled`, `enabled_set`, `disabled_set`, `remove`, `list_all` for the UI.
-- Plumb `Arc<SessionOverrideRegistry>` through `ServiceContainer` into both `FeatureService` and `MCPNotifier`.
-- Extend `FeatureService::get_tools_for_grants` (+ prompts + resources) signatures to accept `session_id: Option<&str>` and apply `(servers ∪ enabled) − disabled` filtering.
-- Update `handler.rs` callsites to pass `session_id` from `RequestContext` headers.
-- `MCPNotifier` session-reap pass also drops override entries.
-- Unit tests in `session_overrides.rs`: set/get round-trip, enable/disable composition, GC on remove.
+- [x] `crates/mcpmux-gateway/src/services/session_overrides.rs` — `DashMap`-backed registry with `enable`, `disable`, `clear`, `enabled_set`, `disabled_set`, `remove`, `list_all`
+- [x] Plumb `Arc<SessionOverrideRegistry>` through `ServiceContainer` → `ServiceFactory` → `FeatureService` and `MCPNotifier`
+- [x] `FeatureService::get_*_for_grants(..., session_id: Option<&str>)` applies server-level composition: `effective = (binding_servers ∪ enabled) − disabled`, then all available features per effective `server_id`
+- [x] All callsites updated (`handler.rs`, `routing.rs`, `handlers.rs`, `meta_tools/diff.rs`, integration tests) — MCP handler passes real session id; others pass `None`
+- [x] `MCPNotifier::reap_dead_sessions` drops override entries alongside session roots
+- [x] Unit tests in `session_overrides.rs`; composition tests in `tests/rust/tests/integration/meta_tools.rs` (deny bootstrap, disable, additive)
 
-**Outcome:** A test that directly mutates `SessionOverrideRegistry` for a fake session id observes the next `FeatureService::get_tools_for_grants` call return the composed set. No meta-tools exist yet; UI unchanged. CI green.
+**Outcome (verified):** Direct registry mutation changes the next `get_tools_for_grants` result. Meta-tools and UI unchanged. `RoutingService::call_tool` authorization deferred to Phase 3 (list-only in Phase 1).
+
+**Implementation notes:**
+- Server-level composition loads **all available** features for each effective `server_id` (not FS-partial tool subsets).
+- Fixed pre-existing DashMap deadlock in `SessionRootsRegistry::record_resolution` (`get` guard must not overlap `insert` on the same map).
 
 ### Phase 2 — `mcpmux_list_servers` read tool
 

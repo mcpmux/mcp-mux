@@ -76,7 +76,7 @@ pub use pool::{
 };
 
 // Services module
-pub use services::{EventEmitter, GrantService, PrefixCacheService};
+pub use services::{EventEmitter, GrantService, PrefixCacheService, SessionOverrideRegistry};
 
 // MCP module (rmcp-based implementation)
 pub use mcp::McpMuxGatewayHandler;

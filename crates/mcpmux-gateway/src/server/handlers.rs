@@ -1087,7 +1087,7 @@ pub async fn oauth_get_client_features(
         .services
         .pool_services
         .feature_service
-        .get_tools_for_grants(&space_id_str, &feature_set_ids)
+        .get_tools_for_grants(&space_id_str, &feature_set_ids, None)
         .await
         .unwrap_or_default();
 
@@ -1095,7 +1095,7 @@ pub async fn oauth_get_client_features(
         .services
         .pool_services
         .feature_service
-        .get_prompts_for_grants(&space_id_str, &feature_set_ids)
+        .get_prompts_for_grants(&space_id_str, &feature_set_ids, None)
         .await
         .unwrap_or_default();
 
@@ -1103,7 +1103,7 @@ pub async fn oauth_get_client_features(
         .services
         .pool_services
         .feature_service
-        .get_resources_for_grants(&space_id_str, &feature_set_ids)
+        .get_resources_for_grants(&space_id_str, &feature_set_ids, None)
         .await
         .unwrap_or_default();
 

@@ -13,6 +13,7 @@ mod grant_service;
 pub mod meta_tools;
 mod notification_emitter;
 mod prefix_cache;
+mod session_overrides;
 mod session_roots;
 mod space_resolver;
 
@@ -27,5 +28,6 @@ pub use meta_tools::{
 };
 pub use notification_emitter::NotificationEmitter;
 pub use prefix_cache::PrefixCacheService;
+pub use session_overrides::{SessionOverrideEntry, SessionOverrideRegistry};
 pub use session_roots::SessionRootsRegistry;
 pub use space_resolver::SpaceResolverService;

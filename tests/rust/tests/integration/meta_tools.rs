@@ -129,6 +129,7 @@ impl Fixture {
             resolver,
             feature_service.clone(),
             session_roots.clone(),
+            session_overrides.clone(),
             broker.clone(),
             tx,
             None,
@@ -258,6 +259,100 @@ async fn list_feature_sets_returns_space_contents() {
     let sets = body.get("feature_sets").unwrap().as_array().unwrap();
     // Seed created 2 custom FSes + the auto-seeded Default.
     assert_eq!(sets.len(), 3, "Default + 2 custom expected");
+}
+
+fn server_status(body: &Value, server_id: &str) -> String {
+    body.get("servers")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s.get("id").and_then(|v| v.as_str()) == Some(server_id))
+        .unwrap()
+        .get("status")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+async fn bind_github_only_to_session_root(f: &Fixture) -> String {
+    use mcpmux_core::WorkspaceBinding;
+
+    let fs_id = github_only_fs(f).await;
+    let root = "/tmp/mcpmux-list-servers-test";
+    f.session_roots.set_roots_capable(&f.session_id, true);
+    f.session_roots.set(&f.session_id, [root]);
+    let binding = WorkspaceBinding::new(
+        normalize_workspace_root(root),
+        f.space_id,
+        fs_id.clone(),
+    );
+    f.binding_repo.create(&binding).await.unwrap();
+    fs_id
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_servers_marks_unbound_servers_inactive() {
+    let f = Fixture::new().await;
+    let result = f
+        .registry
+        .call(
+            "mcpmux_list_servers",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    assert!(!Fixture::is_error(&result));
+    let body = Fixture::result_json(&result);
+    let servers = body.get("servers").unwrap().as_array().unwrap();
+    assert_eq!(servers.len(), 2);
+    assert_eq!(server_status(&body, "github"), "inactive");
+    assert_eq!(server_status(&body, "firebase"), "inactive");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_servers_shows_enabled_via_binding() {
+    let f = Fixture::new().await;
+    bind_github_only_to_session_root(&f).await;
+
+    let result = f
+        .registry
+        .call(
+            "mcpmux_list_servers",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    let body = Fixture::result_json(&result);
+    assert_eq!(server_status(&body, "github"), "enabled_via_binding");
+    assert_eq!(server_status(&body, "firebase"), "inactive");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_servers_shows_session_override_statuses() {
+    let f = Fixture::new().await;
+    bind_github_only_to_session_root(&f).await;
+    f.session_overrides.enable(&f.session_id, "firebase");
+    f.session_overrides.disable(&f.session_id, "github");
+
+    let result = f
+        .registry
+        .call(
+            "mcpmux_list_servers",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    let body = Fixture::result_json(&result);
+    assert_eq!(server_status(&body, "github"), "disabled_via_session");
+    assert_eq!(server_status(&body, "firebase"), "enabled_via_session");
 }
 
 // `describe_resolution` and `describe_workspace` were both removed at the
@@ -448,6 +543,7 @@ async fn registry_advertises_every_default_tool_with_annotations() {
     for expected in [
         "mcpmux_list_all_tools",
         "mcpmux_list_feature_sets",
+        "mcpmux_list_servers",
         "mcpmux_create_feature_set",
         "mcpmux_bind_current_workspace",
     ] {
@@ -525,6 +621,7 @@ async fn bare_registry(
         resolver,
         feature_service,
         SessionRootsRegistry::new(),
+        SessionOverrideRegistry::new(),
         Arc::new(ApprovalBroker::new()),
         tx.clone(),
         settings_repo,
@@ -638,6 +735,7 @@ async fn master_switch_toggles_registry_visibility() {
         resolver,
         feature_service,
         SessionRootsRegistry::new(),
+        SessionOverrideRegistry::new(),
         Arc::new(ApprovalBroker::new()),
         tx,
         Some(settings_repo.clone()),

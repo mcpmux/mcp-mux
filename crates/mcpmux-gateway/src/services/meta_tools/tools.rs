@@ -9,12 +9,14 @@ use mcpmux_core::{
 };
 use rmcp::model::{CallToolResult, Content};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use tokio::sync::broadcast;
 use tracing::info;
 use uuid::Uuid;
 
 use super::approval::{ApprovalPayload, ApprovalScope};
 use super::registry::{MetaTool, MetaToolCall, MetaToolError};
+use crate::services::ResolvedFeatureSet;
 
 /// Fire a `FeatureSetMembersChanged` event so MCPNotifier pushes a
 /// `tools/list_changed` notification to every connected client in the Space.
@@ -62,6 +64,33 @@ async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
     Err(MetaToolError::Internal(
         "no Space resolved for this caller (no default Space configured?)".into(),
     ))
+}
+
+/// Full resolver output for the caller — space + binding FS ids + source.
+async fn caller_resolution(call: &MetaToolCall<'_>) -> Result<ResolvedFeatureSet, MetaToolError> {
+    call.ctx
+        .resolver
+        .resolve(call.session_id, Some(call.client_id))
+        .await
+        .map_err(|e| MetaToolError::Internal(e.to_string()))
+}
+
+/// Derive the manifest status for one server in the caller's session.
+fn derive_server_status(
+    server_id: &str,
+    binding_servers: &HashSet<String>,
+    session_enabled: &HashSet<String>,
+    session_disabled: &HashSet<String>,
+) -> &'static str {
+    if session_disabled.contains(server_id) {
+        "disabled_via_session"
+    } else if session_enabled.contains(server_id) && !binding_servers.contains(server_id) {
+        "enabled_via_session"
+    } else if binding_servers.contains(server_id) {
+        "enabled_via_binding"
+    } else {
+        "inactive"
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +191,103 @@ impl MetaTool for ListFeatureSetsTool {
         Ok(text_result(
             json!({ "space_id": space.id, "feature_sets": sets }),
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mcpmux_list_servers — read
+// ---------------------------------------------------------------------------
+
+pub struct ListServersTool;
+
+#[async_trait]
+impl MetaTool for ListServersTool {
+    fn name(&self) -> &'static str {
+        "mcpmux_list_servers"
+    }
+
+    fn description(&self) -> &'static str {
+        "List every MCP server installed in the caller's resolved Space with \
+         a coarse status per server: enabled_via_binding, enabled_via_session, \
+         disabled_via_session, or inactive. Use before enable/disable to see \
+         current routing state without loading every tool."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+
+    async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
+        let resolved = caller_resolution(&call).await?;
+        let space_id = resolved
+            .space_id
+            .ok_or_else(|| MetaToolError::Internal("space missing".into()))?;
+
+        let binding_features = call
+            .ctx
+            .feature_service
+            .resolve_feature_sets(&space_id.to_string(), &resolved.feature_set_ids)
+            .await?;
+        let binding_servers: HashSet<String> = binding_features
+            .iter()
+            .map(|f| f.server_id.clone())
+            .collect();
+
+        let session_enabled = call
+            .session_id
+            .map(|sid| call.ctx.session_overrides.enabled_set(sid))
+            .unwrap_or_default();
+        let session_disabled = call
+            .session_id
+            .map(|sid| call.ctx.session_overrides.disabled_set(sid))
+            .unwrap_or_default();
+
+        let features = call
+            .ctx
+            .server_feature_repo
+            .list_for_space(&space_id.to_string())
+            .await?;
+
+        let mut by_server: HashMap<String, (Option<String>, usize)> = HashMap::new();
+        for feature in &features {
+            if feature.feature_type != FeatureType::Tool {
+                continue;
+            }
+            let entry = by_server
+                .entry(feature.server_id.clone())
+                .or_insert((None, 0));
+            if entry.0.is_none() {
+                entry.0 = feature.display_name.clone();
+            }
+            entry.1 += 1;
+        }
+
+        let mut servers: Vec<Value> = by_server
+            .into_iter()
+            .map(|(id, (display_name, tool_count))| {
+                let name = display_name.unwrap_or_else(|| id.clone());
+                let status = derive_server_status(
+                    &id,
+                    &binding_servers,
+                    &session_enabled,
+                    &session_disabled,
+                );
+                json!({
+                    "id": id,
+                    "name": name,
+                    "tool_count": tool_count,
+                    "status": status,
+                })
+            })
+            .collect();
+        servers.sort_by(|a, b| {
+            a.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .cmp(b.get("id").and_then(|v| v.as_str()).unwrap_or(""))
+        });
+
+        Ok(text_result(json!({ "servers": servers })))
     }
 }
 

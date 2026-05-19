@@ -19,7 +19,9 @@ use tokio::sync::broadcast;
 
 use super::approval::ApprovalBroker;
 use crate::pool::FeatureService;
-use crate::services::{FeatureSetResolverService, SessionRootsRegistry};
+use crate::services::{
+    FeatureSetResolverService, SessionOverrideRegistry, SessionRootsRegistry,
+};
 
 /// App-settings key that toggles the entire `mcpmux_*` namespace.
 /// Present + "false" → hidden; missing or anything else → enabled.
@@ -39,6 +41,7 @@ pub struct MetaToolContext {
     pub resolver: Arc<FeatureSetResolverService>,
     pub feature_service: Arc<FeatureService>,
     pub session_roots: Arc<SessionRootsRegistry>,
+    pub session_overrides: Arc<SessionOverrideRegistry>,
     pub approval_broker: Arc<ApprovalBroker>,
     /// Broadcast domain events (e.g. ToolsChanged) so MCPNotifier can push
     /// `tools/list_changed` to connected peers after a write mutates state.

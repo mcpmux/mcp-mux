@@ -55,6 +55,7 @@ pub fn build_default_registry(
     resolver: std::sync::Arc<crate::services::FeatureSetResolverService>,
     feature_service: std::sync::Arc<crate::pool::FeatureService>,
     session_roots: std::sync::Arc<crate::services::SessionRootsRegistry>,
+    session_overrides: std::sync::Arc<crate::services::SessionOverrideRegistry>,
     approval_broker: std::sync::Arc<ApprovalBroker>,
     domain_event_tx: tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>,
     settings_repo: Option<std::sync::Arc<dyn mcpmux_core::AppSettingsRepository>>,
@@ -68,6 +69,7 @@ pub fn build_default_registry(
         resolver,
         feature_service,
         session_roots,
+        session_overrides,
         approval_broker,
         domain_event_tx,
         settings_repo,
@@ -77,6 +79,7 @@ pub fn build_default_registry(
     // Reads — no approval needed.
     registry.register(Box::new(tools::ListAllToolsTool));
     registry.register(Box::new(tools::ListFeatureSetsTool));
+    registry.register(Box::new(tools::ListServersTool));
     // Both `describe_resolution` and `describe_workspace` were removed by
     // user request — the read surface is just the two list_* tools above,
     // which an LLM can stitch into the same picture without an extra hop.

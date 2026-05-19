@@ -134,6 +134,7 @@ impl ServiceContainer {
             feature_set_resolver.clone(),
             pool_services.feature_service.clone(),
             session_roots.clone(),
+            session_overrides.clone(),
             approval_broker.clone(),
             domain_event_tx.clone(),
             deps.settings_repo.clone(),

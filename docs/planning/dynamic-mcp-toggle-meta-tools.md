@@ -1,7 +1,7 @@
 # Dynamic MCP Toggling via Meta Tools
 
 **Last Updated:** May 19, 2026
-**Status:** Phase 1 complete — SessionOverrideRegistry + list-path composition wired; Phases 2–5 pending
+**Status:** Phase 2 complete — `mcpmux_list_servers` read tool shipped; Phases 3–5 pending
 **Branch:** `feat/dynamic-mcp-toggle-meta-tools`
 **Base branch:** `feat/workspace-root-routing` ([upstream PR #151](https://github.com/mcpmux/mcp-mux/pull/151))
 **Issue:** TBD — file after planning review
@@ -187,17 +187,18 @@ Each write fires `tools/list_changed` per-peer via the existing `MCPNotifier::no
 - Server-level composition loads **all available** features for each effective `server_id` (not FS-partial tool subsets).
 - Fixed pre-existing DashMap deadlock in `SessionRootsRegistry::record_resolution` (`get` guard must not overlap `insert` on the same map).
 
-### Phase 2 — `mcpmux_list_servers` read tool
+### Phase 2 — `mcpmux_list_servers` read tool ✅
 
-**Effort:** 1 evening
+**Effort:** 1 evening  
+**Completed:** May 19, 2026
 
-- Add `ListServersTool` unit struct + `MetaTool` impl in `meta_tools/tools.rs`.
-- Implementation: load `ServerFeature::list_for_space(caller_space_id)`, group by `server_id`, compute `tool_count = features.iter().filter(|f| f.feature_type == Tool).count()`, derive `status` per server by checking `binding`, `session_overrides.enabled`, `session_overrides.disabled` in order.
-- JSON schema: empty `properties` (no args).
-- Register in `build_default_registry` alongside the existing reads.
-- Integration test: connect a fake session, call `mcpmux_list_servers`, assert response shape includes `status` enum values for both bound and unbound servers.
+- [x] `ListServersTool` in `meta_tools/tools.rs` — groups `ServerFeature::list_for_space` by `server_id`, counts tools, derives status
+- [x] Status enum: `enabled_via_binding | enabled_via_session | disabled_via_session | inactive` (binding → session-enabled → session-disabled priority)
+- [x] `SessionOverrideRegistry` plumbed into `MetaToolContext` for status derivation
+- [x] Registered in `build_default_registry`
+- [x] Integration tests: inactive (no binding), `enabled_via_binding`, session override statuses
 
-**Outcome:** An LLM calling `mcpmux_list_servers` from any session receives a server roster like `[{id: "github", name: "GitHub", tool_count: 24, status: "enabled_via_binding"}, {id: "firebase", name: "Firebase", tool_count: 18, status: "inactive"}, ...]`. No state mutation yet.
+**Outcome:** LLM calls `mcpmux_list_servers` and gets a server roster with per-server status. No state mutation.
 
 ### Phase 3 — `mcpmux_enable_server` / `mcpmux_disable_server` (session scope)
 

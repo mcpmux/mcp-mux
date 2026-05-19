@@ -126,3 +126,126 @@ impl SpaceService {
         self.repository.get_default().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use tokio::sync::RwLock;
+
+    struct InMemorySpaceRepo {
+        spaces: RwLock<HashMap<Uuid, Space>>,
+    }
+
+    async fn repo_with_space(space: Space) -> Arc<InMemorySpaceRepo> {
+        let repo = Arc::new(InMemorySpaceRepo {
+            spaces: RwLock::new(HashMap::new()),
+        });
+        repo.spaces.write().await.insert(space.id, space);
+        repo
+    }
+
+    #[async_trait]
+    impl SpaceRepository for InMemorySpaceRepo {
+        async fn list(&self) -> crate::repository::RepoResult<Vec<Space>> {
+            Ok(self.spaces.read().await.values().cloned().collect())
+        }
+
+        async fn get(&self, id: &Uuid) -> crate::repository::RepoResult<Option<Space>> {
+            Ok(self.spaces.read().await.get(id).cloned())
+        }
+
+        async fn create(&self, space: &Space) -> crate::repository::RepoResult<()> {
+            self.spaces.write().await.insert(space.id, space.clone());
+            Ok(())
+        }
+
+        async fn update(&self, space: &Space) -> crate::repository::RepoResult<()> {
+            self.spaces.write().await.insert(space.id, space.clone());
+            Ok(())
+        }
+
+        async fn delete(&self, id: &Uuid) -> crate::repository::RepoResult<()> {
+            self.spaces.write().await.remove(id);
+            Ok(())
+        }
+
+        async fn get_default(&self) -> crate::repository::RepoResult<Option<Space>> {
+            Ok(self
+                .spaces
+                .read()
+                .await
+                .values()
+                .find(|s| s.is_default)
+                .cloned())
+        }
+
+        async fn set_default(&self, id: &Uuid) -> crate::repository::RepoResult<()> {
+            let mut spaces = self.spaces.write().await;
+            for space in spaces.values_mut() {
+                space.is_default = false;
+            }
+            if let Some(space) = spaces.get_mut(id) {
+                space.is_default = true;
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn update_changes_name_and_bumps_updated_at() {
+        let original = Space::new("Original");
+        let id = original.id;
+        let original_updated_at = original.updated_at;
+        let repo = repo_with_space(original).await;
+        let service = SpaceService::new(repo);
+
+        let updated = service
+            .update(id, Some("Renamed".to_string()), None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(updated.name, "Renamed");
+        assert!(updated.updated_at >= original_updated_at);
+
+        let loaded = service.get(&id).await.unwrap().expect("space exists");
+        assert_eq!(loaded.name, "Renamed");
+    }
+
+    #[tokio::test]
+    async fn update_applies_icon_and_description() {
+        let space = Space::new("Space");
+        let id = space.id;
+        let repo = repo_with_space(space).await;
+        let service = SpaceService::new(repo);
+
+        let updated = service
+            .update(
+                id,
+                None,
+                Some("rocket".to_string()),
+                Some("Side project".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(updated.icon.as_deref(), Some("rocket"));
+        assert_eq!(updated.description.as_deref(), Some("Side project"));
+    }
+
+    #[tokio::test]
+    async fn update_returns_not_found_for_missing_space() {
+        let repo = Arc::new(InMemorySpaceRepo {
+            spaces: RwLock::new(HashMap::new()),
+        });
+        let service = SpaceService::new(repo);
+
+        let err = service
+            .update(Uuid::new_v4(), Some("nope".to_string()), None, None)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Space not found"));
+    }
+}

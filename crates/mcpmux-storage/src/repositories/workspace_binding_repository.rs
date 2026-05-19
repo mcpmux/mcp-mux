@@ -370,6 +370,31 @@ mod tests {
         assert_eq!(got.workspace_root, root);
         assert_eq!(got.space_id, space_id);
         assert_eq!(got.feature_set_ids, vec![fs_id]);
+        assert_eq!(got.label, None);
+    }
+
+    #[tokio::test]
+    async fn test_label_round_trip() {
+        let (repo, space_id, fs_id) = fixture().await;
+        let root = if cfg!(windows) { "d:\\labeled" } else { "/labeled" };
+        let mut binding = WorkspaceBinding::new(root, space_id, fs_id);
+        binding.label = Some("My Project".to_string());
+        repo.create(&binding).await.unwrap();
+
+        let got = repo.get(&binding.id).await.unwrap().unwrap();
+        assert_eq!(got.label.as_deref(), Some("My Project"));
+
+        let mut updated = got;
+        updated.label = None;
+        repo.update(&updated).await.unwrap();
+        let cleared = repo.get(&binding.id).await.unwrap().unwrap();
+        assert_eq!(cleared.label, None);
+
+        let mut relabeled = cleared;
+        relabeled.label = Some("Renamed".to_string());
+        repo.update(&relabeled).await.unwrap();
+        let final_got = repo.get(&binding.id).await.unwrap().unwrap();
+        assert_eq!(final_got.label.as_deref(), Some("Renamed"));
     }
 
     #[tokio::test]

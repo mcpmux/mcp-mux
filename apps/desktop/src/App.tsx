@@ -390,6 +390,7 @@ function App() {
 }
 
 function DashboardView() {
+  const navigateTo = useNavigateTo();
   const [stats, setStats] = useState({
     installedServers: 0,
     connectedServers: 0,
@@ -398,6 +399,9 @@ function DashboardView() {
     featureSets: 0,
   });
   const viewSpace = useViewSpace();
+
+  const statCardClass =
+    'cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50';
 
   // Load stats on mount and when gateway changes
   const loadStats = async () => {
@@ -460,7 +464,20 @@ function DashboardView() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="dashboard-stats-grid">
-        <Card data-testid="stat-servers">
+        <Card
+          className={statCardClass}
+          data-testid="stat-servers"
+          role="button"
+          tabIndex={0}
+          aria-label="Go to Servers"
+          onClick={() => navigateTo('servers')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              navigateTo('servers');
+            }
+          }}
+        >
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Server className="h-5 w-5 text-primary-500" />
@@ -473,7 +490,20 @@ function DashboardView() {
           </CardContent>
         </Card>
 
-        <Card data-testid="stat-featuresets">
+        <Card
+          className={statCardClass}
+          data-testid="stat-featuresets"
+          role="button"
+          tabIndex={0}
+          aria-label="Go to Feature Sets"
+          onClick={() => navigateTo('featuresets')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              navigateTo('featuresets');
+            }
+          }}
+        >
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Wrench className="h-5 w-5 text-primary-500" />
@@ -486,7 +516,20 @@ function DashboardView() {
           </CardContent>
         </Card>
 
-        <Card data-testid="stat-clients">
+        <Card
+          className={statCardClass}
+          data-testid="stat-clients"
+          role="button"
+          tabIndex={0}
+          aria-label="Go to Clients"
+          onClick={() => navigateTo('clients')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              navigateTo('clients');
+            }
+          }}
+        >
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Monitor className="h-5 w-5 text-primary-500" />
@@ -499,7 +542,20 @@ function DashboardView() {
           </CardContent>
         </Card>
 
-        <Card data-testid="stat-active-space">
+        <Card
+          className={statCardClass}
+          data-testid="stat-active-space"
+          role="button"
+          tabIndex={0}
+          aria-label="Go to Spaces"
+          onClick={() => navigateTo('spaces')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              navigateTo('spaces');
+            }
+          }}
+        >
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Globe className="h-5 w-5 text-primary-500" />

@@ -713,3 +713,23 @@ pub async fn get_workspace_effective_features(
         server_totals,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_label;
+
+    #[test]
+    fn normalize_label_none_and_empty() {
+        assert_eq!(normalize_label(&None), None);
+        assert_eq!(normalize_label(&Some(String::new())), None);
+        assert_eq!(normalize_label(&Some("   ".to_string())), None);
+    }
+
+    #[test]
+    fn normalize_label_trims_non_empty() {
+        assert_eq!(
+            normalize_label(&Some("  My Project  ".to_string())),
+            Some("My Project".to_string())
+        );
+    }
+}

@@ -54,6 +54,7 @@ async fn emit_binding_changed(
 pub struct WorkspaceBindingDto {
     pub id: String,
     pub workspace_root: String,
+    pub label: Option<String>,
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
     pub created_at: String,
@@ -65,6 +66,7 @@ impl From<WorkspaceBinding> for WorkspaceBindingDto {
         Self {
             id: b.id.to_string(),
             workspace_root: b.workspace_root,
+            label: b.label,
             space_id: b.space_id.to_string(),
             feature_set_ids: b.feature_set_ids,
             created_at: b.created_at.to_rfc3339(),
@@ -80,8 +82,16 @@ impl From<WorkspaceBinding> for WorkspaceBindingDto {
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceBindingInput {
     pub workspace_root: String,
+    pub label: Option<String>,
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
+}
+
+fn normalize_label(label: &Option<String>) -> Option<String> {
+    label
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn parse_space_id(input: &WorkspaceBindingInput) -> Result<Uuid, String> {
@@ -194,7 +204,8 @@ pub async fn create_workspace_binding(
     let feature_set_ids = validate_fs_list(&input)?;
     let normalized = normalize_and_validate(&input.workspace_root)?;
 
-    let binding = WorkspaceBinding::new_multi(normalized.clone(), space_id, feature_set_ids);
+    let mut binding = WorkspaceBinding::new_multi(normalized.clone(), space_id, feature_set_ids);
+    binding.label = normalize_label(&input.label);
 
     state
         .workspace_binding_repository
@@ -241,9 +252,16 @@ pub async fn update_workspace_binding(
         .ok_or_else(|| format!("binding not found: {}", id))?;
     let old_space_id = existing.space_id;
 
+    let label = if input.label.is_some() {
+        normalize_label(&input.label)
+    } else {
+        existing.label
+    };
+
     let updated = WorkspaceBinding {
         id: existing.id,
         workspace_root: normalized,
+        label,
         space_id,
         feature_set_ids,
         created_at: existing.created_at,

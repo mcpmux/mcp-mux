@@ -848,6 +848,7 @@ pub fn run() {
             commands::list_spaces,
             commands::get_space,
             commands::create_space,
+            commands::update_space,
             commands::delete_space,
             commands::open_space_config_file,
             commands::read_space_config,

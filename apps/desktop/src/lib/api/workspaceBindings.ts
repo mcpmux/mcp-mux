@@ -10,6 +10,8 @@ import { invoke } from '@tauri-apps/api/core';
 export interface WorkspaceBinding {
   id: string;
   workspace_root: string;
+  /** Friendly display name shown instead of the folder path when set. */
+  label: string | null;
   space_id: string;
   /**
    * Non-empty by construction. Order is the operator-chosen rendering
@@ -24,6 +26,7 @@ export interface WorkspaceBinding {
 /** Input payload for create / update. `feature_set_ids` must be non-empty. */
 export interface WorkspaceBindingInput {
   workspace_root: string;
+  label?: string | null;
   space_id: string;
   feature_set_ids: string[];
 }
@@ -91,6 +94,7 @@ export async function deleteWorkspaceBinding(id: string): Promise<void> {
 export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
   return {
     workspace_root: b.workspace_root,
+    label: b.label,
     space_id: b.space_id,
     feature_set_ids: b.feature_set_ids,
   };

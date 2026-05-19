@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Trash2, Loader2, Search, Layout, AlertCircle } from 'lucide-react';
+import { Plus, Loader2, Search, Layout, AlertCircle, Pencil } from 'lucide-react';
 import {
   Card,
   CardHeader,
@@ -11,7 +11,8 @@ import {
   useConfirm,
 } from '@mcpmux/ui';
 import { useAppStore, useSpaces, useIsLoading } from '@/stores';
-import { createSpace, deleteSpace } from '@/lib/api/spaces';
+import { createSpace } from '@/lib/api/spaces';
+import { SpacePanel } from './SpacePanel';
 
 export function SpacesPage() {
   const spaces = useSpaces();
@@ -20,12 +21,12 @@ export function SpacesPage() {
   // Store actions
   const addSpace = useAppStore((state) => state.addSpace);
   const removeSpace = useAppStore((state) => state.removeSpace);
+  const updateSpaceInStore = useAppStore((state) => state.updateSpace);
 
   // Local state
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [isActionLoading, setIsActionLoading] = useState<string | null>(null); // ID of space being acted on
-  const { confirm, ConfirmDialogElement } = useConfirm();
+  const { ConfirmDialogElement } = useConfirm();
   const { toasts, success, error: showError, dismiss } = useToast();
 
   // Create Modal State
@@ -33,6 +34,7 @@ export function SpacesPage() {
   const [newSpaceName, setNewSpaceName] = useState('');
   const [newSpaceIcon, setNewSpaceIcon] = useState('🌐');
   const [isCreating, setIsCreating] = useState(false);
+  const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
 
   const handleCreate = async () => {
     if (!newSpaceName.trim()) return;
@@ -55,30 +57,9 @@ export function SpacesPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    const spaceName = spaces.find(s => s.id === id)?.name || 'this space';
-    if (!await confirm({
-      title: 'Delete workspace',
-      message: `Are you sure you want to delete "${spaceName}"? This action cannot be undone.`,
-      confirmLabel: 'Delete',
-      variant: 'danger',
-    })) return;
-    
-    setIsActionLoading(id);
-    setError(null);
-    try {
-      const deletedSpace = spaces.find(s => s.id === id);
-      await deleteSpace(id);
-      removeSpace(id);
-      success('Space deleted', `"${deletedSpace?.name || 'Space'}" has been deleted`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      showError('Failed to delete space', msg);
-    } finally {
-      setIsActionLoading(null);
-    }
-  };
+  const selectedSpace = selectedSpaceId
+    ? spaces.find((s) => s.id === selectedSpaceId) ?? null
+    : null;
 
   // Filter spaces
   const filteredSpaces = spaces.filter(space => {
@@ -166,16 +147,19 @@ export function SpacesPage() {
           ) : (
             <div className="grid gap-5 auto-fill-cards">
               {filteredSpaces.map((space) => {
-                const isProcessing = isActionLoading === space.id;
+                const isSelected = selectedSpaceId === space.id;
 
                 return (
                   <Card
                     key={space.id}
-                    className="transition-all hover:shadow-lg hover:scale-[1.01]"
+                    className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] group ${
+                      isSelected ? 'ring-2 ring-primary-500 shadow-lg' : ''
+                    }`}
+                    onClick={() => setSelectedSpaceId(space.id)}
                     data-testid={`space-card-${space.id}`}
                   >
                     <CardContent className="p-4">
-                      <div className="flex items-start gap-2.5 mb-3">
+                      <div className="flex items-start gap-2.5">
                         <div className="w-9 h-9 flex items-center justify-center bg-[rgb(var(--surface))] rounded-lg text-xl border border-[rgb(var(--border-subtle))] flex-shrink-0">
                           {space.icon || '🌐'}
                         </div>
@@ -185,7 +169,7 @@ export function SpacesPage() {
                             {space.description || 'No description'}
                           </p>
                         </div>
-                        <div className="flex gap-1 flex-shrink-0">
+                        <div className="flex gap-1 flex-shrink-0 items-start">
                           {space.is_default && (
                             <span
                               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
@@ -194,17 +178,12 @@ export function SpacesPage() {
                               Default
                             </span>
                           )}
-                          {!space.is_default && (
-                            <button
-                              onClick={() => handleDelete(space.id)}
-                              disabled={isProcessing}
-                              className="p-1.5 text-[rgb(var(--muted))] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="Delete Space"
-                              data-testid={`delete-space-${space.id}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
+                          <span
+                            className="p-1.5 text-[rgb(var(--muted))] opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Edit workspace"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </span>
                         </div>
                       </div>
                     </CardContent>
@@ -215,6 +194,27 @@ export function SpacesPage() {
           )}
         </div>
       </div>
+
+      {selectedSpace && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40 animate-in fade-in duration-200"
+            onClick={() => setSelectedSpaceId(null)}
+          />
+          <SpacePanel
+            space={selectedSpace}
+            onClose={() => setSelectedSpaceId(null)}
+            onSaved={(updated) => {
+              updateSpaceInStore(updated.id, updated);
+              setSelectedSpaceId(updated.id);
+            }}
+            onDeleted={(id) => {
+              removeSpace(id);
+              setSelectedSpaceId(null);
+            }}
+          />
+        </>
+      )}
 
       {/* Create Modal */}
       {showCreateModal && (

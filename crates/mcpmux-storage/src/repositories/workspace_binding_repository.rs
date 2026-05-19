@@ -62,13 +62,15 @@ impl SqliteWorkspaceBindingRepository {
     fn row_to_binding_no_fs(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceBinding> {
         let id_str: String = row.get(0)?;
         let workspace_root: String = row.get(1)?;
-        let space_id_str: String = row.get(2)?;
-        let created_at: String = row.get(3)?;
-        let updated_at: String = row.get(4)?;
+        let label: Option<String> = row.get(2)?;
+        let space_id_str: String = row.get(3)?;
+        let created_at: String = row.get(4)?;
+        let updated_at: String = row.get(5)?;
 
         Ok(WorkspaceBinding {
             id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
             workspace_root,
+            label,
             space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::nil()),
             feature_set_ids: Vec::new(), // filled in by caller
             created_at: Self::parse_datetime(&created_at),
@@ -138,7 +140,8 @@ impl SqliteWorkspaceBindingRepository {
         Ok(())
     }
 
-    const SELECT_COLS: &'static str = "id, workspace_root, space_id, created_at, updated_at";
+    const SELECT_COLS: &'static str =
+        "id, workspace_root, label, space_id, created_at, updated_at";
 
     /// Fetch bindings + their FeatureSet lists in two queries.
     /// `where_clause` is appended to the binding SELECT (use `""` for none);
@@ -209,11 +212,12 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
 
         conn.execute(
             "INSERT INTO workspace_bindings
-                (id, workspace_root, space_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+                (id, workspace_root, label, space_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 binding.id.to_string(),
                 binding.workspace_root,
+                binding.label,
                 binding.space_id.to_string(),
                 binding.created_at.to_rfc3339(),
                 binding.updated_at.to_rfc3339(),
@@ -236,11 +240,12 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
 
         let rows_affected = conn.execute(
             "UPDATE workspace_bindings
-             SET workspace_root = ?2, space_id = ?3, updated_at = ?4
+             SET workspace_root = ?2, label = ?3, space_id = ?4, updated_at = ?5
              WHERE id = ?1",
             params![
                 binding.id.to_string(),
                 binding.workspace_root,
+                binding.label,
                 binding.space_id.to_string(),
                 binding.updated_at.to_rfc3339(),
             ],

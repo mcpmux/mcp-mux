@@ -234,8 +234,10 @@ export function WorkspacesPage() {
             .map((id) => fsById.get(id)?.name ?? '')
             .join(' ')
         : '';
+      const label = e.binding?.label?.toLowerCase() ?? '';
       return (
         e.root.toLowerCase().includes(q) ||
+        label.includes(q) ||
         spaceName.toLowerCase().includes(q) ||
         fsNames.toLowerCase().includes(q)
       );
@@ -469,11 +471,31 @@ function formatFsList(names: string[]): string {
  * a no-op edit. `feature_set_ids` order matters (it's the operator-
  * chosen render order, not just a set), so we compare positionally.
  */
+function normalizeLabel(label: string | null | undefined): string | null {
+  const trimmed = label?.trim() ?? '';
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Primary title for a workspace entry — label when set, otherwise the path.
+ */
+function entryDisplayTitle(entry: Entry): string {
+  const label = entry.binding?.label?.trim();
+  if (label) return label;
+  return entry.root;
+}
+
 function sameBindingInput(
   a: WorkspaceBindingInput,
-  b: { workspace_root: string; space_id: string; feature_set_ids: string[] }
+  b: {
+    workspace_root: string;
+    label?: string | null;
+    space_id: string;
+    feature_set_ids: string[];
+  }
 ): boolean {
   if (a.workspace_root.trim() !== b.workspace_root.trim()) return false;
+  if (normalizeLabel(a.label) !== normalizeLabel(b.label)) return false;
   if (a.space_id !== b.space_id) return false;
   if (a.feature_set_ids.length !== b.feature_set_ids.length) return false;
   return a.feature_set_ids.every((id, i) => id === b.feature_set_ids[i]);
@@ -584,11 +606,18 @@ function EntryCard({
               {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
             </div>
             <p
-              className="font-mono text-sm text-[rgb(var(--foreground))] truncate"
-              title={entry.root}
+              className={`text-sm text-[rgb(var(--foreground))] truncate ${
+                entry.binding?.label?.trim() ? 'font-semibold' : 'font-mono'
+              }`}
+              title={entryDisplayTitle(entry)}
             >
-              {entry.root}
+              {entryDisplayTitle(entry)}
             </p>
+            {entry.binding?.label?.trim() && (
+              <p className="font-mono text-xs text-[rgb(var(--muted))] truncate mt-0.5" title={entry.root}>
+                {entry.root}
+              </p>
+            )}
           </div>
         </div>
 
@@ -833,9 +862,12 @@ function InspectorPanel({
       ? 'edit'
       : 'create-from-live';
   const title = isNew ? 'New binding' : isMapped ? 'Binding' : 'Configure workspace';
+  const displayTitle = entry ? entryDisplayTitle(entry) : '';
   const subtitle = isNew
     ? 'Tell mcpmux how a folder should route.'
-    : entry?.root ?? '';
+    : displayTitle !== entry?.root
+      ? entry?.root ?? ''
+      : displayTitle;
 
   // Auto-save status drives the small pill in the Mapping section header.
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ kind: 'idle' });
@@ -858,13 +890,20 @@ function InspectorPanel({
                 {!isNew && entry && !isMapped && <Pill tone="amber">Unmapped</Pill>}
                 {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">Offline</Pill>}
               </div>
-              <h2 className="text-lg font-bold truncate">{title}</h2>
-              <p
-                className={`text-xs text-[rgb(var(--muted))] truncate ${!isNew ? 'font-mono' : ''}`}
-                title={subtitle}
-              >
-                {subtitle}
-              </p>
+              <h2 className="text-lg font-bold truncate" title={displayTitle || title}>
+                {!isNew && entry ? displayTitle : title}
+              </h2>
+              {!isNew && entry && displayTitle !== entry.root && (
+                <p
+                  className="text-xs text-[rgb(var(--muted))] truncate font-mono"
+                  title={entry.root}
+                >
+                  {entry.root}
+                </p>
+              )}
+              {isNew && (
+                <p className="text-xs text-[rgb(var(--muted))] truncate">{subtitle}</p>
+              )}
             </div>
           </div>
           <button
@@ -1708,6 +1747,7 @@ function BindingForm({
 
   const rootRef = useRef<HTMLInputElement | null>(null);
   const [root, setRoot] = useState(initial?.workspace_root ?? prefillRoot ?? '');
+  const [label, setLabel] = useState(initial?.label ?? '');
   const [spaceId, setSpaceId] = useState<string>(initial?.space_id ?? defaultSpaceId);
   // Multi-FS: a binding may resolve to N FeatureSets (the resolver merges
   // their members into one allow set). Order is preserved so the operator
@@ -1836,6 +1876,7 @@ function BindingForm({
     try {
       await onSubmit({
         workspace_root: root.trim(),
+        label: label.trim() || null,
         space_id: spaceId,
         feature_set_ids: fsIds,
       });
@@ -1887,6 +1928,7 @@ function BindingForm({
 
     const candidate: WorkspaceBindingInput = {
       workspace_root: root.trim(),
+      label: label.trim() || null,
       space_id: spaceId,
       feature_set_ids: fsIds,
     };
@@ -1895,6 +1937,7 @@ function BindingForm({
     // otherwise the initial payload from when the panel opened.
     const baseline = lastSavedRef.current ?? {
       workspace_root: initial.workspace_root,
+      label: initial.label,
       space_id: initial.space_id,
       feature_set_ids: initial.feature_set_ids,
     };
@@ -1934,6 +1977,7 @@ function BindingForm({
     isEdit,
     initial,
     root,
+    label,
     spaceId,
     fsIds,
     canSubmit,
@@ -1977,6 +2021,20 @@ function BindingForm({
 
   return (
     <div className="space-y-5">
+      <FormField
+        label="Label"
+        hint="Friendly name shown instead of the folder path (optional)."
+      >
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="e.g., Frontend project"
+          className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+          data-testid="workspace-binding-label-input"
+        />
+      </FormField>
+
       <FormField label="Workspace root">
         <div className="flex gap-2">
           <input

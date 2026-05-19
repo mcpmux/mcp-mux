@@ -21,7 +21,11 @@ import {
 } from 'lucide-react';
 import { Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
-import { isStarterFeatureSet, setFeatureSetMembers } from '@/lib/api/featureSets';
+import {
+  isStarterFeatureSet,
+  setFeatureSetMembers,
+  updateFeatureSet,
+} from '@/lib/api/featureSets';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeatures } from '@/lib/api/serverFeatures';
 
@@ -45,6 +49,11 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingGeneral, setIsSavingGeneral] = useState(false);
+  const [displayName, setDisplayName] = useState(featureSet.name);
+  const [editName, setEditName] = useState(featureSet.name);
+  const [editDescription, setEditDescription] = useState(featureSet.description ?? '');
+  const [editIcon, setEditIcon] = useState(featureSet.icon ?? '');
   const [error, setError] = useState<string | null>(null);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const { toasts, success, error: showError, dismiss } = useToast();
@@ -67,6 +76,13 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
 
   const isFeatureSelected = (featureId: string, _feature: ServerFeature) =>
     selectedFeatureIds.has(featureId);
+
+  useEffect(() => {
+    setDisplayName(featureSet.name);
+    setEditName(featureSet.name);
+    setEditDescription(featureSet.description ?? '');
+    setEditIcon(featureSet.icon ?? '');
+  }, [featureSet]);
 
   useEffect(() => {
     const loadFeatures = async () => {
@@ -167,6 +183,44 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
     });
   };
 
+  /**
+   * Save name, description, and icon from the General Information section.
+   */
+  const handleSaveGeneral = async () => {
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      setError('Name is required.');
+      return;
+    }
+
+    setIsSavingGeneral(true);
+    setError(null);
+    try {
+      const updated = await updateFeatureSet(featureSet.id, {
+        name: trimmedName,
+        description: editDescription.trim() || undefined,
+        icon: editIcon.trim() || undefined,
+      });
+      setDisplayName(updated.name);
+      setEditName(updated.name);
+      setEditDescription(updated.description ?? '');
+      setEditIcon(updated.icon ?? '');
+      success('Feature set updated', `"${updated.name}" has been saved`);
+      onUpdate?.();
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setError(errorMsg);
+      showError('Failed to save feature set', errorMsg);
+    } finally {
+      setIsSavingGeneral(false);
+    }
+  };
+
+  const hasGeneralChanges =
+    editName.trim() !== featureSet.name ||
+    editDescription.trim() !== (featureSet.description ?? '') ||
+    editIcon.trim() !== (featureSet.icon ?? '');
+
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
@@ -251,7 +305,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-bold truncate flex items-center gap-2">
-                {featureSet.name}
+                {displayName}
               </h2>
               <div className="flex items-center gap-2 mt-0.5">
                 <span
@@ -327,13 +381,62 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
               <div className="p-4 space-y-4 border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))]">
                 <div>
                   <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
+                    Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    data-testid="featureset-panel-name"
+                  />
+                </div>
+
+                
+                <div>
+                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
                     Description
                   </label>
-                  <p className="text-sm">
-                    {featureSet.description || 'No description provided.'}
-                  </p>
+                  <input
+                    type="text"
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder="What this feature set allows..."
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    data-testid="featureset-panel-description"
+                  />
                 </div>
-                
+
+                <div>
+                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
+                    Icon (emoji)
+                  </label>
+                  <input
+                    type="text"
+                    value={editIcon}
+                    onChange={(e) => setEditIcon(e.target.value)}
+                    placeholder="🔧"
+                    maxLength={2}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    data-testid="featureset-panel-icon"
+                  />
+                </div>
+
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void handleSaveGeneral()}
+                  disabled={isSavingGeneral || !editName.trim() || !hasGeneralChanges}
+                  data-testid="featureset-panel-save-general"
+                >
+                  {isSavingGeneral ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  Save
+                </Button>
+
                 {isStarter && (
                   <div className="p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded-lg">
                     <div className="flex gap-2">

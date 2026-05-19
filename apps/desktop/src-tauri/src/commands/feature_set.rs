@@ -263,10 +263,6 @@ pub async fn update_feature_set(
         .map_err(|e| e.to_string())?
         .ok_or("Feature set not found")?;
 
-    if feature_set.is_builtin {
-        return Err("Cannot modify builtin feature set".to_string());
-    }
-
     if let Some(name) = input.name {
         feature_set.name = name;
     }

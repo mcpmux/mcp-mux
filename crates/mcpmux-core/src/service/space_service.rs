@@ -80,6 +80,35 @@ impl SpaceService {
         Ok(space)
     }
 
+    /// Update a space's display metadata (name, icon, description).
+    pub async fn update(
+        &self,
+        id: Uuid,
+        name: Option<String>,
+        icon: Option<String>,
+        description: Option<String>,
+    ) -> anyhow::Result<Space> {
+        let mut space = self
+            .repository
+            .get(&id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Space not found"))?;
+
+        if let Some(name) = name {
+            space.name = name;
+        }
+        if let Some(icon) = icon {
+            space.icon = Some(icon);
+        }
+        if let Some(description) = description {
+            space.description = Some(description);
+        }
+        space.updated_at = chrono::Utc::now();
+
+        self.repository.update(&space).await?;
+        Ok(space)
+    }
+
     /// Delete a space
     pub async fn delete(&self, id: &Uuid) -> anyhow::Result<()> {
         let space = self.repository.get(id).await?;

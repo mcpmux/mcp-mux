@@ -30,6 +30,20 @@ export async function createSpace(name: string, icon?: string): Promise<Space> {
   return invoke('create_space', { name, icon });
 }
 
+/** Partial update payload for a Space. */
+export interface UpdateSpaceInput {
+  name?: string;
+  icon?: string;
+  description?: string;
+}
+
+/**
+ * Update a Space's display metadata (name, icon, description).
+ */
+export async function updateSpace(id: string, input: UpdateSpaceInput): Promise<Space> {
+  return invoke('update_space', { id, input });
+}
+
 export async function deleteSpace(id: string): Promise<void> {
   return invoke('delete_space', { id });
 }

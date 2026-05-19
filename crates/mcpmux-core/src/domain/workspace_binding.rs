@@ -32,6 +32,8 @@ use uuid::Uuid;
 pub struct WorkspaceBinding {
     pub id: Uuid,
     pub workspace_root: String,
+    /// Optional friendly display name shown in the UI instead of the path.
+    pub label: Option<String>,
     pub space_id: Uuid,
     /// Order matters for UI rendering only — the resolver treats them as
     /// a set. Stored in the `workspace_binding_feature_sets` junction
@@ -63,6 +65,7 @@ impl WorkspaceBinding {
         Self {
             id: Uuid::new_v4(),
             workspace_root: workspace_root.into(),
+            label: None,
             space_id,
             feature_set_ids,
             created_at: now,

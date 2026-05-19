@@ -7,6 +7,7 @@
 //! viewing in its own Zustand store (frontend-only state).
 
 use mcpmux_core::Space;
+use serde::Deserialize;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
@@ -99,6 +100,59 @@ pub async fn create_space(
     }
 
     info!("[create_space] Space '{}' created successfully", space.name);
+
+    Ok(space)
+}
+
+/// Partial update payload for a Space (name, icon, description).
+#[derive(Debug, Deserialize)]
+pub struct UpdateSpaceInput {
+    pub name: Option<String>,
+    pub icon: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Update a space's display metadata.
+#[tauri::command]
+pub async fn update_space(
+    id: String,
+    input: UpdateSpaceInput,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<Space, String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+
+    let name = input
+        .name
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty());
+    let icon = input
+        .icon
+        .map(|i| i.trim().to_string())
+        .filter(|i| !i.is_empty());
+    let description = input.description.map(|d| d.trim().to_string());
+
+    let space = state
+        .space_service
+        .update(uuid, name, icon, description)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let gw_state = gateway_state.read().await;
+    if let Some(ref gw) = gw_state.gateway_state {
+        let gw = gw.read().await;
+        gw.emit_domain_event(mcpmux_core::DomainEvent::SpaceUpdated {
+            space_id: space.id,
+            name: space.name.clone(),
+        });
+    }
+
+    if let Err(e) = tray::update_tray_spaces(&app, &state).await {
+        warn!("Failed to update tray menu: {}", e);
+    }
+
+    info!("[update_space] Space '{}' updated successfully", space.name);
 
     Ok(space)
 }

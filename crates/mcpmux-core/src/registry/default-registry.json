@@ -270,7 +270,7 @@
       "connection": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "@bilig/headless", "bilig-workpaper-mcp"]
+        "args": ["-y", "@bilig/workpaper", "bilig-workpaper-mcp"]
       },
       "auth_type": "none"
     },

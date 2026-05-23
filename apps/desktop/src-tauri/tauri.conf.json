@@ -36,7 +36,8 @@
         "minHeight": 600,
         "center": true,
         "preventOverflow": true,
-        "decorations": false
+        "decorations": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

@@ -194,10 +194,13 @@
 }
 
 @layer utilities {
-  .drag-region {
+  /* Tauri 2 custom titlebar — see https://v2.tauri.app/learn/window-customization/ */
+  [data-tauri-drag-region] {
+    app-region: drag;
     -webkit-app-region: drag;
   }
   .no-drag {
+    app-region: no-drag;
     -webkit-app-region: no-drag;
   }
 

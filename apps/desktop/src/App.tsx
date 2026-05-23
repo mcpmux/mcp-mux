@@ -296,16 +296,22 @@ function AppContent() {
   );
 
   const titleBar = (
-    <div className="flex items-center gap-1.5 pl-3">
-      <McpMuxGlyph className="h-4 w-4 shrink-0" />
-      <span className="text-sm font-bold tracking-tight select-none">
-        <span style={{ color: 'var(--brand-light)' }}>Mcp</span>
-        <span style={{ color: 'var(--brand-dark)' }}>Mux</span>
-      </span>
-      <div className="mx-2 h-4 w-px bg-[rgb(var(--border))]" />
+    <div className="flex h-full w-full items-center pl-3">
+      <div
+        data-tauri-drag-region
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5"
+      >
+        <McpMuxGlyph className="pointer-events-none h-4 w-4 shrink-0" />
+        <span className="pointer-events-none select-none text-sm font-bold tracking-tight">
+          <span style={{ color: 'var(--brand-light)' }}>Mcp</span>
+          <span style={{ color: 'var(--brand-dark)' }}>Mux</span>
+        </span>
+        <div className="pointer-events-none mx-2 h-4 w-px bg-[rgb(var(--border))]" />
+      </div>
       <button
+        type="button"
         onClick={toggleDarkMode}
-        className="p-1 rounded-md hover:bg-[rgb(var(--surface-hover))] transition-colors"
+        className="no-drag rounded-md p-1 transition-colors hover:bg-[rgb(var(--surface-hover))]"
         title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
       >
         {theme === 'dark' ? <Sun className="h-3.5 w-3.5 text-[rgb(var(--muted))]" /> : <Moon className="h-3.5 w-3.5 text-[rgb(var(--muted))]" />}

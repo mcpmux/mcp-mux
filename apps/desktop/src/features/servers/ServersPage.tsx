@@ -19,6 +19,8 @@ import {
   Clock,
   FileJson,
   FolderOpen,
+  UnfoldVertical,
+  FoldVertical,
 } from 'lucide-react';
 import { ServerActionMenu } from './ServerActionMenu';
 import { CloneAccountModal } from './CloneAccountModal';
@@ -525,6 +527,31 @@ export function ServersPage() {
     return 'connected_auto';
   };
 
+  /** Connected servers that show the expand/collapse chevron in the list. */
+  const isServerExpandable = (server: ServerViewModel): boolean => {
+    const action = getServerAction(server);
+    return action === 'running' || action === 'connected_auto';
+  };
+
+  /** Expands every connected server row and loads features for any not yet fetched. */
+  const expandAllServers = () => {
+    const expandableIds = installedServers.filter(isServerExpandable).map((s) => s.id);
+    setExpandedServers(new Set(expandableIds));
+    for (const serverId of expandableIds) {
+      if (!serverFeatures[serverId]) {
+        loadFeaturesForServer(serverId);
+      }
+    }
+  };
+
+  /** Collapses every expanded server row. */
+  const collapseAllServers = () => {
+    setExpandedServers(new Set());
+  };
+
+  const expandableServerCount = installedServers.filter(isServerExpandable).length;
+  const hasExpandedServers = expandedServers.size > 0;
+
   // Get display status for UI
   const getDisplayStatus = (server: ServerViewModel): string => {
     const action = getServerAction(server);
@@ -1029,13 +1056,42 @@ export function ServersPage() {
           </p>
         </div>
         {viewSpace && (
-          <button
-            onClick={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] hover:border-[rgb(var(--border-subtle))] shadow-sm hover:shadow transition-all"
-          >
-            <FileJson className="h-4 w-4 text-[rgb(var(--primary))]" />
-            Add Custom Server
-          </button>
+          <div className="flex items-center gap-2">
+            {installedServers.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={expandAllServers}
+                  disabled={expandableServerCount === 0}
+                  className="flex items-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] hover:border-[rgb(var(--border-subtle))] shadow-sm hover:shadow transition-all disabled:opacity-40 disabled:pointer-events-none"
+                  title="Expand all connected servers"
+                  data-testid="expand-all-servers"
+                >
+                  <UnfoldVertical className="h-4 w-4 text-[rgb(var(--muted))]" />
+                  Expand all
+                </button>
+                <button
+                  type="button"
+                  onClick={collapseAllServers}
+                  disabled={!hasExpandedServers}
+                  className="flex items-center gap-2 px-3 py-2.5 text-sm font-medium rounded-lg bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] hover:border-[rgb(var(--border-subtle))] shadow-sm hover:shadow transition-all disabled:opacity-40 disabled:pointer-events-none"
+                  title="Collapse all servers"
+                  data-testid="collapse-all-servers"
+                >
+                  <FoldVertical className="h-4 w-4 text-[rgb(var(--muted))]" />
+                  Collapse all
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] hover:border-[rgb(var(--border-subtle))] shadow-sm hover:shadow transition-all"
+            >
+              <FileJson className="h-4 w-4 text-[rgb(var(--primary))]" />
+              Add Custom Server
+            </button>
+          </div>
         )}
       </div>
 
@@ -1321,8 +1377,11 @@ export function ServersPage() {
                         </button>
                       )}
 
-                      {/* Disable button - shown when enabled and connected/running */}
-                      {server.enabled && (serverAction === 'running' || serverAction === 'connected_auto') && (
+                      {/* Disable button - enabled servers that are connected, idle, or stuck in error */}
+                      {server.enabled &&
+                        (serverAction === 'running' ||
+                          serverAction === 'connected_auto' ||
+                          serverAction === 'error') && (
                         <button
                           onClick={() => handleDisableClick(server)}
                           disabled={disableLoading}

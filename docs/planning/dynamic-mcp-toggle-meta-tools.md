@@ -1,7 +1,7 @@
 # Dynamic MCP Toggling via Meta Tools
 
-**Last Updated:** May 19, 2026
-**Status:** Feature complete — pending validation + PR
+**Last Updated:** May 23, 2026
+**Status:** Feature complete on fork — session grants + structuredContent fixes verified; pending upstream PR merge
 **Branch:** `feat/dynamic-mcp-toggle-meta-tools`
 **Base branch:** `feat/workspace-root-routing` ([upstream PR #151](https://github.com/mcpmux/mcp-mux/pull/151))
 **Issue:** TBD — file after planning review
@@ -298,6 +298,7 @@ Optional (slow / env-dependent): `pnpm test:e2e`, `pnpm test:e2e:web`.
 
 - [mcpmux/mcp-mux PR #151](https://github.com/mcpmux/mcp-mux/pull/151) — workspace-root-driven FeatureSet routing + the `mcpmux_*` meta-tool namespace this PR builds on. Must merge (or be consumed via fork) first.
 - [`docs/planning/issue-52-secret-text-input-syntax.md`](./issue-52-secret-text-input-syntax.md) — sibling planning doc; same conventions used here. Independent feature, no functional overlap.
+- [`docs/planning/server-account-clones.md`](./server-account-clones.md) — multi-account installs via UI clone; branched after meta-tools + gateway fixes.
 - [`jsg-tech-check` homelab plan](../../../jsg-tech-check/docs/setup/home-lab-overview.md#mcp-strategy--current-state) — the consuming use case. The "Personal vs Work" Spaces + bundled `set-times-app` / `sync2hire-platform` model leans on bindings; this doc adds the "no, actually just enable this one MCP for the next 10 minutes" escape valve.
 - [MCP spec — Tools `list_changed`](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#list-changed-notification) — the protocol mechanism that makes the post-write tool-list refresh observable mid-conversation. Already wired by PR #151.
 
@@ -307,8 +308,10 @@ Optional (slow / env-dependent): `pnpm test:e2e`, `pnpm test:e2e:web`.
 
 This doc is the source of truth for what gets built. When implementation completes, update the **Status** field at the top and reconcile any deviations (extra files, dropped phases, scope changes) per [`update-planning-md`](~/.cursor/commands/update-planning-md.md).
 
-**May 19, 2026 closeout:**
+**May 23, 2026 closeout:**
 - Phases 1–5 implemented on `feat/dynamic-mcp-toggle-meta-tools`.
+- Post-ship fixes on same branch: session-grant routing in `call_tool` (`5269a18`), `structuredContent` forwarding for proxied tool results (`d519a79`) — required for Google Workspace MCP through mux.
 - Tauri commands landed in `session_overrides.rs` (not `workspace_binding.rs` as originally planned).
 - CHANGELOG handled by release-please; README updated in-repo.
 - Pre-PR validation gate documented above; PR blocked until validate + tests + build pass.
+- Follow-on: [server-account-clones.md](./server-account-clones.md) branched from this work for multi-account migration.

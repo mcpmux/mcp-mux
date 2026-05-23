@@ -1,8 +1,8 @@
 # Server Account Clones (UI-Assisted Multi-Account)
 
 **Last Updated:** May 23, 2026
-**Status:** In progress — Phases 1–4 complete, Phase 5 optional
-**Branch:** `feat/server-account-clones`
+**Status:** Complete — Phases 1–4 shipped; Phase 5 (first-class instances) optional/deferred
+**Branch:** `feat/server-account-clones` (merged or ready to merge)
 **Base branch:** `main`
 **Issue:** TBD — file after planning review
 **Depends on:** None (orthogonal to session meta-tools; benefits from but does not require PR #154)
@@ -266,3 +266,5 @@ Multi-account need?
 This doc is the source of truth for server account clones. When implementation starts, update **Status** and **Branch** at the top. Phase 5 remains optional — do not block Phases 1–4 on it.
 
 **Decision record (May 23, 2026):** Option 2 (UI-assisted clone) selected over status quo, first-class instances (deferred Phase 5), per-client credential override (rejected), and wrapper meta-servers (rejected). Brainstorm source: Cursor session on multi-account MCP patterns.
+
+**May 23, 2026 closeout:** Phases 1–4 implemented and verified in dev. Consumed by [mcpmux-server-migration.md](../../../jsg-tech-check/docs/setup/mcpmux-server-migration.md) Phase B2 (clone sprint). Phase 5 remains optional until clone ID sprawl or FeatureSet grouping pain justifies schema migration.

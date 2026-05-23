@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { X, Download, Trash2, RefreshCw } from 'lucide-react';
+import { X, Download, Trash2, RefreshCw, Copy } from 'lucide-react';
 import { useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import { getServerLogs, clearServerLogs, getServerLogFile, type ServerLogEntry } from '@/lib/api/logs';
 
@@ -31,6 +31,30 @@ const SOURCE_COLORS: Record<string, string> = {
   oauth: 'text-pink-400',
   server: 'text-cyan-400',
 };
+
+/**
+ * Formats an ISO timestamp for log display and export.
+ */
+function formatTimestamp(ts: string): string {
+  const date = new Date(ts);
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  const ms = date.getMilliseconds().toString().padStart(3, '0');
+  return `${hours}:${minutes}:${seconds}.${ms}`;
+}
+
+/**
+ * Formats a log entry as a single plain-text line for display export.
+ */
+function formatLogLine(log: ServerLogEntry): string {
+  const level = log.level.toUpperCase().padEnd(5);
+  const base = `${formatTimestamp(log.timestamp)}  ${level}  ${log.source}  ${log.message}`;
+  if (!log.metadata) {
+    return base;
+  }
+  return `${base}  ${JSON.stringify(log.metadata)}`;
+}
 
 export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogViewerProps) {
   const [logs, setLogs] = useState<ServerLogEntry[]>([]);
@@ -122,21 +146,31 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
     }
   };
 
-  const formatTimestamp = (ts: string) => {
-    const date = new Date(ts);
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    const seconds = date.getSeconds().toString().padStart(2, '0');
-    const ms = date.getMilliseconds().toString().padStart(3, '0');
-    return `${hours}:${minutes}:${seconds}.${ms}`;
-  };
-
   const filteredLogs = logs.filter(log => {
     if (levelFilter === 'all') return true;
     const logLevelIndex = LOG_LEVELS.indexOf(log.level as LogLevel);
     const filterLevelIndex = LOG_LEVELS.indexOf(levelFilter);
     return logLevelIndex >= filterLevelIndex;
   });
+
+  /** Copies all currently visible (filtered) log lines to the clipboard. */
+  const handleCopyAll = async () => {
+    if (filteredLogs.length === 0) {
+      showError('Nothing to copy', 'No logs match the current filter');
+      return;
+    }
+
+    try {
+      const text = filteredLogs.map((log) => formatLogLine(log)).join('\n');
+      await navigator.clipboard.writeText(text);
+      success(
+        'Logs copied',
+        `${filteredLogs.length} log${filteredLogs.length !== 1 ? 's' : ''} copied to clipboard`
+      );
+    } catch (e) {
+      showError('Failed to copy logs', e instanceof Error ? e.message : String(e));
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -194,6 +228,16 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
               title="Open log file in external editor"
             >
               <Download className="h-4 w-4" />
+            </button>
+
+            {/* Copy All */}
+            <button
+              onClick={handleCopyAll}
+              disabled={filteredLogs.length === 0}
+              className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              title="Copy all visible logs to clipboard"
+            >
+              <Copy className="h-4 w-4" />
             </button>
             
             {/* Clear Logs */}

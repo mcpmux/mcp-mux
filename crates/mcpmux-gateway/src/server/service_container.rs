@@ -131,6 +131,7 @@ impl ServiceContainer {
             deps.feature_set_repo.clone(),
             deps.workspace_binding_repo.clone(),
             deps.feature_repo.clone(),
+            deps.installed_server_repo.clone(),
             feature_set_resolver.clone(),
             pool_services.feature_service.clone(),
             session_roots.clone(),

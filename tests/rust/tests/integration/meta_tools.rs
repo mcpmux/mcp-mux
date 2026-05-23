@@ -12,8 +12,9 @@ use std::time::Duration;
 use futures::FutureExt;
 use mcpmux_core::{
     normalize_workspace_root, Client, DomainEvent, FeatureSet, FeatureSetMember,
-    FeatureSetRepository, InboundMcpClientRepository, MemberMode, MemberType, ServerFeature,
-    ServerFeatureRepository, SpaceRepository, WorkspaceBindingRepository,
+    FeatureSetRepository, InboundMcpClientRepository, InstalledServer, InstalledServerRepository,
+    MemberMode, MemberType, ServerFeature, ServerFeatureRepository, SpaceRepository,
+    WorkspaceBindingRepository,
 };
 use mcpmux_gateway::pool::FeatureService;
 use mcpmux_gateway::services::{
@@ -22,9 +23,9 @@ use mcpmux_gateway::services::{
     SessionRootsRegistry,
 };
 use mcpmux_storage::{
-    Database, InboundClientRepository, SqliteFeatureSetRepository,
-    SqliteInboundMcpClientRepository, SqliteServerFeatureRepository, SqliteSpaceRepository,
-    SqliteWorkspaceBindingRepository,
+    generate_master_key, Database, FieldEncryptor, InboundClientRepository,
+    SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
+    SqliteServerFeatureRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
@@ -37,6 +38,7 @@ struct Fixture {
     client_repo: Arc<dyn InboundMcpClientRepository>,
     feature_set_repo: Arc<dyn FeatureSetRepository>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
+    installed_server_repo: Arc<dyn InstalledServerRepository>,
     session_roots: Arc<SessionRootsRegistry>,
     session_overrides: Arc<SessionOverrideRegistry>,
     feature_service: Arc<FeatureService>,
@@ -48,6 +50,11 @@ struct Fixture {
     fs_android_id: Uuid,
     github_tool_id: Uuid,
     event_rx: broadcast::Receiver<DomainEvent>,
+}
+
+fn test_encryptor() -> Arc<FieldEncryptor> {
+    let key = generate_master_key().expect("generate key");
+    Arc::new(FieldEncryptor::new(&key).expect("create encryptor"))
 }
 
 impl Fixture {
@@ -63,6 +70,9 @@ impl Fixture {
             Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
         let server_feature_repo: Arc<dyn ServerFeatureRepository> =
             Arc::new(SqliteServerFeatureRepository::new(db.clone()));
+        let installed_server_repo: Arc<dyn InstalledServerRepository> = Arc::new(
+            SqliteInstalledServerRepository::new(db.clone(), test_encryptor()),
+        );
 
         let default_space = space_repo.get_default().await.unwrap().unwrap();
         let space_id = default_space.id;
@@ -127,6 +137,7 @@ impl Fixture {
             feature_set_repo.clone(),
             binding_repo.clone(),
             server_feature_repo.clone(),
+            installed_server_repo.clone(),
             resolver,
             feature_service.clone(),
             session_roots.clone(),
@@ -142,6 +153,7 @@ impl Fixture {
             client_repo,
             feature_set_repo,
             binding_repo,
+            installed_server_repo,
             session_roots,
             session_overrides,
             feature_service,
@@ -351,6 +363,67 @@ async fn list_servers_shows_session_override_statuses() {
     let body = Fixture::result_json(&result);
     assert_eq!(server_status(&body, "github"), "disabled_via_session");
     assert_eq!(server_status(&body, "firebase"), "enabled_via_session");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_servers_includes_cloned_from_for_clone_installs() {
+    let f = Fixture::new().await;
+    let space_id = f.space_id.to_string();
+
+    let posthog = InstalledServer::new(&space_id, "posthog");
+    f.installed_server_repo
+        .install(&posthog)
+        .await
+        .unwrap();
+    let posthog_work = InstalledServer::new(&space_id, "posthog-work")
+        .with_cloned_from("posthog");
+    f.installed_server_repo
+        .install(&posthog_work)
+        .await
+        .unwrap();
+
+    let mut clone_tool = ServerFeature::tool(f.space_id, "posthog-work", "capture");
+    clone_tool.display_name = Some("PostHog (work)".into());
+    f.registry
+        .context()
+        .server_feature_repo
+        .upsert(&clone_tool)
+        .await
+        .unwrap();
+
+    let result = f
+        .registry
+        .call(
+            "mcpmux_list_servers",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    let body = Fixture::result_json(&result);
+    let clone_entry = body
+        .get("servers")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("posthog-work"))
+        .expect("clone server in manifest");
+    assert_eq!(
+        clone_entry.get("cloned_from").and_then(|v| v.as_str()),
+        Some("posthog")
+    );
+
+    let github_entry = body
+        .get("servers")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("github"))
+        .expect("github in manifest");
+    assert!(github_entry.get("cloned_from").is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -774,6 +847,9 @@ async fn bare_registry(
         Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
     let server_feature_repo: Arc<dyn ServerFeatureRepository> =
         Arc::new(SqliteServerFeatureRepository::new(db.clone()));
+    let installed_server_repo: Arc<dyn InstalledServerRepository> = Arc::new(
+        SqliteInstalledServerRepository::new(db.clone(), test_encryptor()),
+    );
 
     let _space = space_repo.get_default().await.unwrap().unwrap();
     let client = Client::new("c", "t");
@@ -801,6 +877,7 @@ async fn bare_registry(
         feature_set_repo,
         binding_repo,
         server_feature_repo,
+        installed_server_repo,
         resolver,
         feature_service,
         SessionRootsRegistry::new(),
@@ -894,6 +971,9 @@ async fn master_switch_toggles_registry_visibility() {
         Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
     let server_feature_repo: Arc<dyn ServerFeatureRepository> =
         Arc::new(SqliteServerFeatureRepository::new(db.clone()));
+    let installed_server_repo: Arc<dyn InstalledServerRepository> = Arc::new(
+        SqliteInstalledServerRepository::new(db.clone(), test_encryptor()),
+    );
     let inbound_client_repo = Arc::new(InboundClientRepository::new(db.clone()));
     let resolver = Arc::new(FeatureSetResolverService::new(
         space_repo.clone(),
@@ -915,6 +995,7 @@ async fn master_switch_toggles_registry_visibility() {
         feature_set_repo,
         binding_repo,
         server_feature_repo,
+        installed_server_repo,
         resolver,
         feature_service,
         SessionRootsRegistry::new(),

@@ -100,6 +100,33 @@ Disabling a server immediately disconnects it and removes its tools from connect
 
 ![Expanded server view showing available tools and prompts for each connected server](https://mcpmux.com/screenshots/server-expanded.png)
 
+## Multiple Accounts
+
+Some MCP servers only support one account per process. Others accept a per-call account parameter, or you may simply want work and personal credentials in separate contexts. Use this decision tree:
+
+```text
+Need more than one account for the same MCP?
+├─ The MCP accepts a per-call account parameter (e.g. Google Workspace `user_google_email`)
+│   └─ Install once — pass the account on each tool call. No clone needed.
+├─ Accounts map to different repo or project context (work vs personal vs client)
+│   └─ Use [Spaces](/docs/spaces/) — one install per Space with separate credentials.
+└─ Two or more accounts in the SAME Space for a single-account MCP
+    └─ Clone via **Add another account…** on the server card in My Servers.
+```
+
+### Cloning a server
+
+When you need two PostHog workspaces, Firebase projects, or Gmail accounts in one Space:
+
+1. Open **My Servers** and use the server menu → **Add another account…**
+2. Choose a suffix (`work`, `personal`, `prod`, etc.) — the clone ID becomes `{server}-{suffix}` (e.g. `posthog-work`)
+3. Configure credentials for the clone (secrets are never copied from the source)
+4. Enable the clone — tools appear with the clone prefix (e.g. `posthog-work_capture`)
+
+Clones are independent installs: separate credentials, OAuth sessions, and tool prefixes. The source server is unchanged. You cannot clone a clone (max depth 1).
+
+When using [meta tools](/docs/feature-sets/) (`mcpmux_list_servers`), clone rows include an optional `cloned_from` field with the source server ID so an LLM can see lineage.
+
 ## Connection Status
 
 The **My Servers** page shows real-time connection status for each server:

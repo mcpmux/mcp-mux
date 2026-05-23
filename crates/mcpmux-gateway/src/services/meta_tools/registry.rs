@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use mcpmux_core::{
-    DomainEvent, FeatureSetRepository, InboundMcpClientRepository, ServerFeatureRepository,
-    SpaceRepository, WorkspaceBindingRepository,
+    DomainEvent, FeatureSetRepository, InboundMcpClientRepository, InstalledServerRepository,
+    ServerFeatureRepository, SpaceRepository, WorkspaceBindingRepository,
 };
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::Value;
@@ -41,6 +41,7 @@ pub struct MetaToolContext {
     pub feature_set_repo: Arc<dyn FeatureSetRepository>,
     pub binding_repo: Arc<dyn WorkspaceBindingRepository>,
     pub server_feature_repo: Arc<dyn ServerFeatureRepository>,
+    pub installed_server_repo: Arc<dyn InstalledServerRepository>,
     pub resolver: Arc<FeatureSetResolverService>,
     pub feature_service: Arc<FeatureService>,
     pub session_roots: Arc<SessionRootsRegistry>,

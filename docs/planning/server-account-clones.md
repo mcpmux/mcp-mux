@@ -1,8 +1,8 @@
 # Server Account Clones (UI-Assisted Multi-Account)
 
 **Last Updated:** May 23, 2026
-**Status:** Planning — decisions locked, not started
-**Branch:** TBD — file after planning review
+**Status:** In progress — Phases 1–3 complete, Phase 4 pending
+**Branch:** `feat/server-account-clones`
 **Base branch:** `main`
 **Issue:** TBD — file after planning review
 **Depends on:** None (orthogonal to session meta-tools; benefits from but does not require PR #154)
@@ -163,16 +163,16 @@ Multi-account need?
 
 **Effort:** ~1 day
 
-- [ ] Migration: `cloned_from TEXT NULL` on `installed_servers`
-- [ ] `InstalledServer.cloned_from` field + repo round-trip
-- [ ] `ServerAppService::clone_server`:
+- [x] Migration: `cloned_from TEXT NULL` on `installed_servers`
+- [x] `InstalledServer.cloned_from` field + repo round-trip
+- [x] `ServerAppService::clone_server`:
   - Load source install + definition from `cached_definition`
   - Derive `new_id = "{base}-{suffix}"` using same normalization as `UserServerEntry::normalize_server_id`
   - Reject if `(space_id, new_id)` exists or source is missing
   - Patch definition `alias` to suffix (or user override)
   - Install via existing `install()` path with `ManualEntry` + `with_cloned_from(source_id)`
-- [ ] Unit tests: happy path, collision, missing source, suffix normalization (no underscores)
-- [ ] Tauri command `clone_server(space_id, source_server_id, suffix, alias?)`
+- [x] Unit tests: happy path, collision, missing source, suffix normalization (no underscores)
+- [x] Tauri command `clone_server(space_id, source_server_id, suffix, alias?)`
 
 **Outcome:** `clone_server` from Tauri creates a disabled `posthog-work` install with copied definition, empty creds, and `cloned_from = "posthog"`. Verifiable via `list_installed_servers` and SQLite inspection. No UI yet.
 
@@ -180,10 +180,10 @@ Multi-account need?
 
 **Effort:** ~1 day
 
-- [ ] `CloneAccountModal` — suffix field with suggestions (`work`, `personal`, `prod`, `staging`), live alias preview, inline collision error
-- [ ] `ServerActionMenu` → "Add another account…" on registry and manual installs (not on clones)
-- [ ] Post-clone flow: open existing `ConfigEditorModal` for credential entry before enable
-- [ ] `SourceBadge` shows clone lineage
+- [x] `CloneAccountModal` — suffix field with suggestions (`work`, `personal`, `prod`, `staging`), live alias preview, inline collision error
+- [x] `ServerActionMenu` → "Add another account…" on registry and manual installs (not on clones)
+- [x] Post-clone flow: open existing `ConfigEditorModal` for credential entry before enable
+- [x] `SourceBadge` shows clone lineage
 - [ ] Optional: collapsed "Accounts" group on `ServersPage` when `cloned_from` matches same base (visual only, no schema)
 
 **Outcome:** User clicks "Add another account" on PostHog, enters suffix `work`, gets `posthog-work` card in My Servers, configures API key, enables — tools appear as `posthog-work_*` in gateway. No JSON editing.
@@ -192,9 +192,9 @@ Multi-account need?
 
 **Effort:** ~0.5 day
 
-- [ ] `mcpmux_list_servers` returns optional `cloned_from` for clone rows
-- [ ] `docs/guide/servers.mdx` section: "Multiple accounts" — decision tree (Spaces / native param / clone)
-- [ ] Migration doc update in `jsg-tech-check` with concrete clone targets (PostHog, Gmail, Sheets, Firebase)
+- [x] `mcpmux_list_servers` returns optional `cloned_from` for clone rows
+- [x] `docs/guide/servers.mdx` section: "Multiple accounts" — decision tree (Spaces / native param / clone)
+- [ ] Migration doc update in `jsg-tech-check` with concrete clone targets (PostHog, Gmail, Sheets, Firebase) — out of repo; deferred
 
 **Outcome:** LLM manifest shows clone lineage. Docs explain when to clone vs use a Space. Migration checklist has explicit suffix naming convention.
 

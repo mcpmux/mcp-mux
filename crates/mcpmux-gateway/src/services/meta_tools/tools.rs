@@ -211,7 +211,8 @@ impl MetaTool for ListServersTool {
     fn description(&self) -> &'static str {
         "List every MCP server installed in the caller's resolved Space with \
          a coarse status per server: enabled_via_binding, enabled_via_session, \
-         disabled_via_session, or inactive. Use before enable/disable to see \
+         disabled_via_session, or inactive. Clone installs include optional \
+         `cloned_from` (source server_id). Use before enable/disable to see \
          current routing state without loading every tool."
     }
 
@@ -250,6 +251,17 @@ impl MetaTool for ListServersTool {
             .list_for_space(&space_id.to_string())
             .await?;
 
+        let installed = call
+            .ctx
+            .installed_server_repo
+            .list_for_space(&space_id.to_string())
+            .await
+            .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+        let cloned_from_by_server: HashMap<String, Option<String>> = installed
+            .into_iter()
+            .map(|s| (s.server_id, s.cloned_from))
+            .collect();
+
         let mut by_server: HashMap<String, (Option<String>, usize)> = HashMap::new();
         for feature in &features {
             if feature.feature_type != FeatureType::Tool {
@@ -274,12 +286,16 @@ impl MetaTool for ListServersTool {
                     &session_enabled,
                     &session_disabled,
                 );
-                json!({
+                let mut entry = json!({
                     "id": id,
                     "name": name,
                     "tool_count": tool_count,
                     "status": status,
-                })
+                });
+                if let Some(cloned_from) = cloned_from_by_server.get(&id).and_then(|v| v.as_ref()) {
+                    entry["cloned_from"] = json!(cloned_from);
+                }
+                entry
             })
             .collect();
         servers.sort_by(|a, b| {

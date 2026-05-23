@@ -183,6 +183,19 @@ impl ServerAppService {
             .is_none())
     }
 
+    /// List installed servers in a space that were cloned from the given source.
+    pub async fn list_clone_dependents(
+        &self,
+        space_id: &str,
+        source_server_id: &str,
+    ) -> Result<Vec<InstalledServer>> {
+        let servers = self.server_repo.list_for_space(space_id).await?;
+        Ok(servers
+            .into_iter()
+            .filter(|server| server.cloned_from.as_deref() == Some(source_server_id))
+            .collect())
+    }
+
     /// Suggest the first available default suffix for cloning a server.
     pub async fn suggest_clone_suffix(
         &self,
@@ -784,5 +797,76 @@ mod tests {
             .expect("suffix suggestion");
 
         assert_eq!(suffix, "personal");
+    }
+
+    #[tokio::test]
+    async fn list_clone_dependents_returns_matching_clones() {
+        let space_id = Uuid::new_v4();
+        let space_id_str = space_id.to_string();
+        let source = InstalledServer::new(&space_id_str, "posthog")
+            .with_definition(&sample_definition("posthog", "PostHog"));
+        let clone_work = InstalledServer::new(&space_id_str, "posthog-work")
+            .with_definition(&sample_definition("posthog-work", "PostHog (work)"))
+            .with_cloned_from("posthog");
+        let clone_personal = InstalledServer::new(&space_id_str, "posthog-personal")
+            .with_definition(&sample_definition("posthog-personal", "PostHog (personal)"))
+            .with_cloned_from("posthog");
+        let unrelated = InstalledServer::new(&space_id_str, "github")
+            .with_definition(&sample_definition("github", "GitHub"));
+
+        let repo = Arc::new(
+            InMemoryInstalledServerRepo::new()
+                .with_server(source)
+                .with_server(clone_work)
+                .with_server(clone_personal)
+                .with_server(unrelated),
+        );
+        let service = build_service(repo);
+
+        let dependents = service
+            .list_clone_dependents(&space_id_str, "posthog")
+            .await
+            .expect("dependents lookup");
+
+        assert_eq!(dependents.len(), 2);
+        let ids: Vec<_> = dependents.iter().map(|server| server.server_id.as_str()).collect();
+        assert!(ids.contains(&"posthog-work"));
+        assert!(ids.contains(&"posthog-personal"));
+    }
+
+    #[tokio::test]
+    async fn uninstall_clone_preserves_source() {
+        let space_id = Uuid::new_v4();
+        let space_id_str = space_id.to_string();
+        let source = InstalledServer::new(&space_id_str, "posthog")
+            .with_definition(&sample_definition("posthog", "PostHog"));
+        let clone_work = InstalledServer::new(&space_id_str, "posthog-work")
+            .with_definition(&sample_definition("posthog-work", "PostHog (work)"))
+            .with_cloned_from("posthog");
+
+        let repo = Arc::new(
+            InMemoryInstalledServerRepo::new()
+                .with_server(source)
+                .with_server(clone_work),
+        );
+        let service = build_service(repo.clone());
+
+        service
+            .uninstall(space_id, "posthog-work")
+            .await
+            .expect("clone uninstall");
+
+        assert!(
+            repo.get_by_server_id(&space_id_str, "posthog")
+                .await
+                .expect("lookup source")
+                .is_some()
+        );
+        assert!(
+            repo.get_by_server_id(&space_id_str, "posthog-work")
+                .await
+                .expect("lookup clone")
+                .is_none()
+        );
     }
 }

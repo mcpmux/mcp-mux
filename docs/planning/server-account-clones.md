@@ -1,7 +1,7 @@
 # Server Account Clones (UI-Assisted Multi-Account)
 
 **Last Updated:** May 23, 2026
-**Status:** In progress — Phases 1–3 complete, Phase 4 pending
+**Status:** In progress — Phases 1–4 complete, Phase 5 optional
 **Branch:** `feat/server-account-clones`
 **Base branch:** `main`
 **Issue:** TBD — file after planning review
@@ -202,11 +202,11 @@ Multi-account need?
 
 **Effort:** ~0.5 day
 
-- [ ] Integration test: two clones in one Space, distinct prefixes, both connect with different env
-- [ ] Uninstall clone does not affect source
-- [ ] Uninstall source warns if clones exist (list dependents, offer bulk uninstall)
-- [ ] Prefix collision: two different registry servers cannot claim same alias (existing behavior — verify clones don't break it)
-- [ ] `pnpm validate` + targeted Rust/TS tests
+- [x] Integration test: two clones in one Space, distinct prefixes, both connect with different env
+- [x] Uninstall clone does not affect source
+- [x] Uninstall source warns if clones exist (list dependents, offer bulk uninstall)
+- [x] Prefix collision: two different registry servers cannot claim same alias (existing behavior — verify clones don't break it)
+- [x] `pnpm validate` + targeted Rust/TS tests
 
 **Outcome:** Clone lifecycle is safe through install → configure → enable → uninstall. Source/uninstall warnings prevent orphaned expectations.
 

@@ -59,6 +59,19 @@ export async function suggestCloneSuffix(
 }
 
 /**
+ * List account clones that were created from the given source server in a space.
+ */
+export async function listCloneDependents(
+  spaceId: string,
+  sourceServerId: string
+): Promise<ClonedInstalledServer[]> {
+  return invoke<ClonedInstalledServer[]>('list_clone_dependents', {
+    spaceId,
+    sourceServerId,
+  });
+}
+
+/**
  * Normalize a server ID the same way the backend does (lowercase, strip underscores/spaces).
  */
 export function normalizeServerId(id: string): string {

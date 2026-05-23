@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { ServerActionMenu } from './ServerActionMenu';
 import { CloneAccountModal } from './CloneAccountModal';
+import { UninstallSourceWithClonesDialog } from './UninstallSourceWithClonesDialog';
 import type { ServerViewModel, ServerDefinition, InstalledServerState, InputDefinition } from '../../types/registry';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
@@ -38,6 +39,7 @@ import { ConfigEditorModal } from '@/components/ConfigEditorModal';
 import { ServerDefinitionModal } from '@/components/ServerDefinitionModal';
 import { SourceBadge } from '@/components/SourceBadge';
 import type { ClonedInstalledServer } from '@/lib/api/serverClone';
+import { listCloneDependents } from '@/lib/api/serverClone';
 
 /** Server view model extended with optional clone lineage from the backend. */
 type ServerViewModelWithClone = ServerViewModel & { cloned_from?: string };
@@ -220,6 +222,12 @@ export function ServersPage() {
 
   // Clone account wizard state
   const [cloneModalServer, setCloneModalServer] = useState<ServerViewModelWithClone | null>(null);
+
+  // Uninstall source-with-clones confirmation
+  const [uninstallClonesDialog, setUninstallClonesDialog] = useState<{
+    server: ServerViewModelWithClone;
+    dependents: ClonedInstalledServer[];
+  } | null>(null);
   
   // Config editor state
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
@@ -795,31 +803,103 @@ export function ServersPage() {
     }
   };
 
-  const handleUninstall = async (server: ServerViewModel) => {
+  const performUninstall = async (serverIds: string[]) => {
+    const { uninstallServer } = await import('@/lib/api/registry');
+    const { disconnectServer } = await import('@/lib/api/gateway');
+
+    if (gatewayRunning && viewSpace) {
+      for (const serverId of serverIds) {
+        const target = installedServers.find((entry) => entry.id === serverId);
+        if (!target?.enabled) {
+          continue;
+        }
+
+        try {
+          await disconnectServer(serverId, viewSpace.id);
+        } catch (error) {
+          console.warn(`[ServersPage] Failed to disconnect server from gateway:`, error);
+        }
+      }
+    }
+
+    for (const serverId of serverIds) {
+      await uninstallServer(serverId, viewSpace?.id ?? '');
+    }
+
+    await loadData();
+  };
+
+  const handleUninstall = async (server: ServerViewModelWithClone) => {
+    if (!viewSpace) {
+      return;
+    }
+
+    if (!server.cloned_from) {
+      try {
+        const dependents = await listCloneDependents(viewSpace.id, server.id);
+        if (dependents.length > 0) {
+          setUninstallClonesDialog({ server, dependents });
+          return;
+        }
+      } catch (error) {
+        showToast(String(error), 'error');
+        return;
+      }
+    }
+
     const { getUninstallLabel } = await import('@/components/SourceBadge');
     const actionLabel = getUninstallLabel(server.installation_source);
 
     setActionLoading(`uninstall-${server.id}`);
     try {
-      const { uninstallServer } = await import('@/lib/api/registry');
-      const { disconnectServer } = await import('@/lib/api/gateway');
-      
-      if (gatewayRunning && server.enabled && viewSpace) {
-        try {
-          await disconnectServer(server.id, viewSpace.id);
-        } catch (e) {
-          console.warn(`[ServersPage] Failed to disconnect server from gateway:`, e);
-        }
-      }
-      
-      // ServerAppService handles source-aware cleanup automatically:
-      // - UserConfig: removes from JSON file + DB
-      // - Registry/ManualEntry: just removes from DB
-      await uninstallServer(server.id, viewSpace?.id ?? '');
-      await loadData();
+      await performUninstall([server.id]);
       showToast(`${server.name} ${actionLabel.toLowerCase()}ed`, 'success');
-    } catch (e) {
-      showToast(String(e), 'error');
+    } catch (error) {
+      showToast(String(error), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUninstallSourceOnly = async () => {
+    if (!uninstallClonesDialog) {
+      return;
+    }
+
+    const { server } = uninstallClonesDialog;
+    const { getUninstallLabel } = await import('@/components/SourceBadge');
+    const actionLabel = getUninstallLabel(server.installation_source);
+
+    setUninstallClonesDialog(null);
+    setActionLoading(`uninstall-${server.id}`);
+    try {
+      await performUninstall([server.id]);
+      showToast(`${server.name} ${actionLabel.toLowerCase()}ed`, 'success');
+    } catch (error) {
+      showToast(String(error), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUninstallAllWithClones = async () => {
+    if (!uninstallClonesDialog) {
+      return;
+    }
+
+    const { server, dependents } = uninstallClonesDialog;
+    const serverIds = [...dependents.map((dependent) => dependent.server_id), server.id];
+
+    setUninstallClonesDialog(null);
+    setActionLoading(`uninstall-${server.id}`);
+    try {
+      await performUninstall(serverIds);
+      showToast(
+        `${server.name} and ${dependents.length} clone${dependents.length === 1 ? '' : 's'} uninstalled`,
+        'success'
+      );
+    } catch (error) {
+      showToast(String(error), 'error');
     } finally {
       setActionLoading(null);
     }
@@ -930,6 +1010,16 @@ export function ServersPage() {
   return (
     <div className="space-y-6" data-testid="servers-page">
       {gatewayControl.ConfirmDialogElement}
+      {uninstallClonesDialog && (
+        <UninstallSourceWithClonesDialog
+          open
+          sourceName={uninstallClonesDialog.server.name}
+          dependents={uninstallClonesDialog.dependents}
+          onCancel={() => setUninstallClonesDialog(null)}
+          onUninstallSourceOnly={handleUninstallSourceOnly}
+          onUninstallAll={handleUninstallAllWithClones}
+        />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

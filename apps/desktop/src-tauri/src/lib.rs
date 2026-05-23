@@ -873,6 +873,7 @@ pub fn run() {
             commands::clone_server,
             commands::is_clone_id_available,
             commands::suggest_clone_suffix,
+            commands::list_clone_dependents,
             // FeatureSet commands
             commands::list_feature_sets,
             commands::list_feature_sets_by_space,

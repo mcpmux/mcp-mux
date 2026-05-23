@@ -12,4 +12,5 @@ mod feature_routing;
 mod feature_set_resolver;
 mod mcp_flows;
 mod meta_tools;
+mod server_clone;
 mod workspace_binding_events;

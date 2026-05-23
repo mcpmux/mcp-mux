@@ -159,11 +159,16 @@ impl PrefixCacheService {
                 continue;
             }
 
-            // Get desired alias from server discovery
-            let desired_alias = server_discovery
-                .get(&server.server_id)
-                .await
-                .and_then(|s| s.alias.clone());
+            let desired_alias = match server
+                .get_definition()
+                .and_then(|definition| definition.alias.clone())
+            {
+                Some(alias) => Some(alias),
+                None => server_discovery
+                    .get(&server.server_id)
+                    .await
+                    .and_then(|definition| definition.alias),
+            };
 
             // Try to assign alias, fallback to server_id if taken
             let prefix = if let Some(ref alias) = desired_alias {
@@ -286,16 +291,36 @@ impl PrefixCacheService {
     /// This is the recommended method for runtime prefix assignment.
     /// Returns the actual prefix assigned.
     pub async fn assign_prefix_for_server(&self, space_id: &str, server_id: &str) -> String {
-        // Fetch alias from server discovery if available
-        let desired_alias = if let Some(ref discovery) = self.server_discovery {
-            discovery.get(server_id).await.and_then(|s| s.alias.clone())
-        } else {
-            None
-        };
-
-        // Delegate to existing assign_prefix_runtime
+        let desired_alias = self.resolve_desired_alias(space_id, server_id).await;
         self.assign_prefix_runtime(space_id, server_id, desired_alias.as_deref())
             .await
+    }
+
+    /// Resolve the preferred tool prefix alias for an installed server.
+    async fn resolve_desired_alias(&self, space_id: &str, server_id: &str) -> Option<String> {
+        if let Some(ref installed_server_repo) = self.installed_server_repo {
+            if let Ok(Some(server)) = installed_server_repo
+                .get_by_server_id(space_id, server_id)
+                .await
+            {
+                if let Some(alias) = server
+                    .get_definition()
+                    .and_then(|definition| definition.alias)
+                    .filter(|alias| !alias.is_empty())
+                {
+                    return Some(alias);
+                }
+            }
+        }
+
+        if let Some(ref discovery) = self.server_discovery {
+            return discovery
+                .get(server_id)
+                .await
+                .and_then(|definition| definition.alias);
+        }
+
+        None
     }
 
     /// Release a server's prefix (runtime only - no reassignment)

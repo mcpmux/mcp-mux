@@ -73,3 +73,21 @@ pub async fn suggest_clone_suffix(
         .await
         .map_err(|e| e.to_string())
 }
+
+/// List installed servers in a space that were cloned from the given source.
+#[tauri::command]
+pub async fn list_clone_dependents(
+    app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
+    space_id: String,
+    source_server_id: String,
+) -> Result<Vec<InstalledServer>, String> {
+    let service_lock = app_service.read().await;
+    let service = service_lock
+        .as_ref()
+        .ok_or("ServerAppService not initialized")?;
+
+    service
+        .list_clone_dependents(&space_id, &source_server_id)
+        .await
+        .map_err(|e| e.to_string())
+}

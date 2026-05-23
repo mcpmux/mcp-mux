@@ -140,7 +140,7 @@ impl UserServerEntry {
     /// Normalize a server ID for prefix compatibility
     /// Removes spaces and special characters, converts to lowercase
     /// IMPORTANT: No underscores - underscore is reserved as delimiter in qualified names (prefix_toolname)
-    fn normalize_server_id(id: &str) -> String {
+    pub fn normalize_server_id(id: &str) -> String {
         id.chars()
             .filter_map(|c| {
                 if c.is_alphanumeric() {
@@ -156,7 +156,7 @@ impl UserServerEntry {
 
     /// Normalize an alias to be underscore-free
     /// Underscores are replaced with hyphens since underscore is the prefix_toolname delimiter
-    fn normalize_alias(alias: &str) -> String {
+    pub fn normalize_alias(alias: &str) -> String {
         alias
             .chars()
             .map(|c| {

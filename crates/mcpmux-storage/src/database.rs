@@ -113,6 +113,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "workspace_binding_label",
         sql: include_str!("migrations/016_workspace_binding_label.sql"),
     },
+    Migration {
+        version: 17,
+        name: "installed_server_cloned_from",
+        sql: include_str!("migrations/017_installed_server_cloned_from.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

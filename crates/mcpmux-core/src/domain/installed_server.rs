@@ -81,6 +81,10 @@ pub struct InstalledServer {
     #[serde(default)]
     pub source: InstallationSource,
 
+    /// Source server ID when this install was cloned from another server in the same space
+    #[serde(default)]
+    pub cloned_from: Option<String>,
+
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 
@@ -107,6 +111,7 @@ impl InstalledServer {
             extra_headers: HashMap::new(),
             oauth_connected: false,
             source: InstallationSource::default(),
+            cloned_from: None,
             created_at: now,
             updated_at: now,
         }
@@ -157,6 +162,12 @@ impl InstalledServer {
     /// Set installation source
     pub fn with_source(mut self, source: InstallationSource) -> Self {
         self.source = source;
+        self
+    }
+
+    /// Set the source server ID when this install is a clone
+    pub fn with_cloned_from(mut self, source_server_id: impl Into<String>) -> Self {
+        self.cloned_from = Some(source_server_id.into());
         self
     }
 

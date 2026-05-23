@@ -30,6 +30,7 @@ struct RawServerRow {
     created_at: String,
     updated_at: String,
     source: Option<String>,
+    cloned_from: Option<String>,
 }
 
 /// SQLite-backed implementation of InstalledServerRepository.
@@ -131,7 +132,7 @@ impl SqliteInstalledServerRepository {
     /// Standard column list for SELECT queries
     const SELECT_COLUMNS: &'static str =
         "id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
-         args_append, extra_headers, oauth_connected, created_at, updated_at, source";
+         args_append, extra_headers, oauth_connected, created_at, updated_at, source, cloned_from";
 
     /// Extract raw row data (used in the closure passed to rusqlite).
     fn extract_row(row: &rusqlite::Row) -> rusqlite::Result<RawServerRow> {
@@ -150,6 +151,7 @@ impl SqliteInstalledServerRepository {
             created_at: row.get(11)?,
             updated_at: row.get(12)?,
             source: row.get(13)?,
+            cloned_from: row.get(14)?,
         })
     }
 
@@ -168,6 +170,7 @@ impl SqliteInstalledServerRepository {
             extra_headers: Self::parse_json_map(row.extra_headers),
             oauth_connected: row.oauth_connected,
             source: Self::parse_source(row.source),
+            cloned_from: row.cloned_from,
             created_at: Self::parse_datetime(&row.created_at),
             updated_at: Self::parse_datetime(&row.updated_at),
         }
@@ -275,8 +278,8 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         conn.execute(
             "INSERT INTO installed_servers
              (id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
-              args_append, extra_headers, oauth_connected, created_at, updated_at, source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              args_append, extra_headers, oauth_connected, created_at, updated_at, source, cloned_from)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 server.id.to_string(),
                 server.space_id,
@@ -292,6 +295,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.created_at.to_rfc3339(),
                 server.updated_at.to_rfc3339(),
                 Self::serialize_source(&server.source),
+                server.cloned_from,
             ],
         )?;
         Ok(())

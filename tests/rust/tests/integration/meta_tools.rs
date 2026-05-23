@@ -371,12 +371,8 @@ async fn list_servers_includes_cloned_from_for_clone_installs() {
     let space_id = f.space_id.to_string();
 
     let posthog = InstalledServer::new(&space_id, "posthog");
-    f.installed_server_repo
-        .install(&posthog)
-        .await
-        .unwrap();
-    let posthog_work = InstalledServer::new(&space_id, "posthog-work")
-        .with_cloned_from("posthog");
+    f.installed_server_repo.install(&posthog).await.unwrap();
+    let posthog_work = InstalledServer::new(&space_id, "posthog-work").with_cloned_from("posthog");
     f.installed_server_repo
         .install(&posthog_work)
         .await

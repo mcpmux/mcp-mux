@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use mcpmux_core::{
     application::ServerAppService, EventBus, InstalledServer, InstalledServerRepository,
-    ServerDefinition, ServerDiscoveryService, ServerFeature, ServerFeatureRepository,
-    ServerSource, SpaceRepository, TransportConfig, TransportMetadata,
+    ServerDefinition, ServerDiscoveryService, ServerFeature, ServerFeatureRepository, ServerSource,
+    SpaceRepository, TransportConfig, TransportMetadata,
 };
 use mcpmux_gateway::{FeatureService, PrefixCacheService, SessionOverrideRegistry};
 use mcpmux_storage::{
@@ -38,21 +38,18 @@ impl CloneFixture {
         let default_space = space_repo.get_default().await.unwrap().unwrap();
         let space_id = default_space.id;
 
-        let installed_server_repo: Arc<dyn InstalledServerRepository> = Arc::new(
-            SqliteInstalledServerRepository::new(db.clone(), encryptor),
-        );
+        let installed_server_repo: Arc<dyn InstalledServerRepository> =
+            Arc::new(SqliteInstalledServerRepository::new(db.clone(), encryptor));
         let feature_repo: Arc<dyn ServerFeatureRepository> =
             Arc::new(SqliteServerFeatureRepository::new(db));
 
-        let prefix_cache = Arc::new(
-            PrefixCacheService::new().with_dependencies(
-                installed_server_repo.clone(),
-                Arc::new(ServerDiscoveryService::new(
-                    std::env::temp_dir().join(format!("mcpmux-clone-test-{}", Uuid::new_v4())),
-                    std::env::temp_dir().join(format!("mcpmux-clone-spaces-{}", Uuid::new_v4())),
-                )),
-            ),
-        );
+        let prefix_cache = Arc::new(PrefixCacheService::new().with_dependencies(
+            installed_server_repo.clone(),
+            Arc::new(ServerDiscoveryService::new(
+                std::env::temp_dir().join(format!("mcpmux-clone-test-{}", Uuid::new_v4())),
+                std::env::temp_dir().join(format!("mcpmux-clone-spaces-{}", Uuid::new_v4())),
+            )),
+        ));
         let feature_service = Arc::new(FeatureService::new(
             feature_repo.clone(),
             Arc::new(tests::mocks::MockFeatureSetRepository::new()),
@@ -240,7 +237,10 @@ async fn two_clones_have_distinct_prefixes_and_env() {
         Some("work-account")
     );
     assert_eq!(
-        stored_personal.input_values.get("ACCOUNT").map(String::as_str),
+        stored_personal
+            .input_values
+            .get("ACCOUNT")
+            .map(String::as_str),
         Some("personal-account")
     );
     assert_eq!(clone_work.cloned_from.as_deref(), Some("posthog"));
@@ -272,22 +272,18 @@ async fn uninstall_clone_does_not_affect_source() {
         .await
         .expect("clone uninstall");
 
-    assert!(
-        fixture
-            .installed_server_repo
-            .get_by_server_id(&space_id_str, "posthog")
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert!(
-        fixture
-            .installed_server_repo
-            .get_by_server_id(&space_id_str, "posthog-work")
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(fixture
+        .installed_server_repo
+        .get_by_server_id(&space_id_str, "posthog")
+        .await
+        .unwrap()
+        .is_some());
+    assert!(fixture
+        .installed_server_repo
+        .get_by_server_id(&space_id_str, "posthog-work")
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -339,11 +335,19 @@ async fn clone_prefixes_do_not_break_existing_alias_uniqueness() {
     let other = fixtures::test_installed_server(&space_id_str, "other-server")
         .with_definition(&env_stdio_definition("other-server", "Other", "api"));
 
-    fixture.installed_server_repo.install(&posthog).await.unwrap();
+    fixture
+        .installed_server_repo
+        .install(&posthog)
+        .await
+        .unwrap();
     fixture.installed_server_repo.install(&other).await.unwrap();
 
     let clone = InstalledServer::new(&space_id_str, "posthog-work")
-        .with_definition(&env_stdio_definition("posthog-work", "PostHog (work)", "work"))
+        .with_definition(&env_stdio_definition(
+            "posthog-work",
+            "PostHog (work)",
+            "work",
+        ))
         .with_cloned_from("posthog");
     fixture.installed_server_repo.install(&clone).await.unwrap();
 

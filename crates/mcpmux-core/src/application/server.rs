@@ -8,7 +8,9 @@ use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::domain::{DomainEvent, InstallationSource, InstalledServer, ServerDefinition, UserServerEntry};
+use crate::domain::{
+    DomainEvent, InstallationSource, InstalledServer, ServerDefinition, UserServerEntry,
+};
 use crate::event_bus::EventSender;
 use crate::repository::{CredentialRepository, InstalledServerRepository, ServerFeatureRepository};
 
@@ -769,7 +771,8 @@ mod tests {
 
         assert_eq!(cloned.server_id, "posthog-mywork");
         assert_eq!(
-            cloned.get_definition()
+            cloned
+                .get_definition()
                 .and_then(|definition| definition.alias),
             Some("mywork".to_string())
         );
@@ -829,7 +832,10 @@ mod tests {
             .expect("dependents lookup");
 
         assert_eq!(dependents.len(), 2);
-        let ids: Vec<_> = dependents.iter().map(|server| server.server_id.as_str()).collect();
+        let ids: Vec<_> = dependents
+            .iter()
+            .map(|server| server.server_id.as_str())
+            .collect();
         assert!(ids.contains(&"posthog-work"));
         assert!(ids.contains(&"posthog-personal"));
     }
@@ -856,17 +862,15 @@ mod tests {
             .await
             .expect("clone uninstall");
 
-        assert!(
-            repo.get_by_server_id(&space_id_str, "posthog")
-                .await
-                .expect("lookup source")
-                .is_some()
-        );
-        assert!(
-            repo.get_by_server_id(&space_id_str, "posthog-work")
-                .await
-                .expect("lookup clone")
-                .is_none()
-        );
+        assert!(repo
+            .get_by_server_id(&space_id_str, "posthog")
+            .await
+            .expect("lookup source")
+            .is_some());
+        assert!(repo
+            .get_by_server_id(&space_id_str, "posthog-work")
+            .await
+            .expect("lookup clone")
+            .is_none());
     }
 }

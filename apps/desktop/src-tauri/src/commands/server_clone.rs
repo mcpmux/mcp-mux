@@ -23,12 +23,7 @@ pub async fn clone_server(
     let space_uuid = uuid::Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
 
     service
-        .clone_server(
-            space_uuid,
-            &source_server_id,
-            &suffix,
-            alias.as_deref(),
-        )
+        .clone_server(space_uuid, &source_server_id, &suffix, alias.as_deref())
         .await
         .map_err(|e| e.to_string())
 }

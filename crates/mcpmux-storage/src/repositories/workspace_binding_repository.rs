@@ -140,8 +140,7 @@ impl SqliteWorkspaceBindingRepository {
         Ok(())
     }
 
-    const SELECT_COLS: &'static str =
-        "id, workspace_root, label, space_id, created_at, updated_at";
+    const SELECT_COLS: &'static str = "id, workspace_root, label, space_id, created_at, updated_at";
 
     /// Fetch bindings + their FeatureSet lists in two queries.
     /// `where_clause` is appended to the binding SELECT (use `""` for none);
@@ -376,7 +375,11 @@ mod tests {
     #[tokio::test]
     async fn test_label_round_trip() {
         let (repo, space_id, fs_id) = fixture().await;
-        let root = if cfg!(windows) { "d:\\labeled" } else { "/labeled" };
+        let root = if cfg!(windows) {
+            "d:\\labeled"
+        } else {
+            "/labeled"
+        };
         let mut binding = WorkspaceBinding::new(root, space_id, fs_id);
         binding.label = Some("My Project".to_string());
         repo.create(&binding).await.unwrap();

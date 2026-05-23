@@ -852,11 +852,12 @@ impl ServerHandler for McpMuxGatewayHandler {
             "call_tool result"
         );
 
-        let result = if tool_result.is_error {
+        let mut result = if tool_result.is_error {
             CallToolResult::error(content)
         } else {
             CallToolResult::success(content)
         };
+        result.structured_content = tool_result.structured_content;
 
         Ok(result)
     }

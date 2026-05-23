@@ -51,6 +51,7 @@ pub struct RoutedResource {
 #[derive(Debug)]
 pub struct ToolCallResult {
     pub content: Vec<Value>,
+    pub structured_content: Option<Value>,
     pub is_error: bool,
 }
 
@@ -304,6 +305,7 @@ impl RoutingService {
 
                     Ok(ToolCallResult {
                         content,
+                        structured_content: res.structured_content,
                         is_error: res.is_error.unwrap_or(false),
                     })
                 }

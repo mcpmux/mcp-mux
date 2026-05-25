@@ -10,15 +10,15 @@ One-session checklist for validating Phases A–C (search → schema → invoke,
 
 ## Quick prep
 
-- [ ] Rebuild/restart gateway if you haven't since the branch (`pnpm dev` or run the built app)
-- [ ] Cursor → MCP → **Reload tools**
-- [ ] Confirm McpMux endpoint: `http://localhost:45818/mcp`
-- [ ] Have at least one OAuth server (GitHub) **installed and connected** but **inactive** in session (for enable-flow tests)
-- [ ] Optional for Phase C tests: create a FeatureSet with 1–2 GitHub tools, bind to workspace; leave surfaced off until test 7
+- [x] Rebuild/restart gateway if you haven't since the branch (`pnpm dev` or run the built app)
+- [x] Cursor → MCP → **Reload tools**
+- [x] Confirm McpMux endpoint: `http://localhost:45818/mcp`
+- [ ] Have at least one OAuth server (GitHub) **installed and connected** but **inactive** in session (for enable-flow tests) — github is `enabled_via_binding`; use session disable for test 2
+- [ ] Optional for Phase C tests: create a FeatureSet with 1–2 GitHub tools, bind to workspace; leave surfaced off until test 8
 
-**Tester:** _______________  
-**Date:** _______________  
-**McpMux version / commit:** _______________
+**Tester:** Cursor agent (Composer)  
+**Date:** May 25, 2026  
+**McpMux version / commit:** `feat/meta-gateway-invoke` @ `993f378`
 
 ---
 
@@ -35,10 +35,10 @@ You have McpMux meta tools only — no direct backend tools like github_*.
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| `mcpmux_list_servers` returns installed servers | ☐ | ☐ | |
-| Only **10** `mcpmux_*` tools exposed (no backend names) | ☐ | ☐ | Expected: bind, create_feature_set, disable/enable_server, get_tool_schema, invoke_tool, list_all_tools, list_feature_sets, list_servers, search_tools |
-| Backend servers show **inactive** until enabled | ☐ | ☐ | |
-| Tool list count stable (~10 meta + Cursor/plugin tools) | ☐ | ☐ | |
+| `mcpmux_list_servers` returns installed servers | ☑ | ☐ | 34 servers returned |
+| Only **10** `mcpmux_*` tools exposed (no backend names) | ☑ | ☐ | Verified via MCP descriptor folder |
+| Backend servers show **inactive** until enabled | ☑ | ☐ | All inactive at session start |
+| Tool list count stable (~10 meta + Cursor/plugin tools) | ☑ | ☐ | No backend tools leaked |
 
 ---
 
@@ -63,11 +63,11 @@ Show each step briefly, then the first 5 issues.
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| Agent enabled github when inactive | ☐ | ☐ | |
-| Search before invoke (no param guessing) | ☐ | ☐ | |
-| Schema read before invoke | ☐ | ☐ | |
-| Invoke succeeded with correct param names | ☐ | ☐ | |
-| `tools/list` still ~10 meta tools after enable | ☐ | ☐ | |
+| Agent enabled github when inactive | ☐ | ☐ | N/A — github was `enabled_via_binding` |
+| Search before invoke (no param guessing) | ☑ | ☐ | Found `github_list_issues` via search |
+| Schema read before invoke | ☑ | ☐ | Used `owner`/`repo`/`state`/`perPage` from schema |
+| Invoke succeeded with correct param names | ☑ | ☐ | 5 open issues returned for mcpmux/mcp-mux |
+| `tools/list` still ~10 meta tools after enable | ☑ | ☐ | Still exactly 10 `mcpmux_*` tools |
 
 ---
 
@@ -86,9 +86,9 @@ Try to invoke a GitHub tool WITHOUT enabling github first (disable it if needed)
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| Invoke denied when server inactive | ☐ | ☐ | |
-| Error mentions `mcpmux_enable_server` with server_id | ☐ | ☐ | |
-| Recovery via enable → retry works | ☐ | ☐ | |
+| Invoke denied when server inactive | ☑ | ☐ | After `mcpmux_disable_server` → `disabled_via_session` |
+| Error mentions `mcpmux_enable_server` with server_id | ☑ | ☐ | `server 'github' is disabled for this session → mcpmux_enable_server({ "server_id": "github" })` |
+| Recovery via enable → retry works | ☑ | ☐ | enable + invoke returned 3 issues |
 
 ---
 
@@ -109,10 +109,10 @@ What did compact strip?
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| `name` level omits descriptions | ☐ | ☐ | |
-| `description` level includes descriptions | ☐ | ☐ | |
-| `compact: true` strips descriptions/examples | ☐ | ☐ | |
-| Batch schema (array of tools) works if agent tries it | ☐ | ☐ | |
+| `name` level omits descriptions | ☑ | ☐ | `github_list_issues` — no `description` key |
+| `description` level includes descriptions | ☑ | ☐ | Full tool description present |
+| `compact: true` strips descriptions/examples | ☑ | ☐ | Strips **top-level** tool `description`; property descriptions in `input_schema` kept |
+| Batch schema (array of tools) works if agent tries it | ☑ | ☐ | `tools: ["github_list_issues"]` returned schemas array |
 
 ---
 

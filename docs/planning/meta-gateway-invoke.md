@@ -1,8 +1,8 @@
 # Meta-Gateway Invoke (Search → Schema → Invoke)
 
 **Last Updated:** May 25, 2026
-**Status:** Planning
-**Branch:** TBD — branch off `main`
+**Status:** Implemented on branch — manual QA in progress ([`meta-gateway-invoke-qa.md`](./meta-gateway-invoke-qa.md))
+**Branch:** `feat/meta-gateway-invoke`
 **Base branch:** `main`
 **Issue:** TBD — file after planning review
 **Depends on:** [`dynamic-mcp-toggle-meta-tools.md`](./dynamic-mcp-toggle-meta-tools.md) (session overrides + meta-tool registry); benefits from workspace bindings / FeatureSets from PR #151
@@ -160,28 +160,30 @@ Prompts and resources: unchanged — still materialized per grants. Invoke model
 
 ## Files to create
 
-| File | Purpose |
-| ---- | ------- |
-| `crates/mcpmux-gateway/src/services/tool_discovery.rs` | Index + search + schema lookup over Space tool features |
-| `crates/mcpmux-gateway/src/services/meta_tools/invoke.rs` | `InvokeToolTool` impl — permission check, routing, error mapping |
-| `tests/rust/tests/integration/meta_gateway_invoke.rs` | Search, schema, invoke, permission deny, surfaced tools, direct backend call rejected |
-| `docs/planning/meta-gateway-invoke.md` | This doc |
+| File | Purpose | Status |
+| ---- | ------- | ------ |
+| `crates/mcpmux-gateway/src/services/tool_discovery.rs` | Index + search + schema lookup over Space tool features | ✅ Done |
+| `crates/mcpmux-gateway/src/services/meta_tools/invoke.rs` | `InvokeToolTool` impl — permission check, routing, error mapping, result shaping | ✅ Done |
+| `tests/rust/tests/integration/meta_gateway_invoke.rs` | Search, schema, invoke, permission deny, surfaced tools, direct backend call rejected | ✅ Done (13 tests) |
+| `docs/planning/meta-gateway-invoke-qa.md` | Manual QA runbook for Phases A–C | ✅ Done |
+| `docs/planning/meta-gateway-invoke.md` | This doc | ✅ Done |
 
 ## Files to modify
 
-| File | Change |
-| ---- | ------ |
-| [`crates/mcpmux-gateway/src/services/mod.rs`](../../crates/mcpmux-gateway/src/services/mod.rs) | `pub mod tool_discovery;` |
-| [`crates/mcpmux-gateway/src/services/meta_tools/tools.rs`](../../crates/mcpmux-gateway/src/services/meta_tools/tools.rs) | `SearchToolsTool`, `GetToolSchemaTool`; extend `ListAllToolsTool` with optional `server_id` filter |
-| [`crates/mcpmux-gateway/src/services/meta_tools/mod.rs`](../../crates/mcpmux-gateway/src/services/meta_tools/mod.rs) | Register new tools; wire `ToolDiscoveryService` + `RoutingService` into `MetaToolContext` |
-| [`crates/mcpmux-gateway/src/services/meta_tools/registry.rs`](../../crates/mcpmux-gateway/src/services/meta_tools/registry.rs) | Extend `MetaToolContext` with discovery + routing handles |
-| [`crates/mcpmux-gateway/src/pool/features/facade.rs`](../../crates/mcpmux-gateway/src/pool/features/facade.rs) | Split `get_tools_for_grants` into advertised (meta + surfaced) vs invokable (full set for search/invoke ACL) |
-| [`crates/mcpmux-gateway/src/pool/routing.rs`](../../crates/mcpmux-gateway/src/pool/routing.rs) | Shared invokable-set helper; ensure `call_tool` errors are actionable |
-| [`crates/mcpmux-gateway/src/mcp/handler.rs`](../../crates/mcpmux-gateway/src/mcp/handler.rs) | `tools/list` uses advertised set only; direct backend `call_tool` rejected with invoke redirect |
-| [`crates/mcpmux-storage/`](../../crates/mcpmux-storage/) or core domain | Optional `surfaced` flag on FeatureSet member rows (Phase C) — if schema change needed |
-| [`apps/desktop/src/features/settings/SettingsPage.tsx`](../../apps/desktop/src/features/settings/SettingsPage.tsx) | Update meta-tools copy for search → schema → invoke workflow |
-| [`apps/desktop/src/features/feature-sets/`](../../apps/desktop/src/features/feature-sets/) | UI to mark tools as surfaced (Phase C) |
-| [`README.md`](../../README.md) | Replace "every tool available right now" agent-facing claim; document search → schema → invoke flow |
+| File | Change | Status |
+| ---- | ------ | ------ |
+| [`crates/mcpmux-gateway/src/services/mod.rs`](../../crates/mcpmux-gateway/src/services/mod.rs) | `pub mod tool_discovery;` | ✅ Done |
+| [`crates/mcpmux-gateway/src/services/meta_tools/tools.rs`](../../crates/mcpmux-gateway/src/services/meta_tools/tools.rs) | `SearchToolsTool`, `GetToolSchemaTool`; extend `ListAllToolsTool` with optional `server_id` filter | ✅ Done |
+| [`crates/mcpmux-gateway/src/services/meta_tools/mod.rs`](../../crates/mcpmux-gateway/src/services/meta_tools/mod.rs) | Register new tools; wire `ToolDiscoveryService` + `RoutingService` into `MetaToolContext` | ✅ Done |
+| [`crates/mcpmux-gateway/src/services/meta_tools/registry.rs`](../../crates/mcpmux-gateway/src/services/meta_tools/registry.rs) | Extend `MetaToolContext` with discovery + routing handles | ✅ Done |
+| [`crates/mcpmux-gateway/src/pool/features/facade.rs`](../../crates/mcpmux-gateway/src/pool/features/facade.rs) | Split into `get_advertised_tools_for_grants` vs `get_invokable_tools_for_grants` | ✅ Done |
+| [`crates/mcpmux-gateway/src/pool/features/resolution.rs`](../../crates/mcpmux-gateway/src/pool/features/resolution.rs) | `resolve_surfaced_feature_ids` for surfaced promotion | ✅ Done |
+| [`crates/mcpmux-gateway/src/pool/routing.rs`](../../crates/mcpmux-gateway/src/pool/routing.rs) | `format_direct_call_redirect`; actionable invoke errors | ✅ Done |
+| [`crates/mcpmux-gateway/src/mcp/handler.rs`](../../crates/mcpmux-gateway/src/mcp/handler.rs) | `tools/list` uses advertised set only; direct backend `call_tool` rejected with invoke redirect | ✅ Done |
+| [`crates/mcpmux-core/src/domain/feature_set.rs`](../../crates/mcpmux-core/src/domain/feature_set.rs) | `surfaced: bool` on `FeatureSetMember` | ✅ Done |
+| [`apps/desktop/src/features/featuresets/FeatureSetPanel.tsx`](../../apps/desktop/src/features/featuresets/FeatureSetPanel.tsx) | Per-tool "Surface in client" toggle | ✅ Done |
+| [`apps/desktop/src/features/settings/SettingsPage.tsx`](../../apps/desktop/src/features/settings/SettingsPage.tsx) | Update meta-tools copy for search → schema → invoke workflow | ⬜ Pending |
+| [`README.md`](../../README.md) | Replace "every tool available right now" agent-facing claim; document search → schema → invoke flow | ⬜ Pending |
 
 ---
 
@@ -189,42 +191,43 @@ Prompts and resources: unchanged — still materialized per grants. Invoke model
 
 ### Phase A — Meta invoke core
 
-**Effort:** ~3–4 days
+**Effort:** ~3–4 days  
+**Status:** ✅ Implemented — manual QA sections 0–1 pass; sections 2–4 pending ([`meta-gateway-invoke-qa.md`](./meta-gateway-invoke-qa.md))
 
-- [ ] `ToolDiscoveryService` — build index from Space features; search by query + optional `server_id`; return matches at `detail_level`
-- [ ] `mcpmux_search_tools` meta tool — pagination (`limit`, `cursor`), `detail_level` enum
-- [ ] `mcpmux_get_tool_schema` — single + batch; `compact` strips descriptions/examples
-- [ ] `mcpmux_invoke_tool` — `{ server_id, tool, args }`; delegates to `RoutingService::call_tool`; fail closed on permission miss
-- [ ] `FeatureService` split: **advertised** = meta tools + surfaced only (hard cut — no backend tools in list)
-- [ ] Handler rejects direct backend `call_tool` — return actionable error pointing to `mcpmux_invoke_tool`
-- [ ] Actionable error mapping: inactive server, unknown tool, permission denied, param validation passthrough from backend
-- [ ] Optional `server_id` filter on `mcpmux_list_all_tools`
-- [ ] Integration tests: GitHub read path (enable → search → schema → invoke); deny when server inactive; direct `github_*` call rejected
+- [x] `ToolDiscoveryService` — build index from Space features; search by query + optional `server_id`; return matches at `detail_level`
+- [x] `mcpmux_search_tools` meta tool — pagination (`limit`, `cursor`), `detail_level` enum
+- [x] `mcpmux_get_tool_schema` — single + batch; `compact` strips descriptions/examples
+- [x] `mcpmux_invoke_tool` — `{ server_id, tool, args }`; delegates to `RoutingService::call_tool`; fail closed on permission miss
+- [x] `FeatureService` split: **advertised** = meta tools + surfaced only (hard cut — no backend tools in list)
+- [x] Handler rejects direct backend `call_tool` — return actionable error pointing to `mcpmux_invoke_tool`
+- [x] Actionable error mapping: inactive server, unknown tool, permission denied, param validation passthrough from backend
+- [x] Optional `server_id` filter on `mcpmux_list_all_tools`
+- [x] Integration tests: GitHub read path (enable → search → schema → invoke); deny when server inactive; direct `github_*` call rejected
 
-**Outcome:** Cursor session shows ~12 `mcpmux_*` tools. Agent completes `github_list_issues` on `mcpmux/mcp-mux` in 4 meta calls + invoke with zero param guessing. Token footprint for tool definitions drops from ~30–50k to ~1–2k.
+**Outcome:** Cursor session shows **10** `mcpmux_*` tools (verified May 25, 2026). Agent completes `github_list_issues` on `mcpmux/mcp-mux` via search → schema → invoke with zero param guessing.
 
 ### Phase B — Result shaping on invoke
 
-**Effort:** ~2 days
+**Effort:** ~2 days  
+**Status:** ✅ Implemented — manual QA sections 5–6 pending
 
-- [ ] Extend `mcpmux_invoke_tool` args with optional `filter: { max_rows?, max_bytes?, fields?, format? }`
-- [ ] Post-process JSON/text results in gateway before returning to client
-- [ ] Default smart truncation for known-heavy patterns (large arrays) when filter omitted
-- [ ] Integration tests: truncated list response includes `{ returned, total, truncated: true }`
+- [x] Extend `mcpmux_invoke_tool` args with optional `filter: { max_rows?, max_bytes?, fields?, format? }`
+- [x] Post-process JSON/text results in gateway before returning to client
+- [x] Default smart truncation for known-heavy patterns (large arrays) when filter omitted (`DEFAULT_MAX_ROWS` = 50)
+- [x] Integration tests: truncated list response includes `{ returned, total, truncated: true }`
 
 **Outcome:** Posthog/Firebase/GWorkspace list calls return bounded payloads. Agent can query large backends without blowing context on results.
 
 ### Phase C — FeatureSet as invoke ACL + surfaced tools
 
-**Effort:** ~3 days
+**Effort:** ~3 days  
+**Status:** ✅ Implemented — manual QA sections 8–9 pending
 
-- [ ] FeatureSet member model: tools invokable by default when server in set; optional `surfaced: true` promotes into `tools/list`
-- [ ] Search + invoke respect FeatureSet member filter (not just server-all)
-- [ ] Workspaces UI: per-tool "Surface in client" toggle in FeatureSet editor
-- [ ] Update `mcpmux_create_feature_set` to accept optional `surfaced_tools[]`
-- [ ] Integration tests: binding with partial tool set → search only finds allowed tools; surfaced tool appears in `tools/list`
-
-**Outcome:** Bundles ship with zero surfaced tools by default. Users may opt in per FeatureSet. Invoke ACL semantics are unambiguous: **permission + optional promotion**.
+- [x] FeatureSet member model: tools invokable by default when server in set; optional `surfaced: true` promotes into `tools/list`
+- [x] Search + invoke respect FeatureSet member filter (not just server-all)
+- [x] Workspaces UI: per-tool "Surface in client" toggle in FeatureSet editor (`FeatureSetPanel.tsx`)
+- [ ] Update `mcpmux_create_feature_set` to accept optional `surfaced_tools[]` (UI path done; meta-tool arg deferred)
+- [x] Integration tests: binding with partial tool set → search only finds allowed tools; surfaced tool appears in `tools/list`
 
 ### Phase D — Advanced optimizations (defer)
 
@@ -307,6 +310,16 @@ Prompts and resources: unchanged — still materialized per grants. Invoke model
 
 ## Reconciliation
 
-This doc is the source of truth for the meta-gateway invoke model. When implementation starts, update **Status** and **Branch** at the top. Mark [`tool-level-session-pin.md`](./tool-level-session-pin.md) **Status** as *Superseded* once Phase A ships.
+This doc is the source of truth for the meta-gateway invoke model. Phases A–C are implemented on `feat/meta-gateway-invoke`; manual QA tracked in [`meta-gateway-invoke-qa.md`](./meta-gateway-invoke-qa.md). Mark [`tool-level-session-pin.md`](./tool-level-session-pin.md) **Status** as *Superseded* once Phase A ships to main.
 
 **Decision record (May 25, 2026):** Hard cut to invoke-only — no legacy direct backend exposure. Surfaced tools default zero everywhere (bundles included). FeatureSets redefine as invoke ACL + optional surfaced promotion. Session pin deferred to Phase F (very optional, last). Competitor analysis (MikkoParkkola + abdullah1854) informed Phase A–B scope; REST capabilities in Phase E / separate doc.
+
+**Manual QA progress (May 25, 2026):**
+
+| QA section | Result | Notes |
+| ---------- | ------ | ----- |
+| 0 — Sanity (meta-only surface) | ✅ Pass | 10 `mcpmux_*` tools; 34 servers listed; all inactive until enabled |
+| 1 — Happy path (GitHub read) | ✅ Pass | search → schema → invoke returned 5 open issues; enable step N/A (`enabled_via_binding`) |
+| 2 — Fail-closed + recovery | ✅ Pass | Session disable → actionable error → enable → retry |
+| 3 — Search detail levels + compact schema | ✅ Pass | compact omits top-level description only |
+| 4–11 | ⬜ Pending | In progress |

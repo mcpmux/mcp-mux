@@ -99,6 +99,12 @@ pub trait InstalledServerRepository: Send + Sync {
         server_name: Option<String>,
         cached_definition: Option<String>,
     ) -> RepoResult<()>;
+
+    /// Set or clear the user-supplied display name override for an installed server.
+    ///
+    /// Pass `None` to clear the override (UI falls back to `server_name` /
+    /// `cached_definition.name` / `server_id` tail).
+    async fn set_display_name_override(&self, id: &Uuid, value: Option<String>) -> RepoResult<()>;
 }
 
 /// ServerFeature repository trait

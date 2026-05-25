@@ -16,6 +16,7 @@ import type {
   SortOption,
 } from '../types/registry';
 import * as api from '../lib/api/registry';
+import { resolveInstalledDisplayName } from '../features/servers/server-display-name.helpers';
 
 // ============================================
 // State & Actions Types
@@ -368,6 +369,7 @@ function mergeServers(defs: ServerDefinition[], states: InstalledServerState[]):
     
     return {
       ...def,
+      name: state ? resolveInstalledDisplayName(state, def) : def.name,
       is_installed: !!state,
       enabled: state?.enabled ?? false,
       oauth_connected: state?.oauth_connected ?? false,

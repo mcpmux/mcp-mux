@@ -1,8 +1,10 @@
 import { AlertCircle } from 'lucide-react';
+import { resolveInstalledDisplayName } from './server-display-name.helpers';
 
 export interface CloneDependentSummary {
   server_id: string;
   server_name?: string | null;
+  display_name_override?: string | null;
 }
 
 interface UninstallSourceWithClonesDialogProps {
@@ -29,8 +31,12 @@ export function UninstallSourceWithClonesDialog({
     return null;
   }
 
-  const dependentLabels = dependents.map(
-    (dependent) => dependent.server_name ?? dependent.server_id
+  const dependentLabels = dependents.map((dependent) =>
+    resolveInstalledDisplayName({
+      server_id: dependent.server_id,
+      server_name: dependent.server_name ?? null,
+      display_name_override: dependent.display_name_override ?? null,
+    })
   );
   const dependentList = dependentLabels.join(', ');
   const totalCount = dependents.length + 1;
@@ -42,7 +48,7 @@ export function UninstallSourceWithClonesDialog({
       data-testid="uninstall-clones-dialog-overlay"
     >
       <div
-        className="mx-4 w-full max-w-md rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200"
+        className="animate-in fade-in zoom-in-95 mx-4 w-full max-w-md rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--card))] p-6 shadow-xl duration-200"
         onClick={(event) => event.stopPropagation()}
         data-testid="uninstall-clones-dialog"
       >

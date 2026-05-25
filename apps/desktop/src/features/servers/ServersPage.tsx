@@ -41,6 +41,7 @@ import {
   type StatusFilterKey,
   type TransportFilter,
 } from './servers-page.helpers';
+import { resolveInstalledDisplayName } from './server-display-name.helpers';
 import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverManager';
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
 import { useViewSpace, useNavigateTo } from '@/stores';
@@ -88,30 +89,28 @@ function mergeDefinitionsWithStates(
   
   return definitions.map(def => {
     const state = stateMap.get(def.id);
-    
-    // Check if any required inputs are missing
+
     const inputs = def.transport.metadata?.inputs ?? [];
     const inputValues = state?.input_values ?? {};
     const missing_required_inputs = inputs.some((input: InputDefinition) =>
       input.required && !inputValues[input.id]
     );
-    
-    // Calculate initial connection_status based on enabled state
-    // Calculate initial connection_status based on enabled state
-    // Actual runtime status comes from ServerManager events via useServerManager hook
+
     const connection_status = state?.enabled ? 'connecting' : 'disconnected';
-    
+    const displayName = state ? resolveInstalledDisplayName(state, def) : def.name;
+
     return {
       ...def,
+      name: displayName,
       is_installed: !!state,
       enabled: state?.enabled ?? false,
       oauth_connected: state?.oauth_connected ?? false,
       input_values: inputValues,
-      connection_status, // Initial status, will be overridden by runtime events
+      connection_status,
       missing_required_inputs,
-      last_error: null, // Runtime-only, will be set by ServerManager events
-      created_at: state?.created_at, // Include for sorting
-      installation_source: state?.source, // Track how server was installed
+      last_error: null,
+      created_at: state?.created_at,
+      installation_source: state?.source,
       cloned_from: state ? getInstalledCloneLineage(state) : undefined,
       env_overrides: state?.env_overrides ?? {},
       args_append: state?.args_append ?? [],
@@ -123,7 +122,6 @@ function mergeDefinitionsWithStates(
 // Helper to create ServerViewModel from installed state when registry is unavailable
 // Uses cached_definition if available (proper offline support), otherwise falls back to minimal data
 function createOfflineServerViewModel(state: InstalledServerState): ServerViewModelWithClone {
-  // Try to use cached definition first (proper offline support)
   if (state.cached_definition) {
     try {
       const definition: ServerDefinition = JSON.parse(state.cached_definition);
@@ -138,6 +136,7 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
 
       return {
         ...definition,
+        name: resolveInstalledDisplayName(state, definition),
         is_installed: true,
         enabled: state.enabled,
         oauth_connected: state.oauth_connected,
@@ -157,10 +156,9 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
     }
   }
 
-  // Fallback: minimal view model when no cached definition available
   return {
     id: state.server_id,
-    name: state.server_name || state.server_id.split('/').pop() || state.server_id,
+    name: resolveInstalledDisplayName(state),
     description: '(Server definition not cached)',
     alias: null,
     icon: null,
@@ -204,6 +202,10 @@ interface ConfigModalState {
   argsAppend: string[];
   /** Extra HTTP headers (http only) */
   extraHeaders: Record<string, string>;
+  /** User-supplied display label (empty string = clear override). */
+  displayName: string;
+  /** Display name when the modal opened — used to detect changes on save. */
+  initialDisplayName: string;
 }
 
 export function ServersPage() {
@@ -225,6 +227,8 @@ export function ServersPage() {
     envOverrides: {},
     argsAppend: [],
     extraHeaders: {},
+    displayName: '',
+    initialDisplayName: '',
   });
 
   // Features state
@@ -664,14 +668,17 @@ export function ServersPage() {
       serverInputs.forEach((input: InputDefinition) => {
         initialValues[input.id] = server.input_values[input.id] || '';
       });
+      const initialDisplayName = server.name ?? '';
       setConfigModal({
         open: true,
         server,
         inputValues: initialValues,
-        enableOnSave: true, // This is from Enable flow
+        enableOnSave: true,
         envOverrides: { ...(server.env_overrides ?? {}) },
         argsAppend: [...(server.args_append ?? [])],
         extraHeaders: { ...(server.extra_headers ?? {}) },
+        displayName: initialDisplayName,
+        initialDisplayName,
       });
       return;
     }
@@ -734,14 +741,17 @@ export function ServersPage() {
     serverInputs.forEach((input: InputDefinition) => {
       initialValues[input.id] = server.input_values[input.id] || '';
     });
+    const initialDisplayName = server.name ?? '';
     setConfigModal({
       open: true,
       server,
       inputValues: initialValues,
-      enableOnSave: false, // Just configure, don't enable
+      enableOnSave: false,
       envOverrides: { ...(server.env_overrides ?? {}) },
       argsAppend: [...(server.args_append ?? [])],
       extraHeaders: { ...(server.extra_headers ?? {}) },
+      displayName: initialDisplayName,
+      initialDisplayName,
     });
   };
 
@@ -763,6 +773,7 @@ export function ServersPage() {
 
       return {
         ...definition,
+        name: resolveInstalledDisplayName(cloned, definition),
         is_installed: true,
         enabled: cloned.enabled,
         oauth_connected: cloned.oauth_connected,
@@ -801,19 +812,22 @@ export function ServersPage() {
 
   const handleSaveConfig = async () => {
     if (!configModal.server) return;
-    
+
     const server = configModal.server;
     const serverId = server.id;
     const shouldEnable = configModal.enableOnSave ?? false;
-    
+
     setActionLoading(`config-${serverId}`);
     try {
       const { saveServerInputs } = await import('@/lib/api/registry');
 
-      // Save input values with env overrides, args, and headers.
-      // Always send the values (even if empty) so that clearing them works.
-      // Backend treats None as "keep existing", so we must send Some({}/[])
-      // to actually clear fields the user removed.
+      const trimmedDisplayName = configModal.displayName.trim();
+      const trimmedInitial = configModal.initialDisplayName.trim();
+      // Only send a value when the user actually edited the field; otherwise pass
+      // undefined so the backend leaves the existing override untouched.
+      const displayNameOverride =
+        trimmedDisplayName === trimmedInitial ? undefined : trimmedDisplayName;
+
       await saveServerInputs(
         serverId,
         configModal.inputValues,
@@ -821,9 +835,19 @@ export function ServersPage() {
         configModal.envOverrides,
         configModal.argsAppend,
         configModal.extraHeaders,
+        displayNameOverride,
       );
 
-      setConfigModal({ open: false, server: null, inputValues: {}, envOverrides: {}, argsAppend: [], extraHeaders: {} });
+      setConfigModal({
+        open: false,
+        server: null,
+        inputValues: {},
+        envOverrides: {},
+        argsAppend: [],
+        extraHeaders: {},
+        displayName: '',
+        initialDisplayName: '',
+      });
       
       // Only enable if requested (from Enable flow)
       if (shouldEnable && !server.enabled) {
@@ -861,7 +885,16 @@ export function ServersPage() {
       // Set the server to pending_config state by enabling but not connecting
       // Actually, we just close the modal - the UI already shows Configure button for missing inputs
     }
-    setConfigModal({ open: false, server: null, inputValues: {}, envOverrides: {}, argsAppend: [], extraHeaders: {} });
+    setConfigModal({
+      open: false,
+      server: null,
+      inputValues: {},
+      envOverrides: {},
+      argsAppend: [],
+      extraHeaders: {},
+      displayName: '',
+      initialDisplayName: '',
+    });
   };
 
   // Cancel OAuth flow - uses new ServerManager v2
@@ -1673,8 +1706,31 @@ export function ServersPage() {
             <p className="text-sm text-[rgb(var(--muted))] mb-4">
               {(configModal.server.auth && 'instructions' in configModal.server.auth ? configModal.server.auth.instructions : null) || 'Enter the required configuration to enable this server.'}
             </p>
-            
+
             <div className="space-y-4">
+              <div>
+                <label
+                  htmlFor="config-display-name"
+                  className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+                >
+                  Display name
+                </label>
+                <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                  Shown in My Servers only. Does not change the server ID or tool names.
+                </p>
+                <input
+                  id="config-display-name"
+                  type="text"
+                  value={configModal.displayName}
+                  onChange={(e) =>
+                    setConfigModal({ ...configModal, displayName: e.target.value })
+                  }
+                  placeholder={configModal.server.name}
+                  className="input w-full"
+                  data-testid="config-display-name"
+                />
+              </div>
+
               {(configModal.server.transport.metadata?.inputs ?? []).map((input: InputDefinition) => {
                 const obtainUrl = input.obtain_url || input.obtain?.url;
                 const obtainInstructions = input.obtain_instructions || input.obtain?.instructions;

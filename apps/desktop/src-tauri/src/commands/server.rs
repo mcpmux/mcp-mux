@@ -127,6 +127,7 @@ pub async fn set_server_oauth_connected(
         .map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn save_server_inputs(
     app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
@@ -136,6 +137,7 @@ pub async fn save_server_inputs(
     env_overrides: Option<HashMap<String, String>>,
     args_append: Option<Vec<String>>,
     extra_headers: Option<HashMap<String, String>>,
+    display_name_override: Option<String>,
 ) -> Result<InstalledServer, String> {
     let service_lock = app_service.read().await;
     let service = service_lock
@@ -152,7 +154,32 @@ pub async fn save_server_inputs(
             env_overrides,
             args_append,
             extra_headers,
+            display_name_override,
         )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Set or clear the user-supplied display label on an installed server.
+///
+/// Empty/whitespace clears the override and the UI falls back to the cached
+/// definition name. Does not change `server_id`, alias, or tool prefixes.
+#[tauri::command]
+pub async fn set_server_display_name(
+    app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
+    id: String,
+    space_id: String,
+    display_name: Option<String>,
+) -> Result<InstalledServer, String> {
+    let service_lock = app_service.read().await;
+    let service = service_lock
+        .as_ref()
+        .ok_or("ServerAppService not initialized")?;
+
+    let space_uuid = uuid::Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
+
+    service
+        .set_display_name_override(space_uuid, &id, display_name)
         .await
         .map_err(|e| e.to_string())
 }

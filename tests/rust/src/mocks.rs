@@ -223,6 +223,13 @@ impl InstalledServerRepository for MockInstalledServerRepository {
         }
         Ok(())
     }
+
+    async fn set_display_name_override(&self, id: &Uuid, value: Option<String>) -> RepoResult<()> {
+        if let Some(server) = self.servers.write().unwrap().get_mut(id) {
+            server.display_name_override = value;
+        }
+        Ok(())
+    }
 }
 
 // ============================================================================

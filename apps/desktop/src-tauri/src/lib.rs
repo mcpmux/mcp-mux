@@ -870,6 +870,7 @@ pub fn run() {
             commands::set_server_enabled,
             commands::set_server_oauth_connected,
             commands::save_server_inputs,
+            commands::set_server_display_name,
             commands::clone_server,
             commands::is_clone_id_available,
             commands::suggest_clone_suffix,

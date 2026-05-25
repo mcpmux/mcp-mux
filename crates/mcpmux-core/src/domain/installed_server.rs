@@ -85,6 +85,14 @@ pub struct InstalledServer {
     #[serde(default)]
     pub cloned_from: Option<String>,
 
+    /// User-supplied display label that survives user-config sync.
+    ///
+    /// When set, the UI and meta tools prefer this over `server_name` /
+    /// `cached_definition.name`. The `server_id`, alias, and tool prefixes are
+    /// unaffected.
+    #[serde(default)]
+    pub display_name_override: Option<String>,
+
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 
@@ -112,6 +120,7 @@ impl InstalledServer {
             oauth_connected: false,
             source: InstallationSource::default(),
             cloned_from: None,
+            display_name_override: None,
             created_at: now,
             updated_at: now,
         }
@@ -131,14 +140,29 @@ impl InstalledServer {
             .and_then(|json| serde_json::from_str(json).ok())
     }
 
-    /// Get display name (from cached definition or server_id fallback)
+    /// Get effective display name.
+    ///
+    /// Precedence: `display_name_override` (user-supplied) → `server_name`
+    /// (cached at install time) → final segment of `server_id`.
     pub fn display_name(&self) -> &str {
+        if let Some(override_name) = self.display_name_override.as_deref() {
+            return override_name;
+        }
         self.server_name.as_deref().unwrap_or_else(|| {
             self.server_id
                 .split('/')
                 .next_back()
                 .unwrap_or(&self.server_id)
         })
+    }
+
+    /// Set the user-supplied display override (None or empty/whitespace clears it).
+    pub fn with_display_name_override(mut self, value: Option<impl Into<String>>) -> Self {
+        self.display_name_override = value
+            .map(Into::into)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        self
     }
 
     /// Set input values
@@ -460,5 +484,55 @@ mod tests {
         let deserialized: InstalledServer = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.args_append.len(), 100);
         assert_eq!(deserialized.args_append[99], "--arg-99");
+    }
+
+    #[test]
+    fn test_display_name_override_takes_precedence() {
+        let mut server = InstalledServer::new("space_default", "google.com/calendar");
+        server.server_name = Some("Google Calendar".to_string());
+
+        assert_eq!(server.display_name(), "Google Calendar");
+
+        server.display_name_override = Some("Joe Calendar".to_string());
+        assert_eq!(server.display_name(), "Joe Calendar");
+    }
+
+    #[test]
+    fn test_with_display_name_override_trims_and_clears() {
+        let server = InstalledServer::new("space_default", "test-server")
+            .with_display_name_override(Some("  Work Account  "));
+        assert_eq!(
+            server.display_name_override.as_deref(),
+            Some("Work Account")
+        );
+
+        let cleared = server.with_display_name_override(Some("   "));
+        assert!(cleared.display_name_override.is_none());
+
+        let none_clears = InstalledServer::new("space_default", "test-server")
+            .with_display_name_override(Some("Name"))
+            .with_display_name_override(Option::<String>::None);
+        assert!(none_clears.display_name_override.is_none());
+    }
+
+    #[test]
+    fn test_display_name_override_default_on_deserialize() {
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "space_id": "space_default",
+            "server_id": "test-server",
+            "server_name": "Catalog Name",
+            "cached_definition": null,
+            "input_values": {},
+            "enabled": false,
+            "oauth_connected": false,
+            "source": {"type": "registry"},
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z"
+        }"#;
+
+        let server: InstalledServer = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(server.display_name_override.is_none());
+        assert_eq!(server.display_name(), "Catalog Name");
     }
 }

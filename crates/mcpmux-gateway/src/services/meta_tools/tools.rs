@@ -257,9 +257,24 @@ impl MetaTool for ListServersTool {
             .list_for_space(&space_id.to_string())
             .await
             .map_err(|e| MetaToolError::Internal(e.to_string()))?;
-        let cloned_from_by_server: HashMap<String, Option<String>> = installed
+        // Per-server lookup of effective display name (override → server_name → tail)
+        // and clone lineage. Centralized so JSON output and UI agree on the label.
+        struct InstalledMeta {
+            display_name: String,
+            cloned_from: Option<String>,
+        }
+        let installed_meta_by_server: HashMap<String, InstalledMeta> = installed
             .into_iter()
-            .map(|s| (s.server_id, s.cloned_from))
+            .map(|s| {
+                let display_name = s.display_name().to_string();
+                (
+                    s.server_id,
+                    InstalledMeta {
+                        display_name,
+                        cloned_from: s.cloned_from,
+                    },
+                )
+            })
             .collect();
 
         let mut by_server: HashMap<String, (Option<String>, usize)> = HashMap::new();
@@ -278,8 +293,14 @@ impl MetaTool for ListServersTool {
 
         let mut servers: Vec<Value> = by_server
             .into_iter()
-            .map(|(id, (display_name, tool_count))| {
-                let name = display_name.unwrap_or_else(|| id.clone());
+            .map(|(id, (feature_display_name, tool_count))| {
+                // Prefer the installed row's effective display name (override or
+                // server_name) so users see "Joe Calendar" instead of the catalog name.
+                let installed_meta = installed_meta_by_server.get(&id);
+                let name = installed_meta
+                    .map(|meta| meta.display_name.clone())
+                    .or(feature_display_name)
+                    .unwrap_or_else(|| id.clone());
                 let status = derive_server_status(
                     &id,
                     &binding_servers,
@@ -292,7 +313,8 @@ impl MetaTool for ListServersTool {
                     "tool_count": tool_count,
                     "status": status,
                 });
-                if let Some(cloned_from) = cloned_from_by_server.get(&id).and_then(|v| v.as_ref()) {
+                if let Some(cloned_from) = installed_meta.and_then(|meta| meta.cloned_from.as_ref())
+                {
                     entry["cloned_from"] = json!(cloned_from);
                 }
                 entry

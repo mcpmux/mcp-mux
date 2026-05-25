@@ -101,6 +101,8 @@ export interface InstalledServerState {
   extra_headers: Record<string, string>;
   oauth_connected: boolean;
   source: InstallationSource; // How this server was installed
+  /** User-supplied display label that survives user-config sync. */
+  display_name_override?: string | null;
   created_at: string;
   updated_at: string;
 }

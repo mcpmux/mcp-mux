@@ -35,11 +35,18 @@ export function CloneAccountModal({
   onCloned,
 }: CloneAccountModalProps) {
   const [suffix, setSuffix] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [isChecking, setIsChecking] = useState(false);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isLoadingSuggestion, setIsLoadingSuggestion] = useState(false);
+
+  const trimmedSuffix = suffix.trim();
+  const trimmedDisplayName = displayName.trim();
+  const displayNamePlaceholder = trimmedSuffix
+    ? `${sourceServer.name} (${trimmedSuffix})`
+    : `${sourceServer.name} (work)`;
 
   const previewId = deriveCloneServerId(sourceServer.id, suffix);
   const previewAlias = deriveCloneAlias(suffix);
@@ -131,7 +138,13 @@ export function CloneAccountModal({
     setSubmitError(null);
 
     try {
-      const cloned = await cloneServer(spaceId, sourceServer.id, suffix);
+      const cloned = await cloneServer(
+        spaceId,
+        sourceServer.id,
+        suffix,
+        undefined,
+        trimmedDisplayName.length > 0 ? trimmedDisplayName : undefined
+      );
       onCloned(cloned);
       onClose();
     } catch (e) {
@@ -139,26 +152,37 @@ export function CloneAccountModal({
     } finally {
       setIsSubmitting(false);
     }
-  }, [hasSuffix, hasCollision, isChecking, spaceId, sourceServer.id, suffix, onCloned, onClose]);
+  }, [
+    hasSuffix,
+    hasCollision,
+    isChecking,
+    spaceId,
+    sourceServer.id,
+    suffix,
+    trimmedDisplayName,
+    onCloned,
+    onClose,
+  ]);
 
   if (!open) {
     return null;
   }
 
-  const canSubmit = hasSuffix && !hasCollision && !isChecking && !isSubmitting && !isLoadingSuggestion;
+  const canSubmit =
+    hasSuffix && !hasCollision && !isChecking && !isSubmitting && !isLoadingSuggestion;
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
       data-testid="clone-account-modal-overlay"
     >
       <div
-        className="dropdown-menu w-full max-w-md p-6 animate-in fade-in scale-in duration-150"
+        className="dropdown-menu animate-in fade-in scale-in w-full max-w-md p-6 duration-150"
         data-testid="clone-account-modal"
       >
-        <div className="flex items-start justify-between gap-3 mb-4">
+        <div className="mb-4 flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-[rgb(var(--primary))]/10">
+            <div className="rounded-lg bg-[rgb(var(--primary))]/10 p-2">
               <Copy className="h-5 w-5 text-[rgb(var(--primary))]" />
             </div>
             <div>
@@ -172,7 +196,7 @@ export function CloneAccountModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-[rgb(var(--surface-hover))] text-[rgb(var(--muted))] transition-colors"
+            className="rounded p-1 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
             aria-label="Close"
             data-testid="clone-account-close-btn"
           >
@@ -183,12 +207,34 @@ export function CloneAccountModal({
         <div className="space-y-4">
           <div>
             <label
+              htmlFor="clone-display-name"
+              className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]"
+            >
+              Display name
+            </label>
+            <p className="mb-2 text-xs text-[rgb(var(--muted))]">
+              Shown in My Servers only. Leave blank to use the default.
+            </p>
+            <input
+              id="clone-display-name"
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={displayNamePlaceholder}
+              className="input w-full"
+              disabled={isSubmitting}
+              data-testid="clone-display-name-input"
+            />
+          </div>
+
+          <div>
+            <label
               htmlFor="clone-suffix"
-              className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+              className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]"
             >
               Account label
             </label>
-            <p className="text-xs text-[rgb(var(--muted))] mb-2">
+            <p className="mb-2 text-xs text-[rgb(var(--muted))]">
               Used in the server ID and tool prefix (e.g. work, personal)
             </p>
             <input
@@ -202,21 +248,24 @@ export function CloneAccountModal({
               data-testid="clone-suffix-input"
             />
             {hasCollision && (
-              <p className="text-xs text-[rgb(var(--error))] mt-1" data-testid="clone-collision-error">
+              <p
+                className="mt-1 text-xs text-[rgb(var(--error))]"
+                data-testid="clone-collision-error"
+              >
                 An account with this label already exists in this space
               </p>
             )}
           </div>
 
           <div>
-            <p className="text-xs font-medium text-[rgb(var(--muted))] mb-2">Suggestions</p>
+            <p className="mb-2 text-xs font-medium text-[rgb(var(--muted))]">Suggestions</p>
             <div className="flex flex-wrap gap-2">
               {CLONE_SUFFIX_SUGGESTIONS.map((suggestion) => (
                 <button
                   key={suggestion}
                   type="button"
                   onClick={() => setSuffix(suggestion)}
-                  className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                  className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
                     suffix === suggestion
                       ? 'border-[rgb(var(--primary))] bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))]'
                       : 'border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))]'
@@ -230,14 +279,16 @@ export function CloneAccountModal({
           </div>
 
           {hasSuffix && (
-            <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-dim))] p-3 space-y-2">
+            <div className="space-y-2 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-dim))] p-3">
               <div className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-[rgb(var(--muted))]">Server ID</span>
-                <code className="text-xs font-mono text-[rgb(var(--foreground))]">{previewId || '—'}</code>
+                <code className="font-mono text-xs text-[rgb(var(--foreground))]">
+                  {previewId || '—'}
+                </code>
               </div>
               <div className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-[rgb(var(--muted))]">Tool prefix</span>
-                <code className="text-xs font-mono text-[rgb(var(--foreground))]">
+                <code className="font-mono text-xs text-[rgb(var(--foreground))]">
                   {previewAlias ? `${previewAlias}_*` : '—'}
                 </code>
               </div>
@@ -264,7 +315,7 @@ export function CloneAccountModal({
           <div className="flex justify-end gap-2 pt-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
+              className="rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
               disabled={isSubmitting}
               data-testid="clone-cancel-btn"
             >
@@ -273,7 +324,7 @@ export function CloneAccountModal({
             <button
               onClick={handleSubmit}
               disabled={!canSubmit}
-              className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50 transition-colors flex items-center gap-2"
+              className="flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
               data-testid="clone-submit-btn"
             >
               {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}

@@ -135,12 +135,12 @@ async fn two_clones_have_distinct_prefixes_and_env() {
 
     let clone_work = fixture
         .service
-        .clone_server(space_id, "posthog", "work", None)
+        .clone_server(space_id, "posthog", "work", None, None)
         .await
         .expect("clone work");
     let clone_personal = fixture
         .service
-        .clone_server(space_id, "posthog", "personal", None)
+        .clone_server(space_id, "posthog", "personal", None, None)
         .await
         .expect("clone personal");
 
@@ -156,6 +156,7 @@ async fn two_clones_have_distinct_prefixes_and_env() {
             )])),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -169,6 +170,7 @@ async fn two_clones_have_distinct_prefixes_and_env() {
                 "ACCOUNT".to_string(),
                 "personal-account".to_string(),
             )])),
+            None,
             None,
             None,
         )
@@ -262,7 +264,7 @@ async fn uninstall_clone_does_not_affect_source() {
         .unwrap();
     fixture
         .service
-        .clone_server(space_id, "posthog", "work", None)
+        .clone_server(space_id, "posthog", "work", None, None)
         .await
         .unwrap();
 
@@ -301,12 +303,12 @@ async fn list_clone_dependents_returns_source_clones() {
         .unwrap();
     fixture
         .service
-        .clone_server(space_id, "posthog", "work", None)
+        .clone_server(space_id, "posthog", "work", None, None)
         .await
         .unwrap();
     fixture
         .service
-        .clone_server(space_id, "posthog", "personal", None)
+        .clone_server(space_id, "posthog", "personal", None, None)
         .await
         .unwrap();
 

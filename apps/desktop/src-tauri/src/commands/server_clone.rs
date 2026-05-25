@@ -7,6 +7,10 @@ use tauri::State;
 use tokio::sync::RwLock;
 
 /// Clone an installed server into a new suffixed manual-entry install in the same space.
+///
+/// `display_name` (optional) is stored as `display_name_override` so the user-supplied
+/// label survives later definition refreshes (e.g. user-config sync). When omitted, the
+/// auto `"Source (suffix)"` label on the cached definition is used as fallback.
 #[tauri::command]
 pub async fn clone_server(
     app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
@@ -14,6 +18,7 @@ pub async fn clone_server(
     source_server_id: String,
     suffix: String,
     alias: Option<String>,
+    display_name: Option<String>,
 ) -> Result<InstalledServer, String> {
     let service_lock = app_service.read().await;
     let service = service_lock
@@ -23,7 +28,13 @@ pub async fn clone_server(
     let space_uuid = uuid::Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
 
     service
-        .clone_server(space_uuid, &source_server_id, &suffix, alias.as_deref())
+        .clone_server(
+            space_uuid,
+            &source_server_id,
+            &suffix,
+            alias.as_deref(),
+            display_name.as_deref(),
+        )
         .await
         .map_err(|e| e.to_string())
 }

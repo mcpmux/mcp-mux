@@ -118,6 +118,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "installed_server_cloned_from",
         sql: include_str!("migrations/017_installed_server_cloned_from.sql"),
     },
+    Migration {
+        version: 18,
+        name: "installed_server_display_name_override",
+        sql: include_str!("migrations/018_installed_server_display_name_override.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

@@ -15,18 +15,24 @@ export interface ClonedInstalledServer extends InstalledServerState {
 
 /**
  * Clone an installed server into a new suffixed manual-entry install in the same space.
+ *
+ * `displayName` is optional; when set, it is stored as the user-supplied display label
+ * (`display_name_override`) and survives later definition refreshes. When omitted, the
+ * UI falls back to the auto `"Source (suffix)"` cached definition name.
  */
 export async function cloneServer(
   spaceId: string,
   sourceServerId: string,
   suffix: string,
-  alias?: string
+  alias?: string,
+  displayName?: string
 ): Promise<ClonedInstalledServer> {
   return invoke<ClonedInstalledServer>('clone_server', {
     spaceId,
     sourceServerId,
     suffix,
     alias: alias ?? null,
+    displayName: displayName ?? null,
   });
 }
 
@@ -48,10 +54,7 @@ export async function isCloneIdAvailable(
 /**
  * Suggest the first available default suffix for cloning a server.
  */
-export async function suggestCloneSuffix(
-  spaceId: string,
-  sourceServerId: string
-): Promise<string> {
+export async function suggestCloneSuffix(spaceId: string, sourceServerId: string): Promise<string> {
   return invoke<string>('suggest_clone_suffix', {
     spaceId,
     sourceServerId,

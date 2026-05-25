@@ -10,6 +10,8 @@ import {
 export interface ServerActionMenuProps {
   serverId: string;
   serverName: string;
+  /** Whether the server has credential / config inputs. Servers with no inputs still show
+   *  Configure so the display name can be edited. */
   hasInputs: boolean;
   isOAuth: boolean;
   isEnabled: boolean;
@@ -58,9 +60,11 @@ export function ServerActionMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48 py-1 p-1">
-        {hasInputs && (
-          <DropdownMenuAction icon={Settings} label="Configure" onSelect={onConfigure} />
-        )}
+        <DropdownMenuAction
+          icon={Settings}
+          label={hasInputs ? 'Configure' : 'Settings'}
+          onSelect={onConfigure}
+        />
         {isEnabled && (
           <DropdownMenuAction icon={RefreshCw} label="Refresh" onSelect={onRefresh} />
         )}

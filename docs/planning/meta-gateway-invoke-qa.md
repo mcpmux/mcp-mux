@@ -29,7 +29,7 @@ After any Surface change: **Cursor → MCP → Reload tools**.
 
 **Tester:** Cursor agent (Composer)  
 **Date:** May 25, 2026  
-**McpMux version / commit:** `feat/meta-gateway-invoke` @ `433e7bd` (PR [#155](https://github.com/mcpmux/mcp-mux/pull/155))
+**McpMux version / commit:** `feat/meta-gateway-invoke` @ `5508c5e` (PR [#155](https://github.com/mcpmux/mcp-mux/pull/155))
 
 ---
 
@@ -291,7 +291,7 @@ Rules: McpMux meta tools only, read schemas before invoke, note truncation if an
 ## Red flags (stop and file a bug)
 
 - [ ] Backend tools (`github_*`, etc.) appear in `tools/list` without surfacing
-- [ ] Agent can call backend tools directly (bypassing `mcpmux_invoke_tool`)
+- [ ] Non-surfaced backend tools callable directly (bypassing `mcpmux_invoke_tool`) — surfaced one-hop is expected
 - [ ] Enable server expands `tools/list` beyond meta + surfaced
 - [ ] Search returns tools from inactive or unbound servers
 - [ ] Invoke succeeds for tools outside FeatureSet ACL

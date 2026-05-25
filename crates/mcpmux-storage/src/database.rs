@@ -123,6 +123,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "installed_server_display_name_override",
         sql: include_str!("migrations/018_installed_server_display_name_override.sql"),
     },
+    Migration {
+        version: 19,
+        name: "feature_set_member_surfaced",
+        sql: include_str!("migrations/019_feature_set_member_surfaced.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

@@ -77,7 +77,7 @@ Lightweight and cross-platform — built in Rust with Tauri 2, McpMux uses minim
 }
 ```
 
-**3.** Done. Every tool from every server is available in every client, right now.
+**3.** Done. Connected clients see a small fixed meta-tool surface (~12 `mcpmux_*` tools). Backend tools are discovered via **`mcpmux_search_tools`** → **`mcpmux_get_tool_schema`** → **`mcpmux_invoke_tool`**, keeping context windows lean. Optionally surface individual hot-path tools into `tools/list` per FeatureSet.
 
 McpMux routes calls to the right server, refreshes OAuth tokens automatically, and keeps credentials encrypted in your OS keychain — you never think about it again.
 
@@ -109,28 +109,33 @@ Create isolated Spaces — each with their own servers, credentials, and permiss
 
 ### Control What Each Client Can Do
 
-Not every AI client should have the same power. Create Feature Sets — permission bundles that control exactly which tools, prompts, and resources a client can access. Build a "Read Only" set for cautious workflows, a "React Development" set with just GitHub and Filesystem, or a "Full Stack Dev" set with everything. Assign them per-client so each tool only goes where you want it.
+Not every AI client should have the same power. Create Feature Sets — permission bundles that control exactly which tools a client can **invoke** (search + invoke ACL), plus optional per-tool **Surface in client** promotion for one-hop hot paths. Build a "Read Only" set for cautious workflows, a "React Development" set with just GitHub and Filesystem, or a "Full Stack Dev" set with everything. Assign them per-client so each tool only goes where you want it.
 
 ![Feature Sets — granular per-server tool selection](docs/screenshots/featureset-detail.png)
 
 ### Self-Management Meta Tools (mcpmux_*)
 
-Routing everything through one gateway endpoint means connected AI clients can see every backend tool at session start — even when the project only needs a handful. Workspace bindings pin stable per-folder toolsets, but they do not cover one-off needs ("enable Firebase for the next 15 minutes") or discovery-driven workflows where the LLM picks servers as it goes.
+Connected AI clients see a fixed ~12-tool meta surface instead of every backend tool definition. FeatureSets define what is **invokable**; optional **surfaced** tools (0–N per set) can be promoted into `tools/list` for one-hop hot paths. Workspace bindings pin stable per-folder toolsets; session enable/disable gates server activity without bloating context.
 
-McpMux exposes a built-in `mcpmux_*` tool namespace so the LLM can introspect and reshape its own tool surface mid-conversation:
+McpMux exposes a built-in `mcpmux_*` tool namespace for search → schema → invoke workflows:
 
 1. Call **`mcpmux_list_servers`** — server-level manifest with per-server status: `enabled_via_binding`, `enabled_via_session`, `disabled_via_session`, or `inactive`.
-2. Call **`mcpmux_enable_server`** or **`mcpmux_disable_server`** — toggle servers on or off. The gateway pushes `tools/list_changed` so the tool list refreshes without reconnecting.
-3. Use **`scope: "session"`** (default) for ephemeral overrides that die with the MCP session, or **`scope: "workspace"`** to persistently add/remove a server from the workspace binding (workspace writes always require approval).
+2. Call **`mcpmux_enable_server`** or **`mcpmux_disable_server`** — toggle servers on or off for the session or workspace.
+3. Call **`mcpmux_search_tools`** — find invokable tools by query (respects FeatureSet ACL).
+4. Call **`mcpmux_get_tool_schema`** — load parameter schemas before invoking.
+5. Call **`mcpmux_invoke_tool`** — invoke any permitted backend tool through one entry point.
 
 | Tool | Type | Purpose |
 | ---- | ---- | ------- |
-| `mcpmux_list_all_tools` | read | Full tool roster in the resolved Space |
+| `mcpmux_list_all_tools` | read | Full tool roster in the resolved Space (diagnostic) |
 | `mcpmux_list_feature_sets` | read | FeatureSets available in the resolved Space |
 | `mcpmux_list_servers` | read | Server-level manifest with status |
+| `mcpmux_search_tools` | read | Search invokable tools with optional schema detail |
+| `mcpmux_get_tool_schema` | read | Load input schemas before invoke |
+| `mcpmux_invoke_tool` | read | Invoke a backend tool by server_id + tool name |
 | `mcpmux_enable_server` | write | Enable a server (session or workspace scope) |
 | `mcpmux_disable_server` | write | Disable a server (session or workspace scope) |
-| `mcpmux_create_feature_set` | write | Create a custom FeatureSet |
+| `mcpmux_create_feature_set` | write | Create a custom FeatureSet (optional `surfaced_tools[]`) |
 | `mcpmux_bind_current_workspace` | write | Bind the session's workspace root to FeatureSets |
 
 In the desktop app: **Settings → Self-management tools** toggles the whole namespace and optional approval for session-scope overrides. **Workspaces → live folder inspector → Active session overrides** shows per-session enabled/disabled servers and lets you clear overrides with one click.

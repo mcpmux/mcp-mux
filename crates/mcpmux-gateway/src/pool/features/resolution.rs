@@ -163,6 +163,48 @@ impl FeatureResolutionService {
         Ok(result)
     }
 
+    /// Collect feature IDs marked `surfaced: true` across the given FeatureSets.
+    pub async fn resolve_surfaced_feature_ids(
+        &self,
+        feature_set_ids: &[String],
+    ) -> Result<HashSet<String>> {
+        let mut surfaced = HashSet::new();
+        for fs_id in feature_set_ids {
+            let Some(feature_set) = self.feature_set_repo.get_with_members(fs_id).await? else {
+                continue;
+            };
+            self.collect_surfaced_members(&feature_set, &mut surfaced)
+                .await?;
+        }
+        Ok(surfaced)
+    }
+
+    async fn collect_surfaced_members(
+        &self,
+        feature_set: &FeatureSet,
+        surfaced: &mut HashSet<String>,
+    ) -> Result<()> {
+        for member in &feature_set.members {
+            match member.member_type {
+                MemberType::Feature => {
+                    if member.mode == MemberMode::Include && member.surfaced {
+                        surfaced.insert(member.member_id.clone());
+                    }
+                }
+                MemberType::FeatureSet => {
+                    if let Some(nested_fs) = self
+                        .feature_set_repo
+                        .get_with_members(&member.member_id)
+                        .await?
+                    {
+                        Box::pin(self.collect_surfaced_members(&nested_fs, surfaced)).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn resolve_members(
         &self,
         feature_set: &FeatureSet,

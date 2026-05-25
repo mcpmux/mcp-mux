@@ -1036,6 +1036,7 @@ async fn github_only_fs(f: &Fixture) -> String {
         member_type: MemberType::Feature,
         member_id: f.github_tool_id.to_string(),
         mode: MemberMode::Include,
+        surfaced: false,
     });
     let id = fs.id.clone();
     f.feature_set_repo.create(&fs).await.unwrap();

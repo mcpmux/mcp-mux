@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use mcpmux_core::{
-    normalize_workspace_root, DomainEvent, FeatureType, MemberMode, WorkspaceBinding,
+    normalize_workspace_root, DomainEvent, FeatureType, WorkspaceBinding,
 };
 use rmcp::model::{CallToolResult, Content};
 use serde_json::{json, Value};
@@ -823,7 +823,8 @@ impl MetaTool for CreateFeatureSetTool {
     fn description(&self) -> &'static str {
         "Create a new custom FeatureSet in the caller's resolved Space from \
          an explicit list of qualified tool names (e.g. ['github_create_issue', \
-         'firebase_deploy']). Returns the new FS id. To make a workspace \
+         'firebase_deploy']). Optional surfaced_tools promotes a subset into \
+         client tools/list. Returns the new FS id. To make a workspace \
          actually route through this FeatureSet, follow up with \
          `mcpmux_bind_current_workspace`."
     }
@@ -838,6 +839,11 @@ impl MetaTool for CreateFeatureSetTool {
                 "tool_qualified_names": {
                     "type": "array",
                     "items": { "type": "string" }
+                },
+                "surfaced_tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional subset of tool_qualified_names to promote into client tools/list"
                 }
             }
         })
@@ -874,6 +880,17 @@ impl MetaTool for CreateFeatureSetTool {
                 "tool_qualified_names must contain at least one entry".into(),
             ));
         }
+
+        let surfaced_names: HashSet<String> = call
+            .args
+            .get("surfaced_tools")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let space_id = caller_space_id(&call).await?;
 
@@ -916,17 +933,24 @@ impl MetaTool for CreateFeatureSetTool {
                 let mut fs =
                     mcpmux_core::FeatureSet::new_custom(&name_for_closure, space_id.to_string());
                 fs.description = description_for_closure;
-                fs_repo.create(&fs).await?;
                 for feature in &matched {
-                    fs_repo
-                        .add_feature_member(&fs.id, &feature.id.to_string(), MemberMode::Include)
-                        .await?;
+                    let mut member = mcpmux_core::FeatureSetMember::include_feature(
+                        &fs.id,
+                        &feature.id.to_string(),
+                    );
+                    if surfaced_names.contains(&feature.qualified_name()) {
+                        member.surfaced = true;
+                    }
+                    fs.members.push(member);
                 }
+                fs_repo.create(&fs).await?;
+                let surfaced_count = fs.members.iter().filter(|m| m.surfaced).count();
                 info!(fs_id = %fs.id, name = %name_for_closure, "[meta_tools] create_feature_set applied");
                 Ok(text_result(json!({
                     "ok": true,
                     "feature_set_id": fs.id,
                     "tool_count": matched.len(),
+                    "surfaced_count": surfaced_count,
                 })))
             },
         )

@@ -105,6 +105,7 @@ impl TestContext {
                 member_type: MemberType::Feature,
                 member_id: feature.id.to_string(),
                 mode: MemberMode::Include,
+                surfaced: false,
             });
         }
         fs
@@ -129,6 +130,7 @@ impl TestContext {
                 member_type: MemberType::Feature,
                 member_id: feature.id.to_string(),
                 mode: MemberMode::Include,
+                surfaced: false,
             });
         }
         fs
@@ -188,6 +190,7 @@ async fn test_list_tools_with_restricted_grant() {
         member_id: tool_a_id.to_string(),
         member_type: MemberType::Feature,
         mode: MemberMode::Include,
+        surfaced: false,
     });
     let custom_fs_id = ctx.add_feature_set(custom_fs).await;
 
@@ -512,6 +515,7 @@ async fn test_features_dont_leak_between_spaces() {
         member_type: MemberType::Feature,
         member_id: work_tool.id.to_string(),
         mode: MemberMode::Include,
+        surfaced: false,
     });
     let work_all_id = work_all.id.clone();
     feature_set_repo.create(&work_all).await.unwrap();

@@ -638,9 +638,10 @@ export function SettingsPage() {
             Self-management tools (mcpmux_*)
           </CardTitle>
           <CardDescription>
-            When enabled, connected MCP clients see a small built-in toolset that lets
-            LLMs introspect and — with your approval — reshape the FeatureSet they see.
-            Writes always trigger a native approval dialog; reads are silent.
+            When enabled, connected MCP clients see a fixed meta-tool surface (~12 tools)
+            for search → schema → invoke workflows. FeatureSets control what is invokable;
+            optional surfaced tools can appear directly in tools/list. Writes always trigger
+            a native approval dialog; reads are silent.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -650,9 +651,9 @@ export function SettingsPage() {
               <div>
                 <label className="text-sm font-medium">Advertise self-management tools</label>
                 <p className="text-xs text-[rgb(var(--muted))] mt-1">
-                  Shows <code className="font-mono">mcpmux_list_all_tools</code>,&nbsp;
-                  <code className="font-mono">mcpmux_pin_this_session</code>, and 6 others to
-                  every connected MCP client. Turn off to hide the whole namespace.
+                  Shows <code className="font-mono">mcpmux_search_tools</code>,&nbsp;
+                  <code className="font-mono">mcpmux_invoke_tool</code>, and other meta tools
+                  to every connected MCP client. Turn off to hide the whole namespace.
                 </p>
               </div>
             </div>

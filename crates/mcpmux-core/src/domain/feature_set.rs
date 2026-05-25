@@ -119,6 +119,9 @@ pub struct FeatureSetMember {
     pub member_id: String,
     /// Include or exclude
     pub mode: MemberMode,
+    /// When true on an included tool member, promote into client `tools/list`.
+    #[serde(default)]
+    pub surfaced: bool,
 }
 
 impl FeatureSetMember {
@@ -130,6 +133,7 @@ impl FeatureSetMember {
             member_type: MemberType::Feature,
             member_id: feature_id.to_string(),
             mode: MemberMode::Include,
+            surfaced: false,
         }
     }
 
@@ -141,6 +145,7 @@ impl FeatureSetMember {
             member_type: MemberType::Feature,
             member_id: feature_id.to_string(),
             mode: MemberMode::Exclude,
+            surfaced: false,
         }
     }
 
@@ -152,6 +157,7 @@ impl FeatureSetMember {
             member_type: MemberType::FeatureSet,
             member_id: included_featureset_id.to_string(),
             mode: MemberMode::Include,
+            surfaced: false,
         }
     }
 }

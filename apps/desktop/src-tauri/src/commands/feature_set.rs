@@ -22,6 +22,7 @@ pub struct FeatureSetMemberResponse {
     pub member_type: String,
     pub member_id: String,
     pub mode: String,
+    pub surfaced: bool,
 }
 
 impl From<&FeatureSetMember> for FeatureSetMemberResponse {
@@ -32,6 +33,7 @@ impl From<&FeatureSetMember> for FeatureSetMemberResponse {
             member_type: m.member_type.as_str().to_string(),
             member_id: m.member_id.clone(),
             mode: m.mode.as_str().to_string(),
+            surfaced: m.surfaced,
         }
     }
 }
@@ -92,6 +94,7 @@ pub struct AddMemberInput {
     pub member_type: String, // "feature" or "feature_set"
     pub member_id: String,
     pub mode: Option<String>, // "include" or "exclude", defaults to "include"
+    pub surfaced: Option<bool>,
 }
 
 /// List all feature sets.
@@ -368,6 +371,7 @@ pub async fn add_feature_set_member(
         member_type,
         member_id: input.member_id,
         mode,
+        surfaced: input.surfaced.unwrap_or(false),
     };
 
     feature_set.members.push(member);
@@ -492,6 +496,7 @@ pub async fn set_feature_set_members(
                 member_type,
                 member_id: input.member_id,
                 mode,
+                surfaced: input.surfaced.unwrap_or(false),
             }
         })
         .collect();

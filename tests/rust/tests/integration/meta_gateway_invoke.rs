@@ -30,6 +30,8 @@ struct Fixture {
     registry: Arc<MetaToolRegistry>,
     feature_service: Arc<FeatureService>,
     session_overrides: Arc<SessionOverrideRegistry>,
+    session_roots: Arc<SessionRootsRegistry>,
+    inbound_client_repo: Arc<InboundClientRepository>,
     server_feature_repo: Arc<dyn ServerFeatureRepository>,
     feature_set_repo: Arc<dyn FeatureSetRepository>,
     space_id: Uuid,
@@ -89,6 +91,7 @@ impl Fixture {
             member_type: MemberType::Feature,
             member_id: list_issues.id.to_string(),
             mode: MemberMode::Include,
+            surfaced: false,
         });
         feature_set_repo.create(&grant_all).await.unwrap();
 
@@ -125,7 +128,7 @@ impl Fixture {
             resolver,
             feature_service.clone(),
             None,
-            session_roots,
+            session_roots.clone(),
             session_overrides.clone(),
             broker,
             tx,
@@ -136,12 +139,28 @@ impl Fixture {
             registry,
             feature_service,
             session_overrides,
+            session_roots,
+            inbound_client_repo,
             server_feature_repo,
             feature_set_repo,
             space_id,
             client_id,
             session_id,
         }
+    }
+
+    /// Grant a FeatureSet to the fixture client (Tier-2 resolver path).
+    async fn grant_feature_set(&self, feature_set_id: &str) {
+        self.inbound_client_repo
+            .grant_feature_set(
+                &self.client_id,
+                &self.space_id.to_string(),
+                feature_set_id,
+            )
+            .await
+            .unwrap();
+        self.session_roots
+            .set_roots_capable(&self.session_id, false);
     }
 
     fn result_json(result: &rmcp::model::CallToolResult) -> Value {
@@ -168,7 +187,7 @@ impl Fixture {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn advertised_tools_empty_while_invokable_has_backend_tools() {
+async fn advertised_tools_empty_without_surfaced_members() {
     let f = Fixture::new().await;
     let fs_ids = vec![
         f.feature_set_repo
@@ -186,7 +205,7 @@ async fn advertised_tools_empty_while_invokable_has_backend_tools() {
         .get_advertised_tools_for_grants(&f.space_id.to_string(), &fs_ids, Some(&f.session_id))
         .await
         .unwrap();
-    assert!(advertised.is_empty(), "Phase A: no surfaced tools yet");
+    assert!(advertised.is_empty(), "no surfaced members by default");
 
     f.session_overrides.enable(&f.session_id, "github");
     let invokable = f
@@ -376,4 +395,101 @@ async fn invoke_result_filter_shapes_text_content_blocks() {
     assert_eq!(parsed.get("returned"), Some(&json!(10)));
     assert_eq!(parsed.get("total"), Some(&json!(80)));
     assert_eq!(parsed.get("truncated"), Some(&json!(true)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn partial_feature_set_binding_limits_search_and_invoke() {
+    let f = Fixture::new().await;
+
+    let mut create_issue = ServerFeature::tool(f.space_id, "github", "create_issue");
+    create_issue.description = Some("Create an issue".into());
+    create_issue.raw_json = Some(json!({
+        "name": "create_issue",
+        "description": "Create an issue",
+        "inputSchema": { "type": "object" }
+    }));
+    f.server_feature_repo.upsert(&create_issue).await.unwrap();
+
+    let list_issues = f
+        .server_feature_repo
+        .list_for_space(&f.space_id.to_string())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|feat| feat.feature_name == "list_issues")
+        .unwrap();
+
+    let mut partial_fs = FeatureSet::new_custom("Partial GitHub", f.space_id.to_string());
+    partial_fs.members.push(FeatureSetMember {
+        id: Uuid::new_v4().to_string(),
+        feature_set_id: partial_fs.id.clone(),
+        member_type: MemberType::Feature,
+        member_id: list_issues.id.to_string(),
+        mode: MemberMode::Include,
+        surfaced: false,
+    });
+    f.feature_set_repo.create(&partial_fs).await.unwrap();
+    f.grant_feature_set(&partial_fs.id).await;
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let fs_ids = vec![partial_fs.id.clone()];
+    let invokable = f
+        .feature_service
+        .get_invokable_tools_for_grants(&f.space_id.to_string(), &fs_ids, Some(&f.session_id))
+        .await
+        .unwrap();
+    assert_eq!(invokable.len(), 1);
+    assert_eq!(invokable[0].feature_name, "list_issues");
+
+    let search = f
+        .call(
+            "mcpmux_search_tools",
+            json!({ "query": "issue", "server_id": "github" }),
+        )
+        .await;
+    let search_body = Fixture::result_json(&search);
+    let tools = search_body.get("tools").unwrap().as_array().unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(
+        tools[0].get("qualified_name"),
+        Some(&json!("github_list_issues"))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn surfaced_tool_appears_in_advertised_set() {
+    let f = Fixture::new().await;
+
+    let list_issues = f
+        .server_feature_repo
+        .list_for_space(&f.space_id.to_string())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|feat| feat.feature_name == "list_issues")
+        .unwrap();
+
+    let mut surfaced_fs = FeatureSet::new_custom("Surfaced GitHub", f.space_id.to_string());
+    surfaced_fs.members.push(FeatureSetMember {
+        id: Uuid::new_v4().to_string(),
+        feature_set_id: surfaced_fs.id.clone(),
+        member_type: MemberType::Feature,
+        member_id: list_issues.id.to_string(),
+        mode: MemberMode::Include,
+        surfaced: true,
+    });
+    f.feature_set_repo.create(&surfaced_fs).await.unwrap();
+
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let fs_ids = vec![surfaced_fs.id.clone()];
+    let advertised = f
+        .feature_service
+        .get_advertised_tools_for_grants(&f.space_id.to_string(), &fs_ids, Some(&f.session_id))
+        .await
+        .unwrap();
+
+    assert_eq!(advertised.len(), 1);
+    assert_eq!(advertised[0].feature_name, "list_issues");
+    assert_eq!(advertised[0].qualified_name(), "github_list_issues");
 }

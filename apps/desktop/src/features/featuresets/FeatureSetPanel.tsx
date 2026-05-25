@@ -18,6 +18,7 @@ import {
   Star,
   Shield,
   Save,
+  Monitor,
 } from 'lucide-react';
 import { Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
@@ -46,6 +47,7 @@ interface ServerGroup {
 export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpdate }: FeatureSetPanelProps) {
   const [allFeatures, setAllFeatures] = useState<ServerFeature[]>([]);
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<Set<string>>(new Set());
+  const [surfacedFeatureIds, setSurfacedFeatureIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -93,13 +95,18 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         
         // Seed from the set's include-mode feature members.
         const currentIds = new Set<string>();
+        const surfacedIds = new Set<string>();
         featureSet.members?.forEach((m) => {
           if (m.member_type === 'feature' && m.mode === 'include') {
             currentIds.add(m.member_id);
+            if (m.surfaced) {
+              surfacedIds.add(m.member_id);
+            }
           }
         });
 
         setSelectedFeatureIds(currentIds);
+        setSurfacedFeatureIds(surfacedIds);
         
         // Start with all servers collapsed
         setExpandedServers(new Set());
@@ -143,6 +150,28 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const toggleFeature = (featureId: string) => {
     if (!isConfigurable) return;
     setSelectedFeatureIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(featureId)) {
+        next.delete(featureId);
+        setSurfacedFeatureIds((surfaced) => {
+          const nextSurfaced = new Set(surfaced);
+          nextSurfaced.delete(featureId);
+          return nextSurfaced;
+        });
+      } else {
+        next.add(featureId);
+      }
+      return next;
+    });
+  };
+
+  /**
+   * Toggle whether an included tool is promoted into client tools/list.
+   */
+  const toggleSurfaced = (featureId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!isConfigurable || !selectedFeatureIds.has(featureId)) return;
+    setSurfacedFeatureIds((prev) => {
       const next = new Set(prev);
       if (next.has(featureId)) {
         next.delete(featureId);
@@ -230,6 +259,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         member_type: 'feature' as const,
         member_id: id,
         mode: 'include' as const,
+        surfaced: surfacedFeatureIds.has(id),
       }));
       
       await setFeatureSetMembers(featureSet.id, members);
@@ -613,42 +643,64 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                               <div className="bg-[rgb(var(--background))] border-t border-[rgb(var(--border))]">
                                 {group.features.map((feature) => {
                                   const isSelected = isFeatureSelected(feature.id, feature);
-                                  
+                                  const isSurfaced = surfacedFeatureIds.has(feature.id);
+                                  const isTool = feature.feature_type === 'tool';
+
                                   return (
-                                    <button
+                                    <div
                                       key={feature.id}
-                                      onClick={() => toggleFeature(feature.id)}
-                                      disabled={!isConfigurable}
-                                      className={`w-full flex items-center gap-3 px-4 py-2.5 pl-12 text-left border-b border-[rgb(var(--border))] last:border-b-0 transition-colors
-                                        ${isConfigurable ? 'hover:bg-[rgb(var(--surface-hover))]' : 'cursor-default'}
+                                      className={`flex items-center gap-2 border-b border-[rgb(var(--border))] last:border-b-0 transition-colors
                                         ${isSelected ? 'bg-primary-50 dark:bg-primary-900/10' : ''}`}
                                     >
-                                      <div className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                        isSelected 
-                                          ? 'bg-primary-500 border-primary-500' 
-                                          : 'border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--surface))]'
-                                      }`}>
-                                        {isSelected && <Check className="h-3 w-3 text-white" />}
-                                      </div>
-                                      
-                                      {getFeatureIcon(feature.feature_type)}
-                                      
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-medium text-sm truncate">
-                                            {feature.display_name || feature.feature_name}
-                                          </span>
-                                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${getTypeColor(feature.feature_type)}`}>
-                                            {feature.feature_type}
-                                          </span>
+                                      <button
+                                        onClick={() => toggleFeature(feature.id)}
+                                        disabled={!isConfigurable}
+                                        className={`flex-1 flex items-center gap-3 px-4 py-2.5 pl-12 text-left transition-colors
+                                          ${isConfigurable ? 'hover:bg-[rgb(var(--surface-hover))]' : 'cursor-default'}`}
+                                      >
+                                        <div className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                          isSelected
+                                            ? 'bg-primary-500 border-primary-500'
+                                            : 'border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--surface))]'
+                                        }`}>
+                                          {isSelected && <Check className="h-3 w-3 text-white" />}
                                         </div>
-                                        {feature.description && (
-                                          <p className="text-xs text-[rgb(var(--muted))] mt-0.5 line-clamp-1">
-                                            {feature.description}
-                                          </p>
-                                        )}
-                                      </div>
-                                    </button>
+
+                                        {getFeatureIcon(feature.feature_type)}
+
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-medium text-sm truncate">
+                                              {feature.display_name || feature.feature_name}
+                                            </span>
+                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${getTypeColor(feature.feature_type)}`}>
+                                              {feature.feature_type}
+                                            </span>
+                                          </div>
+                                          {feature.description && (
+                                            <p className="text-xs text-[rgb(var(--muted))] mt-0.5 line-clamp-1">
+                                              {feature.description}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </button>
+
+                                      {isConfigurable && isTool && isSelected && (
+                                        <button
+                                          type="button"
+                                          onClick={(event) => toggleSurfaced(feature.id, event)}
+                                          className={`mr-3 flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors flex-shrink-0
+                                            ${isSurfaced
+                                              ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                                              : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))]'}`}
+                                          title="Surface in client tools/list"
+                                          data-testid={`surface-toggle-${feature.id}`}
+                                        >
+                                          <Monitor className="h-3.5 w-3.5" />
+                                          Surface
+                                        </button>
+                                      )}
+                                    </div>
                                   );
                                 })}
                               </div>

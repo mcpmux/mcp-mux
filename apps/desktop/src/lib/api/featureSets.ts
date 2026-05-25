@@ -45,6 +45,7 @@ export interface FeatureSetMember {
   member_type: MemberType;
   member_id: string;
   mode: MemberMode;
+  surfaced?: boolean;
 }
 
 /**
@@ -89,6 +90,7 @@ export interface AddMemberInput {
   member_type: MemberType;
   member_id: string;
   mode?: MemberMode;
+  surfaced?: boolean;
 }
 
 /**

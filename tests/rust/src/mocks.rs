@@ -439,6 +439,7 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             member_type: MemberType::Feature,
             member_id: feature_id.to_string(),
             mode,
+            surfaced: false,
         };
         self.members
             .write()

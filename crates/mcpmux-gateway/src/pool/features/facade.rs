@@ -107,21 +107,27 @@ impl FeatureService {
     }
 
     /// Tools promoted into client `tools/list` (surfaced backend tools only).
-    ///
-    /// Phase C adds per-member `surfaced: true`; until then this returns an
-    /// empty list so clients see meta tools only.
     pub async fn get_advertised_tools_for_grants(
         &self,
         space_id: &str,
         feature_set_ids: &[String],
         session_id: Option<&str>,
     ) -> Result<Vec<ServerFeature>> {
+        if feature_set_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let invokable = self
             .get_invokable_tools_for_grants(space_id, feature_set_ids, session_id)
             .await?;
+        let surfaced_ids = self
+            .resolution
+            .resolve_surfaced_feature_ids(feature_set_ids)
+            .await?;
+
         Ok(invokable
             .into_iter()
-            .filter(|_| false) // Phase C: filter surfaced members
+            .filter(|f| surfaced_ids.contains(&f.id.to_string()))
             .collect())
     }
 
@@ -192,14 +198,25 @@ impl FeatureService {
             return Ok(binding_features);
         }
 
-        let mut binding_servers: HashSet<String> = binding_features
+        // Bound FeatureSets: member filter is authoritative — session overrides
+        // only gate server activity, they do not expand to all server tools.
+        if !feature_set_ids.is_empty() {
+            return Ok(binding_features
+                .into_iter()
+                .filter(|f| !disabled.contains(&f.server_id))
+                .collect());
+        }
+
+        // Unbound session (no FS): session-enabled servers expose all tools so
+        // meta tools can bootstrap before bind/grant.
+        let mut active_servers: HashSet<String> = binding_features
             .iter()
             .map(|f| f.server_id.clone())
             .collect();
-        binding_servers.extend(enabled.iter().cloned());
-        binding_servers.retain(|server_id| !disabled.contains(server_id));
+        active_servers.extend(enabled.iter().cloned());
+        active_servers.retain(|server_id| !disabled.contains(server_id));
 
-        if binding_servers.is_empty() {
+        if active_servers.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -210,7 +227,7 @@ impl FeatureService {
 
         Ok(all_features
             .into_iter()
-            .filter(|f| f.is_available && binding_servers.contains(&f.server_id))
+            .filter(|f| f.is_available && active_servers.contains(&f.server_id))
             .collect())
     }
 

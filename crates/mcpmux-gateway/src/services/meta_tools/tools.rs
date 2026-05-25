@@ -52,7 +52,7 @@ pub(crate) fn text_result(v: Value) -> CallToolResult {
 /// to them, and prevents an LLM in workspace A from mutating FSes in
 /// workspace B just because both sit under the same default-Space-flagged
 /// row in the DB.
-async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError> {
+pub(crate) async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError> {
     let resolved = call
         .ctx
         .resolver
@@ -69,7 +69,9 @@ async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
 }
 
 /// Full resolver output for the caller — space + binding FS ids + source.
-async fn caller_resolution(call: &MetaToolCall<'_>) -> Result<ResolvedFeatureSet, MetaToolError> {
+pub(crate) async fn caller_resolution(
+    call: &MetaToolCall<'_>,
+) -> Result<ResolvedFeatureSet, MetaToolError> {
     call.ctx
         .resolver
         .resolve(call.session_id, Some(call.client_id))
@@ -115,11 +117,20 @@ impl MetaTool for ListAllToolsTool {
     }
 
     fn input_schema(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": {
+                "server_id": {
+                    "type": "string",
+                    "description": "Optional filter to one server id"
+                }
+            }
+        })
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
         let space_id = caller_space_id(&call).await?;
+        let server_filter = call.args.get("server_id").and_then(|v| v.as_str());
         let features = call
             .ctx
             .server_feature_repo
@@ -128,6 +139,7 @@ impl MetaTool for ListAllToolsTool {
         let tools: Vec<_> = features
             .iter()
             .filter(|f| f.feature_type == FeatureType::Tool)
+            .filter(|f| server_filter.is_none_or(|sid| f.server_id == sid))
             .map(|f| {
                 json!({
                     "server_id": f.server_id,
@@ -328,6 +340,184 @@ impl MetaTool for ListServersTool {
         });
 
         Ok(text_result(json!({ "servers": servers })))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mcpmux_search_tools — read
+// ---------------------------------------------------------------------------
+
+pub struct SearchToolsTool;
+
+#[async_trait]
+impl MetaTool for SearchToolsTool {
+    fn name(&self) -> &'static str {
+        "mcpmux_search_tools"
+    }
+
+    fn description(&self) -> &'static str {
+        "Search invokable backend tools in the caller's resolved Space. \
+         Supports query substring match, optional server_id filter, \
+         detail_level (name | description | schema), and pagination."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" },
+                "server_id": { "type": "string" },
+                "detail_level": {
+                    "type": "string",
+                    "enum": ["name", "description", "schema"],
+                    "default": "description"
+                },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+                "cursor": { "type": "string" }
+            }
+        })
+    }
+
+    async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
+        let resolved = caller_resolution(&call).await?;
+        let space_id = caller_space_id(&call).await?;
+
+        let detail_level = call
+            .args
+            .get("detail_level")
+            .and_then(|v| v.as_str())
+            .and_then(crate::services::tool_discovery::DetailLevel::parse)
+            .unwrap_or(crate::services::tool_discovery::DetailLevel::Description);
+
+        let limit = call
+            .args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(20) as usize;
+
+        let invokable = call
+            .ctx
+            .feature_service
+            .get_invokable_tools_for_grants(
+                &space_id.to_string(),
+                &resolved.feature_set_ids,
+                call.session_id,
+            )
+            .await
+            .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+
+        let index = call
+            .ctx
+            .tool_discovery
+            .build_index(&space_id.to_string(), &invokable)
+            .await
+            .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+
+        let result = crate::services::tool_discovery::ToolDiscoveryService::search(
+            &index,
+            call.args.get("query").and_then(|v| v.as_str()),
+            call.args.get("server_id").and_then(|v| v.as_str()),
+            detail_level,
+            limit,
+            call.args.get("cursor").and_then(|v| v.as_str()),
+        );
+
+        Ok(text_result(json!({
+            "tools": result.tools,
+            "next_cursor": result.next_cursor,
+            "total": result.total,
+        })))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mcpmux_get_tool_schema — read
+// ---------------------------------------------------------------------------
+
+pub struct GetToolSchemaTool;
+
+#[async_trait]
+impl MetaTool for GetToolSchemaTool {
+    fn name(&self) -> &'static str {
+        "mcpmux_get_tool_schema"
+    }
+
+    fn description(&self) -> &'static str {
+        "Load input schemas for one or more qualified tool names before \
+         invoking via mcpmux_invoke_tool. Pass tools as a string or array. \
+         Set compact: true to omit descriptions."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["tools"],
+            "properties": {
+                "tools": {
+                    "oneOf": [
+                        { "type": "string" },
+                        { "type": "array", "items": { "type": "string" } }
+                    ]
+                },
+                "compact": { "type": "boolean", "default": false }
+            }
+        })
+    }
+
+    async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
+        let resolved = caller_resolution(&call).await?;
+        let space_id = caller_space_id(&call).await?;
+
+        let tool_names: Vec<String> = match call.args.get("tools") {
+            Some(Value::String(s)) => vec![s.clone()],
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+            _ => {
+                return Err(MetaToolError::InvalidArgument(
+                    "missing or invalid `tools` — expected string or string array".into(),
+                ));
+            }
+        };
+
+        if tool_names.is_empty() {
+            return Err(MetaToolError::InvalidArgument(
+                "`tools` must contain at least one qualified name".into(),
+            ));
+        }
+
+        let compact = call
+            .args
+            .get("compact")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let invokable = call
+            .ctx
+            .feature_service
+            .get_invokable_tools_for_grants(
+                &space_id.to_string(),
+                &resolved.feature_set_ids,
+                call.session_id,
+            )
+            .await
+            .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+
+        let index = call
+            .ctx
+            .tool_discovery
+            .build_index(&space_id.to_string(), &invokable)
+            .await
+            .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+
+        let schemas = crate::services::tool_discovery::ToolDiscoveryService::get_schemas(
+            &index,
+            &tool_names,
+            compact,
+        );
+
+        Ok(text_result(json!({ "schemas": schemas })))
     }
 }
 

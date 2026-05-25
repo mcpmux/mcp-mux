@@ -671,12 +671,12 @@ impl ServerHandler for McpMuxGatewayHandler {
             .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
-        // Get tools via FeatureService — using the *resolved* space.
+        // Get advertised tools (meta + surfaced only) for client tools/list.
         let tools = self
             .services
             .pool_services
             .feature_service
-            .get_tools_for_grants(
+            .get_advertised_tools_for_grants(
                 &space_id.to_string(),
                 &feature_set_ids,
                 session_id_owned.as_deref(),
@@ -784,6 +784,29 @@ impl ServerHandler for McpMuxGatewayHandler {
         let (space_id, feature_set_ids) = self
             .resolve_routing(session_id, &oauth_ctx.client_id)
             .await?;
+
+        // Hard cut: reject direct backend tool calls — agents must use mcpmux_invoke_tool.
+        let space_id_str = space_id.to_string();
+        if let Ok(Some((server_id, actual_tool_name))) = self
+            .services
+            .pool_services
+            .feature_service
+            .find_server_for_qualified_tool(&space_id_str, &params.name)
+            .await
+        {
+            let message = crate::pool::format_direct_call_redirect(
+                &params.name,
+                &server_id,
+                &actual_tool_name,
+            );
+            return Ok(CallToolResult::error(vec![Content::text(
+                serde_json::json!({
+                    "error": "use_invoke_tool",
+                    "message": message,
+                })
+                .to_string(),
+            )]));
+        }
 
         // Call tool via routing service (handles auth and routing)
         let tool_result = self

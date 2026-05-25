@@ -18,8 +18,10 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 use super::approval::ApprovalBroker;
-use crate::pool::FeatureService;
-use crate::services::{FeatureSetResolverService, SessionOverrideRegistry, SessionRootsRegistry};
+use crate::pool::{FeatureService, RoutingService};
+use crate::services::{
+    FeatureSetResolverService, SessionOverrideRegistry, SessionRootsRegistry, ToolDiscoveryService,
+};
 
 /// App-settings key that toggles the entire `mcpmux_*` namespace.
 /// Present + "false" → hidden; missing or anything else → enabled.
@@ -44,6 +46,9 @@ pub struct MetaToolContext {
     pub installed_server_repo: Arc<dyn InstalledServerRepository>,
     pub resolver: Arc<FeatureSetResolverService>,
     pub feature_service: Arc<FeatureService>,
+    /// Backend invoke path — required for `mcpmux_invoke_tool`.
+    pub routing_service: Option<Arc<RoutingService>>,
+    pub tool_discovery: Arc<ToolDiscoveryService>,
     pub session_roots: Arc<SessionRootsRegistry>,
     pub session_overrides: Arc<SessionOverrideRegistry>,
     pub approval_broker: Arc<ApprovalBroker>,

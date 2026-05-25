@@ -58,6 +58,45 @@ pub struct ToolCallResult {
 /// Default timeout for MCP tool calls (60 seconds)
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Actionable error when a server is not in the effective enable set.
+pub fn format_server_inactive_error(server_id: &str) -> String {
+    format!(
+        "server '{server_id}' is inactive → mcpmux_enable_server({{ \"server_id\": \"{server_id}\" }})"
+    )
+}
+
+/// Actionable error when invoke targets a tool outside the permission set.
+pub fn format_invoke_permission_denied(
+    qualified_name: &str,
+    server_id: &str,
+    tool_name: &str,
+    suggestions: &[String],
+) -> String {
+    if suggestions.is_empty() {
+        format!(
+            "tool '{qualified_name}' is not invokable with current grants (server_id='{server_id}', tool='{tool_name}')"
+        )
+    } else {
+        format!(
+            "tool '{qualified_name}' is not invokable — did you mean {}?",
+            suggestions.join(", ")
+        )
+    }
+}
+
+/// Redirect message for direct backend `call_tool` attempts.
+pub fn format_direct_call_redirect(
+    qualified_name: &str,
+    server_id: &str,
+    tool_name: &str,
+) -> String {
+    format!(
+        "Direct backend tool calls are not supported. Use mcpmux_invoke_tool instead: \
+         mcpmux_invoke_tool({{ \"server_id\": \"{server_id}\", \"tool\": \"{tool_name}\", \"args\": {{}} }}) \
+         (qualified name was '{qualified_name}')"
+    )
+}
+
 /// RoutingService dispatches requests to backend MCP servers
 pub struct RoutingService {
     feature_service: Arc<FeatureService>,
@@ -92,7 +131,7 @@ impl RoutingService {
         // Resolve feature sets to allowed features
         let allowed_features = self
             .feature_service
-            .get_tools_for_grants(&space_id_str, feature_set_ids, session_id)
+            .get_invokable_tools_for_grants(&space_id_str, feature_set_ids, session_id)
             .await?;
 
         // Filter to just tools
@@ -204,7 +243,7 @@ impl RoutingService {
         // 2. Check if the tool is allowed by grants (session overrides included)
         let allowed_features = self
             .feature_service
-            .get_tools_for_grants(&space_id_str, feature_set_ids, session_id)
+            .get_invokable_tools_for_grants(&space_id_str, feature_set_ids, session_id)
             .await?;
 
         info!(
@@ -240,10 +279,12 @@ impl RoutingService {
                 "[RoutingService] Tool '{}' NOT allowed. Looking for server_id='{}', feature_name='{}', is_available=true",
                 tool_name, server_id, actual_tool_name
             );
-            return Err(anyhow!(
-                "Tool '{}' is not allowed by the current grants",
-                tool_name
-            ));
+            return Err(anyhow!(format_invoke_permission_denied(
+                tool_name,
+                &server_id,
+                &actual_tool_name,
+                &[],
+            )));
         }
 
         info!("[RoutingService] Tool '{}' is ALLOWED", tool_name);

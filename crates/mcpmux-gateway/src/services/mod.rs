@@ -16,6 +16,7 @@ mod prefix_cache;
 mod session_overrides;
 mod session_roots;
 mod space_resolver;
+pub mod tool_discovery;
 
 pub use authorization::AuthorizationService;
 pub use client_metadata_service::ClientMetadataService;
@@ -31,3 +32,4 @@ pub use prefix_cache::PrefixCacheService;
 pub use session_overrides::{SessionOverrideEntry, SessionOverrideRegistry};
 pub use session_roots::SessionRootsRegistry;
 pub use space_resolver::SpaceResolverService;
+pub use tool_discovery::{DetailLevel, ToolDiscoveryService, ToolIndexEntry};

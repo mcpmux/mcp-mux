@@ -22,6 +22,7 @@
 
 pub mod approval;
 pub mod diff;
+mod invoke;
 mod registry;
 mod tools;
 mod workspace_server;
@@ -35,6 +36,8 @@ pub use registry::{
     MetaToolContext, MetaToolError, MetaToolRegistry, META_TOOLS_ENABLED_KEY,
     SESSION_OVERRIDES_REQUIRE_APPROVAL_KEY,
 };
+
+use crate::services::ToolDiscoveryService;
 
 /// Every built-in tool's name must start with this prefix so the handler
 /// can intercept it before routing to backend servers.
@@ -59,12 +62,15 @@ pub fn build_default_registry(
     installed_server_repo: std::sync::Arc<dyn mcpmux_core::InstalledServerRepository>,
     resolver: std::sync::Arc<crate::services::FeatureSetResolverService>,
     feature_service: std::sync::Arc<crate::pool::FeatureService>,
+    routing_service: Option<std::sync::Arc<crate::pool::RoutingService>>,
     session_roots: std::sync::Arc<crate::services::SessionRootsRegistry>,
     session_overrides: std::sync::Arc<crate::services::SessionOverrideRegistry>,
     approval_broker: std::sync::Arc<ApprovalBroker>,
     domain_event_tx: tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>,
     settings_repo: Option<std::sync::Arc<dyn mcpmux_core::AppSettingsRepository>>,
 ) -> std::sync::Arc<MetaToolRegistry> {
+    let tool_discovery =
+        std::sync::Arc::new(ToolDiscoveryService::new(server_feature_repo.clone()));
     let ctx = MetaToolContext {
         client_repo,
         space_repo,
@@ -74,6 +80,8 @@ pub fn build_default_registry(
         installed_server_repo,
         resolver,
         feature_service,
+        routing_service,
+        tool_discovery,
         session_roots,
         session_overrides,
         approval_broker,
@@ -86,6 +94,9 @@ pub fn build_default_registry(
     registry.register(Box::new(tools::ListAllToolsTool));
     registry.register(Box::new(tools::ListFeatureSetsTool));
     registry.register(Box::new(tools::ListServersTool));
+    registry.register(Box::new(tools::SearchToolsTool));
+    registry.register(Box::new(tools::GetToolSchemaTool));
+    registry.register(Box::new(invoke::InvokeToolTool));
     // Writes — gated by ApprovalBroker (or auto-allowed for session overrides).
     registry.register(Box::new(tools::EnableServerTool));
     registry.register(Box::new(tools::DisableServerTool));

@@ -42,7 +42,10 @@ pub use oauth::{
 // SOLID Services
 pub use connection::{ConnectionResult, ConnectionService};
 pub use features::{CachedFeatures, FeatureService};
-pub use routing::{RoutedPrompt, RoutedResource, RoutedTool, RoutingService};
+pub use routing::{
+    format_direct_call_redirect, format_invoke_permission_denied, format_server_inactive_error,
+    RoutedPrompt, RoutedResource, RoutedTool, RoutingService,
+};
 pub use service::{InstalledServerInfo, PoolService, PoolStats, ReconnectResult};
 pub use token::TokenService;
 pub use transport::{ResolvedTransport, Transport, TransportConnectResult, TransportFactory};

@@ -90,8 +90,8 @@ impl FeatureService {
             .await
     }
 
-    /// Resolve granted feature sets to tools, applying session server overrides.
-    pub async fn get_tools_for_grants(
+    /// Resolve granted feature sets to tools invokable via search/invoke ACL.
+    pub async fn get_invokable_tools_for_grants(
         &self,
         space_id: &str,
         feature_set_ids: &[String],
@@ -104,6 +104,36 @@ impl FeatureService {
             Some(FeatureType::Tool),
         )
         .await
+    }
+
+    /// Tools promoted into client `tools/list` (surfaced backend tools only).
+    ///
+    /// Phase C adds per-member `surfaced: true`; until then this returns an
+    /// empty list so clients see meta tools only.
+    pub async fn get_advertised_tools_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+        session_id: Option<&str>,
+    ) -> Result<Vec<ServerFeature>> {
+        let invokable = self
+            .get_invokable_tools_for_grants(space_id, feature_set_ids, session_id)
+            .await?;
+        Ok(invokable
+            .into_iter()
+            .filter(|_| false) // Phase C: filter surfaced members
+            .collect())
+    }
+
+    /// Resolve granted feature sets to tools, applying session server overrides.
+    pub async fn get_tools_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+        session_id: Option<&str>,
+    ) -> Result<Vec<ServerFeature>> {
+        self.get_invokable_tools_for_grants(space_id, feature_set_ids, session_id)
+            .await
     }
 
     /// Resolve granted feature sets to prompts, applying session server overrides.

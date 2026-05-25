@@ -2,9 +2,9 @@
 
 **Last Updated:** May 25, 2026
 **Status:** ✅ Phases A–C implemented and manually QA complete — ready to merge ([`meta-gateway-invoke-qa.md`](./meta-gateway-invoke-qa.md) **Ship**)
-**Branch:** `feat/meta-gateway-invoke`
-**Base branch:** `main`
-**Issue:** [#155](https://github.com/mcpmux/mcp-mux/pull/155)
+**Branch:** `feat/meta-gateway-invoke` (personal fork **integration tip** — see [`fork-integration.md`](./fork-integration.md))
+**Base branch:** `feat/dynamic-mcp-toggle-meta-tools` on fork; upstream contribution is topic-stacked, not `main`
+**Issue:** Fork-only; upstream megapr [#155](https://github.com/mcpmux/mcp-mux/pull/155) closed — use #154 stack for meta-tools upstream
 **Depends on:** [`dynamic-mcp-toggle-meta-tools.md`](./dynamic-mcp-toggle-meta-tools.md) (session overrides + meta-tool registry); benefits from workspace bindings / FeatureSets from PR #151
 **Supersedes:** Token-budget approach in [`tool-level-session-pin.md`](./tool-level-session-pin.md) — pin filtered a bloated `tools/list`; this doc replaces that model with a fixed meta surface + invoke path. Session pin may return as an invoke ACL in Phase F (very optional, last).
 **Unblocks:** Agent-usable McpMux sessions at scale (240+ backend tools installed, ~12 tools in client context); homelab + multi-clone installs without context-window collapse

@@ -282,9 +282,9 @@ Rules: McpMux meta tools only, read schemas before invoke, note truncation if an
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| Completed without backend tool name guessing | ☐ | ☐ | |
-| Schema-first invoke pattern | ☐ | ☐ | |
-| Sensible output despite truncation | ☐ | ☐ | |
+| Completed without backend tool name guessing | ☑ | ☐ | search `"list issues"` → `github_list_issues`; no param guessing |
+| Schema-first invoke pattern | ☑ | ☐ | `mcpmux_get_tool_schema` before invoke (`owner`, `repo`, `state`, `perPage`) |
+| Sensible output despite truncation | ☑ | ☐ | 5 open issues; filter `max_rows: 3` → 3 titles + `{ returned: 3, total: 5, truncated: true }` |
 
 ---
 
@@ -307,7 +307,7 @@ Rules: McpMux meta tools only, read schemas before invoke, note truncation if an
 | Phase A — meta invoke core | ☑ Pass ☐ Fail |
 | Phase B — result shaping | ☑ Pass ☐ Fail |
 | Phase C — ACL + surfaced | ☑ Pass ☐ Fail ☐ Skipped |
-| Overall | ☐ Ship ☐ Block |
+| Overall | ☑ Ship ☐ Block |
 
 **Blockers / issues filed:**
 

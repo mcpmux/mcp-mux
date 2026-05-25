@@ -111,10 +111,11 @@ impl MetaTool for ListAllToolsTool {
     }
 
     fn description(&self) -> &'static str {
-        "List every tool installed in the caller's resolved Space, without \
-         the current FeatureSet filter applied. Use this to see what the \
-         workspace could expose before composing a custom FeatureSet. \
-         Returns an array of {server_id, qualified_name, description, available}."
+        "Operator/diagnostic: list every tool installed in the caller's resolved \
+         Space (ignores FeatureSet filter on the roster). Each entry includes \
+         server_available (seen on the connected server) and invokable (callable \
+         via mcpmux_invoke_tool with current grants). Agents should prefer \
+         mcpmux_search_tools for discovery — only invokable tools can be invoked."
     }
 
     fn input_schema(&self) -> Value {
@@ -130,8 +131,26 @@ impl MetaTool for ListAllToolsTool {
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
+        let resolved = caller_resolution(&call).await?;
         let space_id = caller_space_id(&call).await?;
         let server_filter = call.args.get("server_id").and_then(|v| v.as_str());
+
+        let invokable = call
+            .ctx
+            .feature_service
+            .get_invokable_tools_for_grants(
+                &space_id.to_string(),
+                &resolved.feature_set_ids,
+                call.session_id,
+            )
+            .await
+            .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+        let invokable_names: HashSet<String> = invokable
+            .iter()
+            .filter(|f| f.feature_type == FeatureType::Tool)
+            .map(|f| f.qualified_name())
+            .collect();
+
         let features = call
             .ctx
             .server_feature_repo
@@ -142,15 +161,26 @@ impl MetaTool for ListAllToolsTool {
             .filter(|f| f.feature_type == FeatureType::Tool)
             .filter(|f| server_filter.is_none_or(|sid| f.server_id == sid))
             .map(|f| {
+                let qualified_name = f.qualified_name();
                 json!({
                     "server_id": f.server_id,
-                    "qualified_name": f.qualified_name(),
+                    "qualified_name": qualified_name,
                     "description": f.description,
-                    "available": f.is_available,
+                    "server_available": f.is_available,
+                    "invokable": invokable_names.contains(&qualified_name),
                 })
             })
             .collect();
-        Ok(text_result(json!({ "tools": tools })))
+        let total_invokable = tools
+            .iter()
+            .filter(|t| t.get("invokable") == Some(&json!(true)))
+            .count();
+        Ok(text_result(json!({
+            "tools": tools,
+            "total_installed": tools.len(),
+            "total_invokable": total_invokable,
+            "hint": "Use mcpmux_search_tools for agent discovery. Only invokable tools can be invoked with current FeatureSet grants.",
+        })))
     }
 }
 
@@ -435,6 +465,47 @@ impl MetaTool for SearchToolsTool {
 // mcpmux_get_tool_schema — read
 // ---------------------------------------------------------------------------
 
+/// Parse the `tools` argument from `mcpmux_get_tool_schema` call args.
+///
+/// Accepts a qualified name string, a string array, or a JSON-encoded array
+/// string (common when agents double-serialize through MCP clients).
+fn parse_tool_schema_names(value: Option<&Value>) -> Result<Vec<String>, MetaToolError> {
+    let Some(value) = value else {
+        return Err(MetaToolError::InvalidArgument(
+            "missing or invalid `tools` — expected string or string array".into(),
+        ));
+    };
+
+    match value {
+        Value::String(s) => {
+            if let Ok(Value::Array(arr)) = serde_json::from_str(s) {
+                return names_from_json_array(&arr);
+            }
+            Ok(vec![s.clone()])
+        }
+        Value::Array(arr) => names_from_json_array(arr),
+        _ => Err(MetaToolError::InvalidArgument(
+            "missing or invalid `tools` — expected string or string array".into(),
+        )),
+    }
+}
+
+/// Collect non-empty qualified tool names from a JSON string array.
+fn names_from_json_array(arr: &[Value]) -> Result<Vec<String>, MetaToolError> {
+    let names: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(str::trim))
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if names.is_empty() {
+        return Err(MetaToolError::InvalidArgument(
+            "`tools` must contain at least one qualified name".into(),
+        ));
+    }
+    Ok(names)
+}
+
 pub struct GetToolSchemaTool;
 
 #[async_trait]
@@ -445,8 +516,10 @@ impl MetaTool for GetToolSchemaTool {
 
     fn description(&self) -> &'static str {
         "Load input schemas for one or more qualified tool names before \
-         invoking via mcpmux_invoke_tool. Pass tools as a string or array. \
-         Set compact: true to omit descriptions."
+         invoking via mcpmux_invoke_tool. Pass tools as a single qualified \
+         name string or a string array (e.g. [\"github_list_issues\"]). \
+         Set compact: true to omit descriptions. Tools must be invokable \
+         with current grants — use mcpmux_search_tools to discover names."
     }
 
     fn input_schema(&self) -> Value {
@@ -469,24 +542,7 @@ impl MetaTool for GetToolSchemaTool {
         let resolved = caller_resolution(&call).await?;
         let space_id = caller_space_id(&call).await?;
 
-        let tool_names: Vec<String> = match call.args.get("tools") {
-            Some(Value::String(s)) => vec![s.clone()],
-            Some(Value::Array(arr)) => arr
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect(),
-            _ => {
-                return Err(MetaToolError::InvalidArgument(
-                    "missing or invalid `tools` — expected string or string array".into(),
-                ));
-            }
-        };
-
-        if tool_names.is_empty() {
-            return Err(MetaToolError::InvalidArgument(
-                "`tools` must contain at least one qualified name".into(),
-            ));
-        }
+        let tool_names = parse_tool_schema_names(call.args.get("tools"))?;
 
         let compact = call
             .args
@@ -518,7 +574,32 @@ impl MetaTool for GetToolSchemaTool {
             compact,
         );
 
-        Ok(text_result(json!({ "schemas": schemas })))
+        let found_names: HashSet<String> = schemas
+            .iter()
+            .filter_map(|s| {
+                s.get("qualified_name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        let missing: Vec<&String> = tool_names
+            .iter()
+            .filter(|name| !found_names.contains(*name))
+            .collect();
+
+        if missing.is_empty() {
+            return Ok(text_result(json!({ "schemas": schemas })));
+        }
+
+        let missing_list: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
+        Ok(text_result(json!({
+            "schemas": schemas,
+            "missing": missing_list,
+            "message": format!(
+                "{} tool(s) not invokable or unknown with current grants → use mcpmux_search_tools to discover allowed names",
+                missing.len()
+            ),
+        })))
     }
 }
 

@@ -378,11 +378,11 @@ fn shape_array(items: Vec<Value>, filter: &InvokeResultFilter, data_key: &str) -
     let filtered_items = apply_fields_filter(items, filter);
 
     let Some(max_rows) = filter.max_rows else {
-        return Value::Array(filtered_items);
+        return enforce_byte_limit(Value::Array(filtered_items), filter);
     };
 
     if total <= max_rows {
-        return Value::Array(filtered_items);
+        return enforce_byte_limit(Value::Array(filtered_items), filter);
     }
 
     let sample_size = if filter.is_summary() {
@@ -660,6 +660,20 @@ mod tests {
         let filter = parse_invoke_filter(Some(&json!({ "max_rows": 3 }))).unwrap();
         assert_eq!(filter.max_rows, Some(3));
         assert_eq!(filter.max_bytes, None);
+    }
+
+    #[test]
+    fn max_bytes_only_truncates_top_level_json_array() {
+        let items: Vec<Value> = (0..50)
+            .map(|i| json!({ "id": i, "label": format!("row-{i}-padding") }))
+            .collect();
+        let filter = InvokeResultFilter {
+            max_bytes: Some(512),
+            ..Default::default()
+        };
+        let shaped = shape_json_value(Value::Array(items), &filter);
+        assert_eq!(shaped.get("truncated"), Some(&json!(true)));
+        assert!(shaped.get("total").and_then(|v| v.as_u64()).unwrap_or(0) > 512);
     }
 
     #[test]

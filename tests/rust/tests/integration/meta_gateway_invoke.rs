@@ -645,3 +645,156 @@ async fn direct_backend_call_gate_allows_surfaced_only() {
     assert!(is_surfaced("github_list_issues"));
     assert!(!is_surfaced("github_get_me"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_all_tools_marks_invokable_against_acl() {
+    let f = Fixture::new().await;
+
+    let list_issues = f
+        .server_feature_repo
+        .list_for_space(&f.space_id.to_string())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|feat| feat.feature_name == "list_issues")
+        .unwrap();
+
+    let mut create_issue = ServerFeature::tool(f.space_id, "github", "create_issue");
+    create_issue.description = Some("Create an issue".into());
+    f.server_feature_repo.upsert(&create_issue).await.unwrap();
+
+    let mut partial_fs = FeatureSet::new_custom("Partial GitHub", f.space_id.to_string());
+    partial_fs.members.push(FeatureSetMember {
+        id: Uuid::new_v4().to_string(),
+        feature_set_id: partial_fs.id.clone(),
+        member_type: MemberType::Feature,
+        member_id: list_issues.id.to_string(),
+        mode: MemberMode::Include,
+        surfaced: false,
+    });
+    f.feature_set_repo.create(&partial_fs).await.unwrap();
+    f.grant_feature_set(&partial_fs.id).await;
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let result = f
+        .call("mcpmux_list_all_tools", json!({ "server_id": "github" }))
+        .await;
+    let body = Fixture::result_json(&result);
+    assert_eq!(body.get("total_installed").and_then(|v| v.as_u64()), Some(2));
+    assert_eq!(body.get("total_invokable").and_then(|v| v.as_u64()), Some(1));
+
+    let tools = body.get("tools").unwrap().as_array().unwrap();
+    let list_row = tools
+        .iter()
+        .find(|t| t.get("qualified_name") == Some(&json!("github_list_issues")))
+        .expect("list_issues in catalog");
+    let create_row = tools
+        .iter()
+        .find(|t| t.get("qualified_name") == Some(&json!("github_create_issue")))
+        .expect("create_issue in catalog");
+    assert_eq!(list_row.get("invokable"), Some(&json!(true)));
+    assert_eq!(create_row.get("invokable"), Some(&json!(false)));
+    assert_eq!(list_row.get("server_available"), Some(&json!(true)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_tool_schema_accepts_string_array() {
+    let f = Fixture::new().await;
+    f.grant_github_feature_set().await;
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let result = f
+        .call(
+            "mcpmux_get_tool_schema",
+            json!({ "tools": ["github_list_issues"] }),
+        )
+        .await;
+    let body = Fixture::result_json(&result);
+    let schemas = body.get("schemas").unwrap().as_array().unwrap();
+    assert_eq!(schemas.len(), 1);
+    assert_eq!(
+        schemas[0].get("qualified_name"),
+        Some(&json!("github_list_issues"))
+    );
+    assert!(body.get("missing").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_tool_schema_accepts_json_encoded_array_string() {
+    let f = Fixture::new().await;
+    f.grant_github_feature_set().await;
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let result = f
+        .call(
+            "mcpmux_get_tool_schema",
+            json!({ "tools": "[\"github_list_issues\"]" }),
+        )
+        .await;
+    let body = Fixture::result_json(&result);
+    let schemas = body.get("schemas").unwrap().as_array().unwrap();
+    assert_eq!(schemas.len(), 1);
+    assert_eq!(
+        schemas[0].get("qualified_name"),
+        Some(&json!("github_list_issues"))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_tool_schema_reports_missing_tools() {
+    let f = Fixture::new().await;
+    f.grant_github_feature_set().await;
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let result = f
+        .call(
+            "mcpmux_get_tool_schema",
+            json!({ "tools": ["github_list_issues", "github_create_issue"] }),
+        )
+        .await;
+    let body = Fixture::result_json(&result);
+    let schemas = body.get("schemas").unwrap().as_array().unwrap();
+    assert_eq!(schemas.len(), 1);
+    let missing = body.get("missing").unwrap().as_array().unwrap();
+    assert_eq!(missing, &[json!("github_create_issue")]);
+    assert!(body.get("message").and_then(|m| m.as_str()).is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invoke_max_bytes_truncates_json_array_without_max_rows() {
+    let rows: Vec<Value> = (0..40)
+        .map(|i| json!({ "id": i, "label": format!("row-{i}-padding-value") }))
+        .collect();
+    let payload = json!({ "items": rows });
+    let backend_result = ToolCallResult {
+        content: vec![json!({
+            "type": "text",
+            "text": payload.to_string(),
+        })],
+        structured_content: None,
+        is_error: false,
+    };
+    let invoke_backend = CannedInvokeBackend::new()
+        .with_response("github_list_issues", backend_result)
+        .into_arc();
+
+    let f = Fixture::with_invoke_backend(Some(invoke_backend)).await;
+    f.grant_github_feature_set().await;
+    f.session_overrides.enable(&f.session_id, "github");
+
+    let result = f
+        .call(
+            "mcpmux_invoke_tool",
+            json!({
+                "server_id": "github",
+                "tool": "list_issues",
+                "args": { "owner": "mcpmux", "repo": "mcp-mux" },
+                "filter": { "max_bytes": 512 }
+            }),
+        )
+        .await;
+
+    assert!(!result.is_error.unwrap_or(true));
+    let body = Fixture::result_json(&result);
+    assert_eq!(body.get("truncated"), Some(&json!(true)));
+}

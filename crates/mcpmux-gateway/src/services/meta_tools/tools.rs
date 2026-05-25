@@ -18,6 +18,7 @@ use super::approval::{ApprovalPayload, ApprovalScope};
 use super::registry::{
     MetaTool, MetaToolCall, MetaToolError, SESSION_OVERRIDES_REQUIRE_APPROVAL_KEY,
 };
+use super::workspace_server::emit_workspace_binding_changed;
 use crate::services::ResolvedFeatureSet;
 
 /// Fire a `FeatureSetMembersChanged` event so MCPNotifier pushes a
@@ -1030,19 +1031,46 @@ impl MetaTool for BindCurrentWorkspaceTool {
             true,
             call.args.clone(),
             || async move {
-                let binding =
-                    WorkspaceBinding::new(normalized.clone(), space_id, fs_id.to_string());
-                binding_repo.create(&binding).await?;
-                info!(
-                    %space_id,
-                    workspace_root = %normalized,
-                    feature_set_id = %fs_id,
-                    "[meta_tools] bind_current_workspace applied",
-                );
+                let fs_id_str = fs_id.to_string();
+                let existing = binding_repo
+                    .list()
+                    .await?
+                    .into_iter()
+                    .find(|b| b.workspace_root == normalized);
+
+                let binding_id = if let Some(mut binding) = existing {
+                    binding.space_id = space_id;
+                    binding.feature_set_ids = vec![fs_id_str.clone()];
+                    binding.updated_at = chrono::Utc::now();
+                    binding_repo.update(&binding).await?;
+                    emit_workspace_binding_changed(&event_tx, space_id, &normalized);
+                    info!(
+                        %space_id,
+                        binding_id = %binding.id,
+                        workspace_root = %normalized,
+                        feature_set_id = %fs_id,
+                        "[meta_tools] bind_current_workspace updated existing binding",
+                    );
+                    binding.id
+                } else {
+                    let binding =
+                        WorkspaceBinding::new(normalized.clone(), space_id, fs_id_str.clone());
+                    let binding_id = binding.id;
+                    binding_repo.create(&binding).await?;
+                    info!(
+                        %space_id,
+                        binding_id = %binding_id,
+                        workspace_root = %normalized,
+                        feature_set_id = %fs_id,
+                        "[meta_tools] bind_current_workspace created binding",
+                    );
+                    binding_id
+                };
+
                 emit_tools_list_changed(&event_tx, space_id);
                 Ok(text_result(json!({
                     "ok": true,
-                    "binding_id": binding.id,
+                    "binding_id": binding_id,
                     "workspace_root": normalized,
                     "feature_set_id": fs_id,
                 })))

@@ -14,7 +14,7 @@ use mcpmux_core::{
     normalize_workspace_root, Client, DomainEvent, FeatureSet, FeatureSetMember,
     FeatureSetRepository, InboundMcpClientRepository, InstalledServer, InstalledServerRepository,
     MemberMode, MemberType, ServerFeature, ServerFeatureRepository, SpaceRepository,
-    WorkspaceBindingRepository,
+    WorkspaceBinding, WorkspaceBindingRepository,
 };
 use mcpmux_gateway::pool::FeatureService;
 use mcpmux_gateway::services::{
@@ -756,6 +756,61 @@ async fn bind_current_workspace_creates_binding_with_normalized_root() {
     assert_eq!(
         bindings[0].feature_set_ids,
         vec![f.fs_android_id.to_string()]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_current_workspace_updates_existing_binding_for_same_root() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    let input = if cfg!(windows) {
+        "D:\\Projects\\Android\\MyApp\\"
+    } else {
+        "/home/me/projects/android/myapp/"
+    };
+    let normalized = normalize_workspace_root(input);
+    f.session_roots.set(&f.session_id, [input]);
+
+    let fs_full_id = {
+        let sets = f
+            .feature_set_repo
+            .list_by_space(&f.space_id.to_string())
+            .await
+            .unwrap();
+        let full = sets
+            .iter()
+            .find(|fs| fs.name == "Full Access")
+            .expect("Full Access FS");
+        Uuid::parse_str(&full.id).unwrap()
+    };
+
+    // Seed an existing binding (simulates Workspaces UI or prior bind).
+    let starter = WorkspaceBinding::new(
+        normalized.clone(),
+        f.space_id,
+        f.fs_android_id.to_string(),
+    );
+    f.binding_repo.create(&starter).await.unwrap();
+
+    let result = f
+        .registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "feature_set_id": fs_full_id.to_string() }),
+        )
+        .await
+        .unwrap();
+    assert!(!Fixture::is_error(&result));
+
+    let bindings = f.binding_repo.list_for_space(&f.space_id).await.unwrap();
+    assert_eq!(bindings.len(), 1, "must not insert a second binding row");
+    assert_eq!(bindings[0].id, starter.id, "must reuse existing binding id");
+    assert_eq!(bindings[0].workspace_root, normalized);
+    assert_eq!(
+        bindings[0].feature_set_ids,
+        vec![fs_full_id.to_string()]
     );
 }
 

@@ -50,7 +50,7 @@ async fn resolve_workspace_binding(
     Ok((binding, normalized))
 }
 
-fn emit_workspace_binding_changed(
+pub(crate) fn emit_workspace_binding_changed(
     event_tx: &broadcast::Sender<DomainEvent>,
     space_id: Uuid,
     workspace_root: &str,

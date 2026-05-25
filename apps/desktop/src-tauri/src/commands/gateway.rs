@@ -1575,17 +1575,31 @@ pub async fn connect_all_enabled_servers(
         errors: vec![],
     };
 
-    for (server_info, transport, _server_definition, _installed) in servers_to_connect {
+    for (server_info, transport, _server_definition, installed) in servers_to_connect {
         let space_uuid = server_info.space_id;
         let server_id = server_info.server_id.clone();
 
-        let ctx = ConnectionContext::new(space_uuid, server_id.clone(), transport);
+        let ctx = ConnectionContext::new(space_uuid, server_id.clone(), transport)
+            .with_auto_reconnect(true);
         match pool_service.connect_server(&ctx).await {
             ConnectionResult::Connected { reused, features } => {
                 if reused {
                     result.reused += 1;
                 } else {
                     result.connected += 1;
+                }
+
+                if server_info.requires_oauth && !installed.oauth_connected {
+                    if let Err(e) = app_state
+                        .installed_server_repository
+                        .set_oauth_connected(&installed.id, true)
+                        .await
+                    {
+                        warn!(
+                            "[Gateway] Connected {} but failed to set oauth_connected: {}",
+                            server_id, e
+                        );
+                    }
                 }
 
                 info!(

@@ -1135,7 +1135,7 @@ export function ServersPage() {
   }
 
   return (
-    <div className="space-y-6" data-testid="servers-page">
+    <div data-testid="servers-page">
       {gatewayControl.ConfirmDialogElement}
       {uninstallClonesDialog && (
         <UninstallSourceWithClonesDialog
@@ -1147,8 +1147,11 @@ export function ServersPage() {
           onUninstallAll={handleUninstallAllWithClones}
         />
       )}
-      {/* Header */}
-      <div className="space-y-4">
+      {/* Toolbar — stays visible while the server list scrolls in <main> */}
+      <div
+        className="sticky -top-6 z-20 -mx-6 mb-4 space-y-4 border-b border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] px-6 pt-6 pb-4"
+        data-testid="servers-page-toolbar"
+      >
         <div className="flex items-center justify-between gap-4">
           <div className="flex-shrink min-w-0">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">

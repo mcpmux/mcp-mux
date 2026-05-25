@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use mcpmux_core::domain::{AuthConfig, CredentialType, ServerDefinition, TransportConfig};
 use mcpmux_core::InstalledServer;
 use tracing::{info, warn};
 
@@ -230,16 +231,17 @@ impl StartupOrchestrator {
         let space_id = uuid::Uuid::parse_str(&server.space_id)
             .map_err(|e| anyhow::anyhow!("Invalid space_id: {}", e))?;
 
-        // Check if server requires OAuth but hasn't been approved yet
-        // This prevents auto-connect from setting "Connected" status without user approval
-        let requires_oauth = matches!(
-            definition.auth,
-            Some(mcpmux_core::domain::AuthConfig::Oauth)
-        );
+        let requires_oauth = matches!(definition.auth, Some(AuthConfig::Oauth));
 
-        if requires_oauth && !server.oauth_connected {
+        if should_skip_oauth_autoconnect(
+            requires_oauth,
+            server.oauth_connected,
+            is_stdio_transport(&definition),
+            self.has_mux_oauth_credentials(space_id, &server.server_id)
+                .await?,
+        ) {
             info!(
-                "[Startup] Skipping {}/{} - requires OAuth approval",
+                "[Startup] Skipping {}/{} - HTTP OAuth with no stored credentials and no prior approval",
                 server.space_id, server.server_id
             );
             let key = crate::pool::ServerKey::new(space_id, server.server_id.clone());
@@ -270,9 +272,26 @@ impl StartupOrchestrator {
 
         match connection_result {
             ConnectionResult::Connected { reused, features } => {
-                // Explicitly update ServerManager status to Connected
-                // While PoolService might update instance state, ServerManager is the source of truth for UI events
                 self.server_manager.set_connected(&key, features).await;
+
+                if requires_oauth && !server.oauth_connected {
+                    if let Err(e) = self
+                        .dependencies
+                        .installed_server_repo
+                        .set_oauth_connected(&server.id, true)
+                        .await
+                    {
+                        warn!(
+                            "[Startup] Connected {}/{} but failed to set oauth_connected: {}",
+                            server.space_id, server.server_id, e
+                        );
+                    } else {
+                        info!(
+                            "[Startup] Bootstrapped oauth_connected for {}/{} after credential-based connect",
+                            server.space_id, server.server_id
+                        );
+                    }
+                }
 
                 if reused {
                     Ok(ConnectOutcome::AlreadyConnected)
@@ -316,4 +335,56 @@ enum ConnectOutcome {
     Connected,
     AlreadyConnected,
     NeedsOAuth,
+}
+
+impl StartupOrchestrator {
+    /// Whether mux has a stored OAuth access token for this install.
+    async fn has_mux_oauth_credentials(
+        &self,
+        space_id: uuid::Uuid,
+        server_id: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .dependencies
+            .credential_repo
+            .get(&space_id, server_id, &CredentialType::AccessToken)
+            .await?
+            .is_some())
+    }
+}
+
+/// Stdio MCPs manage auth inside the child process; do not gate on `oauth_connected`.
+fn is_stdio_transport(definition: &ServerDefinition) -> bool {
+    matches!(definition.transport, TransportConfig::Stdio { .. })
+}
+
+/// Skip auto-connect and show Connect Required only for HTTP OAuth with no mux tokens
+/// and no prior user approval (`oauth_connected`).
+fn should_skip_oauth_autoconnect(
+    requires_oauth: bool,
+    oauth_connected: bool,
+    is_stdio: bool,
+    has_mux_credentials: bool,
+) -> bool {
+    if !requires_oauth {
+        return false;
+    }
+    if is_stdio {
+        return false;
+    }
+    !oauth_connected && !has_mux_credentials
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skip_only_http_oauth_without_credentials_or_approval() {
+        assert!(!should_skip_oauth_autoconnect(false, false, false, false));
+        assert!(!should_skip_oauth_autoconnect(true, false, true, false));
+        assert!(!should_skip_oauth_autoconnect(true, true, false, false));
+        assert!(!should_skip_oauth_autoconnect(true, false, false, true));
+        assert!(should_skip_oauth_autoconnect(true, false, false, false));
+    }
 }

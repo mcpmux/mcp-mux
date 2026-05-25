@@ -53,7 +53,7 @@ This doc defines that model for McpMux while preserving its product strengths: O
 | 9 | Error messages | **Actionable, bounded errors** — no dumping full available-tool lists | e.g. `"github inactive → mcpmux_enable_server('github')"`, `"unknown tool → did you mean github_list_issues?"`. Optional Levenshtein suggestions (Phase D). |
 | 10 | Rollout | **Hard cut — no legacy opt-out** | Backend tools never appear in `tools/list`. Direct `call_tool` on backend qualified names is rejected with an actionable redirect to `mcpmux_invoke_tool`. No `expose_backend_tools_in_list` setting. Ship in one release; document migration in CHANGELOG. |
 | 11 | `mcpmux_list_all_tools` | **Keep as operator/diagnostic tool** — not the primary agent discovery path | Still useful for FeatureSet authoring and UI. Doc + descriptions steer agents to `search_tools`. Consider server_id filter arg in Phase A to avoid 855 KB dumps. |
-| 12 | Result shaping scope | **Phase B only on `invoke_tool`** — `max_rows`, `max_bytes`, `fields`, `format: summary`** | Highest ROI after invoke model. Defer delta responses, auto-summarize, sandbox code exec to Phase D. |
+| 12 | Result shaping scope | **Phase B only on `invoke_tool`** — opt-in via explicit `filter`: `max_rows`, `max_bytes`, `fields`, `format: summary`. Omit filter → backend response as-is. | Agents pass `filter` when they know a tool returns large payloads. No default truncation. |
 | 13 | REST / OpenAPI capabilities | **Out of scope here** — Phase E / separate planning doc | [`web-admin-remote-access.md`](./web-admin-remote-access.md) covers admin REST, not REST→MCP capability YAML. No conflict; different layer. |
 
 ---
@@ -212,11 +212,11 @@ Prompts and resources: unchanged — still materialized per grants. Invoke model
 **Status:** ✅ Implemented — manual QA sections 5–6 pending
 
 - [x] Extend `mcpmux_invoke_tool` args with optional `filter: { max_rows?, max_bytes?, fields?, format? }`
-- [x] Post-process JSON/text results in gateway before returning to client
-- [x] Default smart truncation for known-heavy patterns (large arrays) when filter omitted (`DEFAULT_MAX_ROWS` = 50)
-- [x] Integration tests: truncated list response includes `{ returned, total, truncated: true }`
+- [x] Post-process JSON/text results in gateway when `filter` is provided
+- [x] Opt-in truncation only — omit `filter` to return backend response unchanged (May 25 design revision)
+- [x] Integration tests: explicit filter returns `{ returned, total, truncated: true }`; no filter pass-through
 
-**Outcome:** Posthog/Firebase/GWorkspace list calls return bounded payloads. Agent can query large backends without blowing context on results.
+**Outcome:** Agents pass `filter` on known-heavy tools (GWorkspace drive lists, GitHub issues, PostHog events). Plain-text and JSON backends both supported when filter is explicit.
 
 ### Phase C — FeatureSet as invoke ACL + surfaced tools
 
@@ -314,6 +314,8 @@ This doc is the source of truth for the meta-gateway invoke model. Phases A–C 
 
 **Decision record (May 25, 2026):** Hard cut to invoke-only — no legacy direct backend exposure. Surfaced tools default zero everywhere (bundles included). FeatureSets redefine as invoke ACL + optional surfaced promotion. Session pin deferred to Phase F (very optional, last). Competitor analysis (MikkoParkkola + abdullah1854) informed Phase A–B scope; REST capabilities in Phase E / separate doc.
 
+**Design revision (May 25, 2026):** Removed default smart truncation — `filter` is opt-in only. Rationale: plain-text MCP backends (GWorkspace) don't map cleanly to JSON row truncation; agents should explicitly bound payloads when needed.
+
 **Manual QA progress (May 25, 2026):**
 
 | QA section | Result | Notes |
@@ -322,4 +324,6 @@ This doc is the source of truth for the meta-gateway invoke model. Phases A–C 
 | 1 — Happy path (GitHub read) | ✅ Pass | search → schema → invoke returned 5 open issues; enable step N/A (`enabled_via_binding`) |
 | 2 — Fail-closed + recovery | ✅ Pass | Session disable → actionable error → enable → retry |
 | 3 — Search detail levels + compact schema | ✅ Pass | compact omits top-level description only |
-| 4–11 | ⬜ Pending | In progress |
+| 4 — Session toggle (list size unchanged) | ✅ Pass | search empty when disabled; 10 meta tools stable |
+| 5 — Pass-through without filter (Phase B) | ⬜ Pending | invoke without filter → full backend response, no metadata |
+| 6 — Explicit filter (Phase B) | ⬜ Pending | primary truncation test path |

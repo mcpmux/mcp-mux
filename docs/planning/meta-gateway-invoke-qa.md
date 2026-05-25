@@ -129,44 +129,49 @@ What did compact strip?
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| Search empty / no github matches when disabled | ☐ | ☐ | |
-| Meta tool count unchanged across enable/disable | ☐ | ☐ | |
+| Search empty / no github matches when disabled | ☑ | ☐ | `total: 0`, `tools: []` after session disable |
+| Meta tool count unchanged across enable/disable | ☑ | ☐ | 10 `mcpmux_*` before and after |
 
 ---
 
-## 5. Default truncation (Phase B)
+## 5. Pass-through without filter (Phase B)
 
-**Setup:** Enable a heavy server — `posthog-personal`, `firebase-dev`, or GWorkspace clone.
+**Setup:** GWorkspace Personal bound (`taylorwilsdon.google-workspace-mcp-uvx`) or any heavy server in FeatureSet ACL.
 
 **Prompt:**
 
 ```
-Enable [heavy server]. Find a list/analytics tool via search, read schema, invoke WITHOUT filter.
+Find a list tool via search (e.g. GWorkspace list_drive_items), read schema, invoke WITHOUT filter.
 
-Show whether response includes { returned, total, truncated: true } or similar metadata.
-Paste payload size estimate (rough char count is fine).
+Confirm the full backend response is returned with no { returned, total, truncated } metadata.
+Paste rough char count.
 ```
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| Large array auto-truncated | ☐ | ☐ | Default ~50 rows / 64KB |
-| Truncation metadata present | ☐ | ☐ | |
+| Full backend response returned | ☐ | ☐ | |
+| No truncation metadata without filter | ☐ | ☐ | Design: opt-in filter only (May 25) |
 
 ---
 
 ## 6. Explicit filter (Phase B)
 
+**Setup:** Same tool as test 5, or GitHub `list_issues` for JSON row truncation.
+
 **Prompt:**
 
 ```
-Same tool as test 5. Invoke with filter: { "max_rows": 3, "format": "summary" }
+Invoke with filter: { "max_rows": 3, "format": "summary" }
 
-Then again with fields projection if the tool returns objects with id/name/title fields.
+For plain-text tools (GWorkspace), also try filter: { "max_bytes": 4096 }.
+
+Then fields projection if the tool returns JSON objects with id/name/title fields.
 ```
 
 | Check | Pass | Fail | Notes |
 | ----- | ---- | ---- | ----- |
-| `max_rows: 3` honored | ☐ | ☐ | |
+| `max_rows: 3` honored (JSON tools) | ☐ | ☐ | |
+| `max_bytes` honored with metadata (plain text) | ☐ | ☐ | |
 | `format: summary` applied | ☐ | ☐ | |
 | `fields` projection limits keys per row (if tested) | ☐ | ☐ | |
 
@@ -279,7 +284,7 @@ Rules: McpMux meta tools only, read schemas before invoke, note truncation if an
 - [ ] Enable server expands `tools/list` beyond meta + surfaced
 - [ ] Search returns tools from inactive or unbound servers
 - [ ] Invoke succeeds for tools outside FeatureSet ACL
-- [ ] Large list invoke returns unbounded payload with no truncation metadata
+- [ ] Invoke with explicit filter fails to truncate or return metadata
 - [ ] Opaque errors (no enable/invoke redirect hints)
 
 ---

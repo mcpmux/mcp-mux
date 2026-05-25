@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Button, SearchField } from '@mcpmux/ui';
 import { ServerActionMenu } from './ServerActionMenu';
+import { ServerEnabledToggle } from './ServerEnabledToggle';
 import { CloneAccountModal } from './CloneAccountModal';
 import { AddServerMenu } from './AddServerMenu';
 import { ServersFiltersPopover } from './ServersFiltersPopover';
@@ -1451,16 +1452,26 @@ export function ServersPage() {
                       className="flex items-center gap-2 flex-shrink-0"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      {/* Primary action button */}
-                      {serverAction === 'enable' && (
-                        <button
-                          onClick={() => handleEnableClick(server)}
-                          disabled={enableLoading}
-                          className="px-4 py-2 text-sm font-medium rounded-lg bg-[rgb(var(--success))] text-white hover:bg-[rgb(var(--success))]/80 shadow-sm transition-colors disabled:opacity-50"
-                          data-testid={`enable-server-${server.id}`}
-                        >
-                          {enableLoading ? 'Enabling...' : 'Enable'}
-                        </button>
+                      {(serverAction === 'enable' ||
+                        (server.enabled &&
+                          (serverAction === 'running' ||
+                            serverAction === 'connected_auto' ||
+                            serverAction === 'error'))) && (
+                        <ServerEnabledToggle
+                          serverId={server.id}
+                          enabled={server.enabled}
+                          isLoading={enableLoading || disableLoading}
+                          disabled={
+                            serverAction === 'connecting' || serverAction === 'authenticating'
+                          }
+                          onToggle={(checked) => {
+                            if (checked) {
+                              handleEnableClick(server);
+                            } else {
+                              handleDisableClick(server);
+                            }
+                          }}
+                        />
                       )}
 
                       {serverAction === 'configure' && (
@@ -1533,21 +1544,6 @@ export function ServersPage() {
                           className="px-4 py-2 text-sm font-medium rounded-lg bg-[rgb(var(--error))] text-white hover:bg-[rgb(var(--error))]/80 shadow-sm transition-colors disabled:opacity-50"
                         >
                           {retryLoading ? 'Retrying...' : hasConnectedBefore(server.id) ? 'Reconnect' : 'Retry'}
-                        </button>
-                      )}
-
-                      {/* Disable button - enabled servers that are connected, idle, or stuck in error */}
-                      {server.enabled &&
-                        (serverAction === 'running' ||
-                          serverAction === 'connected_auto' ||
-                          serverAction === 'error') && (
-                        <button
-                          onClick={() => handleDisableClick(server)}
-                          disabled={disableLoading}
-                          className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-50"
-                          data-testid={`disable-server-${server.id}`}
-                        >
-                          {disableLoading ? '...' : 'Disable'}
                         </button>
                       )}
 

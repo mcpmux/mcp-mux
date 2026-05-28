@@ -201,12 +201,7 @@ pub async fn take_pending_port_conflict(ctx: &AdminBridgeCtx) -> Result<Value> {
 }
 
 pub async fn get_gateway_port_settings(ctx: &AdminBridgeCtx) -> Result<Value> {
-    let mut value = ctx.gateway_runtime.get_gateway_port_settings().await?;
-    // ponytail: get_gateway_public_url lands in Phase 5; return null for now
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert("publicUrl".to_string(), json!(null));
-    }
-    Ok(value)
+    ctx.gateway_runtime.get_gateway_port_settings().await
 }
 
 pub async fn reset_gateway_port(ctx: &AdminBridgeCtx) -> Result<Value> {

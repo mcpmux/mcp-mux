@@ -6,6 +6,8 @@ use crate::commands::server_manager::ServerManagerState;
 use crate::AppState;
 use mcpmux_core::service::{allocate_dynamic_port, is_port_available};
 use mcpmux_core::DomainEvent;
+use mcpmux_gateway::admin::ui_events::AdminUiEventBus;
+use crate::services::ui_events::OAUTH_CONSENT_REQUEST_CHANNEL;
 use mcpmux_gateway::{
     ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, OAuthCompleteEvent,
     PoolService, ResolvedTransport, ServerKey, ServerManager,
@@ -861,6 +863,30 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
     }
 }
 
+/// Wire OAuth consent notifications to the desktop webview and admin SSE bus.
+pub async fn wire_consent_ui_notifications(
+    app_handle: &AppHandle,
+    gateway_state: &Arc<RwLock<mcpmux_gateway::GatewayState>>,
+    ui_bus: Option<Arc<AdminUiEventBus>>,
+) {
+    let app = app_handle.clone();
+    let ui_bus_for_hook = ui_bus.clone();
+    let hook: mcpmux_gateway::ConsentUiNotifier = Arc::new(move |request_id: &str| {
+        crate::services::ui_events::emit_ui_channel(
+            &app,
+            ui_bus_for_hook.as_deref(),
+            OAUTH_CONSENT_REQUEST_CHANNEL,
+            serde_json::json!({ "requestId": request_id }),
+        );
+    });
+
+    gateway_state.write().await.set_consent_ui_hook(hook);
+    info!(
+        "[Gateway] Consent UI wired (Tauri + SSE={})",
+        ui_bus.is_some()
+    );
+}
+
 /// Create Gateway dependencies from app state using DI builder pattern
 ///
 /// Centralizes dependency construction following Dependency Injection principles.
@@ -1159,6 +1185,12 @@ pub async fn start_gateway(
             drop(guard);
             let guard2 = admin_guard_clone.read().await;
             register_gateway_sse(&guard2, &gw_state_clone).await;
+            wire_consent_ui_notifications(
+                &app_handle,
+                &gw_state_clone,
+                Some(guard2.ui_event_bus.clone()),
+            )
+            .await;
         }
     }
 

@@ -89,6 +89,7 @@ impl Harness {
             &deps,
             event_tx.clone(),
             gateway_state,
+            None,
         ));
 
         let app_state = AppState {

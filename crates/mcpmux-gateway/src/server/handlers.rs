@@ -459,6 +459,15 @@ pub async fn oauth_authorize(
                 consent_token: Some(consent_token),
             },
         );
+        gateway_state.notify_consent_request(&request_id);
+        info!(
+            "[OAuth] Pending authorization stored: request_id='{}', client_id='{}', \
+             pending_count={}, expires_at={}",
+            request_id,
+            params.client_id,
+            gateway_state.pending_authorizations.len(),
+            expires_at
+        );
     }
 
     // Build deep link URL for the Tauri app (only request_id - app fetches details from backend)

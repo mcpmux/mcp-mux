@@ -989,13 +989,32 @@ pub async fn set_gateway_port(ctx: &AdminBridgeCtx, body: GatewayPortBody) -> Re
 }
 
 pub async fn set_gateway_public_url(
-    _ctx: &AdminBridgeCtx,
-    _body: GatewayPublicUrlBody,
+    ctx: &AdminBridgeCtx,
+    body: GatewayPublicUrlBody,
 ) -> Result<Value> {
-    // ponytail: public URL persistence lands in Phase 5 (AppSettingsService extension)
-    Err(anyhow!(
-        "Gateway public URL configuration not yet available"
-    ))
+    let normalized = crate::public_base_url::normalize_public_url(&body.public_url)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let settings = mcpmux_core::AppSettingsService::new(ctx.settings_repository.clone());
+
+    if normalized.is_empty() {
+        settings.clear_gateway_public_url().await?;
+    } else {
+        settings.set_gateway_public_url(&normalized).await?;
+    }
+
+    let stored = if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.clone())
+    };
+    if let Some(gateway_state) = ctx.gateway_writes.gateway_state().await {
+        let mut state = gateway_state.write().await;
+        state.set_public_base_url(stored.clone());
+    }
+
+    Ok(json!({
+        "publicUrl": stored,
+    }))
 }
 
 pub async fn enable_server_v2(ctx: &AdminBridgeCtx, body: ServerConnectionBody) -> Result<Value> {

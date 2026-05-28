@@ -133,6 +133,7 @@ impl Harness {
             &deps,
             event_tx.clone(),
             gateway_state,
+            None,
         ));
 
         let notifier = Arc::new(MCPNotifier::new(

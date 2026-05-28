@@ -33,6 +33,10 @@ pub mod keys {
         pub const ADMIN_CF_TEAM_DOMAIN: &str = "gateway.admin_cf_team_domain";
         /// UUID of the [`Machine`](crate::domain::Machine) this install identifies as.
         pub const LOCAL_MACHINE_ID: &str = "gateway.local_machine_id";
+        /// Public HTTPS URL for remote MCP clients (string, e.g. https://mcp.example.com).
+        /// Shares the desktop app's `gateway.public_base_url` key so the admin API and
+        /// the desktop Settings page read/write the same setting.
+        pub const PUBLIC_URL: &str = "gateway.public_base_url";
     }
 
     /// OAuth callback settings namespace
@@ -273,6 +277,27 @@ impl AppSettingsService {
         self.repository
             .set(keys::gateway::ADMIN_CF_TEAM_DOMAIN, value)
             .await
+    }
+
+    /// Public HTTPS URL advertised in OAuth metadata for tunnel clients.
+    pub async fn get_gateway_public_url(&self) -> Option<String> {
+        self.get_string(keys::gateway::PUBLIC_URL)
+            .await
+            .filter(|value| !value.is_empty())
+    }
+
+    /// Persist the public gateway URL (empty clears).
+    pub async fn set_gateway_public_url(&self, url: &str) -> anyhow::Result<()> {
+        info!("[Settings] Setting gateway public_url");
+        self.repository
+            .set(keys::gateway::PUBLIC_URL, url.trim())
+            .await
+    }
+
+    /// Clear the configured public gateway URL.
+    pub async fn clear_gateway_public_url(&self) -> anyhow::Result<()> {
+        info!("[Settings] Clearing gateway public_url");
+        self.repository.delete(keys::gateway::PUBLIC_URL).await
     }
 
     // =========================================================================

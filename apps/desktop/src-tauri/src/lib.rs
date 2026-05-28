@@ -473,7 +473,7 @@ pub fn run() {
                     .with_log_manager(server_log_manager)
                     .with_database(db_for_gateway)
                     .with_state_dir(app_data_dir.clone())
-                    .with_settings_repo(settings_repo);
+                    .with_settings_repo(settings_repo.clone());
 
                 if let Some(secret) = jwt_secret {
                     deps_builder = deps_builder.with_jwt_secret(secret);
@@ -557,6 +557,15 @@ pub fn run() {
                 state.grant_service = Some(grant_service);
                 state.approval_broker = Some(approval_broker);
                 state.session_roots = Some(session_roots);
+
+                if let Some(ref gw) = state.gateway_state {
+                    crate::commands::gateway::wire_consent_ui_notifications(
+                        &app_handle_for_sm,
+                        gw,
+                        None,
+                    )
+                    .await;
+                }
 
                 info!(
                     "Gateway auto-started successfully on {} - GrantService initialized: {}",

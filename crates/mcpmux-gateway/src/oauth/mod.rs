@@ -5,6 +5,7 @@
 mod dcr;
 mod discovery;
 mod flow;
+pub mod inbound_consent;
 mod pkce;
 mod token;
 
@@ -14,6 +15,10 @@ pub use dcr::{
 };
 pub use discovery::{OAuthDiscovery, OAuthMetadata};
 pub use flow::{AuthorizationCallback, AuthorizationRequest, OAuthFlow};
+pub use inbound_consent::{
+    approve_oauth_consent, emit_consent_request, get_pending_consent, ConsentApprovalRequest,
+    ConsentApprovalResponse, ConsentError, ConsentRequestDetails, OAUTH_CONSENT_EVENT,
+};
 pub use pkce::PkceChallenge;
 pub use token::{OAuthToken, TokenManager};
 

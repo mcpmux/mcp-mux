@@ -159,6 +159,50 @@
       "auth_type": "none"
     },
 
+    "com.emadibrahim/dedicated-mac-mini-ai-bot-setup": {
+      "id": "com.emadibrahim/dedicated-mac-mini-ai-bot-setup",
+      "name": "Dedicated Mac Mini AI Bot Setup",
+      "description": "Evaluate Emad Ibrahim's read-only MCP endpoint for dedicated Mac Mini AI operator setup, founder-slot availability, pricing, proof, buyer routes, and comparison pages.",
+      "about": "A read-only MCP endpoint for founders comparing a private Mac Mini AI operator against cloud agents, DIY bot setup, or marketplace installers. It exposes offer metadata and live queue details only; it does not create leads, reserve slots, send email, or mutate production data.",
+      "icon": "https://www.emadibrahim.com/favicon.ico",
+      "category": "automation",
+      "categories": ["ai", "developer-tools"],
+      "tags": [
+        "ai-agent",
+        "ai-operator",
+        "automation",
+        "mac-mini",
+        "founder-tools",
+        "telegram-bot",
+        "discord-bot",
+        "openclaw"
+      ],
+      "publisher": {
+        "name": "Emad Ibrahim",
+        "domain": "emadibrahim.com",
+        "url": "https://www.emadibrahim.com",
+        "verified": false
+      },
+      "quality": {
+        "official": true,
+        "verified": false
+      },
+      "links": {
+        "homepage": "https://www.emadibrahim.com/bot-setup/mac-mini-ai-agent-setup?utm_source=mcpmux&utm_medium=directory&utm_campaign=mcp_listing",
+        "documentation": "https://www.emadibrahim.com/mcp",
+        "repository": "https://github.com/eibrahim/dedicated-mac-mini-ai-bot-setup-mcp",
+        "support": "mailto:eibrahim@gmail.com"
+      },
+      "inputs": [],
+      "transport": {
+        "type": "http",
+        "url": "https://www.emadibrahim.com/mcp"
+      },
+      "auth": {
+        "type": "none"
+      }
+    },
+
     "io.modelcontextprotocol/server-filesystem": {
       "id": "io.modelcontextprotocol/server-filesystem",
       "name": "Filesystem",

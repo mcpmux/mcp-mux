@@ -366,4 +366,27 @@ mod tests {
         assert_eq!(server.required_inputs().len(), 1);
         assert_eq!(server.secret_inputs().len(), 1);
     }
+
+    #[test]
+    fn test_default_registry_includes_emad_mac_mini_bot_setup() {
+        let json = include_str!("default-registry.json");
+        let registry: ServerRegistry = serde_json::from_str(json).unwrap();
+
+        let server = registry
+            .get("com.emadibrahim/dedicated-mac-mini-ai-bot-setup")
+            .expect("Emad's dedicated Mac mini AI bot setup MCP server should be listed");
+
+        assert_eq!(server.name, "Dedicated Mac Mini AI Bot Setup");
+        assert_eq!(
+            server.links.repository.as_deref(),
+            Some("https://github.com/eibrahim/dedicated-mac-mini-ai-bot-setup-mcp")
+        );
+
+        match &server.transport {
+            TransportConfig::Http { url, .. } => {
+                assert_eq!(url, "https://www.emadibrahim.com/mcp");
+            }
+            TransportConfig::Stdio { .. } => panic!("expected HTTP transport"),
+        }
+    }
 }

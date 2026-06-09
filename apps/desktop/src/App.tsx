@@ -11,6 +11,7 @@ import {
   Moon,
   FolderOpen,
   Download,
+  Boxes,
   X,
 } from 'lucide-react';
 import {
@@ -39,6 +40,7 @@ import { ServersPage } from '@/features/servers';
 import { SpacesPage } from '@/features/spaces';
 import { WorkspacesPage } from '@/features/workspaces';
 import { SettingsPage } from '@/features/settings';
+import { BuiltinServersPage } from '@/features/builtinServers';
 import { AutoStartConflictResolver } from '@/features/gateway/AutoStartConflictResolver';
 import { WorkspaceBindingSheet } from '@/features/workspaces';
 import { MetaToolApprovalDialog } from '@/features/metaTools';
@@ -212,6 +214,13 @@ function AppContent() {
           data-testid="nav-my-servers"
         />
         <SidebarItem
+          icon={<Boxes className="h-4 w-4" />}
+          label="Built-in Servers"
+          active={activeNav === 'builtin-servers'}
+          onClick={() => navigateTo('builtin-servers')}
+          data-testid="nav-builtin-servers"
+        />
+        <SidebarItem
           icon={<Server className="h-4 w-4" />}
           label="Discover"
           active={activeNav === 'registry'}
@@ -364,6 +373,7 @@ function AppContent() {
         {activeNav === 'featuresets' && <FeatureSetsPage />}
         {activeNav === 'workspaces' && <WorkspacesPage />}
         {activeNav === 'clients' && <ClientsPage />}
+        {activeNav === 'builtin-servers' && <BuiltinServersPage />}
         {activeNav === 'settings' && <SettingsPage />}
       </div>
     </AppShell>

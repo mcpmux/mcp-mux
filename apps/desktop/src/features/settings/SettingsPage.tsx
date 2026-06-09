@@ -23,7 +23,6 @@ import {
   XCircle,
   Trash2,
   BarChart3,
-  Sparkles,
   Github,
   Bug,
   Lightbulb,
@@ -35,8 +34,6 @@ import {
 } from 'lucide-react';
 import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
-import { getMetaToolsEnabled, setMetaToolsEnabled } from '@/lib/api/metaTools';
-import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
 
@@ -76,8 +73,6 @@ export function SettingsPage() {
   const [savingRetention, setSavingRetention] = useState(false);
 
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
-  const [metaToolsEnabled, setMetaToolsEnabledState] = useState<boolean>(true);
-  const [loadingMetaTools, setLoadingMetaTools] = useState(true);
 
   // Gateway port — persisted user override, the default the app ships
   // with, and the port the currently-running gateway is bound to. When
@@ -176,29 +171,6 @@ export function SettingsPage() {
     }
   };
 
-  useEffect(() => {
-    getMetaToolsEnabled()
-      .then((v) => setMetaToolsEnabledState(v))
-      .catch((e) => console.error('Failed to load meta_tools_enabled', e))
-      .finally(() => setLoadingMetaTools(false));
-  }, []);
-
-  const handleToggleMetaTools = async (next: boolean) => {
-    const previous = metaToolsEnabled;
-    setMetaToolsEnabledState(next);
-    try {
-      await setMetaToolsEnabled(next);
-      success(
-        next ? 'Self-management tools enabled' : 'Self-management tools disabled',
-        next
-          ? 'Connected MCP clients will see the mcpmux_* toolset on next list_tools.'
-          : 'mcpmux_* is hidden from connected MCP clients.'
-      );
-    } catch (e) {
-      setMetaToolsEnabledState(previous);
-      error('Failed to save setting', e instanceof Error ? e.message : String(e));
-    }
-  };
 
   // Load logs path on mount
   useEffect(() => {
@@ -596,44 +568,6 @@ export function SettingsPage() {
               </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Self-management meta tools — `mcpmux_*` namespace */}
-      <Card data-testid="settings-meta-tools-section">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5" />
-            Self-management tools (mcpmux_*)
-          </CardTitle>
-          <CardDescription>
-            When enabled, connected MCP clients see a small built-in toolset that lets
-            LLMs introspect and — with your approval — reshape the FeatureSet they see.
-            Writes always trigger a native approval dialog; reads are silent.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-start gap-3 flex-1 min-w-0">
-              <Sparkles className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
-              <div>
-                <label className="text-sm font-medium">Advertise self-management tools</label>
-                <p className="text-xs text-[rgb(var(--muted))] mt-1">
-                  Shows <code className="font-mono">mcpmux_list_all_tools</code>,&nbsp;
-                  <code className="font-mono">mcpmux_pin_this_session</code>, and 6 others to
-                  every connected MCP client. Turn off to hide the whole namespace.
-                </p>
-              </div>
-            </div>
-            <Switch
-              checked={metaToolsEnabled}
-              onCheckedChange={handleToggleMetaTools}
-              disabled={loadingMetaTools}
-              data-testid="meta-tools-enabled-switch"
-            />
-          </div>
-          <MetaToolGrantsPanel />
-          <MetaToolAuditLog />
         </CardContent>
       </Card>
 

@@ -8,6 +8,7 @@ export type NavItem =
   | 'featuresets'
   | 'workspaces'
   | 'clients'
+  | 'builtin-servers'
   | 'settings';
 
 export interface AppState {

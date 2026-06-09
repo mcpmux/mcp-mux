@@ -194,6 +194,20 @@ pub async fn create_workspace_binding(
     let feature_set_ids = validate_fs_list(&input)?;
     let normalized = normalize_and_validate(&input.workspace_root)?;
 
+    // Reject a duplicate folder up front with a readable message. The schema
+    // already enforces `UNIQUE(workspace_root)`, but that surfaces an opaque
+    // SQLite constraint error — this gives the UI something a user can act on.
+    let existing = state
+        .workspace_binding_repository
+        .list()
+        .await
+        .map_err(|e| e.to_string())?;
+    if existing.iter().any(|b| b.workspace_root == normalized) {
+        return Err(format!(
+            "A mapping already exists for {normalized}. Edit the existing mapping instead of adding a second one."
+        ));
+    }
+
     let binding = WorkspaceBinding::new_multi(normalized.clone(), space_id, feature_set_ids);
 
     state
@@ -232,6 +246,23 @@ pub async fn update_workspace_binding(
     let space_id = parse_space_id(&input)?;
     let feature_set_ids = validate_fs_list(&input)?;
     let normalized = normalize_and_validate(&input.workspace_root)?;
+
+    // If the edit moved the folder onto a path another mapping already owns,
+    // reject with a readable message rather than tripping the DB UNIQUE
+    // constraint. Exclude this binding's own row.
+    let all = state
+        .workspace_binding_repository
+        .list()
+        .await
+        .map_err(|e| e.to_string())?;
+    if all
+        .iter()
+        .any(|b| b.id != id_uuid && b.workspace_root == normalized)
+    {
+        return Err(format!(
+            "Another mapping already uses {normalized}. Pick a different folder."
+        ));
+    }
 
     let existing = state
         .workspace_binding_repository

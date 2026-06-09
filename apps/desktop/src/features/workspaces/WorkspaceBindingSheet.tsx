@@ -194,10 +194,12 @@ export function WorkspaceBindingSheet() {
             New workspace detected
           </div>
           <h2 className="text-[22px] font-semibold leading-tight tracking-tight text-[rgb(var(--foreground))]">
-            Which tools should this folder see?
+            Which tools should this folder get?
           </h2>
           <p className="mt-2 text-sm text-[rgb(var(--muted))]">
-            Pick a Space and its tool set — every client you open here will get the same one.
+            You just opened this folder in a connected app. Choose a Space and a
+            feature set, and every app you open here will get exactly those
+            tools.
           </p>
 
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-4 py-3">
@@ -215,9 +217,13 @@ export function WorkspaceBindingSheet() {
 
         <div className="flex-1 overflow-y-auto px-8 pb-6 space-y-6">
           <div>
-            <div className="mb-3 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+            <div className="mb-1 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
               Space
             </div>
+            <p className="mb-3 text-xs text-[rgb(var(--muted))]">
+              A profile that groups MCP servers — pick the one this folder draws
+              its tools from.
+            </p>
             <div className="relative">
               <select
                 value={selectedSpaceId}
@@ -238,9 +244,13 @@ export function WorkspaceBindingSheet() {
           </div>
 
           <div>
-            <div className="mb-3 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              Tool set
+            <div className="mb-1 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+              Feature set
             </div>
+            <p className="mb-3 text-xs text-[rgb(var(--muted))]">
+              The exact tools, prompts, and resources this folder is allowed to
+              use.
+            </p>
             {loadingFs ? (
               <div className="flex items-center justify-center py-8 text-[rgb(var(--muted))]">
                 <Loader2 className="h-4 w-4 animate-spin" />

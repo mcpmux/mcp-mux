@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Folder,
   FolderOpen,
   FolderSearch,
   Layers,
@@ -255,7 +256,7 @@ export function WorkspacesPage() {
     setBindings((prev) =>
       [...prev, created].sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
     );
-    success('Binding saved', created.workspace_root);
+    success('Mapping saved', created.workspace_root);
     return created;
   };
 
@@ -266,13 +267,13 @@ export function WorkspacesPage() {
         .map((b) => (b.id === id ? updated : b))
         .sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
     );
-    success('Binding updated', updated.workspace_root);
+    success('Mapping updated', updated.workspace_root);
   };
 
   const handleDelete = async (binding: WorkspaceBinding) => {
     const ok = await confirm({
-      title: 'Remove binding',
-      message: `Sessions matching "${binding.workspace_root}" will fall back to the default Space. You can recreate the binding anytime.`,
+      title: 'Remove mapping',
+      message: `Apps opening "${binding.workspace_root}" will stop receiving these tools. You can map the folder again anytime.`,
       confirmLabel: 'Remove',
       variant: 'danger',
     });
@@ -281,9 +282,9 @@ export function WorkspacesPage() {
       await deleteWorkspaceBinding(binding.id);
       setBindings((prev) => prev.filter((b) => b.id !== binding.id));
       setSelected(null);
-      success('Binding removed', binding.workspace_root);
+      success('Mapping removed', binding.workspace_root);
     } catch (e) {
-      showError('Failed to remove binding', e instanceof Error ? e.message : String(e));
+      showError('Failed to remove mapping', e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -297,8 +298,11 @@ export function WorkspacesPage() {
                 Workspaces
               </h1>
               <p className="text-base text-[rgb(var(--muted))] mt-2 max-w-2xl">
-                Each binding tells mcpmux which Space and feature set a folder routes into.
-                Folders without a binding fall back to the default Space.
+                Map a folder to the tools it should get. When you open that
+                folder in a connected app — Cursor, VS Code, Claude — McpMux
+                serves exactly the tools you chose for it. Folders you
+                haven&apos;t mapped don&apos;t receive your tools until you map
+                them.
               </p>
             </div>
             <div className="flex-shrink-0 flex items-center gap-2">
@@ -320,7 +324,7 @@ export function WorkspacesPage() {
                 className="whitespace-nowrap"
               >
                 <Plus className="h-4 w-4 mr-2" />
-                New binding
+                New mapping
               </Button>
             </div>
           </div>
@@ -416,6 +420,7 @@ export function WorkspacesPage() {
             isNew={selectedIsNew}
             spaces={spaces}
             featureSets={featureSets}
+            existingBindings={bindings}
             onClose={() => setSelected(null)}
             onSubmit={async (input) => {
               if (selectedEntry?.binding) {
@@ -456,11 +461,11 @@ function formatFsList(names: string[]): string {
 }
 
 /**
- * Structural equality between two binding inputs. The autosave effect
- * uses this to skip writes when the user re-toggled their way back to
- * the last-saved state — avoids spamming `WorkspaceBindingChanged` for
- * a no-op edit. `feature_set_ids` order matters (it's the operator-
- * chosen render order, not just a set), so we compare positionally.
+ * Structural equality between two binding inputs. The edit form uses this
+ * for its "dirty" check — Apply stays disabled until the current values
+ * differ from what was loaded, so there's nothing to save on a no-op edit.
+ * `feature_set_ids` order matters (it's the operator-chosen render order,
+ * not just a set), so we compare positionally.
  */
 function sameBindingInput(
   a: WorkspaceBindingInput,
@@ -517,8 +522,60 @@ function SegmentedFilter<T extends string>({
 }
 
 // ---------------------------------------------------------------------------
-// Entry card — matches Clients page card anatomy (56×56 icon, 3xl size, chips)
+// Entry card — a workspace folder and the tools it maps to. Modern tile:
+// gradient status icon, folder-name-first hierarchy, chip summary.
 // ---------------------------------------------------------------------------
+
+type Tone = 'amber' | 'emerald' | 'neutral';
+
+/** Last path segment — the folder's own name (`proj` from `/a/b/proj`). */
+function folderName(path: string): string {
+  const parts = path.split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || path;
+}
+
+/** Everything above the folder name, shown as a muted breadcrumb line. */
+function folderParent(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, '');
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return idx > 0 ? trimmed.slice(0, idx) : '';
+}
+
+const TILE_TONES: Record<Tone, string> = {
+  emerald: 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-emerald-500/25',
+  amber: 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-amber-500/25',
+  neutral:
+    'bg-gradient-to-br from-slate-400 to-slate-500 dark:from-slate-600 dark:to-slate-700 shadow-slate-900/10',
+};
+
+/** The gradient folder tile with a pulsing live indicator. */
+function WorkspaceTile({ tone, live }: { tone: Tone; live: boolean }) {
+  return (
+    <div className="relative flex-shrink-0">
+      <div
+        className={[
+          'flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-lg ring-1 ring-inset ring-white/25',
+          TILE_TONES[tone],
+        ].join(' ')}
+      >
+        {live ? (
+          <FolderOpen className="h-[22px] w-[22px]" strokeWidth={2} />
+        ) : (
+          <Folder className="h-[22px] w-[22px]" strokeWidth={2} />
+        )}
+      </div>
+      {live && (
+        <span
+          className="absolute -right-1 -top-1 flex h-3 w-3"
+          title="A client is active in this folder right now"
+        >
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+          <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]" />
+        </span>
+      )}
+    </div>
+  );
+}
 
 function EntryCard({
   entry,
@@ -533,73 +590,67 @@ function EntryCard({
   selected: boolean;
   onClick: () => void;
 }) {
-  const tone =
+  const tone: Tone =
     entry.kind === 'unmapped-live'
       ? 'amber'
       : entry.kind === 'mapped-live'
         ? 'emerald'
         : 'neutral';
+  const name = folderName(entry.root);
+  const parent = folderParent(entry.root);
 
   return (
     <Card
-      className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
-        selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
+      className={`group relative cursor-pointer overflow-hidden rounded-2xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl ${
+        selected
+          ? 'ring-2 ring-primary-500 shadow-lg'
+          : 'hover:ring-1 hover:ring-[rgb(var(--border-strong,var(--border)))]'
       }`}
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
     >
-      <CardContent className="p-6">
-        <div className="flex items-start gap-4 mb-4">
-          <div className="relative flex-shrink-0">
-            <div
-              className={[
-                'w-14 h-14 flex items-center justify-center rounded-xl border',
-                tone === 'amber'
-                  ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200/80 dark:border-amber-800/50 text-amber-600 dark:text-amber-400'
-                  : tone === 'emerald'
-                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/80 dark:border-emerald-800/50 text-emerald-600 dark:text-emerald-400'
-                    : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))]',
-              ].join(' ')}
-            >
-              <FolderOpen className="h-6 w-6" />
-            </div>
-            {entry.isLive && (
-              <span
-                className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]"
-                title="A client is currently active in this folder"
-              />
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+      <CardContent className="p-5">
+        <div className="flex items-start gap-3.5">
+          <WorkspaceTile tone={tone} live={entry.isLive} />
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
               {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
             </div>
             <p
-              className="font-mono text-sm text-[rgb(var(--foreground))] truncate"
+              className="truncate text-[15px] font-semibold text-[rgb(var(--foreground))]"
               title={entry.root}
             >
-              {entry.root}
+              {name}
+            </p>
+            <p
+              className="truncate font-mono text-[11px] text-[rgb(var(--muted))]"
+              title={entry.root}
+            >
+              {parent || entry.root}
             </p>
           </div>
+          <ChevronRight className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] opacity-0 transition-opacity group-hover:opacity-100" />
         </div>
 
-        <div className="pt-4 border-t border-[rgb(var(--border-subtle))] text-xs text-[rgb(var(--muted))]">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span>Routes to</span>
-            <Chip tone="primary">{fsName ?? '—'}</Chip>
-            <span>in</span>
-            <Chip tone="neutral">{spaceName ?? '—'}</Chip>
-            {!entry.binding && (
-              <span
-                className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase tracking-wider bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200/70 dark:border-amber-800/60"
-                title="No binding matches this folder yet — a live session would be denied. Click to bind it to a FeatureSet."
-              >
-                unbound
+        <div className="mt-4 border-t border-[rgb(var(--border-subtle))] pt-3.5 text-xs">
+          {entry.binding ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-[rgb(var(--muted))]">
+              <span>Serves</span>
+              <Chip tone="primary">{fsName ?? '—'}</Chip>
+              <span>from</span>
+              <Chip tone="neutral">{spaceName ?? '—'}</Chip>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+                <AlertCircle className="h-3.5 w-3.5" />
+                Not mapped
               </span>
-            )}
-          </div>
+              <span className="text-[rgb(var(--muted))]">— gets no tools until you map it</span>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -797,6 +848,7 @@ function InspectorPanel({
   isNew,
   spaces,
   featureSets,
+  existingBindings,
   onClose,
   onSubmit,
   onDelete,
@@ -806,6 +858,7 @@ function InspectorPanel({
   isNew: boolean;
   spaces: Space[];
   featureSets: FeatureSet[];
+  existingBindings: WorkspaceBinding[];
   onClose: () => void;
   onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
   onDelete: () => Promise<void>;
@@ -825,9 +878,13 @@ function InspectorPanel({
     : isMapped
       ? 'edit'
       : 'create-from-live';
-  const title = isNew ? 'New binding' : isMapped ? 'Binding' : 'Configure workspace';
+  const title = isNew
+    ? 'New mapping'
+    : isMapped
+      ? 'Workspace mapping'
+      : 'Map this folder';
   const subtitle = isNew
-    ? 'Tell mcpmux how a folder should route.'
+    ? 'Choose the tools a folder should get.'
     : entry?.root ?? '';
 
   // Auto-save status drives the small pill in the Mapping section header.
@@ -877,23 +934,23 @@ function InspectorPanel({
           title="Mapping"
           subtitle={
             mode === 'create'
-              ? 'Pick the FeatureSet this folder routes through.'
+              ? 'Choose the folder and the tools it should get.'
               : mode === 'create-from-live'
-                ? 'Configure routing for this live workspace.'
+                ? 'This folder is open in an app but has no tools yet — map it.'
                 : isMapped && entry?.binding
-                  ? `Routes to ${
+                  ? `Gives ${
                       formatFsList(
                         entry.binding!.feature_set_ids.map(
                           (id) => featureSets.find((f) => f.id === id)?.name ?? id
                         )
                       ) || '—'
-                    } in ${
+                    } from ${
                       spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—'
                     }`
-                  : 'Changes save automatically.'
+                  : 'Edit what this folder sees, then press Apply.'
           }
           defaultOpen={isNew || !isMapped}
-          headerExtra={mode === 'edit' ? <SaveStatusPill status={saveStatus} /> : null}
+          headerExtra={<SaveStatusPill status={saveStatus} />}
           testId="workspace-mapping-section"
         >
           <BindingForm
@@ -902,6 +959,7 @@ function InspectorPanel({
             featureSets={featureSets}
             initial={entry?.binding ?? null}
             prefillRoot={entry && !isMapped ? entry.root : undefined}
+            existingBindings={existingBindings}
             onCancel={onClose}
             onSubmit={onSubmit}
             onError={onError}
@@ -937,7 +995,7 @@ function InspectorPanel({
             data-testid={`workspace-binding-delete-${entry.binding.id}`}
           >
             <Trash2 className="h-4 w-4 mr-2" />
-            Remove binding
+            Remove mapping
           </Button>
         </div>
       )}
@@ -1494,6 +1552,7 @@ function BindingForm({
   featureSets,
   initial,
   prefillRoot,
+  existingBindings,
   onCancel,
   onSubmit,
   onError,
@@ -1504,6 +1563,8 @@ function BindingForm({
   featureSets: FeatureSet[];
   initial?: WorkspaceBinding | null;
   prefillRoot?: string;
+  /** Every saved mapping, used to flag a folder that's already mapped. */
+  existingBindings: WorkspaceBinding[];
   onCancel: () => void;
   onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
   onError: (message: string) => void;
@@ -1525,6 +1586,15 @@ function BindingForm({
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isEdit = mode === 'edit';
+
+  // Holds the timer that clears the transient "Saved" pill after an
+  // explicit Apply. Cleared if another save starts or the panel unmounts.
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
 
   // Live validation of the workspace_root field. Edit + create-from-live
   // modes already have a trusted root (edit: the persisted one; create-from-
@@ -1618,19 +1688,60 @@ function BindingForm({
     );
   };
 
+  const trimmedRoot = root.trim();
+  // The canonical form the server will store. We prefer the validator's
+  // normalized output (drive-letter case, slash direction, trailing slash
+  // all settled) so the duplicate check matches exactly what a save writes.
+  const effectiveRoot =
+    rootValidation.state === 'ok' ? rootValidation.normalized : trimmedRoot;
+
+  // Has this folder already been mapped? Compare against every saved mapping
+  // (case-insensitively, the app's notion of "same folder"), excluding the
+  // one we're editing. A match means a duplicate — block the save and tell
+  // the user to edit the existing mapping instead of stacking a second one.
+  const duplicate = useMemo(() => {
+    if (!effectiveRoot) return null;
+    const key = effectiveRoot.toLowerCase();
+    return (
+      existingBindings.find(
+        (b) => b.id !== initial?.id && b.workspace_root.toLowerCase() === key
+      ) ?? null
+    );
+  }, [existingBindings, effectiveRoot, initial?.id]);
+
+  // In edit mode, only enable Apply once something actually changed — there's
+  // nothing to save otherwise. Create modes are always "dirty".
+  const dirty = useMemo(() => {
+    if (!isEdit || !initial) return true;
+    return !sameBindingInput(
+      { workspace_root: trimmedRoot, space_id: spaceId, feature_set_ids: fsIds },
+      {
+        workspace_root: initial.workspace_root,
+        space_id: initial.space_id,
+        feature_set_ids: initial.feature_set_ids,
+      }
+    );
+  }, [isEdit, initial, trimmedRoot, spaceId, fsIds]);
+
   const canSubmit =
     !submitting &&
     !!spaceId &&
     fsIds.length > 0 &&
-    (rootValidation.state === 'ok' || !rootEditable);
+    (rootValidation.state === 'ok' || !rootEditable) &&
+    !duplicate &&
+    dirty;
 
   const handleSubmit = async () => {
     if (!root.trim()) {
-      onError('Workspace root is required.');
+      onError('Pick a folder first.');
       return;
     }
     if (rootValidation.state === 'error') {
       onError(rootValidation.reason);
+      return;
+    }
+    if (duplicate) {
+      onError(`That folder is already mapped. Open the existing mapping to change it.`);
       return;
     }
     if (!spaceId) {
@@ -1641,152 +1752,57 @@ function BindingForm({
       onError('Pick at least one feature set.');
       return;
     }
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = null;
+    }
     setSubmitting(true);
+    onSaveStatusChange?.({ kind: 'saving' });
     try {
       await onSubmit({
         workspace_root: root.trim(),
         space_id: spaceId,
         feature_set_ids: fsIds,
       });
+      onSaveStatusChange?.({ kind: 'saved' });
+      savedTimerRef.current = setTimeout(() => {
+        onSaveStatusChange?.({ kind: 'idle' });
+      }, 1800);
     } catch (e) {
-      onError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      onSaveStatusChange?.({ kind: 'error', message: msg });
+      onError(msg);
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ---------- Autosave (edit mode) -----------------------------------------
-  //
-  // Debounced (1500 ms) so a burst of FS-toggle clicks coalesces into one
-  // save instead of firing N WorkspaceBindingChanged events back-to-back.
-  // Dedupe is against the **last successfully-saved** payload, not just
-  // `initial` — so re-toggling A → B → A is a no-op (back to last saved),
-  // and once a save lands the next idle window doesn't re-save the same
-  // values.
-  //
-  // Critical: the debounce timer is cleared on dependency change but the
-  // **pending payload survives panel close**. If the user edits then
-  // closes before the debounce fires, the unmount handler flushes the
-  // save synchronously to Tauri — the IPC goes out before React tears
-  // the component down, and the save completes in the background.
-  const saveSeqRef = useRef(0);
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Snapshot of the last payload we successfully wrote. `null` means
-  // "never saved during this panel session" — fall back to `initial` for
-  // dedupe in that case.
-  const lastSavedRef = useRef<WorkspaceBindingInput | null>(null);
-  // The most recent payload the user produced that has NOT yet been
-  // committed. Cleared on successful save. The unmount handler reads
-  // this to decide whether to flush.
-  const pendingPayloadRef = useRef<WorkspaceBindingInput | null>(null);
-  // Latest closures via ref so the unmount-only effect's empty-deps
-  // cleanup can still call the freshest handlers — closing the panel
-  // mid-edit must use the parent's *current* `onSubmit`, not whatever it
-  // captured on first mount.
-  const onSubmitRef = useRef(onSubmit);
-  const onSaveStatusChangeRef = useRef(onSaveStatusChange);
-  useEffect(() => {
-    onSubmitRef.current = onSubmit;
-    onSaveStatusChangeRef.current = onSaveStatusChange;
-  }, [onSubmit, onSaveStatusChange]);
+  // Saving is now explicit: nothing is written until the user presses
+  // Apply (see `handleSubmit`). The old debounced autosave + flush-on-close
+  // was removed — it fired writes while the user was still deciding and
+  // needed extra reconciliation work to stay correct. Closing the panel now
+  // simply discards unsaved edits.
 
-  useEffect(() => {
-    if (!isEdit || !initial) return;
-    if (!canSubmit) return;
-
-    const candidate: WorkspaceBindingInput = {
-      workspace_root: root.trim(),
-      space_id: spaceId,
-      feature_set_ids: fsIds,
-    };
-
-    // Dedupe baseline: last-saved if we've saved during this session,
-    // otherwise the initial payload from when the panel opened.
-    const baseline = lastSavedRef.current ?? {
-      workspace_root: initial.workspace_root,
-      space_id: initial.space_id,
-      feature_set_ids: initial.feature_set_ids,
-    };
-    if (sameBindingInput(candidate, baseline)) {
-      pendingPayloadRef.current = null;
-      return;
-    }
-
-    pendingPayloadRef.current = candidate;
-    const seq = ++saveSeqRef.current;
-    onSaveStatusChange?.({ kind: 'idle' });
-    const handle = setTimeout(async () => {
-      if (saveSeqRef.current !== seq) return;
-      onSaveStatusChange?.({ kind: 'saving' });
-      setSubmitting(true);
-      try {
-        await onSubmit(candidate);
-        if (saveSeqRef.current !== seq) return;
-        lastSavedRef.current = candidate;
-        pendingPayloadRef.current = null;
-        onSaveStatusChange?.({ kind: 'saved' });
-        if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
-        savedTimerRef.current = setTimeout(() => {
-          onSaveStatusChange?.({ kind: 'idle' });
-        }, 1800);
-      } catch (e) {
-        if (saveSeqRef.current !== seq) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        onSaveStatusChange?.({ kind: 'error', message: msg });
-        onError(msg);
-      } finally {
-        setSubmitting(false);
-      }
-    }, 1500);
-    return () => clearTimeout(handle);
-  }, [
-    isEdit,
-    initial,
-    root,
-    spaceId,
-    fsIds,
-    canSubmit,
-    onSubmit,
-    onError,
-    onSaveStatusChange,
-  ]);
-
-  // Unmount-only flush. If a save was scheduled but the timer hasn't
-  // fired by the time the user closes the panel, fire it now so their
-  // edits aren't silently dropped. Empty-deps so this only runs on
-  // unmount, not on every dep change of the autosave effect above.
-  useEffect(() => {
-    return () => {
-      const pending = pendingPayloadRef.current;
-      if (!pending) return;
-      // Fire-and-forget. Tauri's `invoke` posts the IPC message to the
-      // Rust side immediately; the React tree can unmount in parallel
-      // and the save still completes. Bump the seq so any in-flight
-      // debounced save from before the close is discarded if it lands.
-      saveSeqRef.current += 1;
-      onSaveStatusChangeRef.current?.({ kind: 'saving' });
-      onSubmitRef
-        .current(pending)
-        .then(() => {
-          onSaveStatusChangeRef.current?.({ kind: 'saved' });
-        })
-        .catch((e) => {
-          // Parent's toast bridge is gone with the panel — fall back to
-          // the console so the failure isn't silent in dev.
-          console.warn(
-            '[workspace-binding] flush-on-close save failed:',
-            e instanceof Error ? e.message : String(e)
-          );
-        });
-    };
-  }, []);
-
-  const submitLabel =
-    mode === 'create-from-live' ? 'Save binding' : 'Create binding';
+  const submitLabel = isEdit
+    ? 'Apply changes'
+    : mode === 'create-from-live'
+      ? 'Save mapping'
+      : 'Create mapping';
 
   return (
     <div className="space-y-5">
-      <FormField label="Workspace root">
+      {/* Plain-language primer for anyone who's never seen McpMux. Explains
+          the whole flow in two sentences before the fields. */}
+      <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-3.5 py-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
+        <span className="font-semibold text-[rgb(var(--foreground))]">
+          What is a mapping?
+        </span>{' '}
+        Pick a folder, then choose the tools it should get. Whenever you open
+        that folder in a connected app — Cursor, VS Code, Claude — McpMux hands
+        it exactly the tools you choose here, and nothing else.
+      </div>
+
+      <FormField label="Workspace folder">
         <div className="flex gap-2">
           <input
             ref={rootRef}
@@ -1794,7 +1810,7 @@ function BindingForm({
             value={root}
             onChange={(e) => setRoot(e.target.value)}
             readOnly={!rootEditable}
-            placeholder="Pick a folder, or paste an absolute path"
+            placeholder="Browse for a folder, or paste an absolute path"
             className={[
               'flex-1 min-w-0 px-3 py-2 rounded-lg text-sm font-mono focus:outline-none focus:ring-2',
               !rootEditable
@@ -1835,10 +1851,30 @@ function BindingForm({
             </button>
           )}
         </div>
-        <RootValidationHint state={rootValidation} editable={rootEditable} originalValue={root} />
+        {duplicate ? (
+          <p
+            className="mt-1.5 text-[11px] text-red-600 dark:text-red-400 flex items-start gap-1.5"
+            data-testid="workspace-binding-duplicate-error"
+          >
+            <AlertCircle className="h-3 w-3 flex-shrink-0 mt-px" />
+            <span>
+              This folder is already mapped. Open its existing mapping to change
+              what it sees instead of adding a second one.
+            </span>
+          </p>
+        ) : (
+          <RootValidationHint
+            state={rootValidation}
+            editable={rootEditable}
+            originalValue={root}
+          />
+        )}
       </FormField>
 
-      <FormField label="Space" hint="Which Space this folder belongs to.">
+      <FormField
+        label="Space"
+        hint="A Space is a profile that groups MCP servers. Choose which one this folder draws its tools from."
+      >
         <Picker
           value={spaceId}
           onChange={setSpaceId}
@@ -1855,10 +1891,10 @@ function BindingForm({
       <FormField
         label={
           fsIds.length > 1
-            ? `Feature sets (${fsIds.length} selected)`
+            ? `Feature set (${fsIds.length} selected)`
             : 'Feature set'
         }
-        hint="Which tools this folder sees. Pick one or compose several — selected sets union into a single allow list."
+        hint="A feature set is a curated list of tools, prompts, and resources from that Space — exactly what this folder is allowed to use. Pick one, or combine several into a single set."
       >
         {!spaceId ? (
           <p className="text-xs text-[rgb(var(--muted))] italic px-3 py-2">
@@ -1965,8 +2001,24 @@ function BindingForm({
         )}
       </FormField>
 
-      {!isEdit && (
-        <div className="flex items-center gap-2 pt-1">
+      {/* Saving is explicit in every mode now — nothing is written until
+          Apply is pressed, so the user can keep deciding without half-saved
+          state. In edit mode the button stays disabled until something
+          actually changes. */}
+      <div className="pt-1 space-y-2">
+        {spaceId && availableFs.length > 0 && fsIds.length === 0 ? (
+          // Explains *why* Apply is disabled — otherwise unselecting every
+          // feature set silently greys out the button with no reason.
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+            Select at least one feature set to save — an empty mapping would
+            leave this folder with no tools.
+          </p>
+        ) : isEdit && dirty && !duplicate ? (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400">
+            Unsaved changes — press <strong>Apply changes</strong> to save.
+          </p>
+        ) : null}
+        <div className="flex items-center gap-2">
           <Button
             variant="primary"
             size="md"
@@ -1983,10 +2035,10 @@ function BindingForm({
             {submitLabel}
           </Button>
           <Button variant="secondary" size="md" onClick={onCancel} disabled={submitting}>
-            Cancel
+            {isEdit ? 'Close' : 'Cancel'}
           </Button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -2017,7 +2069,8 @@ function RootValidationHint({
   if (!editable) {
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        Reported by the connected client — the path isn&apos;t editable.
+        This folder was reported by the app that&apos;s open in it, so the path
+        is fixed — just choose its tools below.
       </p>
     );
   }
@@ -2153,14 +2206,15 @@ function EmptyState({
         <div className="h-16 w-16 rounded-full bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center mb-4">
           <Radio className="h-8 w-8 text-primary-500" />
         </div>
-        <h3 className="text-lg font-medium mb-2">Nothing to show yet</h3>
+        <h3 className="text-lg font-medium mb-2">No folders mapped yet</h3>
         <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md mb-6">
-          When a connected MCP client reports a workspace root, it will appear here live.
-          You can also add a binding ahead of time for a folder you care about.
+          When you open a folder in a connected app, it shows up here so you can
+          choose its tools. You can also map a folder ahead of time — add one
+          now to get started.
         </p>
         <Button variant="primary" onClick={onCreate}>
           <Plus className="h-4 w-4 mr-2" />
-          Add a binding
+          Add a mapping
         </Button>
       </CardContent>
     </Card>

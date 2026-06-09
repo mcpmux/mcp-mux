@@ -176,15 +176,23 @@ impl DcrError {
 /// 1. Loopback: http://127.0.0.1:PORT/... or http://localhost:PORT/...
 /// 2. Custom URL schemes: cursor://, vscode://, claude://, etc.
 ///
-/// NOT allowed:
+/// NOT allowed (these are filtered from the request, not hard-failed):
 /// - https:// URLs (except for confidential clients with proper secrets)
 /// - http:// URLs to non-loopback addresses
+///
+/// Invalid URIs are silently skipped rather than rejecting the entire registration.
+/// This is necessary because some clients (notably Cursor) send a mix of valid and
+/// invalid redirect URIs in a single DCR request — failing the whole registration
+/// would lock those clients out entirely, even though they only ever use the valid
+/// URIs in practice. An error is only returned if zero valid URIs remain.
 pub fn validate_redirect_uris(uris: &[String]) -> Result<(), DcrError> {
     if uris.is_empty() {
         return Err(DcrError::invalid_redirect_uri(
             "At least one redirect_uri is required",
         ));
     }
+
+    let mut valid_count = 0;
 
     for uri in uris {
         let is_loopback = uri.starts_with("http://127.0.0.1")
@@ -196,20 +204,28 @@ pub fn validate_redirect_uris(uris: &[String]) -> Result<(), DcrError> {
         let is_custom_scheme = !uri.starts_with("http://") && !uri.starts_with("https://");
 
         if !is_loopback && !is_custom_scheme {
+            // Skip invalid URIs (e.g. https://www.cursor.com/agents/mcp/oauth/callback)
+            // rather than rejecting the entire registration — clients like Cursor send a
+            // mix of valid and invalid URIs and only ever use the valid ones in practice.
             warn!(
-                "[DCR] Rejected redirect_uri: {} (must be loopback or custom scheme)",
+                "[DCR] Skipping invalid redirect_uri: {} (must be loopback or custom scheme)",
                 uri
             );
-            return Err(DcrError::invalid_redirect_uri(
-                "Redirect URI must be loopback (http://127.0.0.1 or http://localhost) \
-                 or a custom URL scheme (e.g., cursor://, vscode://)",
-            ));
+            continue;
         }
 
         debug!(
             "[DCR] Validated redirect_uri: {} (loopback={}, custom_scheme={})",
             uri, is_loopback, is_custom_scheme
         );
+        valid_count += 1;
+    }
+
+    if valid_count == 0 {
+        return Err(DcrError::invalid_redirect_uri(
+            "No valid redirect_uris provided — must include at least one loopback \
+             (http://127.0.0.1 or http://localhost) or custom URL scheme (e.g., cursor://, vscode://)",
+        ));
     }
 
     Ok(())
@@ -420,9 +436,32 @@ mod tests {
 
     #[test]
     fn test_reject_invalid_uris() {
-        // Invalid URIs (non-loopback http)
+        // Invalid URIs (non-loopback http) — fail when no valid URIs remain
         assert!(validate_redirect_uris(&["http://example.com/callback".to_string()]).is_err());
         assert!(validate_redirect_uris(&["https://example.com/callback".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_mixed_valid_and_invalid_uris_pass() {
+        // Real-world case: Cursor sends a mix of valid (custom scheme + loopback) and
+        // invalid (https) URIs. Registration must succeed as long as at least one valid
+        // URI is present — otherwise clients that send any non-loopback HTTPS URI cannot
+        // register at all.
+        let uris = vec![
+            "cursor://anysphere.cursor-mcp/oauth/callback".to_string(),
+            "https://www.cursor.com/agents/mcp/oauth/callback".to_string(),
+            "http://localhost:8787/callback".to_string(),
+        ];
+        assert!(validate_redirect_uris(&uris).is_ok());
+    }
+
+    #[test]
+    fn test_all_invalid_uris_fail() {
+        let uris = vec![
+            "https://www.cursor.com/agents/mcp/oauth/callback".to_string(),
+            "http://example.com/callback".to_string(),
+        ];
+        assert!(validate_redirect_uris(&uris).is_err());
     }
 
     // Note: Integration tests for idempotent registration are better handled

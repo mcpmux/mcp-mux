@@ -138,7 +138,7 @@ impl PrefixCacheService {
 
         // Sort by created_at (earliest first)
         // TODO: Add verified status priority when registry supports it
-        servers.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        servers.sort_by_key(|a| a.created_at);
 
         // Clear existing cache for this space
         self.clear_space(space_id).await;

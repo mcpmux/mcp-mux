@@ -131,16 +131,54 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # Tauri uses the WebView2 runtime, not Edge directly.
-          # msedgedriver must match the WebView2 runtime version, not the Edge browser version.
+          # Tauri uses the WebView2 runtime, not Edge directly, so msedgedriver must be
+          # compatible with the WebView2 runtime (matching the major version is sufficient).
+          # Microsoft does not publish a driver for every exact runtime build, so try the
+          # exact version first, then fall back to the latest driver for the same major
+          # version, then LATEST_STABLE. This keeps the job from breaking whenever the
+          # runner's WebView2 build outpaces the published Edge drivers.
+          $ErrorActionPreference = 'Stop'
           $wv2Key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
           if (-not (Test-Path $wv2Key)) { $wv2Key = 'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' }
           $wv2Version = (Get-ItemProperty $wv2Key).pv
-          Write-Host "WebView2 runtime version: $wv2Version"
-          $driverUrl = "https://msedgewebdriverstorage.blob.core.windows.net/edgewebdriver/$wv2Version/edgedriver_win64.zip"
+          $wv2Major = $wv2Version.Split('.')[0]
+          Write-Host "WebView2 runtime version: $wv2Version (major $wv2Major)"
+
+          # Microsoft locked down the old msedgewebdriverstorage blob (now returns HTTP 409
+          # "Public access is not permitted"); the current host is msedgedriver.microsoft.com.
+          $base = "https://msedgedriver.microsoft.com"
+
+          # Ordered list of candidate driver versions to try.
+          $candidates = [System.Collections.Generic.List[string]]::new()
+          $candidates.Add($wv2Version)
+          foreach ($marker in @("LATEST_RELEASE_${wv2Major}_WINDOWS", "LATEST_STABLE")) {
+            try {
+              $resolved = (Invoke-WebRequest -UseBasicParsing -Uri "$base/$marker").Content
+              # Markers are UTF-16/BOM encoded; keep only version characters.
+              $resolved = ($resolved -replace '[^0-9\.]', '').Trim()
+              if ($resolved) { $candidates.Add($resolved); Write-Host "marker $marker -> $resolved" }
+            } catch {
+              Write-Host "marker $marker unavailable: $($_.Exception.Message)"
+            }
+          }
+
           $zipPath = "$env:TEMP\edgedriver.zip"
           $extractDir = "$env:TEMP\edgedriver"
-          Invoke-WebRequest -Uri $driverUrl -OutFile $zipPath
+          $ok = $false
+          foreach ($v in ($candidates | Select-Object -Unique)) {
+            $driverUrl = "$base/$v/edgedriver_win64.zip"
+            Write-Host "Trying EdgeDriver $v -> $driverUrl"
+            try {
+              Invoke-WebRequest -UseBasicParsing -Uri $driverUrl -OutFile $zipPath
+              Write-Host "Downloaded EdgeDriver $v"
+              $ok = $true
+              break
+            } catch {
+              Write-Host "  not available: $($_.Exception.Message)"
+            }
+          }
+          if (-not $ok) { throw "No compatible msedgedriver found for WebView2 $wv2Version (tried: $($candidates -join ', '))" }
+
           Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
           $driverDir = "$extractDir\edgedriver_win64"
           if (-not (Test-Path "$driverDir\msedgedriver.exe")) { $driverDir = $extractDir }

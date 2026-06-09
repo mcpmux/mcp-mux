@@ -1664,8 +1664,10 @@ function BindingForm({
   }, [availableFs, fsSearch]);
 
   // When the Space changes, drop selections that aren't in the new Space's
-  // FS list. Reseed an empty selection with the default FS so the operator
-  // doesn't have to click anything for a "single-FS, default" binding.
+  // FS list. In CREATE modes only, reseed an empty selection with the default
+  // FS so the operator doesn't have to click anything for the common case.
+  // In EDIT mode we never reseed — an intentionally-empty mapping ("no Space
+  // tools") must survive reopening.
   useEffect(() => {
     if (availableFs.length === 0) {
       if (fsIds.length > 0) setFsIds([]);
@@ -1673,11 +1675,12 @@ function BindingForm({
     }
     const validIds = new Set(availableFs.map((f) => f.id));
     const filtered = fsIds.filter((id) => validIds.has(id));
-    if (filtered.length === 0) {
+    if (filtered.length !== fsIds.length) {
+      // Cross-space cleanup: drop ids that don't belong to this Space.
+      setFsIds(filtered);
+    } else if (filtered.length === 0 && !initial) {
       const fallback = availableFs.find(isStarterFeatureSet) ?? availableFs[0];
       setFsIds([fallback.id]);
-    } else if (filtered.length !== fsIds.length) {
-      setFsIds(filtered);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableFs]);
@@ -1723,10 +1726,11 @@ function BindingForm({
     );
   }, [isEdit, initial, trimmedRoot, spaceId, fsIds]);
 
+  // Note: an empty feature-set selection is a VALID mapping ("no Space tools";
+  // built-in servers still apply per Space), so it does not block Apply.
   const canSubmit =
     !submitting &&
     !!spaceId &&
-    fsIds.length > 0 &&
     (rootValidation.state === 'ok' || !rootEditable) &&
     !duplicate &&
     dirty;
@@ -1746,10 +1750,6 @@ function BindingForm({
     }
     if (!spaceId) {
       onError('Pick a Space.');
-      return;
-    }
-    if (fsIds.length === 0) {
-      onError('Pick at least one feature set.');
       return;
     }
     if (savedTimerRef.current) {
@@ -2004,20 +2004,22 @@ function BindingForm({
       {/* Saving is explicit in every mode now — nothing is written until
           Apply is pressed, so the user can keep deciding without half-saved
           state. In edit mode the button stays disabled until something
-          actually changes. */}
+          actually changes. An empty feature-set selection is valid and
+          savable. */}
       <div className="pt-1 space-y-2">
-        {spaceId && availableFs.length > 0 && fsIds.length === 0 ? (
-          // Explains *why* Apply is disabled — otherwise unselecting every
-          // feature set silently greys out the button with no reason.
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
-            Select at least one feature set to save — an empty mapping would
-            leave this folder with no tools.
+        {spaceId && fsIds.length === 0 && (
+          // Empty is allowed — explain what it means rather than blocking.
+          <p className="text-[11px] text-[rgb(var(--muted))]">
+            No feature sets selected — this folder gets <strong>no tools</strong>{' '}
+            from this Space. Built-in servers still apply per Space (see Built-in
+            Servers).
           </p>
-        ) : isEdit && dirty && !duplicate ? (
+        )}
+        {isEdit && dirty && !duplicate && (
           <p className="text-[11px] text-amber-600 dark:text-amber-400">
             Unsaved changes — press <strong>Apply changes</strong> to save.
           </p>
-        ) : null}
+        )}
         <div className="flex items-center gap-2">
           <Button
             variant="primary"

@@ -26,8 +26,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// A binding between a normalized workspace root and the FeatureSet(s) it
-/// resolves to. `feature_set_ids` is non-empty by construction — see
-/// [`WorkspaceBinding::new`] / `new_multi`.
+/// resolves to. `feature_set_ids` MAY be empty — an empty list is a valid
+/// "no Space tools" mapping (the folder still routes to this Space; built-in
+/// servers apply per Space).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspaceBinding {
     pub id: Uuid,
@@ -51,9 +52,8 @@ impl WorkspaceBinding {
         Self::new_multi(workspace_root, space_id, vec![feature_set_id.into()])
     }
 
-    /// Construct a binding with one or more FeatureSets. Caller must
-    /// guarantee `feature_set_ids` is non-empty; the storage layer rejects
-    /// empties with a validation error.
+    /// Construct a binding with zero or more FeatureSets. An empty list is
+    /// allowed and persists as a "no Space tools" mapping.
     pub fn new_multi(
         workspace_root: impl Into<String>,
         space_id: Uuid,

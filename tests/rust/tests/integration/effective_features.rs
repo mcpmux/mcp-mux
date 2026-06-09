@@ -22,7 +22,7 @@ use mcpmux_core::{
     normalize_workspace_root, FeatureSet, FeatureSetRepository, MemberMode, ServerFeature,
     ServerFeatureRepository, SpaceRepository, WorkspaceBinding, WorkspaceBindingRepository,
 };
-use mcpmux_gateway::services::{FeatureSetResolverService, SessionRootsRegistry};
+use mcpmux_gateway::services::{FeatureSetResolverService, ResolutionSource, SessionRootsRegistry};
 use mcpmux_gateway::{FeatureService, PrefixCacheService};
 use mcpmux_storage::{
     Database, InboundClientRepository, SqliteFeatureSetRepository, SqliteServerFeatureRepository,
@@ -174,6 +174,35 @@ async fn mapping_determines_effective_tools_per_session() {
         ctx.effective_tools("sess-fb").await,
         vec!["deploy".to_string()],
     );
+}
+
+/// An *empty* mapping (a binding with zero feature sets) is valid: the session
+/// routes to the Space (source = WorkspaceBinding) but sees zero Space tools.
+/// Built-in servers (gated per Space) are layered on by the request handler and
+/// aren't part of get_tools_for_grants.
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_mapping_yields_zero_effective_tools() {
+    let ctx = Ctx::new().await;
+    let root = if cfg!(windows) {
+        "d:\\work\\none"
+    } else {
+        "/work/none"
+    };
+    ctx.binding_repo
+        .create(&WorkspaceBinding::new_multi(
+            normalize_workspace_root(root),
+            ctx.space_id,
+            vec![],
+        ))
+        .await
+        .unwrap();
+    ctx.session_roots.set("sess", [root]);
+    ctx.session_roots.set_roots_capable("sess", true);
+
+    let resolved = ctx.resolver.resolve(Some("sess"), None).await.unwrap();
+    assert_eq!(resolved.source, ResolutionSource::WorkspaceBinding);
+    assert!(resolved.feature_set_ids.is_empty());
+    assert!(ctx.effective_tools("sess").await.is_empty());
 }
 
 /// A reported root with no mapping resolves to Deny → empty feature-set list

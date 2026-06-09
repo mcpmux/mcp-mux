@@ -198,12 +198,9 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
     }
 
     async fn create(&self, binding: &WorkspaceBinding) -> Result<()> {
-        if binding.feature_set_ids.is_empty() {
-            anyhow::bail!(
-                "WorkspaceBinding {} must have at least one feature_set_id",
-                binding.id
-            );
-        }
+        // An empty feature_set_ids is allowed: it means "this folder gets no
+        // Space tools" (built-in servers still apply per Space). The junction
+        // simply ends up with zero rows.
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -225,12 +222,9 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
     }
 
     async fn update(&self, binding: &WorkspaceBinding) -> Result<()> {
-        if binding.feature_set_ids.is_empty() {
-            anyhow::bail!(
-                "WorkspaceBinding {} must have at least one feature_set_id",
-                binding.id
-            );
-        }
+        // Empty feature_set_ids is allowed — see `create`. Updating to empty
+        // clears the junction (the folder keeps the binding but gets no Space
+        // tools).
         let db = self.db.lock().await;
         let conn = db.connection();
 
@@ -394,12 +388,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_rejects_empty_fs_list() {
+    async fn test_create_allows_empty_fs_list() {
+        // An empty feature_set_ids is a valid "no Space tools" mapping — the
+        // folder keeps the binding (so it routes to this Space) but gets no
+        // Space tools; built-in servers still apply per Space. It round-trips
+        // as an empty list.
         let (repo, space_id, _) = fixture().await;
         let root = if cfg!(windows) { "d:\\empty" } else { "/empty" };
         let binding = WorkspaceBinding::new_multi(root, space_id, vec![]);
-        let err = repo.create(&binding).await.unwrap_err();
-        assert!(err.to_string().contains("at least one feature_set_id"));
+        repo.create(&binding).await.unwrap();
+        let got = repo.get(&binding.id).await.unwrap().unwrap();
+        assert!(got.feature_set_ids.is_empty());
     }
 
     #[tokio::test]

@@ -73,10 +73,11 @@ impl From<WorkspaceBinding> for WorkspaceBindingDto {
     }
 }
 
-/// Input for creating or updating a binding. Pass at least one
-/// `feature_set_id` in `feature_set_ids` — empty is rejected.
+/// Input for creating or updating a binding.
 ///
-/// Order matters for UI rendering only; the resolver merges them.
+/// `feature_set_ids` MAY be empty — an empty list means "this folder gets no
+/// Space tools" (built-in servers still apply per Space). Order matters for UI
+/// rendering only; the resolver merges them.
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceBindingInput {
     pub workspace_root: String,
@@ -88,23 +89,18 @@ fn parse_space_id(input: &WorkspaceBindingInput) -> Result<Uuid, String> {
     Uuid::parse_str(&input.space_id).map_err(|e| format!("bad space_id: {e}"))
 }
 
+/// Clean + dedup the feature-set list (preserving order). An empty result is
+/// valid — it persists as a "no Space tools" binding.
 fn validate_fs_list(input: &WorkspaceBindingInput) -> Result<Vec<String>, String> {
-    let cleaned: Vec<String> = input
+    let cleaned = input
         .feature_set_ids
         .iter()
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if cleaned.is_empty() {
-        return Err("at least one feature_set_id is required".into());
-    }
+        .filter(|s| !s.is_empty());
     // Dedup while preserving order so the operator's intent ("primary then
     // overlay") survives a duplicate they may have accidentally supplied.
     let mut seen = HashSet::new();
-    let deduped: Vec<String> = cleaned
-        .into_iter()
-        .filter(|id| seen.insert(id.clone()))
-        .collect();
+    let deduped: Vec<String> = cleaned.filter(|id| seen.insert(id.clone())).collect();
     Ok(deduped)
 }
 

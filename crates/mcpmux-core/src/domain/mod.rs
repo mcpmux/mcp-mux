@@ -5,6 +5,7 @@
 //! - Value Objects (ConnectionStatus, FeatureType, etc.)
 //! - Domain Events (DomainEvent enum for event-driven architecture)
 
+mod builtin;
 mod client;
 pub mod config;
 mod credential;
@@ -22,6 +23,10 @@ mod workspace_binding;
 pub use event::{ConnectionStatus, DiscoveredCapabilities, DomainEvent, DomainEventEnvelope};
 
 // Export entities (installed_server re-exports ConnectionStatus from event)
+pub use builtin::{
+    builtin_server, builtin_servers, BuiltinServerDescriptor, BuiltinToolDescriptor,
+    TOOL_OPTIMIZATION_SERVER_ID,
+};
 pub use client::*;
 pub use config::*;
 pub use credential::*;

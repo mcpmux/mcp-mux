@@ -10,8 +10,8 @@ use crate::services::ClientMetadataService;
 use mcpmux_core::{
     AppSettingsRepository, CimdMetadataFetcher, CredentialRepository, FeatureSetRepository,
     InboundMcpClientRepository, InstalledServerRepository, OutboundOAuthRepository,
-    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager, SpaceRepository,
-    WorkspaceBindingRepository,
+    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager,
+    SpaceBuiltinConfigRepository, SpaceRepository, WorkspaceBindingRepository,
 };
 use mcpmux_storage::{Database, InboundClientRepository};
 use tokio::sync::Mutex;
@@ -37,6 +37,9 @@ pub struct GatewayDependencies {
     pub inbound_mcp_client_repo: Arc<dyn InboundMcpClientRepository>,
     /// Workspace -> FeatureSet bindings for resolver v2.
     pub workspace_binding_repo: Arc<dyn WorkspaceBindingRepository>,
+    /// Per-Space built-in server config (Tool Optimization enablement + tool
+    /// toggles), consulted when advertising the `mcpmux_*` tools per Space.
+    pub builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository>,
 
     // Services (Business Layer)
     pub server_discovery: Arc<ServerDiscoveryService>,
@@ -82,6 +85,9 @@ impl GatewayDependencies {
         let workspace_binding_repo: Arc<dyn WorkspaceBindingRepository> = Arc::new(
             mcpmux_storage::SqliteWorkspaceBindingRepository::new(database.clone()),
         );
+        let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> = Arc::new(
+            mcpmux_storage::SqliteSpaceBuiltinConfigRepository::new(database.clone()),
+        );
 
         Self {
             installed_server_repo,
@@ -93,6 +99,7 @@ impl GatewayDependencies {
             inbound_client_repo,
             inbound_mcp_client_repo,
             workspace_binding_repo,
+            builtin_config_repo,
             server_discovery,
             log_manager,
             cimd_fetcher,
@@ -240,6 +247,9 @@ impl DependenciesBuilder {
         let workspace_binding_repo: Arc<dyn WorkspaceBindingRepository> = Arc::new(
             mcpmux_storage::SqliteWorkspaceBindingRepository::new(database.clone()),
         );
+        let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> = Arc::new(
+            mcpmux_storage::SqliteSpaceBuiltinConfigRepository::new(database.clone()),
+        );
 
         Ok(GatewayDependencies {
             installed_server_repo: self
@@ -257,6 +267,7 @@ impl DependenciesBuilder {
             inbound_client_repo,
             inbound_mcp_client_repo,
             workspace_binding_repo,
+            builtin_config_repo,
             server_discovery: self
                 .server_discovery
                 .ok_or("server_discovery is required")?,

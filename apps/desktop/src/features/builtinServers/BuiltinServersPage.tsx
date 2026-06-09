@@ -2,14 +2,13 @@
  * Built-in Servers page.
  *
  * Home for the MCP servers McpMux ships itself — distinct from the servers the
- * user installs (those live under "My Servers"). Each built-in server can be
- * enabled/disabled; when on, its tools appear to connected MCP clients
- * alongside the user's own tools.
+ * user installs (those live under "My Servers"). Built-in servers and their
+ * individual tools are enabled/disabled **per Space**: this page configures the
+ * Space currently selected in the sidebar's Space switcher.
  *
  * Today there's one concrete built-in server — "Tool Optimization" (the
  * `mcpmux_*` self-management toolset). Memory / Skills / Plugins are scaffolded
- * as "coming soon" so the shape of the framework is visible. Per-workspace
- * enable/disable + per-tool toggles land on top of this in a later pass.
+ * as "coming soon" so the shape of the framework is visible.
  */
 
 import { useEffect, useState } from 'react';
@@ -32,44 +31,22 @@ import {
   Eye,
   Pencil,
   Boxes,
+  Loader2,
+  Layers,
 } from 'lucide-react';
-import { getMetaToolsEnabled, setMetaToolsEnabled } from '@/lib/api/metaTools';
+import { listen } from '@tauri-apps/api/event';
+import {
+  listBuiltinServers,
+  setBuiltinServerEnabled,
+  setBuiltinToolEnabled,
+  type BuiltinServer,
+} from '@/lib/api/builtinServers';
 import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
+import { useViewSpace, useDefaultSpace } from '@/stores';
 
-/** A tool the Tool Optimization server exposes — display metadata only. */
-interface BuiltinTool {
-  name: string;
-  description: string;
-  write: boolean;
-}
-
-/**
- * The `mcpmux_*` tools, mirrored from the gateway's meta-tool registry. Kept
- * here for display; the gateway is the source of truth for what's actually
- * advertised. Writes require a native approval before they run.
- */
-const TOOL_OPTIMIZATION_TOOLS: BuiltinTool[] = [
-  {
-    name: 'mcpmux_list_all_tools',
-    description: 'Browse every tool available in the resolved Space, unfiltered.',
-    write: false,
-  },
-  {
-    name: 'mcpmux_list_feature_sets',
-    description: 'See the feature sets defined in the Space.',
-    write: false,
-  },
-  {
-    name: 'mcpmux_create_feature_set',
-    description: 'Build a focused feature set from chosen tools.',
-    write: true,
-  },
-  {
-    name: 'mcpmux_bind_current_workspace',
-    description: 'Map the current folder to a feature set so it persists.',
-    write: true,
-  },
-];
+const SERVER_ICONS: Record<string, React.ReactNode> = {
+  'tool-optimization': <Sparkles className="h-5 w-5" />,
+};
 
 interface ComingSoonServer {
   id: string;
@@ -88,7 +65,7 @@ const COMING_SOON: ComingSoonServer[] = [
   {
     id: 'skills',
     name: 'Skills',
-    description: 'Search a catalog of skills and pull the ones you want into a workspace.',
+    description: 'Search a catalog of skills and pull the ones you want into a Space.',
     icon: <BookOpen className="h-5 w-5" />,
   },
   {
@@ -102,45 +79,85 @@ const COMING_SOON: ComingSoonServer[] = [
 export function BuiltinServersPage() {
   const { toasts, success, error, dismiss } = useToast();
 
-  const [enabled, setEnabled] = useState(true);
+  const viewSpace = useViewSpace();
+  const defaultSpace = useDefaultSpace();
+  const space = viewSpace ?? defaultSpace;
+  const spaceId = space?.id ?? null;
+
+  const [servers, setServers] = useState<BuiltinServer[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getMetaToolsEnabled()
-      .then(setEnabled)
-      .catch((e) => console.error('Failed to load meta_tools_enabled', e))
-      .finally(() => setLoading(false));
-  }, []);
-
-  // Live-sync if the switch is flipped elsewhere (the gateway forwards
-  // `meta-tools-changed` after a toggle); keep this page honest without a
-  // manual refresh.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void import('@tauri-apps/api/event').then(({ listen }) => {
-      void listen<{ enabled: boolean }>('meta-tools-changed', (e) => {
-        setEnabled(e.payload.enabled);
-      }).then((fn) => {
-        unlisten = fn;
+    if (!spaceId) return;
+    let cancelled = false;
+    setLoading(true);
+    listBuiltinServers(spaceId)
+      .then((s) => {
+        if (!cancelled) setServers(s);
+      })
+      .catch((e) => {
+        if (!cancelled) error('Failed to load built-in servers', String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spaceId]);
+
+  // Refetch when this Space's config changes elsewhere (the gateway forwards
+  // `builtin-server-config-changed` after a toggle).
+  useEffect(() => {
+    if (!spaceId) return;
+    let unlisten: (() => void) | undefined;
+    void listen<{ space_id: string }>('builtin-server-config-changed', (e) => {
+      if (e.payload.space_id === spaceId) {
+        void listBuiltinServers(spaceId)
+          .then(setServers)
+          .catch(() => {
+            /* keep current view; initial load surfaced any error */
+          });
+      }
+    }).then((fn) => {
+      unlisten = fn;
     });
     return () => unlisten?.();
-  }, []);
+  }, [spaceId]);
 
-  const handleToggle = async (next: boolean) => {
-    const previous = enabled;
-    setEnabled(next);
+  const toggleServer = async (serverId: string, enabled: boolean) => {
+    if (!spaceId) return;
+    const prev = servers;
+    setServers((s) => s.map((x) => (x.id === serverId ? { ...x, enabled } : x)));
     try {
-      await setMetaToolsEnabled(next);
+      await setBuiltinServerEnabled(spaceId, serverId, enabled);
+      const srv = prev.find((x) => x.id === serverId);
       success(
-        next ? 'Tool Optimization enabled' : 'Tool Optimization disabled',
-        next
-          ? 'Connected clients now see the mcpmux_* tools.'
-          : 'The mcpmux_* tools are hidden from connected clients.'
+        `${srv?.name ?? 'Server'} ${enabled ? 'enabled' : 'disabled'}`,
+        `For ${space?.name ?? 'this Space'} — connected clients update immediately.`
       );
     } catch (e) {
-      setEnabled(previous);
-      error('Failed to save', e instanceof Error ? e.message : String(e));
+      setServers(prev);
+      error('Failed to save', String(e));
+    }
+  };
+
+  const toggleTool = async (serverId: string, toolName: string, enabled: boolean) => {
+    if (!spaceId) return;
+    const prev = servers;
+    setServers((s) =>
+      s.map((x) =>
+        x.id === serverId
+          ? { ...x, tools: x.tools.map((t) => (t.name === toolName ? { ...t, enabled } : t)) }
+          : x
+      )
+    );
+    try {
+      await setBuiltinToolEnabled(spaceId, serverId, toolName, enabled);
+    } catch (e) {
+      setServers(prev);
+      error('Failed to save', String(e));
     }
   };
 
@@ -151,92 +168,106 @@ export function BuiltinServersPage() {
           <h1 className="text-3xl font-bold">Built-in Servers</h1>
           <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
             MCP servers that ship with McpMux — separate from the ones you install under{' '}
-            <span className="font-medium text-[rgb(var(--foreground))]">My Servers</span>. Turn a
-            server on and its tools appear to every connected client alongside your own.
+            <span className="font-medium text-[rgb(var(--foreground))]">My Servers</span>. Enable
+            them and toggle their tools <span className="font-medium">per Space</span>; the choices
+            below apply to{' '}
+            <span className="font-semibold text-[rgb(var(--foreground))]">
+              {space?.name ?? '…'}
+            </span>{' '}
+            (switch Spaces from the sidebar).
           </p>
         </div>
       </header>
 
       <div className="flex-1 overflow-auto p-8">
         <div className="mx-auto max-w-3xl space-y-6">
-          {/* Tool Optimization — the mcpmux_* self-management server */}
-          <Card data-testid="builtin-server-tool-optimization">
-            <CardHeader>
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <CardTitle className="flex items-center gap-2">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500/10 text-primary-500">
-                      <Sparkles className="h-5 w-5" />
-                    </span>
-                    Tool Optimization
-                    <span className="rounded-md border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
-                      Built-in
-                    </span>
-                  </CardTitle>
-                  <CardDescription className="mt-2">
-                    Lets the AI keep its own toolset lean: it can browse every available tool,
-                    assemble a focused feature set, and pin it to the current folder — each with
-                    your approval. Reads are silent; writes pop a native approval dialog.
-                  </CardDescription>
-                </div>
-                <Switch
-                  checked={enabled}
-                  onCheckedChange={handleToggle}
-                  disabled={loading}
-                  data-testid="meta-tools-enabled-switch"
-                />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Tools this server exposes */}
-              <div>
-                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-                  <Wrench className="h-3.5 w-3.5" />
-                  Tools ({TOOL_OPTIMIZATION_TOOLS.length})
-                </div>
-                <div
-                  className={`overflow-hidden rounded-xl border border-[rgb(var(--border))] transition-opacity ${
-                    enabled ? '' : 'opacity-50'
-                  }`}
-                >
-                  <div className="divide-y divide-[rgb(var(--border-subtle))]">
-                    {TOOL_OPTIMIZATION_TOOLS.map((t) => (
-                      <div key={t.name} className="flex items-start gap-3 px-4 py-2.5">
-                        {t.write ? (
-                          <Pencil className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
-                        ) : (
-                          <Eye className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate font-mono text-sm">{t.name}</span>
-                            <span
-                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                                t.write
-                                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                              }`}
-                            >
-                              {t.write ? 'write · approval' : 'read'}
-                            </span>
-                          </div>
-                          <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">{t.description}</p>
-                        </div>
-                      </div>
-                    ))}
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
+            </div>
+          ) : (
+            servers.map((server) => (
+              <Card key={server.id} data-testid={`builtin-server-${server.id}`}>
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <CardTitle className="flex items-center gap-2">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500/10 text-primary-500">
+                          {SERVER_ICONS[server.id] ?? <Boxes className="h-5 w-5" />}
+                        </span>
+                        {server.name}
+                        <span className="rounded-md border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
+                          Built-in
+                        </span>
+                      </CardTitle>
+                      <CardDescription className="mt-2">{server.description}</CardDescription>
+                    </div>
+                    <Switch
+                      checked={server.enabled}
+                      onCheckedChange={(v) => void toggleServer(server.id, v)}
+                      data-testid={`builtin-server-toggle-${server.id}`}
+                    />
                   </div>
-                </div>
-              </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
+                      <Wrench className="h-3.5 w-3.5" />
+                      Tools ({server.tools.length})
+                    </div>
+                    <div
+                      className={`overflow-hidden rounded-xl border border-[rgb(var(--border))] transition-opacity ${
+                        server.enabled ? '' : 'opacity-50'
+                      }`}
+                    >
+                      <div className="divide-y divide-[rgb(var(--border-subtle))]">
+                        {server.tools.map((t) => (
+                          <div key={t.name} className="flex items-start gap-3 px-4 py-2.5">
+                            {t.write ? (
+                              <Pencil className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+                            ) : (
+                              <Eye className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="truncate font-mono text-sm">{t.name}</span>
+                                <span
+                                  className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                    t.write
+                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                                  }`}
+                                >
+                                  {t.write ? 'write · approval' : 'read'}
+                                </span>
+                              </div>
+                              <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
+                                {t.description}
+                              </p>
+                            </div>
+                            <Switch
+                              checked={t.enabled}
+                              disabled={!server.enabled}
+                              onCheckedChange={(v) => void toggleTool(server.id, t.name, v)}
+                              data-testid={`builtin-tool-toggle-${t.name}`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
 
-              <MetaToolGrantsPanel />
-              <MetaToolAuditLog />
-            </CardContent>
-          </Card>
+                  <MetaToolGrantsPanel />
+                  <MetaToolAuditLog />
+                </CardContent>
+              </Card>
+            ))
+          )}
 
           {/* Framework preview — servers that slot into this same shell later. */}
           <div>
             <div className="mb-3 flex items-center gap-2">
-              <Boxes className="h-4 w-4 text-[rgb(var(--muted))]" />
+              <Layers className="h-4 w-4 text-[rgb(var(--muted))]" />
               <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">
                 More built-in servers
               </h2>

@@ -720,13 +720,16 @@ impl ServerHandler for McpMuxGatewayHandler {
             })
             .collect();
 
-        // Append built-in `mcpmux_*` meta tools when enabled. Default is ON;
-        // users can set `gateway.meta_tools_enabled = "false"` in settings
-        // to hide the entire namespace — useful when a deployment explicitly
-        // wants a non-self-managing gateway.
-        if self.services.meta_tool_registry.is_enabled().await {
-            mcp_tools.extend(self.services.meta_tool_registry.list_as_tools());
-        }
+        // Append the resolved Space's built-in `mcpmux_*` (Tool Optimization)
+        // tools. The set is empty when that built-in server is disabled for the
+        // Space, and any individual tools the Space has turned off are filtered
+        // out — all configured per Space via the Built-in Servers tab.
+        mcp_tools.extend(
+            self.services
+                .meta_tool_registry
+                .list_as_tools_for_space(&space_id)
+                .await,
+        );
 
         // Log tool names at DEBUG level for visibility
         let tool_names: Vec<String> = mcp_tools.iter().map(|t| t.name.to_string()).collect();
@@ -758,13 +761,25 @@ impl ServerHandler for McpMuxGatewayHandler {
         let session_id_owned = extract_session_id(&context.extensions);
         let session_id = session_id_owned.as_deref();
 
-        // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering.
-        // When the master switch is off we fall through to the feature-set
-        // path where the tool will miss and surface a normal "not found"
-        // error — same behaviour a client would see for any unknown tool.
+        // Resolve routing once — the binding's target space is authoritative
+        // (may differ from oauth_ctx.space_id). Needed both to gate the
+        // per-Space meta tools below and to route a normal tool call.
+        let (space_id, feature_set_ids) = self
+            .resolve_routing(session_id, &oauth_ctx.client_id)
+            .await?;
+
+        // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering, gated
+        // by the resolved Space's built-in config. When the Tool Optimization
+        // server (or this specific tool) is disabled for the Space we fall
+        // through to the feature-set path, where the tool misses and surfaces a
+        // normal "not found" error.
         if crate::services::is_meta_tool(&params.name)
             && self.services.meta_tool_registry.contains(&params.name)
-            && self.services.meta_tool_registry.is_enabled().await
+            && self
+                .services
+                .meta_tool_registry
+                .is_tool_enabled_for_space(&space_id, &params.name)
+                .await
         {
             // Note: client_id is the OAuth client identity (a URL for DCR-
             // registered clients like Claude, a UUID for others). The meta-
@@ -783,12 +798,6 @@ impl ServerHandler for McpMuxGatewayHandler {
                 Err(e) => Ok(e.into_call_tool_result()),
             };
         }
-
-        // Resolve routing — the binding's target space is authoritative,
-        // which may differ from oauth_ctx.space_id.
-        let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id, &oauth_ctx.client_id)
-            .await?;
 
         // Call tool via routing service (handles auth and routing)
         let tool_result = self

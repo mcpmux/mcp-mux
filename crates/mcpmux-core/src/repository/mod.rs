@@ -341,3 +341,42 @@ pub trait AppSettingsRepository: Send + Sync {
     /// Get all settings with a given prefix (e.g., "gateway." returns all gateway settings)
     async fn list_by_prefix(&self, prefix: &str) -> RepoResult<Vec<(String, String)>>;
 }
+
+/// Per-Space configuration for built-in MCP servers.
+///
+/// Built-in servers (e.g. "Tool Optimization", the `mcpmux_*` tools) and their
+/// individual tools are enabled/disabled **per Space**. Absence of a stored
+/// row means "default": the server uses its descriptor's `default_enabled`, and
+/// every tool is on. Only deviations from the default are persisted.
+#[async_trait]
+pub trait SpaceBuiltinConfigRepository: Send + Sync {
+    /// The stored enable override for a built-in server in a Space, or `None`
+    /// when the Space has never overridden it (callers fall back to the
+    /// descriptor's `default_enabled`).
+    async fn server_enabled_override(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Option<bool>>;
+
+    /// Tool names explicitly disabled for `(space, server)`. Any tool not in
+    /// this list is enabled.
+    async fn disabled_tools(&self, space_id: &str, server_id: &str) -> RepoResult<Vec<String>>;
+
+    /// Enable/disable a built-in server for a Space.
+    async fn set_server_enabled(
+        &self,
+        space_id: &str,
+        server_id: &str,
+        enabled: bool,
+    ) -> RepoResult<()>;
+
+    /// Enable/disable an individual tool of a built-in server for a Space.
+    async fn set_tool_enabled(
+        &self,
+        space_id: &str,
+        server_id: &str,
+        tool_name: &str,
+        enabled: bool,
+    ) -> RepoResult<()>;
+}

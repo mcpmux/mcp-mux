@@ -3,6 +3,7 @@
 //! This module contains all commands that can be invoked from the frontend.
 //! Commands are organized by feature area.
 
+pub mod builtin_servers;
 pub mod client;
 pub mod client_install;
 pub mod config_export;
@@ -22,6 +23,7 @@ pub mod space;
 pub mod workspace_binding;
 
 // Re-export commands for convenience
+pub use builtin_servers::*;
 pub use client::*;
 pub use client_install::*;
 pub use config_export::*;

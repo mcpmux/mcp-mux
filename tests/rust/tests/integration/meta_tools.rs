@@ -15,6 +15,7 @@ use mcpmux_core::{
     InboundMcpClientRepository, ServerFeature, ServerFeatureRepository, SpaceRepository,
     WorkspaceBindingRepository,
 };
+use mcpmux_core::{SpaceBuiltinConfigRepository, TOOL_OPTIMIZATION_SERVER_ID};
 use mcpmux_gateway::pool::FeatureService;
 use mcpmux_gateway::services::{
     meta_tools, ApprovalBroker, ApprovalDecision, ApprovalPayload, ApprovalPublisher,
@@ -22,8 +23,8 @@ use mcpmux_gateway::services::{
 };
 use mcpmux_storage::{
     Database, InboundClientRepository, SqliteFeatureSetRepository,
-    SqliteInboundMcpClientRepository, SqliteServerFeatureRepository, SqliteSpaceRepository,
-    SqliteWorkspaceBindingRepository,
+    SqliteInboundMcpClientRepository, SqliteServerFeatureRepository,
+    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
@@ -113,6 +114,9 @@ impl Fixture {
         let broker = Arc::new(ApprovalBroker::new().with_timeout(Duration::from_millis(500)));
         let (tx, _rx) = broadcast::channel::<DomainEvent>(32);
 
+        let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> =
+            Arc::new(SqliteSpaceBuiltinConfigRepository::new(db.clone()));
+
         let registry = meta_tools::build_default_registry(
             client_repo.clone(),
             space_repo.clone(),
@@ -125,6 +129,7 @@ impl Fixture {
             broker.clone(),
             tx,
             None,
+            Some(builtin_config_repo),
         );
 
         Self {
@@ -517,6 +522,7 @@ async fn bare_registry(
         Arc::new(ApprovalBroker::new()),
         tx.clone(),
         settings_repo,
+        None,
     );
     (registry, client_id, tx, rx)
 }
@@ -582,17 +588,11 @@ async fn denied_write_emits_meta_tool_invoked_with_decision_deny() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn master_switch_toggles_registry_visibility() {
-    use mcpmux_storage::SqliteAppSettingsRepository;
-
-    // Same DB so the settings repo and the registry see one another.
+async fn per_space_config_controls_registry_visibility() {
+    // Same DB so the per-Space config repo and the registry see one another.
     let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-    let settings_repo: Arc<dyn mcpmux_core::AppSettingsRepository> =
-        Arc::new(SqliteAppSettingsRepository::new(db.clone()));
-    settings_repo
-        .set("gateway.meta_tools_enabled", "false")
-        .await
-        .unwrap();
+    let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> =
+        Arc::new(SqliteSpaceBuiltinConfigRepository::new(db.clone()));
 
     let space_repo: Arc<dyn SpaceRepository> = Arc::new(SqliteSpaceRepository::new(db.clone()));
     let feature_set_repo: Arc<dyn FeatureSetRepository> =
@@ -604,6 +604,9 @@ async fn master_switch_toggles_registry_visibility() {
     let server_feature_repo: Arc<dyn ServerFeatureRepository> =
         Arc::new(SqliteServerFeatureRepository::new(db.clone()));
     let inbound_client_repo = Arc::new(InboundClientRepository::new(db.clone()));
+
+    let space_id = space_repo.get_default().await.unwrap().unwrap().id;
+
     let resolver = Arc::new(FeatureSetResolverService::new(
         space_repo.clone(),
         binding_repo.clone(),
@@ -628,23 +631,71 @@ async fn master_switch_toggles_registry_visibility() {
         SessionRootsRegistry::new(),
         Arc::new(ApprovalBroker::new()),
         tx,
-        Some(settings_repo.clone()),
+        None,
+        Some(builtin_config_repo.clone()),
     );
 
-    assert!(!registry.is_enabled().await, "initially disabled");
+    let sid = space_id.to_string();
 
-    settings_repo
-        .set("gateway.meta_tools_enabled", "true")
+    // Default: the Tool Optimization server is enabled for the Space.
+    assert!(
+        registry.is_server_enabled_for_space(&space_id).await,
+        "enabled by default"
+    );
+    assert!(
+        !registry.list_as_tools_for_space(&space_id).await.is_empty(),
+        "tools advertised by default"
+    );
+
+    // Disable the whole server for this Space → no tools advertised.
+    builtin_config_repo
+        .set_server_enabled(&sid, TOOL_OPTIMIZATION_SERVER_ID, false)
         .await
         .unwrap();
-    assert!(registry.is_enabled().await, "flipped back on");
+    assert!(!registry.is_server_enabled_for_space(&space_id).await);
+    assert!(
+        registry.list_as_tools_for_space(&space_id).await.is_empty(),
+        "no tools when the server is disabled for the Space"
+    );
 
-    // Missing key → default on (fresh install).
-    settings_repo
-        .delete("gateway.meta_tools_enabled")
+    // Re-enable, then disable a single tool → that tool drops, others remain.
+    builtin_config_repo
+        .set_server_enabled(&sid, TOOL_OPTIMIZATION_SERVER_ID, true)
         .await
         .unwrap();
-    assert!(registry.is_enabled().await, "missing key defaults on");
+    builtin_config_repo
+        .set_tool_enabled(
+            &sid,
+            TOOL_OPTIMIZATION_SERVER_ID,
+            "mcpmux_list_all_tools",
+            false,
+        )
+        .await
+        .unwrap();
+    let names: Vec<String> = registry
+        .list_as_tools_for_space(&space_id)
+        .await
+        .into_iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(
+        !names.iter().any(|n| n == "mcpmux_list_all_tools"),
+        "the disabled tool is hidden: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "mcpmux_list_feature_sets"),
+        "other tools remain: {names:?}"
+    );
+    assert!(
+        !registry
+            .is_tool_enabled_for_space(&space_id, "mcpmux_list_all_tools")
+            .await
+    );
+    assert!(
+        registry
+            .is_tool_enabled_for_space(&space_id, "mcpmux_list_feature_sets")
+            .await
+    );
 }
 
 // Silence unused-import warnings from helper imports that only some tests exercise.

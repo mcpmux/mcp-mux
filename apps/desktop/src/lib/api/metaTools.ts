@@ -32,18 +32,9 @@ export async function revokeMetaToolGrant(
   return invoke('revoke_meta_tool_grant', { clientId, toolName });
 }
 
-/**
- * Read the master switch that controls whether `mcpmux_*` meta tools are
- * advertised to connected MCP clients. Default ON.
- */
-export async function getMetaToolsEnabled(): Promise<boolean> {
-  return invoke('get_meta_tools_enabled');
-}
-
-/** Flip the master switch; takes effect on the next `list_tools` push. */
-export async function setMetaToolsEnabled(enabled: boolean): Promise<void> {
-  return invoke('set_meta_tools_enabled', { enabled });
-}
+// The mcpmux_* enablement switch is now per-Space — see
+// `@/lib/api/builtinServers` (listBuiltinServers / setBuiltinServerEnabled /
+// setBuiltinToolEnabled). The old global get/set_meta_tools_enabled were removed.
 
 /**
  * Respond to a pending approval request. Normally called by

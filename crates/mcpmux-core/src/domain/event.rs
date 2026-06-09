@@ -399,12 +399,12 @@ pub enum DomainEvent {
     // ════════════════════════════════════════════════════════════════════════
     // BUILT-IN SERVERS
     // ════════════════════════════════════════════════════════════════════════
-    /// The global "Tool Optimization" (self-management `mcpmux_*`) master
-    /// switch was toggled. The meta-tools are appended to *every* session's
-    /// `tools/list` regardless of space, so flipping this changes what every
-    /// connected client sees — the notifier re-pushes `tools/list_changed`
-    /// to all sessions rather than scoping to one space.
-    MetaToolsEnabledChanged { enabled: bool },
+    /// A Space's built-in-server config changed — a built-in server (e.g. Tool
+    /// Optimization / `mcpmux_*`) or one of its tools was enabled/disabled for
+    /// this Space. Every session resolving to this Space may now see a
+    /// different tool list, so the notifier re-pushes `tools/list_changed` to
+    /// that Space's peers.
+    BuiltinServerConfigChanged { space_id: Uuid },
 }
 
 // ============================================================================
@@ -445,7 +445,7 @@ impl DomainEvent {
             Self::WorkspaceNeedsBinding { .. } => "workspace_needs_binding",
             Self::SessionRootsChanged => "session_roots_changed",
             Self::MetaToolInvoked { .. } => "meta_tool_invoked",
-            Self::MetaToolsEnabledChanged { .. } => "meta_tools_enabled_changed",
+            Self::BuiltinServerConfigChanged { .. } => "builtin_server_config_changed",
         }
     }
 
@@ -473,9 +473,9 @@ impl DomainEvent {
             | Self::ResourcesChanged { .. } => true,
             // Binding changes reshuffle every peer's resolution in the space
             Self::WorkspaceBindingChanged { .. } => true,
-            // The meta-tools master switch adds/removes the mcpmux_* namespace
-            // from every session's tool list.
-            Self::MetaToolsEnabledChanged { .. } => true,
+            // A Space's built-in-server config changes the tool list every
+            // session resolving to that Space sees.
+            Self::BuiltinServerConfigChanged { .. } => true,
             // WorkspaceNeedsBinding is a UI prompt — doesn't itself change what
             // tools a client sees, just invites the user to configure.
             // All other events don't affect MCP capabilities
@@ -506,7 +506,8 @@ impl DomainEvent {
             | Self::PromptsChanged { space_id, .. }
             | Self::ResourcesChanged { space_id, .. }
             | Self::WorkspaceBindingChanged { space_id, .. }
-            | Self::WorkspaceNeedsBinding { space_id, .. } => Some(*space_id),
+            | Self::WorkspaceNeedsBinding { space_id, .. }
+            | Self::BuiltinServerConfigChanged { space_id } => Some(*space_id),
 
             Self::ClientRegistered { .. }
             | Self::ClientReconnected { .. }
@@ -516,8 +517,7 @@ impl DomainEvent {
             | Self::GatewayStarted { .. }
             | Self::GatewayStopped
             | Self::SessionRootsChanged
-            | Self::MetaToolInvoked { .. }
-            | Self::MetaToolsEnabledChanged { .. } => None,
+            | Self::MetaToolInvoked { .. } => None,
         }
     }
 

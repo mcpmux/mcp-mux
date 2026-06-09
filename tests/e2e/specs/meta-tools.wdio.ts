@@ -13,34 +13,53 @@
  */
 
 import { byTestId, TIMEOUT, safeClick } from '../helpers/selectors';
-import { emitEvent, invoke } from '../helpers/tauri-api';
+import { emitEvent, getDefaultSpace, invoke } from '../helpers/tauri-api';
 
-describe('Meta tools - Settings UI', () => {
-  it('TC-MT-001: Master-switch round-trips through Settings > get_meta_tools_enabled', async () => {
-    const settingsButton = await byTestId('nav-settings');
-    await safeClick(settingsButton);
+interface BuiltinServerRow {
+  id: string;
+  enabled: boolean;
+}
+
+describe('Built-in Servers - Tool Optimization UI', () => {
+  it('TC-MT-001: Tool Optimization enablement round-trips per Space', async () => {
+    const nav = await byTestId('nav-builtin-servers');
+    await safeClick(nav);
     await browser.pause(1000);
 
-    const metaSection = await byTestId('settings-meta-tools-section');
-    await expect(metaSection).toBeDisplayed();
+    const card = await byTestId('builtin-server-tool-optimization');
+    await expect(card).toBeDisplayed();
 
-    // Initial state should be enabled (product default).
-    const initial = await invoke<boolean>('get_meta_tools_enabled');
-    expect(initial).toBe(true);
+    const space = await getDefaultSpace();
+    if (!space) throw new Error('No default space — cannot set up test');
 
-    // Toggle via the Tauri command and verify UI reflects the change after
-    // a navigation away-and-back (the switch is loaded on mount).
-    await invoke<void>('set_meta_tools_enabled', { enabled: false });
-    expect(await invoke<boolean>('get_meta_tools_enabled')).toBe(false);
+    const enabledFor = async () =>
+      (await invoke<BuiltinServerRow[]>('list_builtin_servers', { spaceId: space.id })).find(
+        (s) => s.id === 'tool-optimization'
+      )?.enabled;
+
+    // Default: enabled for the Space (product default).
+    expect(await enabledFor()).toBe(true);
+
+    // Disable for this Space and verify.
+    await invoke<void>('set_builtin_server_enabled', {
+      spaceId: space.id,
+      serverId: 'tool-optimization',
+      enabled: false,
+    });
+    expect(await enabledFor()).toBe(false);
 
     // Restore so subsequent tests see the default.
-    await invoke<void>('set_meta_tools_enabled', { enabled: true });
-    expect(await invoke<boolean>('get_meta_tools_enabled')).toBe(true);
+    await invoke<void>('set_builtin_server_enabled', {
+      spaceId: space.id,
+      serverId: 'tool-optimization',
+      enabled: true,
+    });
+    expect(await enabledFor()).toBe(true);
   });
 
-  it('TC-MT-002: Grants panel + audit log render in the Settings section', async () => {
-    const settingsButton = await byTestId('nav-settings');
-    await safeClick(settingsButton);
+  it('TC-MT-002: Grants panel + audit log render in the Built-in Servers tab', async () => {
+    const nav = await byTestId('nav-builtin-servers');
+    await safeClick(nav);
     await browser.pause(1000);
 
     const grants = await byTestId('meta-tool-grants-panel');

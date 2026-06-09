@@ -700,13 +700,13 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
             }),
         ),
 
-        // The global Tool Optimization (mcpmux_*) master switch flipped. The
-        // gateway-side MCPNotifier handles the `tools/list_changed` push to
-        // connected MCP clients; this forwards the new value to the desktop UI
-        // so any open Built-in Servers / Settings view reflects it live.
-        DomainEvent::MetaToolsEnabledChanged { enabled } => (
-            "meta-tools-changed",
-            serde_json::json!({ "enabled": enabled }),
+        // A Space's built-in-server config changed. The gateway-side
+        // MCPNotifier handles the `tools/list_changed` push to that Space's
+        // MCP clients; this forwards it to the desktop UI so an open Built-in
+        // Servers view for that Space reflects the change live.
+        DomainEvent::BuiltinServerConfigChanged { space_id } => (
+            "builtin-server-config-changed",
+            serde_json::json!({ "space_id": space_id }),
         ),
     }
 }

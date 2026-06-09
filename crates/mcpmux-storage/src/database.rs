@@ -108,6 +108,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "rewrite_starter_seed_copy_v2",
         sql: include_str!("migrations/015_rewrite_starter_seed_copy_v2.sql"),
     },
+    Migration {
+        version: 16,
+        name: "space_builtin_servers",
+        sql: include_str!("migrations/016_space_builtin_servers.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

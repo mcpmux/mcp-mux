@@ -7,14 +7,14 @@ use mcpmux_core::{
     AppSettingsRepository, AppSettingsService, CredentialRepository, FeatureSetRepository,
     GatewayPortService, InboundMcpClientRepository, InstalledServerRepository, LogConfig,
     OutboundOAuthRepository, ServerDiscoveryService,
-    ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager, SpaceRepository,
-    SpaceService, WorkspaceBindingRepository,
+    ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager,
+    SpaceBuiltinConfigRepository, SpaceRepository, SpaceService, WorkspaceBindingRepository,
 };
 use mcpmux_storage::{
     Database, FieldEncryptor, SqliteAppSettingsRepository, SqliteCredentialRepository,
     SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
-    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository, SqliteSpaceRepository,
-    SqliteWorkspaceBindingRepository,
+    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository,
+    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,6 +49,8 @@ pub struct AppState {
     pub client_repository: Arc<dyn InboundMcpClientRepository>,
     /// Workspace-root -> FeatureSet bindings (resolver v2)
     pub workspace_binding_repository: Arc<dyn WorkspaceBindingRepository>,
+    /// Per-Space built-in server config (Tool Optimization enablement + tool toggles)
+    pub space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository>,
     /// Server feature repository for discovered MCP features (implements core trait)
     pub server_feature_repository: Arc<SqliteServerFeatureRepository>,
     /// Server feature repository cast to core trait (for gateway services)
@@ -107,6 +109,9 @@ impl AppState {
         let workspace_binding_repository: Arc<dyn WorkspaceBindingRepository> =
             Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
 
+        let space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository> =
+            Arc::new(SqliteSpaceBuiltinConfigRepository::new(db.clone()));
+
         let server_feature_repository = Arc::new(SqliteServerFeatureRepository::new(db.clone()));
         let server_feature_repository_core: Arc<dyn CoreServerFeatureRepository> =
             server_feature_repository.clone();
@@ -164,6 +169,7 @@ impl AppState {
             feature_set_repository,
             client_repository,
             workspace_binding_repository,
+            space_builtin_config_repository,
             server_feature_repository,
             server_feature_repository_core,
             encryptor,

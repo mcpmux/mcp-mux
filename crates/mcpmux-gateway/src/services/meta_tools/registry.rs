@@ -9,21 +9,19 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use mcpmux_core::{
-    DomainEvent, FeatureSetRepository, InboundMcpClientRepository, ServerFeatureRepository,
-    SpaceRepository, WorkspaceBindingRepository,
+    builtin_server, DomainEvent, FeatureSetRepository, InboundMcpClientRepository,
+    ServerFeatureRepository, SpaceBuiltinConfigRepository, SpaceRepository,
+    WorkspaceBindingRepository, TOOL_OPTIMIZATION_SERVER_ID,
 };
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::broadcast;
+use uuid::Uuid;
 
 use super::approval::ApprovalBroker;
 use crate::pool::FeatureService;
 use crate::services::{FeatureSetResolverService, SessionRootsRegistry};
-
-/// App-settings key that toggles the entire `mcpmux_*` namespace.
-/// Present + "false" → hidden; missing or anything else → enabled.
-pub const META_TOOLS_ENABLED_KEY: &str = "gateway.meta_tools_enabled";
 
 /// Context injected into every meta-tool invocation.
 ///
@@ -43,10 +41,14 @@ pub struct MetaToolContext {
     /// Broadcast domain events (e.g. ToolsChanged) so MCPNotifier can push
     /// `tools/list_changed` to connected peers after a write mutates state.
     pub domain_event_tx: broadcast::Sender<DomainEvent>,
-    /// App-settings repo for the `gateway.meta_tools_enabled` master switch.
-    /// Optional because older dependency builders may not have wired it.
-    /// When absent the switch defaults to ENABLED (matches the product default).
+    /// App-settings repo (retained for future built-in servers; the meta-tools
+    /// enablement now lives in `builtin_config_repo`, scoped per Space).
     pub settings_repo: Option<Arc<dyn mcpmux_core::AppSettingsRepository>>,
+    /// Per-Space built-in-server config. Gates whether the Tool Optimization
+    /// (`mcpmux_*`) server + its individual tools are advertised for a given
+    /// Space. Optional because some dependency builders / tests don't wire it;
+    /// when absent the server defaults to ENABLED with all tools on.
+    pub builtin_config_repo: Option<Arc<dyn SpaceBuiltinConfigRepository>>,
 }
 
 /// Per-request metadata threaded through every tool call.
@@ -159,25 +161,65 @@ impl MetaToolRegistry {
         self.tools.contains_key(name)
     }
 
-    /// Master switch: are meta tools enabled in app settings? When disabled,
-    /// the gateway handler hides `mcpmux_*` from `list_tools` and routes
-    /// `call_tool` invocations straight to the feature-set path (where they
-    /// will miss and return "tool not found").
-    ///
-    /// Default when the setting is missing or the repo is not wired: ON.
-    /// Default when the setting value is unparseable: ON (fail-open on the
-    /// discoverability side; security-sensitive writes still require approval).
-    pub async fn is_enabled(&self) -> bool {
-        let Some(repo) = self.ctx.settings_repo.as_ref() else {
+    /// Is the Tool Optimization (`mcpmux_*`) built-in server enabled for this
+    /// Space? Reads the per-Space override, falling back to the descriptor's
+    /// `default_enabled` (ON). When no config repo is wired (older builders /
+    /// tests), defaults to ON.
+    pub async fn is_server_enabled_for_space(&self, space_id: &Uuid) -> bool {
+        let Some(repo) = self.ctx.builtin_config_repo.as_ref() else {
             return true;
         };
-        match repo.get(META_TOOLS_ENABLED_KEY).await {
-            Ok(Some(v)) => !matches!(v.as_str(), "false" | "0"),
-            _ => true,
+        let default = builtin_server(TOOL_OPTIMIZATION_SERVER_ID)
+            .map(|d| d.default_enabled)
+            .unwrap_or(true);
+        repo.server_enabled_override(&space_id.to_string(), TOOL_OPTIMIZATION_SERVER_ID)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(default)
+    }
+
+    /// Tool names disabled for this Space (empty when no config repo / none).
+    async fn disabled_tools_for_space(&self, space_id: &Uuid) -> Vec<String> {
+        match self.ctx.builtin_config_repo.as_ref() {
+            Some(repo) => repo
+                .disabled_tools(&space_id.to_string(), TOOL_OPTIMIZATION_SERVER_ID)
+                .await
+                .unwrap_or_default(),
+            None => Vec::new(),
         }
     }
 
-    /// The `rmcp::model::Tool` list advertised to clients.
+    /// Whether a specific meta tool is advertised/callable for a Space — the
+    /// server must be enabled and the individual tool not disabled. Used by the
+    /// `call_tool` interception path so a disabled tool can't be invoked.
+    pub async fn is_tool_enabled_for_space(&self, space_id: &Uuid, tool_name: &str) -> bool {
+        if !self.is_server_enabled_for_space(space_id).await {
+            return false;
+        }
+        !self
+            .disabled_tools_for_space(space_id)
+            .await
+            .iter()
+            .any(|n| n == tool_name)
+    }
+
+    /// The `rmcp::model::Tool` list advertised to a Space — the enabled tools
+    /// of the Tool Optimization server, or empty when that server is disabled
+    /// for the Space.
+    pub async fn list_as_tools_for_space(&self, space_id: &Uuid) -> Vec<Tool> {
+        if !self.is_server_enabled_for_space(space_id).await {
+            return Vec::new();
+        }
+        let disabled = self.disabled_tools_for_space(space_id).await;
+        self.list_as_tools()
+            .into_iter()
+            .filter(|t| !disabled.iter().any(|d| d == t.name.as_ref()))
+            .collect()
+    }
+
+    /// The full unfiltered `rmcp::model::Tool` list (every registered tool,
+    /// ignoring per-Space config). Used by the per-Space filter above.
     pub fn list_as_tools(&self) -> Vec<Tool> {
         self.tools
             .values()

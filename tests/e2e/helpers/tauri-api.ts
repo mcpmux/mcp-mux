@@ -96,7 +96,8 @@ export async function listClients(): Promise<Client[]> {
 export interface FeatureSet {
   id: string;
   name: string;
-  feature_set_type: 'default' | 'custom';
+  // 'starter' is the current auto-seeded type; 'default' is the legacy alias.
+  feature_set_type: 'starter' | 'default' | 'custom';
   server_id: string | null;
   is_builtin: boolean;
 }
@@ -262,7 +263,8 @@ export interface WorkspaceBinding {
   id: string;
   workspace_root: string;
   space_id: string;
-  feature_set_id: string;
+  /** A binding can map to one or more FeatureSets (order = render order). */
+  feature_set_ids: string[];
   created_at: string;
   updated_at: string;
 }
@@ -270,7 +272,8 @@ export interface WorkspaceBinding {
 export interface WorkspaceBindingInput {
   workspace_root: string;
   space_id: string;
-  feature_set_id: string;
+  /** Non-empty: at least one FeatureSet id. */
+  feature_set_ids: string[];
 }
 
 export async function listWorkspaceBindings(): Promise<WorkspaceBinding[]> {

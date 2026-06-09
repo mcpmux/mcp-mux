@@ -8,6 +8,7 @@
 //! NOTE: Authorization tests that require InboundClientRepository
 //! are in the database tests since they need the real SQLite implementation.
 
+mod effective_features;
 mod feature_routing;
 mod feature_set_resolver;
 mod mcp_flows;

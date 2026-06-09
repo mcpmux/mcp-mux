@@ -69,27 +69,13 @@ impl Ctx {
     }
 }
 
-/// Session with roots, no binding → resolver returns `source = Deny`.
-/// This is the exact condition `handler.rs::log_and_notify_resolution`
-/// turns into a `WorkspaceNeedsBinding` emission.
-#[tokio::test(flavor = "multi_thread")]
-async fn session_with_unbound_root_resolves_via_deny() {
-    let ctx = Ctx::new().await;
-    ctx.session_roots.set("sess-1", ["/proj/unbound"]);
-    ctx.session_roots.set_roots_capable("sess-1", true);
-
-    let resolved = ctx.resolver.resolve(Some("sess-1"), None).await.unwrap();
-    assert_eq!(resolved.source, ResolutionSource::Deny);
-    assert_eq!(resolved.space_id, Some(ctx.space_id));
-    // No FS resolves until the user binds the folder; mcpmux_* meta tools
-    // are appended unconditionally by the request handler so the LLM can
-    // self-bind from this state.
-    assert!(resolved.feature_set_ids.is_empty());
-}
-
-/// After creating a binding for the root the next resolve flips to
-/// `source = WorkspaceBinding`. In production that's what triggers the
-/// `WorkspaceBindingChanged` → `list_changed` broadcast.
+/// After creating a binding for the root the next resolve flips from
+/// `Deny` (roots reported, nothing bound — the condition
+/// `handler.rs::log_and_notify_resolution` turns into a
+/// `WorkspaceNeedsBinding` prompt) to `WorkspaceBinding`. In production the
+/// flip is what triggers the `WorkspaceBindingChanged` → `list_changed`
+/// broadcast. (The standalone "unbound → Deny" case is covered by the
+/// resolver decision-table in `feature_set_resolver.rs`.)
 #[tokio::test(flavor = "multi_thread")]
 async fn creating_binding_flips_next_resolution_source() {
     let ctx = Ctx::new().await;

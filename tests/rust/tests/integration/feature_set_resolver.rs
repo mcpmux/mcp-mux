@@ -301,3 +301,76 @@ async fn capable_session_does_not_fall_through_to_grants() {
     assert_eq!(r.source, ResolutionSource::PendingRoots);
     assert!(r.feature_set_ids.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Session-keyed routing — one client, many concurrent sessions
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn two_sessions_on_different_roots_resolve_independently() {
+    // A single client (e.g. two editor windows) holds two sessions on
+    // different folders. Routing keys on session_id → that session's reported
+    // roots → its own binding, so the two must NOT cross-talk: each resolves
+    // to its own FeatureSet.
+    let f = Fixture::new().await;
+    let (root_a, root_b) = if cfg!(windows) {
+        ("d:\\work\\a", "d:\\work\\b")
+    } else {
+        ("/work/a", "/work/b")
+    };
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(root_a),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(root_b),
+            f.space_id,
+            f.fs_b_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set("sess-a", [root_a]);
+    f.session_roots.set_roots_capable("sess-a", true);
+    f.session_roots.set("sess-b", [root_b]);
+    f.session_roots.set_roots_capable("sess-b", true);
+
+    let ra = f.resolver.resolve(Some("sess-a"), None).await.unwrap();
+    let rb = f.resolver.resolve(Some("sess-b"), None).await.unwrap();
+    assert_eq!(ra.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(rb.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(ra.feature_set_ids, vec![f.fs_a_id.clone()]);
+    assert_eq!(rb.feature_set_ids, vec![f.fs_b_id.clone()]);
+}
+
+#[tokio::test]
+async fn two_sessions_on_same_root_resolve_to_the_same_binding() {
+    // Two clients open the SAME folder. The (globally-unique) root is the
+    // routing key, so both sessions resolve to the same binding — same Space
+    // and FeatureSet. They're distinguished only by session_id for
+    // *notification* delivery (see MCPNotifier), never for routing.
+    let f = Fixture::new().await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(test_root()),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+    for s in ["sess-1", "sess-2"] {
+        f.session_roots.set(s, [test_root()]);
+        f.session_roots.set_roots_capable(s, true);
+    }
+
+    let r1 = f.resolver.resolve(Some("sess-1"), None).await.unwrap();
+    let r2 = f.resolver.resolve(Some("sess-2"), None).await.unwrap();
+    assert_eq!(r1.feature_set_ids, vec![f.fs_a_id.clone()]);
+    assert_eq!(r2.feature_set_ids, vec![f.fs_a_id.clone()]);
+    assert_eq!(r1.space_id, r2.space_id);
+}

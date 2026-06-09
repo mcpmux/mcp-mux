@@ -1,10 +1,15 @@
 //! Settings commands for auto-start and system tray behavior
 
+use std::sync::Arc;
+
+use mcpmux_core::DomainEvent;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri_plugin_autostart::AutoLaunchManager;
+use tokio::sync::RwLock;
 use tracing::{debug, info};
 
+use super::gateway::GatewayAppState;
 use crate::state::AppState;
 
 /// Startup and system tray settings
@@ -152,6 +157,7 @@ pub async fn get_meta_tools_enabled(app_state: State<'_, AppState>) -> Result<bo
 pub async fn set_meta_tools_enabled(
     enabled: bool,
     app_state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<(), String> {
     app_state
         .settings_repository
@@ -162,6 +168,20 @@ pub async fn set_meta_tools_enabled(
         .await
         .map_err(|e| format!("Failed to save meta_tools_enabled: {}", e))?;
     info!("[Settings] meta_tools_enabled = {}", enabled);
+
+    // Push tools/list_changed to every connected session so the mcpmux_*
+    // namespace appears / disappears immediately instead of on their next
+    // list_tools. Best-effort: the gateway not running (no subscribers) is a
+    // normal condition and must not fail the toggle.
+    {
+        let gw_state = gateway_state.read().await;
+        if let Some(ref gw) = gw_state.gateway_state {
+            gw.read()
+                .await
+                .emit_domain_event(DomainEvent::MetaToolsEnabledChanged { enabled });
+        }
+    }
+
     Ok(())
 }
 

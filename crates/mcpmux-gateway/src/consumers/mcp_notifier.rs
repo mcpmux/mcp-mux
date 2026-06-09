@@ -458,6 +458,19 @@ impl MCPNotifier {
                 self.notify_all_list_changed(space_id, true).await;
             }
 
+            // The global meta-tools master switch flipped. The mcpmux_* tools
+            // are appended to every session regardless of space, so a per-space
+            // fanout would miss sessions in other spaces. Push tools/list_changed
+            // to every session so each refetches and the namespace appears /
+            // disappears immediately instead of on its next list_tools.
+            DomainEvent::MetaToolsEnabledChanged { enabled } => {
+                info!(
+                    enabled,
+                    "[MCPNotifier] 📨 MetaToolsEnabledChanged - notifying ALL sessions (tools/list_changed)"
+                );
+                self.notify_all_sessions_tools_changed().await;
+            }
+
             // ============ Backend Server Notifications (Pass-through with Throttling) ============
             // IMPORTANT: These events come from backend MCP servers. Some servers are "chatty" and
             // emit list_changed when queried (not just when features actually change). Our throttling
@@ -722,6 +735,52 @@ impl MCPNotifier {
         {
             let mut tracker = self.throttle_tracker.write();
             tracker.insert((space_id, NotificationType::Tools), now);
+        }
+    }
+
+    /// Push `tools/list_changed` to EVERY session with an active stream,
+    /// regardless of space. Used for global, cross-space changes (the
+    /// meta-tools master switch) that alter every session's tool list.
+    ///
+    /// Deliberately bypasses the per-space content hash + throttle: those are
+    /// keyed by space-feature content and have no visibility into the
+    /// `mcpmux_*` namespace, so they'd wrongly dedupe this away. The trigger
+    /// is a rare, explicit user action, so unconditional fanout is safe.
+    async fn notify_all_sessions_tools_changed(&self) {
+        if DISABLE_ALL_NOTIFICATIONS {
+            trace!("[MCPNotifier] 🚫 NOTIFICATIONS DISABLED - skipping global tools/list_changed");
+            return;
+        }
+
+        let targets: Vec<(String, String, Arc<Peer<RoleServer>>)> = {
+            let sessions = self.sessions.read();
+            sessions
+                .iter()
+                .filter(|(_, e)| e.has_active_stream)
+                .map(|(sid, e)| (sid.clone(), e.client_id.clone(), e.peer.clone()))
+                .collect()
+        };
+
+        if targets.is_empty() {
+            debug!("[MCPNotifier] No sessions with active streams for global tools/list_changed");
+            return;
+        }
+
+        info!(
+            session_count = targets.len(),
+            "[MCPNotifier] 📤 Sending tools/list_changed to all {} session(s)",
+            targets.len()
+        );
+
+        for (session_id, client_id, peer) in targets {
+            if let Err(e) = peer.notify_tool_list_changed().await {
+                warn!(
+                    %session_id,
+                    %client_id,
+                    error = ?e,
+                    "[MCPNotifier] Failed to send global tools/list_changed to session"
+                );
+            }
         }
     }
 

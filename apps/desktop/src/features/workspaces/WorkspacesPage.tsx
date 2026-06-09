@@ -530,6 +530,26 @@ function summarizeFeatureSets(names: string[]): string {
   return `${names[0]} + ${names.length - 1} more`;
 }
 
+/**
+ * Per-status color. Soft flat tints (not heavy gradients) + a thin solid
+ * accent strip — adds life and at-a-glance status while staying inside the
+ * app's tinted-surface design language.
+ */
+const CARD_TONES = {
+  emerald: {
+    strip: 'bg-emerald-500',
+    box: 'bg-emerald-50 text-emerald-600 ring-emerald-200/70 dark:bg-emerald-900/20 dark:text-emerald-400 dark:ring-emerald-800/50',
+  },
+  amber: {
+    strip: 'bg-amber-500',
+    box: 'bg-amber-50 text-amber-600 ring-amber-200/70 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-800/50',
+  },
+  neutral: {
+    strip: 'bg-slate-300 dark:bg-slate-600',
+    box: 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] ring-[rgb(var(--border-subtle))]',
+  },
+} as const;
+
 function EntryCard({
   entry,
   spaceName,
@@ -544,30 +564,35 @@ function EntryCard({
   selected: boolean;
   onClick: () => void;
 }) {
-  const folderColor =
+  const tone =
     entry.kind === 'unmapped-live'
-      ? 'text-amber-500'
+      ? 'amber'
       : entry.kind === 'mapped-live'
-        ? 'text-emerald-500'
-        : 'text-[rgb(var(--muted))]';
+        ? 'emerald'
+        : 'neutral';
+  const t = CARD_TONES[tone];
   const name = folderName(entry.root);
 
   return (
     <Card
-      className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
+      className={`relative cursor-pointer overflow-hidden transition-all hover:shadow-lg hover:scale-[1.01] ${
         selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
       }`}
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
     >
+      {/* Status accent strip across the top — a splash of color per state. */}
+      <div className={`absolute inset-x-0 top-0 h-1 ${t.strip}`} />
       <CardContent className="p-6">
         <div className="mb-4 flex items-start gap-4">
           <div className="relative flex-shrink-0">
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
+            <div
+              className={`flex h-14 w-14 items-center justify-center rounded-xl ring-1 ring-inset ${t.box}`}
+            >
               {entry.isLive ? (
-                <FolderOpen className={`h-6 w-6 ${folderColor}`} />
+                <FolderOpen className="h-6 w-6" />
               ) : (
-                <Folder className={`h-6 w-6 ${folderColor}`} />
+                <Folder className="h-6 w-6" />
               )}
             </div>
             {entry.isLive && (

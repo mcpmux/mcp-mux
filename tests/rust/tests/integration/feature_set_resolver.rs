@@ -128,12 +128,28 @@ async fn deny_when_no_session_id_and_no_grants() {
 }
 
 #[tokio::test]
-async fn deny_when_session_has_no_roots_and_not_capable() {
-    // Default capability state is "unknown" (None). The resolver treats
-    // missing capability info as rootless, so this falls through to Tier 2
-    // (no client_id supplied → Deny).
+async fn pending_when_session_has_no_roots_and_capability_unknown() {
+    // Default capability state for a session we've never seen
+    // `notifications/initialized` for is `None` (unknown). The resolver
+    // treats unknown like roots-capable: returns `PendingRoots` so the
+    // *next* request retries via the on-demand probe instead of being
+    // permanently denied. This was the bug where a tools/list racing
+    // on_initialized resolved to "no roots + no grants — deny" and the
+    // user saw only meta tools until reconnect.
     let f = Fixture::new().await;
     let r = f.resolver.resolve(Some("orphan"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::PendingRoots);
+    assert!(r.feature_set_ids.is_empty());
+}
+
+#[tokio::test]
+async fn deny_when_session_explicitly_rootless_and_no_grants() {
+    // Explicit Some(false) capability — client told us it doesn't
+    // support roots — and no client grants. This is the only path where
+    // the resolver legitimately lands on Deny without a session id.
+    let f = Fixture::new().await;
+    f.session_roots.set_roots_capable("rootless", false);
+    let r = f.resolver.resolve(Some("rootless"), None).await.unwrap();
     assert_eq!(r.source, ResolutionSource::Deny);
 }
 

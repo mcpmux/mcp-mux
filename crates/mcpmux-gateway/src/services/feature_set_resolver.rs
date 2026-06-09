@@ -152,7 +152,20 @@ impl FeatureSetResolverService {
         if let Some(sid) = session_id {
             let roots = self.session_roots.get(sid);
             let has_roots = roots.as_ref().is_some_and(|r| !r.is_empty());
-            let roots_capable = self.session_roots.is_roots_capable(sid).unwrap_or(false);
+            // Three states for capability:
+            //   `Some(true)`  — declared roots on initialize
+            //   `Some(false)` — explicitly didn't declare; treat as rootless
+            //   `None`        — never observed `notifications/initialized`
+            //                   for this session yet. Treat as PROBABLY
+            //                   capable (most modern MCP clients are) so
+            //                   the resolver returns PendingRoots instead
+            //                   of falling all the way through to the
+            //                   rootless client_grants tier — otherwise a
+            //                   tools/list that races on_initialized
+            //                   yields "no roots + no grants — deny" and
+            //                   the user sees only meta tools until
+            //                   reconnect.
+            let roots_capable_known = self.session_roots.is_roots_capable(sid);
 
             // Tier 1: session reported roots — try a binding match.
             if has_roots {
@@ -183,14 +196,19 @@ impl FeatureSetResolverService {
                 });
             }
 
-            // Tier 1c: client declared `roots` but they haven't shown up yet.
-            // Don't fall through to client grants — that's the leak the old
-            // Tier-2 fallback caused. Return empty; we'll fire `list_changed`
-            // when roots actually arrive.
-            if roots_capable {
+            // Tier 1c: client declared `roots` but they haven't shown up
+            // yet, OR we haven't observed `initialize` yet so we don't
+            // know either way. Returning PendingRoots (empty) means the
+            // first response is empty if the on-demand probe loses the
+            // race, but the next request retries via the probe + the
+            // on_initialized list_roots task fires `list_changed` once
+            // roots actually land. Beats falling through to grants and
+            // getting permanently denied.
+            if !matches!(roots_capable_known, Some(false)) {
                 debug!(
                     session_id = %sid,
-                    "[FeatureSetResolver] roots-capable, roots pending — empty until they arrive",
+                    capability = ?roots_capable_known,
+                    "[FeatureSetResolver] roots-capable (or unknown), roots pending — empty until they arrive",
                 );
                 return Ok(ResolvedFeatureSet {
                     feature_set_ids: vec![],

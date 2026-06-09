@@ -211,14 +211,15 @@ impl McpMuxGatewayHandler {
         if self.services.session_roots.get(sid).is_some() {
             return;
         }
-        // Not roots-capable → resolver routes via client grants, no
-        // probe useful.
-        if !self
-            .services
-            .session_roots
-            .is_roots_capable(sid)
-            .unwrap_or(false)
-        {
+        // Skip the probe only when we *know* this session is rootless
+        // (`Some(false)`). When capability is unknown (`None` — we
+        // haven't observed `notifications/initialized` for this session
+        // yet, e.g. tools/list racing in before the notification's
+        // handler completed), still try to probe: the worst case is one
+        // wasted call on a genuinely rootless client where peer.list_roots()
+        // returns method-not-found, vs. a stuck PendingRoots / empty
+        // response on a client that *would* report roots if asked.
+        if self.services.session_roots.is_roots_capable(sid) == Some(false) {
             return;
         }
         // Cool-down after a recent failed probe so we don't hammer a
@@ -392,11 +393,41 @@ impl ServerHandler for McpMuxGatewayHandler {
             }
         };
 
+        let peer = std::sync::Arc::new(context.peer);
+        let session_id_for_register = extract_session_id(&context.extensions);
+
+        // CRITICAL: stamp the roots capability **before any await** so the
+        // resolver / probe paths see the right answer if a request from
+        // this session arrives while we're still partway through this
+        // handler. The race we hit before this reordering:
+        //
+        //     on_initialized starts
+        //     register_session ✓
+        //     await prime_hashes_for_space ← yields ~5ms
+        //                                    tools/list races in here,
+        //                                    is_roots_capable() == None,
+        //                                    → resolver falls to "no roots
+        //                                    + no grants — deny" (Tier 2),
+        //                                    returns 4 meta tools
+        //     await returns, now set_roots_capable(true) — too late
+        //
+        // Stamping synchronously up front guarantees that whatever else
+        // tokio decides to schedule between here and the spawned
+        // list_roots() task at the bottom, the resolver has the right
+        // capability flag.
+        if let Some(sid) = session_id_for_register.as_deref() {
+            let declares_roots = peer
+                .peer_info()
+                .map(|info| info.capabilities.roots.is_some())
+                .unwrap_or(false);
+            self.services
+                .session_roots
+                .set_roots_capable(sid, declares_roots);
+        }
+
         // Register the *session* with MCPNotifier so subsequent fanout can
         // re-resolve per session (a single OAuth client can hold multiple
         // sessions on different folders, each routing independently).
-        let peer = std::sync::Arc::new(context.peer);
-        let session_id_for_register = extract_session_id(&context.extensions);
         if let Some(sid) = session_id_for_register.as_deref() {
             self.notification_bridge.register_session(
                 sid.to_string(),
@@ -422,18 +453,14 @@ impl ServerHandler for McpMuxGatewayHandler {
         // workspace roots into the session registry so the resolver can pick
         // a binding. Then log + (if no binding matched) prompt the UI.
         if let Some(session_id) = extract_session_id(&context.extensions) {
-            let declares_roots = peer
-                .peer_info()
-                .map(|info| info.capabilities.roots.is_some())
-                .unwrap_or(false);
-            // Stash the capability so the resolver can branch between
-            // workspace-binding routing (capable) and the per-client grant
-            // fallback (rootless). Done unconditionally so the registry has
-            // a definitive answer for every session, not just those with
-            // roots declared.
-            self.services
+            // Capability already stamped at the top of this handler — read
+            // it back rather than re-deriving so we stay consistent if the
+            // peer_info() ever flapped during the await above.
+            let declares_roots = self
+                .services
                 .session_roots
-                .set_roots_capable(&session_id, declares_roots);
+                .is_roots_capable(&session_id)
+                .unwrap_or(false);
             // Persist the bit on the client row, *always* — the Clients UI
             // needs to distinguish "never observed" from "explicitly
             // rootless" so its capability badge isn't misleading on

@@ -1654,3 +1654,54 @@ impl Default for OutboundOAuthManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod resource_param_tests {
+    use rmcp::transport::auth::{AuthorizationManager, AuthorizationMetadata};
+
+    /// The gateway delegates authorize-URL construction entirely to rmcp's
+    /// `AuthorizationManager::get_authorization_url` (via `create_auth_manager` /
+    /// `start_oauth_flow`). rmcp appends the RFC 8707 `resource` parameter itself, so the
+    /// gateway must NOT add a second one. This guards against re-introducing the removed
+    /// `add_resource_parameter` wrapper, which produced `?resource=...&resource=...` —
+    /// rejected by strict authorization servers (e.g. Supabase) and broke OAuth login.
+    #[tokio::test]
+    async fn authorize_url_has_exactly_one_resource_param() {
+        let base_url = "https://mcp.example.test/";
+
+        let mut manager = AuthorizationManager::new(base_url)
+            .await
+            .expect("construct AuthorizationManager");
+
+        manager.set_metadata(AuthorizationMetadata {
+            authorization_endpoint: "https://auth.example.test/authorize".to_string(),
+            token_endpoint: "https://auth.example.test/token".to_string(),
+            response_types_supported: Some(vec!["code".to_string()]),
+            code_challenge_methods_supported: Some(vec!["S256".to_string()]),
+            ..Default::default()
+        });
+        manager
+            .configure_client_id("test-client")
+            .expect("configure client id");
+
+        let auth_url = manager
+            .get_authorization_url(&["openid"])
+            .await
+            .expect("generate authorization url");
+
+        let parsed = url::Url::parse(&auth_url).expect("authorize url should parse");
+        let resource_values: Vec<String> = parsed
+            .query_pairs()
+            .filter(|(k, _)| k == "resource")
+            .map(|(_, v)| v.into_owned())
+            .collect();
+
+        assert_eq!(
+            resource_values.len(),
+            1,
+            "authorize URL must carry exactly one RFC 8707 resource param, \
+             got {resource_values:?} in {auth_url}"
+        );
+        assert_eq!(resource_values[0], base_url);
+    }
+}

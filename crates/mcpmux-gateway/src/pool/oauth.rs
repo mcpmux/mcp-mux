@@ -1673,13 +1673,16 @@ mod resource_param_tests {
             .await
             .expect("construct AuthorizationManager");
 
-        manager.set_metadata(AuthorizationMetadata {
-            authorization_endpoint: "https://auth.example.test/authorize".to_string(),
-            token_endpoint: "https://auth.example.test/token".to_string(),
-            response_types_supported: Some(vec!["code".to_string()]),
-            code_challenge_methods_supported: Some(vec!["S256".to_string()]),
-            ..Default::default()
-        });
+        // `AuthorizationMetadata` is `#[non_exhaustive]` in rmcp 1.5, so it can't be
+        // built with a struct literal from outside the crate. Deserialize it instead.
+        let metadata: AuthorizationMetadata = serde_json::from_value(serde_json::json!({
+            "authorization_endpoint": "https://auth.example.test/authorize",
+            "token_endpoint": "https://auth.example.test/token",
+            "response_types_supported": ["code"],
+            "code_challenge_methods_supported": ["S256"],
+        }))
+        .expect("build AuthorizationMetadata");
+        manager.set_metadata(metadata);
         manager
             .configure_client_id("test-client")
             .expect("configure client id");

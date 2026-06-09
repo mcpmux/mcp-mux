@@ -158,22 +158,6 @@ export function WorkspacesPage() {
   }, [spaces]);
 
   /**
-   * The system's routing fallback: the `is_default` Space plus that Space's
-   * Default FeatureSet. Sessions whose reported root has no binding resolve
-   * here. We compute it once and pass it down so EntryCard can show the
-   * effective FS on every row, including unmapped ones.
-   */
-  const fallback = useMemo(() => {
-    const space = spaces.find((s) => s.is_default) ?? spaces[0] ?? null;
-    if (!space) return null;
-    const fs =
-      featureSets.find(
-        (f) => f.space_id === space.id && isStarterFeatureSet(f)
-      ) ?? null;
-    return { space, fs };
-  }, [spaces, featureSets]);
-
-  /**
    * Unified list: live-reported roots come first (unmapped amber, then
    * mapped emerald), then persisted bindings whose clients aren't live.
    */
@@ -379,25 +363,24 @@ export function WorkspacesPage() {
               {filtered.map((entry) => {
                 const isSelected =
                   selected?.mode === 'entry' && selected.id === entry.id;
-                // For mapped entries: trust the binding. For unmapped: fall
-                // back to the system's default Space + its Default FS so
-                // every card answers "what tools does this folder see?".
+                // Mapped entries show their bound Space + FeatureSet names.
+                // Unmapped entries deliberately show no preview — the card
+                // reads "Not mapped" because the folder genuinely gets no
+                // tools until the user maps it.
                 const resolvedSpaceName = entry.binding
                   ? spaceById.get(entry.binding.space_id)?.name
-                  : fallback?.space.name;
-                const resolvedFsName = entry.binding
-                  ? formatFsList(
-                      entry.binding.feature_set_ids.map(
-                        (id) => fsById.get(id)?.name ?? id
-                      )
+                  : undefined;
+                const fsNames = entry.binding
+                  ? entry.binding.feature_set_ids.map(
+                      (id) => fsById.get(id)?.name ?? id
                     )
-                  : fallback?.fs?.name;
+                  : [];
                 return (
                   <EntryCard
                     key={entry.id}
                     entry={entry}
                     spaceName={resolvedSpaceName}
-                    fsName={resolvedFsName}
+                    fsNames={fsNames}
                     selected={isSelected}
                     onClick={() => setSelected({ mode: 'entry', id: entry.id })}
                   />
@@ -522,11 +505,12 @@ function SegmentedFilter<T extends string>({
 }
 
 // ---------------------------------------------------------------------------
-// Entry card — a workspace folder and the tools it maps to. Modern tile:
-// gradient status icon, folder-name-first hierarchy, chip summary.
+// Entry card — a workspace folder and the tools it maps to. Matches the
+// Clients/Servers card template: flat surface icon box + subtle border,
+// w-14 icon, p-6, hover:scale. Folder name leads, full path beneath, and a
+// feature-set summary that collapses to "first + N more" so it stays tidy
+// no matter how many sets a folder maps to.
 // ---------------------------------------------------------------------------
-
-type Tone = 'amber' | 'emerald' | 'neutral';
 
 /** Last path segment — the folder's own name (`proj` from `/a/b/proj`). */
 function folderName(path: string): string {
@@ -534,122 +518,113 @@ function folderName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/** Everything above the folder name, shown as a muted breadcrumb line. */
-function folderParent(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, '');
-  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  return idx > 0 ? trimmed.slice(0, idx) : '';
-}
-
-const TILE_TONES: Record<Tone, string> = {
-  emerald: 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-emerald-500/25',
-  amber: 'bg-gradient-to-br from-amber-400 to-orange-500 shadow-amber-500/25',
-  neutral:
-    'bg-gradient-to-br from-slate-400 to-slate-500 dark:from-slate-600 dark:to-slate-700 shadow-slate-900/10',
-};
-
-/** The gradient folder tile with a pulsing live indicator. */
-function WorkspaceTile({ tone, live }: { tone: Tone; live: boolean }) {
-  return (
-    <div className="relative flex-shrink-0">
-      <div
-        className={[
-          'flex h-12 w-12 items-center justify-center rounded-2xl text-white shadow-lg ring-1 ring-inset ring-white/25',
-          TILE_TONES[tone],
-        ].join(' ')}
-      >
-        {live ? (
-          <FolderOpen className="h-[22px] w-[22px]" strokeWidth={2} />
-        ) : (
-          <Folder className="h-[22px] w-[22px]" strokeWidth={2} />
-        )}
-      </div>
-      {live && (
-        <span
-          className="absolute -right-1 -top-1 flex h-3 w-3"
-          title="A client is active in this folder right now"
-        >
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-          <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]" />
-        </span>
-      )}
-    </div>
-  );
+/**
+ * Compact feature-set summary for the card footer. Lists up to two names,
+ * then collapses to "first + N more" so a folder mapped to many sets doesn't
+ * blow out the card. Full list is exposed via the `title` tooltip at the call
+ * site.
+ */
+function summarizeFeatureSets(names: string[]): string {
+  if (names.length === 0) return 'No tools';
+  if (names.length <= 2) return names.join(' + ');
+  return `${names[0]} + ${names.length - 1} more`;
 }
 
 function EntryCard({
   entry,
   spaceName,
-  fsName,
+  fsNames,
   selected,
   onClick,
 }: {
   entry: Entry;
   spaceName: string | undefined;
-  fsName: string | undefined;
+  /** Resolved FeatureSet names for a mapped folder; empty when unmapped. */
+  fsNames: string[];
   selected: boolean;
   onClick: () => void;
 }) {
-  const tone: Tone =
+  const folderColor =
     entry.kind === 'unmapped-live'
-      ? 'amber'
+      ? 'text-amber-500'
       : entry.kind === 'mapped-live'
-        ? 'emerald'
-        : 'neutral';
+        ? 'text-emerald-500'
+        : 'text-[rgb(var(--muted))]';
   const name = folderName(entry.root);
-  const parent = folderParent(entry.root);
 
   return (
     <Card
-      className={`group relative cursor-pointer overflow-hidden rounded-2xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl ${
-        selected
-          ? 'ring-2 ring-primary-500 shadow-lg'
-          : 'hover:ring-1 hover:ring-[rgb(var(--border-strong,var(--border)))]'
+      className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
+        selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
       }`}
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
     >
-      <CardContent className="p-5">
-        <div className="flex items-start gap-3.5">
-          <WorkspaceTile tone={tone} live={entry.isLive} />
+      <CardContent className="p-6">
+        <div className="mb-4 flex items-start gap-4">
+          <div className="relative flex-shrink-0">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
+              {entry.isLive ? (
+                <FolderOpen className={`h-6 w-6 ${folderColor}`} />
+              ) : (
+                <Folder className={`h-6 w-6 ${folderColor}`} />
+              )}
+            </div>
+            {entry.isLive && (
+              <span
+                className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]"
+                title="A client is active in this folder right now"
+              />
+            )}
+          </div>
           <div className="min-w-0 flex-1">
             <div className="mb-1 flex flex-wrap items-center gap-2">
               {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
             </div>
-            <p
-              className="truncate text-[15px] font-semibold text-[rgb(var(--foreground))]"
-              title={entry.root}
-            >
+            <h3 className="truncate text-base font-semibold" title={entry.root}>
               {name}
-            </p>
+            </h3>
             <p
-              className="truncate font-mono text-[11px] text-[rgb(var(--muted))]"
+              className="truncate font-mono text-xs text-[rgb(var(--muted))]"
               title={entry.root}
             >
-              {parent || entry.root}
+              {entry.root}
             </p>
           </div>
-          <ChevronRight className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] opacity-0 transition-opacity group-hover:opacity-100" />
         </div>
 
-        <div className="mt-4 border-t border-[rgb(var(--border-subtle))] pt-3.5 text-xs">
+        <div className="border-t border-[rgb(var(--border-subtle))] pt-4 text-xs">
           {entry.binding ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-[rgb(var(--muted))]">
-              <span>Serves</span>
-              <Chip tone="primary">{fsName ?? '—'}</Chip>
-              <span>from</span>
-              <Chip tone="neutral">{spaceName ?? '—'}</Chip>
+            <div className="flex items-center justify-between gap-3">
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Layers className="h-3.5 w-3.5 flex-shrink-0 text-primary-500" />
+                <span
+                  className="truncate font-medium text-[rgb(var(--foreground))]"
+                  title={fsNames.join(', ')}
+                >
+                  {summarizeFeatureSets(fsNames)}
+                </span>
+                {fsNames.length > 1 && (
+                  <span
+                    className="flex-shrink-0 rounded-full bg-primary-500/10 px-1.5 text-[10px] font-bold tabular-nums text-primary-600 dark:text-primary-300"
+                    title={`${fsNames.length} feature sets`}
+                  >
+                    {fsNames.length}
+                  </span>
+                )}
+              </span>
+              <span className="inline-flex flex-shrink-0 items-center gap-1.5 text-[rgb(var(--muted))]">
+                <span>in</span>
+                <Chip tone="neutral">{spaceName ?? '—'}</Chip>
+              </span>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
-                <AlertCircle className="h-3.5 w-3.5" />
-                Not mapped
-              </span>
-              <span className="text-[rgb(var(--muted))]">— gets no tools until you map it</span>
-            </div>
+            <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+              Not mapped — no tools until you map it
+            </span>
           )}
         </div>
       </CardContent>

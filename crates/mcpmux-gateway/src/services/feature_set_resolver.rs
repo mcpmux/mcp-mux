@@ -167,11 +167,12 @@ impl FeatureSetResolverService {
             //                   reconnect.
             let roots_capable_known = self.session_roots.is_roots_capable(sid);
 
-            // Tier 1: session reported roots — try a binding match.
+            // Tier 1: session reported roots — try an EXACT binding match
+            // (no ancestor inheritance).
             if has_roots {
                 if let Some(binding) = self
                     .binding_repo
-                    .find_longest_prefix_match(&default_space_id, &roots.unwrap())
+                    .find_exact_for_roots(&roots.unwrap())
                     .await?
                 {
                     debug!(

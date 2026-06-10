@@ -525,7 +525,7 @@ pub async fn get_workspace_effective_features(
     // 3. Tier 1: longest-prefix workspace binding match.
     let binding = state
         .workspace_binding_repository
-        .find_longest_prefix_match(&default_space.id, std::slice::from_ref(&normalized))
+        .find_exact_for_roots(std::slice::from_ref(&normalized))
         .await
         .map_err(|e| e.to_string())?;
 

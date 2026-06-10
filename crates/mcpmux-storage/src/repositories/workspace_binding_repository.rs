@@ -30,7 +30,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mcpmux_core::{longest_prefix_match, WorkspaceBinding, WorkspaceBindingRepository};
+use mcpmux_core::{WorkspaceBinding, WorkspaceBindingRepository};
 use rusqlite::params;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -263,13 +263,8 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         Ok(())
     }
 
-    async fn find_longest_prefix_match(
+    async fn find_exact_for_roots(
         &self,
-        // `space_id` is no longer used for lookup — routing is keyed on root
-        // alone and each binding already carries its target space. Kept in
-        // the signature for trait compatibility with callers that still hold
-        // onto a "caller's space" hint.
-        _space_id: &Uuid,
         candidate_roots: &[String],
     ) -> Result<Option<WorkspaceBinding>> {
         if candidate_roots.is_empty() {
@@ -277,30 +272,14 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         }
 
         let bindings = self.list().await?;
-        if bindings.is_empty() {
-            return Ok(None);
-        }
-
-        let candidate_strings: Vec<&str> =
-            bindings.iter().map(|b| b.workspace_root.as_str()).collect();
-
-        let mut best: Option<&WorkspaceBinding> = None;
+        // Exact match only — no ancestor/prefix inheritance. A folder resolves
+        // to a binding for THAT exact root, or to nothing.
         for root in candidate_roots {
-            if let Some(winner) = longest_prefix_match(root, candidate_strings.iter().copied()) {
-                let winning = bindings
-                    .iter()
-                    .find(|b| b.workspace_root == winner)
-                    .expect("candidate came from bindings");
-                if best
-                    .map(|b| winning.workspace_root.len() > b.workspace_root.len())
-                    .unwrap_or(true)
-                {
-                    best = Some(winning);
-                }
+            if let Some(b) = bindings.iter().find(|b| &b.workspace_root == root) {
+                return Ok(Some(b.clone()));
             }
         }
-
-        Ok(best.cloned())
+        Ok(None)
     }
 }
 
@@ -418,9 +397,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_longest_prefix_match_picks_nested_root() {
+    async fn test_find_exact_for_roots_is_exact_only() {
+        // No ancestor inheritance: a binding on `outer` must NOT match a
+        // deeper reported root. Only an exact root match resolves.
         let (repo, space_id, fs_id) = fixture().await;
-        let (outer, inner) = if cfg!(windows) {
+        let (outer, exact) = if cfg!(windows) {
             ("d:\\work", "d:\\work\\proj")
         } else {
             ("/work", "/work/proj")
@@ -428,19 +409,28 @@ mod tests {
         repo.create(&WorkspaceBinding::new(outer, space_id, fs_id.clone()))
             .await
             .unwrap();
-        let b_inner = WorkspaceBinding::new(inner, space_id, fs_id);
-        repo.create(&b_inner).await.unwrap();
 
+        // A descendant of `outer` (but not exactly `outer`) → no match.
         let deep = if cfg!(windows) {
             "d:\\work\\proj\\src"
         } else {
             "/work/proj/src"
         };
-        let hit = repo
-            .find_longest_prefix_match(&space_id, &[deep.to_string()])
+        assert!(repo
+            .find_exact_for_roots(&[deep.to_string()])
             .await
             .unwrap()
-            .expect("match");
-        assert_eq!(hit.workspace_root, inner);
+            .is_none());
+
+        // Add an exact binding → that exact root matches.
+        repo.create(&WorkspaceBinding::new(exact, space_id, fs_id))
+            .await
+            .unwrap();
+        let hit = repo
+            .find_exact_for_roots(&[exact.to_string()])
+            .await
+            .unwrap()
+            .expect("exact match");
+        assert_eq!(hit.workspace_root, exact);
     }
 }

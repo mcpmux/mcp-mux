@@ -38,6 +38,5 @@ pub use server_feature::*;
 pub use server_log::*;
 pub use space::*;
 pub use workspace_binding::{
-    longest_prefix_match, normalize_workspace_root, validate_workspace_root, WorkspaceBinding,
-    WorkspaceRootValidation,
+    normalize_workspace_root, validate_workspace_root, WorkspaceBinding, WorkspaceRootValidation,
 };

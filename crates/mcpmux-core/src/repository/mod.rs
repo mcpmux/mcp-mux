@@ -240,14 +240,13 @@ pub trait WorkspaceBindingRepository: Send + Sync {
 
     /// Resolve which binding applies for a set of candidate workspace roots.
     ///
-    /// Every candidate MUST already be normalized. Returns the binding whose
-    /// `workspace_root` is the longest prefix of any candidate, scoped to the
-    /// given Space (so bindings in unrelated spaces don't leak across). The
-    /// caller is responsible for then following the binding's space_mode and
-    /// fs_mode to compute the effective Space + FeatureSet.
-    async fn find_longest_prefix_match(
+    /// EXACT match only — a folder resolves to a binding whose `workspace_root`
+    /// equals one of the candidates. There is NO ancestor/prefix inheritance:
+    /// `d:\a\b` does not pick up a binding on `d:\a`. Every candidate MUST
+    /// already be normalized. Returns the first matching binding (each binding
+    /// carries its own target Space).
+    async fn find_exact_for_roots(
         &self,
-        space_id: &Uuid,
         candidate_roots: &[String],
     ) -> RepoResult<Option<WorkspaceBinding>>;
 }

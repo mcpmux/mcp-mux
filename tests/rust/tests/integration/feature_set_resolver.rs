@@ -202,41 +202,38 @@ async fn binding_routes_to_its_target_space_and_fs() {
 }
 
 #[tokio::test]
-async fn longest_prefix_wins_across_nested_bindings() {
+async fn no_inheritance_child_of_bound_parent_denies() {
+    // Inheritance is intentionally NOT supported: a session whose reported root
+    // is a CHILD of a bound parent does not pick up the parent's binding. With
+    // no exact binding of its own, it resolves to Deny.
     let f = Fixture::new().await;
-    let (outer, inner) = if cfg!(windows) {
+    let (parent, child) = if cfg!(windows) {
         ("d:\\work", "d:\\work\\proj")
     } else {
         ("/work", "/work/proj")
     };
     f.binding_repo
         .create(&WorkspaceBinding::new(
-            normalize_workspace_root(outer),
+            normalize_workspace_root(parent),
             f.space_id,
             f.fs_a_id.clone(),
         ))
         .await
         .unwrap();
-    f.binding_repo
-        .create(&WorkspaceBinding::new(
-            normalize_workspace_root(inner),
-            f.space_id,
-            f.fs_b_id.clone(),
-        ))
-        .await
-        .unwrap();
 
-    let deep = if cfg!(windows) {
-        "d:\\work\\proj\\src"
-    } else {
-        "/work/proj/src"
-    };
-    f.session_roots.set("s", [deep]);
-    f.session_roots.set_roots_capable("s", true);
+    // Child reports its root, no exact binding for it → Deny (no inheritance).
+    f.session_roots.set("child", [child]);
+    f.session_roots.set_roots_capable("child", true);
+    let r = f.resolver.resolve(Some("child"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::Deny);
+    assert!(r.feature_set_ids.is_empty());
 
-    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
-    assert_eq!(r.feature_set_ids, vec![f.fs_b_id]);
+    // The parent's own exact root still resolves to its binding.
+    f.session_roots.set("parent", [parent]);
+    f.session_roots.set_roots_capable("parent", true);
+    let rp = f.resolver.resolve(Some("parent"), None).await.unwrap();
+    assert_eq!(rp.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(rp.feature_set_ids, vec![f.fs_a_id]);
 }
 
 // ---------------------------------------------------------------------------

@@ -333,36 +333,6 @@ fn check_windows_reserved_chars(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-// ============================================================================
-// Longest-prefix match (separator-agnostic)
-// ============================================================================
-
-/// Returns the `workspace_root` in `candidates` whose path is the longest
-/// prefix of `query`, respecting path-component boundaries.
-///
-/// Both `query` and every candidate MUST be already normalized via
-/// [`normalize_workspace_root`]. The boundary check accepts either `/` or
-/// `\` regardless of host OS so a binding written on Windows matches a
-/// Linux reader (and vice versa).
-pub fn longest_prefix_match<'a, I>(query: &str, candidates: I) -> Option<&'a str>
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut best: Option<&'a str> = None;
-    for candidate in candidates {
-        let matches = query == candidate
-            || (query.starts_with(candidate)
-                && query
-                    .as_bytes()
-                    .get(candidate.len())
-                    .is_some_and(|b| *b == b'/' || *b == b'\\'));
-        if matches && best.map(|b| candidate.len() > b.len()).unwrap_or(true) {
-            best = Some(candidate);
-        }
-    }
-    best
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,43 +522,5 @@ mod tests {
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
-    }
-
-    // ---- longest_prefix_match — cross-platform ---------------------------
-
-    #[test]
-    fn longest_prefix_posix() {
-        let bindings = ["/a", "/a/b", "/a/b/c"];
-        assert_eq!(longest_prefix_match("/a/b/c", bindings), Some("/a/b/c"));
-        assert_eq!(longest_prefix_match("/a/b/c/d", bindings), Some("/a/b/c"));
-        assert_eq!(longest_prefix_match("/a/b", bindings), Some("/a/b"));
-    }
-
-    #[test]
-    fn longest_prefix_windows_runs_on_any_host() {
-        // No cfg(windows) gating — this test must pass on Linux CI too.
-        let bindings = ["d:\\work", "d:\\work\\proj"];
-        assert_eq!(
-            longest_prefix_match("d:\\work\\proj\\src", bindings),
-            Some("d:\\work\\proj")
-        );
-        assert_eq!(
-            longest_prefix_match("d:\\work\\other", bindings),
-            Some("d:\\work")
-        );
-    }
-
-    #[test]
-    fn longest_prefix_no_false_partial() {
-        let bindings = ["/a/b"];
-        assert_eq!(longest_prefix_match("/a/b-extra", bindings), None);
-        let win = ["d:\\work"];
-        assert_eq!(longest_prefix_match("d:\\workspace", win), None);
-    }
-
-    #[test]
-    fn longest_prefix_empty_candidates() {
-        let bindings: [&str; 0] = [];
-        assert_eq!(longest_prefix_match("/a", bindings), None);
     }
 }

@@ -51,6 +51,7 @@ import {
 } from '@/lib/api/featureSets';
 import { useSpaces } from '@/stores';
 import type { Space } from '@/lib/api/spaces';
+import { resolveRootBinding } from './prefixMatch';
 
 /**
  * Workspaces page.
@@ -68,12 +69,19 @@ import type { Space } from '@/lib/api/spaces';
  *   • OFFLINE + mapped → neutral
  */
 
-type EntryKind = 'unmapped-live' | 'mapped-live' | 'mapped-offline';
+type EntryKind = 'unmapped-live' | 'mapped-live' | 'inherited-live' | 'mapped-offline';
 interface Entry {
   id: string;
   kind: EntryKind;
   root: string;
+  /** This folder's OWN (exact) binding, if any. Drives edit/delete. */
   binding: WorkspaceBinding | null;
+  /**
+   * An ancestor binding this folder resolves through when it has no exact
+   * binding of its own (longest-prefix inheritance — mirrors the gateway
+   * resolver). Drives the "inherits from …" display.
+   */
+  inherited: WorkspaceBinding | null;
   isLive: boolean;
 }
 type Selected = { mode: 'new' } | { mode: 'entry'; id: string };
@@ -141,11 +149,6 @@ export function WorkspacesPage() {
     }
   };
 
-  const bindingsByRoot = useMemo(() => {
-    const m = new Map<string, WorkspaceBinding>();
-    for (const b of bindings) m.set(b.workspace_root.toLowerCase(), b);
-    return m;
-  }, [bindings]);
   const fsById = useMemo(() => {
     const m = new Map<string, FeatureSet>();
     for (const f of featureSets) m.set(f.id, f);
@@ -168,12 +171,21 @@ export function WorkspacesPage() {
       const key = root.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      const binding = bindingsByRoot.get(key) ?? null;
+      // Match the gateway resolver: longest-prefix, so a folder with no
+      // binding of its own still resolves through an ancestor's (inherited).
+      const { exact, effective } = resolveRootBinding(root, bindings);
+      const inherited = exact ? null : effective;
+      const kind: EntryKind = exact
+        ? 'mapped-live'
+        : inherited
+          ? 'inherited-live'
+          : 'unmapped-live';
       list.push({
-        id: binding?.id ?? `live:${root}`,
-        kind: binding ? 'mapped-live' : 'unmapped-live',
+        id: exact?.id ?? `live:${root}`,
+        kind,
         root,
-        binding,
+        binding: exact,
+        inherited,
         isLive: true,
       });
     }
@@ -186,19 +198,21 @@ export function WorkspacesPage() {
         kind: 'mapped-offline',
         root: b.workspace_root,
         binding: b,
+        inherited: null,
         isLive: false,
       });
     }
     const rank: Record<EntryKind, number> = {
       'unmapped-live': 0,
       'mapped-live': 1,
-      'mapped-offline': 2,
+      'inherited-live': 2,
+      'mapped-offline': 3,
     };
     return list.sort((a, b) => {
       const o = rank[a.kind] - rank[b.kind];
       return o !== 0 ? o : a.root.localeCompare(b.root);
     });
-  }, [bindings, bindingsByRoot, reportedRoots]);
+  }, [bindings, reportedRoots]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -206,11 +220,11 @@ export function WorkspacesPage() {
       if (filter === 'live' && !e.isLive) return false;
       if (filter === 'unmapped' && e.kind !== 'unmapped-live') return false;
       if (!q) return true;
-      const spaceName = e.binding ? spaceById.get(e.binding.space_id)?.name ?? '' : '';
-      const fsNames = e.binding
-        ? e.binding.feature_set_ids
-            .map((id) => fsById.get(id)?.name ?? '')
-            .join(' ')
+      // Resolve display names from the effective binding (own or inherited).
+      const eff = e.binding ?? e.inherited;
+      const spaceName = eff ? spaceById.get(eff.space_id)?.name ?? '' : '';
+      const fsNames = eff
+        ? eff.feature_set_ids.map((id) => fsById.get(id)?.name ?? '').join(' ')
         : '';
       return (
         e.root.toLowerCase().includes(q) ||
@@ -363,17 +377,16 @@ export function WorkspacesPage() {
               {filtered.map((entry) => {
                 const isSelected =
                   selected?.mode === 'entry' && selected.id === entry.id;
-                // Mapped entries show their bound Space + FeatureSet names.
-                // Unmapped entries deliberately show no preview — the card
-                // reads "Not mapped" because the folder genuinely gets no
-                // tools until the user maps it.
-                const resolvedSpaceName = entry.binding
-                  ? spaceById.get(entry.binding.space_id)?.name
+                // Show the EFFECTIVE binding's Space + FeatureSet names — the
+                // folder's own binding, or the ancestor it inherits from.
+                // Truly-unmapped entries (no own + no inherited) show no
+                // preview and read "Not mapped".
+                const eff = entry.binding ?? entry.inherited;
+                const resolvedSpaceName = eff
+                  ? spaceById.get(eff.space_id)?.name
                   : undefined;
-                const fsNames = entry.binding
-                  ? entry.binding.feature_set_ids.map(
-                      (id) => fsById.get(id)?.name ?? id
-                    )
+                const fsNames = eff
+                  ? eff.feature_set_ids.map((id) => fsById.get(id)?.name ?? id)
                   : [];
                 return (
                   <EntryCard
@@ -540,6 +553,10 @@ const CARD_TONES = {
     strip: 'bg-emerald-500',
     box: 'bg-emerald-50 text-emerald-600 ring-emerald-200/70 dark:bg-emerald-900/20 dark:text-emerald-400 dark:ring-emerald-800/50',
   },
+  sky: {
+    strip: 'bg-sky-500',
+    box: 'bg-sky-50 text-sky-600 ring-sky-200/70 dark:bg-sky-900/20 dark:text-sky-400 dark:ring-sky-800/50',
+  },
   amber: {
     strip: 'bg-amber-500',
     box: 'bg-amber-50 text-amber-600 ring-amber-200/70 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-800/50',
@@ -569,9 +586,13 @@ function EntryCard({
       ? 'amber'
       : entry.kind === 'mapped-live'
         ? 'emerald'
-        : 'neutral';
+        : entry.kind === 'inherited-live'
+          ? 'sky'
+          : 'neutral';
   const t = CARD_TONES[tone];
   const name = folderName(entry.root);
+  // The ancestor folder this entry inherits its mapping from (if any).
+  const inheritedFrom = entry.inherited ? folderName(entry.inherited.workspace_root) : null;
 
   return (
     <Card
@@ -607,6 +628,7 @@ function EntryCard({
               {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
+              {entry.kind === 'inherited-live' && <Pill tone="sky">Inherited</Pill>}
             </div>
             <h3 className="truncate text-base font-semibold" title={entry.root}>
               {name}
@@ -621,29 +643,42 @@ function EntryCard({
         </div>
 
         <div className="border-t border-[rgb(var(--border-subtle))] pt-4 text-xs">
-          {entry.binding ? (
-            <div className="flex items-center justify-between gap-3">
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <Layers className="h-3.5 w-3.5 flex-shrink-0 text-primary-500" />
-                <span
-                  className="truncate font-medium text-[rgb(var(--foreground))]"
-                  title={fsNames.join(', ')}
-                >
-                  {summarizeFeatureSets(fsNames)}
-                </span>
-                {fsNames.length > 1 && (
-                  <span
-                    className="flex-shrink-0 rounded-full bg-primary-500/10 px-1.5 text-[10px] font-bold tabular-nums text-primary-600 dark:text-primary-300"
-                    title={`${fsNames.length} feature sets`}
-                  >
-                    {fsNames.length}
+          {entry.binding || entry.inherited ? (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-3">
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 flex-shrink-0 text-primary-500" />
+                  <span className="flex-shrink-0 text-[rgb(var(--muted))]">
+                    {entry.binding ? 'Serves' : 'Inherits'}
                   </span>
-                )}
-              </span>
-              <span className="inline-flex flex-shrink-0 items-center gap-1.5 text-[rgb(var(--muted))]">
-                <span>in</span>
-                <Chip tone="neutral">{spaceName ?? '—'}</Chip>
-              </span>
+                  <span
+                    className="truncate font-medium text-[rgb(var(--foreground))]"
+                    title={fsNames.join(', ')}
+                  >
+                    {summarizeFeatureSets(fsNames)}
+                  </span>
+                  {fsNames.length > 1 && (
+                    <span
+                      className="flex-shrink-0 rounded-full bg-primary-500/10 px-1.5 text-[10px] font-bold tabular-nums text-primary-600 dark:text-primary-300"
+                      title={`${fsNames.length} feature sets`}
+                    >
+                      {fsNames.length}
+                    </span>
+                  )}
+                </span>
+                <span className="inline-flex flex-shrink-0 items-center gap-1.5 text-[rgb(var(--muted))]">
+                  <span>in</span>
+                  <Chip tone="neutral">{spaceName ?? '—'}</Chip>
+                </span>
+              </div>
+              {entry.inherited && (
+                <div
+                  className="truncate text-[11px] text-sky-600 dark:text-sky-400"
+                  title={entry.inherited.workspace_root}
+                >
+                  via parent mapping {inheritedFrom} — map this folder to override
+                </div>
+              )}
             </div>
           ) : (
             <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
@@ -662,14 +697,16 @@ function Pill({
   tone,
 }: {
   children: React.ReactNode;
-  tone: 'amber' | 'emerald' | 'neutral';
+  tone: 'amber' | 'emerald' | 'sky' | 'neutral';
 }) {
   const cls =
     tone === 'amber'
       ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-200/80 dark:border-amber-800/60'
       : tone === 'emerald'
         ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
-        : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
+        : tone === 'sky'
+          ? 'bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400 border-sky-200/80 dark:border-sky-800/60'
+          : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[10px] font-semibold uppercase tracking-wider ${cls}`}
@@ -905,7 +942,10 @@ function InspectorPanel({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                 {!isNew && entry?.isLive && <Pill tone="emerald">Live</Pill>}
-                {!isNew && entry && !isMapped && <Pill tone="amber">Unmapped</Pill>}
+                {!isNew && entry?.inherited && <Pill tone="sky">Inherited</Pill>}
+                {!isNew && entry && !isMapped && !entry.inherited && (
+                  <Pill tone="amber">Unmapped</Pill>
+                )}
                 {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">Offline</Pill>}
               </div>
               <h2 className="text-lg font-bold truncate">{title}</h2>
@@ -936,7 +976,9 @@ function InspectorPanel({
             mode === 'create'
               ? 'Choose the folder and the tools it should get.'
               : mode === 'create-from-live'
-                ? 'This folder is open in an app but has no tools yet — map it.'
+                ? entry?.inherited
+                  ? 'Inherits a parent mapping — save here to override it for this folder.'
+                  : 'This folder is open in an app but has no tools yet — map it.'
                 : isMapped && entry?.binding
                   ? `Gives ${
                       formatFsList(
@@ -953,6 +995,23 @@ function InspectorPanel({
           headerExtra={<SaveStatusPill status={saveStatus} />}
           testId="workspace-mapping-section"
         >
+          {entry?.inherited && !isMapped && (
+            <div
+              className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-3 text-xs leading-relaxed text-sky-800 dark:border-sky-800/60 dark:bg-sky-900/20 dark:text-sky-300"
+              data-testid="workspace-inherited-note"
+            >
+              <span className="font-semibold">Inherited mapping.</span> This folder
+              has no mapping of its own — it currently resolves through its parent{' '}
+              <code className="font-mono">{entry.inherited.workspace_root}</code> (
+              {formatFsList(
+                entry.inherited.feature_set_ids.map(
+                  (id) => featureSets.find((f) => f.id === id)?.name ?? id
+                )
+              ) || 'no tools'}
+              ). Saving below creates a mapping for <em>this</em> folder that
+              overrides the inherited one.
+            </div>
+          )}
           <BindingForm
             mode={mode}
             spaces={spaces}

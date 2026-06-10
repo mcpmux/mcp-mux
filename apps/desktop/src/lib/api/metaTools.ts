@@ -25,16 +25,30 @@ export async function listMetaToolGrants(): Promise<MetaToolGrantEntry[]> {
 }
 
 /** Revoke a single "always allow" entry. */
-export async function revokeMetaToolGrant(
-  clientId: string,
-  toolName: string
-): Promise<boolean> {
+export async function revokeMetaToolGrant(clientId: string, toolName: string): Promise<boolean> {
   return invoke('revoke_meta_tool_grant', { clientId, toolName });
 }
 
 // The mcpmux_* enablement switch is now per-Space — see
 // `@/lib/api/builtinServers` (listBuiltinServers / setBuiltinServerEnabled /
 // setBuiltinToolEnabled). The old global get/set_meta_tools_enabled were removed.
+
+/**
+ * DEBUG/dev only: toggle auto-approval of every write meta tool.
+ *
+ * When on, `mcpmux_create_feature_set` / `mcpmux_bind_current_workspace` and
+ * friends are approved without a dialog — so a developer can self-create
+ * feature sets and bindings and exercise routing end-to-end. Session-only:
+ * resets on gateway restart (to the `MCPMUX_DEBUG_AUTO_APPROVE` env default).
+ */
+export async function setMetaToolsAutoApprove(enabled: boolean): Promise<boolean> {
+  return invoke('set_meta_tools_auto_approve', { enabled });
+}
+
+/** Whether write meta tools are currently auto-approved (DEBUG mode state). */
+export async function getMetaToolsAutoApprove(): Promise<boolean> {
+  return invoke('get_meta_tools_auto_approve');
+}
 
 /**
  * Respond to a pending approval request. Normally called by
@@ -44,10 +58,7 @@ export async function respondToMetaToolApproval(
   requestId: string,
   clientId: string,
   toolName: string,
-  decision:
-    | 'allow_once'
-    | 'always_for_this_session_and_client'
-    | 'deny'
+  decision: 'allow_once' | 'always_for_this_session_and_client' | 'deny'
 ): Promise<boolean> {
   return invoke('respond_to_meta_tool_approval', {
     requestId,

@@ -11,15 +11,15 @@
 //! all to `FeatureService::get_*_for_grants` which composes the union.
 //! This is what lets one folder layer e.g. `Read Only` + `Project-specific
 //! tools` without forcing the user to merge them into a single FS by hand.
-//! Empty `feature_set_ids` is rejected at validation time; storing one
-//! would be indistinguishable from "not bound" yet route via Tier 1.
+//! Empty `feature_set_ids` is allowed — a "no Space tools" mapping: the
+//! folder still routes to its Space (built-in servers apply per Space).
 //!
-//! Path handling is **platform-agnostic**. A binding written on Windows
-//! (`d:\work\proj`) has to match correctly on a Linux host that's just
-//! reading the DB (and vice versa). We detect the path style from the
-//! string itself — drive-letter prefix ⇒ Windows, leading `/` ⇒ POSIX —
-//! rather than from `cfg!(windows)`. Both separators are accepted for
-//! prefix matching regardless of the host OS.
+//! Resolution is an EXACT match on the normalized root — there is no
+//! ancestor/prefix inheritance (`d:\a\b` does not pick up a binding on
+//! `d:\a`). Path handling is still **platform-agnostic**: a binding written
+//! on Windows (`d:\work\proj`) must match on a Linux host reading the DB and
+//! vice versa, so we normalize from the string's own style (drive-letter ⇒
+//! Windows, leading `/` ⇒ POSIX) rather than from `cfg!(windows)`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

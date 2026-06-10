@@ -940,14 +940,11 @@ impl ServerHandler for McpMuxGatewayHandler {
             )
             .await?;
 
-        let (server_id, prompt_name) = self
-            .services
-            .pool_services
-            .feature_service
-            .parse_qualified_prompt_name(&space_id.to_string(), &params.name)
-            .await
-            .map_err(|e| McpError::invalid_params(format!("Invalid prompt name: {}", e), None))?;
-
+        // Authorize + route by matching the requested qualified name against
+        // the resolved prompt set — the SAME encoding the list path uses
+        // (ServerFeature::qualified_name). Guarantees "if it lists, it's
+        // callable"; no dependency on the prefix-cache reverse lookup (which
+        // could be stale and reject a listed prompt). Mirrors call_tool.
         let authorized_prompts = self
             .services
             .pool_services
@@ -958,16 +955,18 @@ impl ServerHandler for McpMuxGatewayHandler {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)
             })?;
 
-        let is_authorized = authorized_prompts
+        let (server_id, prompt_name) = match authorized_prompts
             .iter()
-            .any(|p| p.server_id == server_id && p.feature_name == prompt_name && p.is_available);
-
-        if !is_authorized {
-            return Err(McpError::invalid_params(
-                format!("Prompt '{}' not authorized", params.name),
-                None,
-            ));
-        }
+            .find(|p| p.is_available && p.qualified_name() == params.name)
+        {
+            Some(p) => (p.server_id.clone(), p.feature_name.clone()),
+            None => {
+                return Err(McpError::invalid_params(
+                    format!("Prompt '{}' not authorized", params.name),
+                    None,
+                ));
+            }
+        };
 
         let result_value = self
             .services
@@ -1049,19 +1048,10 @@ impl ServerHandler for McpMuxGatewayHandler {
             )
             .await?;
 
-        let server_id = self
-            .services
-            .pool_services
-            .feature_service
-            .find_server_for_resource(&space_id.to_string(), &params.uri)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(format!("Failed to resolve resource: {}", e), None)
-            })?
-            .ok_or_else(|| {
-                McpError::invalid_params(format!("Resource '{}' not found", params.uri), None)
-            })?;
-
+        // Authorize + route by matching the requested URI against the resolved
+        // resource set (resources are namespaced by URI, so qualified_name ==
+        // feature_name == uri). The server_id comes from the matched feature,
+        // so a listed resource is always readable. Mirrors call_tool / get_prompt.
         let authorized_resources = self
             .services
             .pool_services
@@ -1072,16 +1062,18 @@ impl ServerHandler for McpMuxGatewayHandler {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)
             })?;
 
-        let is_authorized = authorized_resources
+        let server_id = match authorized_resources
             .iter()
-            .any(|r| r.server_id == server_id && r.feature_name == params.uri && r.is_available);
-
-        if !is_authorized {
-            return Err(McpError::invalid_params(
-                format!("Resource '{}' not authorized", params.uri),
-                None,
-            ));
-        }
+            .find(|r| r.is_available && r.qualified_name() == params.uri)
+        {
+            Some(r) => r.server_id.clone(),
+            None => {
+                return Err(McpError::invalid_params(
+                    format!("Resource '{}' not authorized", params.uri),
+                    None,
+                ));
+            }
+        };
 
         let contents_values = self
             .services

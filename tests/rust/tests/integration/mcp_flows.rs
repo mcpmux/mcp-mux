@@ -242,6 +242,61 @@ async fn test_call_tool_unauthorized() {
     assert_eq!(tools.len(), 0, "No tools should be authorized");
 }
 
+/// Regression: every tool that LISTS must be callable. call_tool now authorizes
+/// + routes by matching `qualified_name()` against the SAME resolved feature
+/// set the list path uses, so a listed tool always maps back to exactly one
+/// callable feature — no prefix-cache reverse-lookup that could reject it.
+/// Covers hyphenated tool names under an alias prefix (e.g.
+/// `notion_notion-get-users`), the exact shape that surfaced the bug.
+#[tokio::test]
+async fn listed_tool_is_resolvable_by_qualified_name() {
+    let ctx = TestContext::new();
+    ctx.register_server("notion-mcp-http", Some("notion")).await;
+    ctx.add_feature("notion-mcp-http", "notion-get-users", FeatureType::Tool)
+        .await;
+    ctx.add_feature("notion-mcp-http", "notion-search", FeatureType::Tool)
+        .await;
+    // A second server with a hyphenated alias, to exercise alias≠server_id too.
+    ctx.register_server("idsearch", Some("instant-domain-search"))
+        .await;
+    ctx.add_feature("idsearch", "check_domain_availability", FeatureType::Tool)
+        .await;
+
+    let all = ctx.new_grant_everything_set().await;
+    let all_id = ctx.add_feature_set(all).await;
+
+    let listed = ctx
+        .service
+        .get_tools_for_grants(&ctx.space_id, &[all_id.clone()])
+        .await
+        .unwrap();
+    let resolved = ctx
+        .service
+        .resolve_feature_sets(&ctx.space_id, &[all_id])
+        .await
+        .unwrap();
+
+    // The hyphen-under-alias tool lists with the exact qualified name.
+    assert!(listed
+        .iter()
+        .any(|t| t.qualified_name() == "notion_notion-get-users"));
+
+    // Every listed tool maps back to EXACTLY ONE callable feature by qualified
+    // name — the invariant call_tool relies on for authorization + routing.
+    for t in &listed {
+        let qn = t.qualified_name();
+        let matches: Vec<_> = resolved
+            .iter()
+            .filter(|f| {
+                f.feature_type == FeatureType::Tool && f.is_available && f.qualified_name() == qn
+            })
+            .collect();
+        assert_eq!(matches.len(), 1, "listed tool {qn} must map to one feature");
+        assert_eq!(matches[0].feature_name, t.feature_name);
+        assert_eq!(matches[0].server_id, t.server_id);
+    }
+}
+
 // ============================================================================
 // RESOURCES FLOW TESTS
 // ============================================================================

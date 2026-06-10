@@ -151,13 +151,21 @@ impl SessionRootsRegistry {
     /// `false` when it's the same as before.
     pub fn record_resolution(&self, session_id: &str, fs_id: Option<&str>) -> bool {
         let new_val: Option<String> = fs_id.map(|s| s.to_string());
-        match self.last_resolution.get(session_id) {
-            Some(prev) if *prev == new_val => false,
-            _ => {
-                self.last_resolution.insert(session_id.to_string(), new_val);
-                true
-            }
+        // IMPORTANT: read the prior value into an owned `bool` and let the
+        // `get()` read guard drop at the end of THIS statement. Holding a
+        // DashMap `Ref` across the `insert()` below would request a write lock
+        // on the same shard while still holding its read lock — a self-deadlock
+        // that fires exactly when a session's resolution changes from one
+        // Some(..) to a different Some(..) (the common "binding changed" path).
+        let unchanged = self
+            .last_resolution
+            .get(session_id)
+            .is_some_and(|prev| *prev == new_val);
+        if unchanged {
+            return false;
         }
+        self.last_resolution.insert(session_id.to_string(), new_val);
+        true
     }
 
     /// Returns every reported root across every active session, de-duplicated

@@ -61,6 +61,15 @@ export async function getDefaultSpace(): Promise<Space | null> {
   return spaces.find((s) => s.is_default) ?? null;
 }
 
+/**
+ * The Space tests operate against. In the e2e environment this is the default
+ * Space (the gateway's routing fallback), so it aliases {@link getDefaultSpace}.
+ * Kept as a distinct name because several specs read it as "the active Space".
+ */
+export async function getActiveSpace(): Promise<Space | null> {
+  return getDefaultSpace();
+}
+
 // ============================================================================
 // Client API
 // ============================================================================
@@ -195,6 +204,29 @@ export async function approveOAuthClient(clientId: string): Promise<void> {
   return invoke<void>('approve_oauth_client', { clientId });
 }
 
+/** Grant a feature set to an OAuth client in a space (rootless-client routing). */
+export async function grantOAuthClientFeatureSet(
+  clientId: string,
+  spaceId: string,
+  featureSetId: string
+): Promise<void> {
+  return invoke<void>('grant_oauth_client_feature_set', {
+    clientId,
+    spaceId,
+    featureSetId,
+  });
+}
+
+/** DEBUG: toggle auto-approval of every write meta tool (session-only). */
+export async function setMetaToolsAutoApprove(enabled: boolean): Promise<boolean> {
+  return invoke<boolean>('set_meta_tools_auto_approve', { enabled });
+}
+
+/** Read the current DEBUG auto-approve state. */
+export async function getMetaToolsAutoApprove(): Promise<boolean> {
+  return invoke<boolean>('get_meta_tools_auto_approve');
+}
+
 // ============================================================================
 // Server Feature Seeding API (for E2E / screenshots)
 // ============================================================================
@@ -263,7 +295,7 @@ export interface WorkspaceBinding {
   id: string;
   workspace_root: string;
   space_id: string;
-  /** A binding can map to one or more FeatureSets (order = render order). */
+  /** A binding maps to zero or more FeatureSets (order = render order). */
   feature_set_ids: string[];
   created_at: string;
   updated_at: string;
@@ -272,7 +304,7 @@ export interface WorkspaceBinding {
 export interface WorkspaceBindingInput {
   workspace_root: string;
   space_id: string;
-  /** Non-empty: at least one FeatureSet id. */
+  /** MAY be empty — an empty mapping means "no Space tools" for that root. */
   feature_set_ids: string[];
 }
 

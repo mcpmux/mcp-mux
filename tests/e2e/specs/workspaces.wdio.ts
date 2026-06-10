@@ -142,6 +142,48 @@ describe('Workspaces - Create, render, delete', () => {
   });
 });
 
+describe('Workspaces - Empty mapping (no Space tools)', () => {
+  let bindingId: string | null = null;
+  const root = uniqueRoot();
+
+  it('TC-WS-010: A mapping with zero FeatureSets is savable and persists', async () => {
+    const space = await getDefaultSpace();
+    if (!space) throw new Error('No default space — cannot set up test');
+
+    // An empty feature_set_ids list is a deliberate "this root gets no Space
+    // tools" mapping — it must persist, not be rejected.
+    const created: WorkspaceBinding = await createWorkspaceBinding({
+      workspace_root: root,
+      space_id: space.id,
+      feature_set_ids: [],
+    });
+    bindingId = created.id;
+    expect(created.feature_set_ids.length).toBe(0);
+
+    const reloaded = (await listWorkspaceBindings()).find((b) => b.id === created.id);
+    expect(reloaded).toBeTruthy();
+    expect(reloaded!.feature_set_ids.length).toBe(0);
+
+    // Card renders for an empty mapping too.
+    const nav = await byTestId('nav-workspaces');
+    await safeClick(nav);
+    await browser.pause(1200);
+    const card = await $(`[data-testid="workspace-entry-${created.id}"]`);
+    await card.waitForDisplayed({ timeout: TIMEOUT.short });
+    expect(await card.isDisplayed()).toBe(true);
+  });
+
+  after(async () => {
+    if (bindingId) {
+      try {
+        await deleteWorkspaceBinding(bindingId);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+});
+
 describe('Workspaces - Create form flow (UI)', () => {
   let bindingId: string | null = null;
 

@@ -13,7 +13,13 @@
  */
 
 import { byTestId, TIMEOUT, safeClick } from '../helpers/selectors';
-import { emitEvent, getDefaultSpace, invoke } from '../helpers/tauri-api';
+import {
+  emitEvent,
+  getDefaultSpace,
+  invoke,
+  getMetaToolsAutoApprove,
+  setMetaToolsAutoApprove,
+} from '../helpers/tauri-api';
 
 interface BuiltinServerRow {
   id: string;
@@ -66,6 +72,35 @@ describe('Built-in Servers - Tool Optimization UI', () => {
     const audit = await byTestId('meta-tool-audit-log');
     await expect(grants).toBeDisplayed();
     await expect(audit).toBeDisplayed();
+  });
+
+  it('TC-MT-003: DEBUG auto-approve toggle round-trips and reflects backend state', async () => {
+    const nav = await byTestId('nav-builtin-servers');
+    await safeClick(nav);
+    await browser.pause(1000);
+
+    // The amber debug control lives inside the grants panel.
+    const toggleWrap = await byTestId('meta-tool-auto-approve');
+    await expect(toggleWrap).toBeDisplayed();
+
+    // Start from a known-off baseline (session-only state).
+    await setMetaToolsAutoApprove(false);
+    expect(await getMetaToolsAutoApprove()).toBe(false);
+
+    // Flip it on via the UI switch and confirm the backend agrees.
+    const toggle = await byTestId('meta-tool-auto-approve-toggle');
+    await safeClick(toggle);
+    await browser.waitUntil(async () => (await getMetaToolsAutoApprove()) === true, {
+      timeout: TIMEOUT.medium,
+      timeoutMsg: 'auto-approve did not turn on after clicking the switch',
+    });
+
+    // Flip back off so later tests see the safe default.
+    await safeClick(toggle);
+    await browser.waitUntil(async () => (await getMetaToolsAutoApprove()) === false, {
+      timeout: TIMEOUT.medium,
+      timeoutMsg: 'auto-approve did not turn off after clicking the switch',
+    });
   });
 });
 

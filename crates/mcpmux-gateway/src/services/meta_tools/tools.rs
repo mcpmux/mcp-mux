@@ -349,10 +349,11 @@ impl MetaTool for BindCurrentWorkspaceTool {
 
     fn description(&self) -> &'static str {
         "Persistently bind the caller's first reported workspace root to the \
-         given FeatureSet inside the caller's resolved Space. Every future \
-         connection that reports the same root (or a subdirectory) will \
-         resolve to this FeatureSet. Requires user approval and the calling \
-         client MUST have declared MCP roots."
+         given FeatureSet inside the caller's resolved Space. Only a future \
+         connection that reports this EXACT root resolves to this FeatureSet — \
+         bindings are exact-match, with no subdirectory/ancestor inheritance. \
+         Requires user approval and the calling client MUST have declared MCP \
+         roots."
     }
 
     fn input_schema(&self) -> Value {

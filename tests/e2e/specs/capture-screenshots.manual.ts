@@ -49,7 +49,6 @@ import {
   listServerFeatures,
   listClients,
   addFeatureToSet,
-  grantFeatureSetToClient,
   grantOAuthClientFeatureSet,
 } from '../helpers/tauri-api';
 import { PRESEED } from '../mocks/screenshot-preseed';

@@ -8,6 +8,7 @@ import {
   createSpace,
   deleteSpace,
   getDefaultSpace,
+  getActiveSpace,
   listSpaces,
   listFeatureSetsBySpace,
   createFeatureSet,

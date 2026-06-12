@@ -7,7 +7,7 @@ test.describe('Registry/Discover Page', () => {
     await dashboard.navigate();
     
     await page.locator('nav button:has-text("Discover")').click();
-    await expect(page.getByRole('heading', { name: 'Discover Servers' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
   });
 
   test('should display search input', async ({ page }) => {

@@ -11,7 +11,7 @@ test.describe('ConfirmDialog – Spaces', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
 
     // Look for a delete button
     const deleteBtn = page.locator('[data-testid^="delete-space-"]').first();
@@ -32,7 +32,7 @@ test.describe('ConfirmDialog – Spaces', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
 
     const deleteBtn = page.locator('[data-testid^="delete-space-"]').first();
     if (await deleteBtn.isVisible().catch(() => false)) {
@@ -58,7 +58,7 @@ test.describe('ConfirmDialog – Spaces', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
 
     const deleteBtn = page.locator('[data-testid^="delete-space-"]').first();
     if (await deleteBtn.isVisible().catch(() => false)) {
@@ -78,8 +78,8 @@ test.describe('ConfirmDialog – Clients', () => {
   test('should show confirm dialog when clicking Remove Client', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Clients")').click();
-    await expect(page.getByRole('heading', { name: 'Connected Clients' })).toBeVisible();
+    await page.locator('nav button:has-text("Apps")').click();
+    await expect(page.getByRole('heading', { name: 'Apps' })).toBeVisible();
 
     // Click the first client card to open the detail panel
     const clientCards = page.locator('[data-testid^="client-card-"]');

@@ -95,10 +95,10 @@ describe('Gateway Status - Dashboard', () => {
     // Verify individual stat cards
     const pageSource = await browser.getPageSource();
     
-    const hasServersCard = pageSource.includes('Servers');
+    const hasServersCard = pageSource.includes('Tools');
     const hasFeatureSetsCard = pageSource.includes('FeatureSets');
-    const hasClientsCard = pageSource.includes('Clients');
-    const hasActiveSpaceCard = pageSource.includes('Active Space');
+    const hasClientsCard = pageSource.includes('Apps');
+    const hasActiveSpaceCard = pageSource.includes('Space');
     
     console.log('[DEBUG] Stats - Servers:', hasServersCard);
     console.log('[DEBUG] Stats - FeatureSets:', hasFeatureSetsCard);

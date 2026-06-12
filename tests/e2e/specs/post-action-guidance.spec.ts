@@ -7,8 +7,8 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("My Servers")').click();
-      await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
+      await page.locator('nav button:has-text("Tools")').click();
+      await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
 
       // Check for empty state with discover button
       const emptyState = page.locator('text=No servers installed');
@@ -23,7 +23,7 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("My Servers")').click();
+      await page.locator('nav button:has-text("Tools")').click();
 
       const emptyState = page.locator('text=No servers installed');
       if (await emptyState.isVisible().catch(() => false)) {
@@ -31,7 +31,7 @@ test.describe('Post-Action User Guidance', () => {
         await discoverBtn.click();
 
         // Should now be on the Discover page
-        await expect(page.getByRole('heading', { name: 'Discover Servers' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
       }
     });
   });
@@ -63,7 +63,7 @@ test.describe('Post-Action User Guidance', () => {
         // Toast should appear with action button
         await expect(page.getByTestId('toast-success')).toBeVisible({ timeout: 5000 });
         await expect(page.getByTestId('toast-action')).toBeVisible();
-        await expect(page.getByTestId('toast-action')).toContainText('My Servers');
+        await expect(page.getByTestId('toast-action')).toContainText('Tools');
       }
     });
 
@@ -82,7 +82,7 @@ test.describe('Post-Action User Guidance', () => {
         await page.getByTestId('toast-action').click();
 
         // Should navigate to My Servers
-        await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
       }
     });
   });

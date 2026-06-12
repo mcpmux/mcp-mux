@@ -44,6 +44,7 @@ import {
   useToast,
   ToastContainer,
   useConfirm,
+  PageHeader,
 } from '@mcpmux/ui';
 import {
   useDefaultSpace,
@@ -62,13 +63,7 @@ const CLIENT_ICON_ASSETS: Record<string, string> = {
   'android-studio': androidStudioIcon,
 };
 
-function ClientIcon({
-  logo_uri,
-  client_name,
-}: {
-  logo_uri?: string | null;
-  client_name: string;
-}) {
+function ClientIcon({ logo_uri, client_name }: { logo_uri?: string | null; client_name: string }) {
   const knownKey = resolveKnownClientKey(client_name);
   const iconUrl = (knownKey && CLIENT_ICON_ASSETS[knownKey]) || logo_uri;
   if (iconUrl) {
@@ -76,7 +71,7 @@ function ClientIcon({
       <img
         src={iconUrl}
         alt={client_name}
-        className="w-full h-full object-contain rounded"
+        className="h-full w-full rounded object-contain"
         onError={(e) => {
           e.currentTarget.style.display = 'none';
           e.currentTarget.parentElement!.append(document.createTextNode('🤖'));
@@ -205,9 +200,7 @@ export default function ClientsPage() {
       const updated = await updateOAuthClient(selected.client_id, {
         client_alias: editAlias || undefined,
       });
-      setClients((prev) =>
-        prev.map((c) => (c.client_id === updated.client_id ? updated : c))
-      );
+      setClients((prev) => prev.map((c) => (c.client_id === updated.client_id ? updated : c)));
       setSelected(updated);
       success('Saved', `"${updated.client_alias || updated.client_name}" updated`);
     } catch (e) {
@@ -255,48 +248,42 @@ export default function ClientsPage() {
   const renderNow = useMemo(() => Date.now(), [clients]);
 
   return (
-    <div className="h-full flex flex-col relative" data-testid="clients-page">
-      <header className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">
-        <div className="max-w-[2000px] mx-auto">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-3xl font-bold" data-testid="clients-title">
-                Connections
-              </h1>
-              <p className="text-base text-[rgb(var(--muted))] mt-2 max-w-2xl">
-                Approved AI clients. Routing (which Space, which FeatureSet) is
-                configured in{' '}
+    <div className="relative flex h-full flex-col" data-testid="clients-page">
+      <header className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-8">
+        <div className="mx-auto max-w-[2000px]">
+          <PageHeader
+            title="Apps"
+            titleTestId="clients-title"
+            subtitle={
+              <>
+                The AI apps connected through your gateway. Which tools each one gets (which Space,
+                which FeatureSet) is configured in{' '}
                 <button
                   onClick={() => navigateTo('workspaces')}
-                  className="text-[rgb(var(--accent))] hover:underline font-medium"
+                  className="font-medium text-[rgb(var(--accent))] hover:underline"
                 >
                   Workspaces
-                </button>
-                {' '}per folder, not per client.
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={refreshClients}
-              disabled={isRefreshing}
-            >
-              <RefreshCw
-                className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`}
-              />
-              Refresh
-            </Button>
-          </div>
+                </button>{' '}
+                per folder, not per app.
+              </>
+            }
+            actions={
+              <Button variant="ghost" size="md" onClick={refreshClients} disabled={isRefreshing}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            }
+          />
 
           {clients.length > 0 && (
             <div className="relative max-w-3xl">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-[rgb(var(--muted))]" />
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[rgb(var(--muted))]" />
               <input
                 type="text"
                 placeholder="Search by name, alias, or id…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 text-base bg-[rgb(var(--surface))] border border-[rgb(var(--border))] rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
+                className="focus:ring-primary-500 focus:border-primary-500 w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3 pl-12 pr-4 text-base transition-all focus:outline-none focus:ring-2"
               />
             </div>
           )}
@@ -305,28 +292,26 @@ export default function ClientsPage() {
 
       {error && (
         <div className="flex-shrink-0 px-8 pt-6">
-          <div className="max-w-[2000px] mx-auto p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="mx-auto flex max-w-[2000px] items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600 dark:text-red-400" />
             <p className="text-base text-red-600 dark:text-red-400">{error}</p>
           </div>
         </div>
       )}
 
       <div className="flex-1 overflow-auto px-8 py-8">
-        <div className="max-w-[2000px] mx-auto">
+        <div className="mx-auto max-w-[2000px]">
           {isLoading ? (
-            <div className="flex items-center justify-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
+            <div className="flex h-64 items-center justify-center">
+              <Loader2 className="text-primary-500 h-8 w-8 animate-spin" />
             </div>
           ) : filtered.length === 0 ? (
             searchQuery ? (
-              <Card className="max-w-2xl mx-auto">
+              <Card className="mx-auto max-w-2xl">
                 <CardContent className="flex flex-col items-center justify-center py-16">
-                  <Laptop className="h-16 w-16 text-[rgb(var(--muted))] mb-4" />
-                  <h3 className="text-lg font-medium mb-2">
-                    No connections match your search
-                  </h3>
-                  <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md">
+                  <Laptop className="mb-4 h-16 w-16 text-[rgb(var(--muted))]" />
+                  <h3 className="mb-2 text-lg font-medium">No connections match your search</h3>
+                  <p className="max-w-md text-center text-sm text-[rgb(var(--muted))]">
                     Try adjusting your search terms.
                   </p>
                 </CardContent>
@@ -335,33 +320,28 @@ export default function ClientsPage() {
               <EmptyStateOnboarding gatewayStatus={gatewayStatus} />
             )
           ) : (
-            <div className="grid gap-5 auto-fill-cards">
+            <div className="auto-fill-cards grid gap-5">
               {filtered.map((client) => {
                 const isSelected = selected?.client_id === client.client_id;
                 const displayName = client.client_alias || client.client_name;
                 return (
                   <Card
                     key={client.client_id}
-                    className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
-                      isSelected ? 'ring-2 ring-primary-500 shadow-lg' : ''
+                    className={`cursor-pointer transition-all hover:scale-[1.01] hover:shadow-lg ${
+                      isSelected ? 'ring-primary-500 shadow-lg ring-2' : ''
                     }`}
                     onClick={() => openPanel(client)}
                     data-testid={`client-card-${client.client_id.replace(/[^a-zA-Z0-9-_]/g, '_')}`}
                   >
                     <CardContent className="p-6">
-                      <div className="flex items-start gap-4 mb-4">
-                        <div className="w-14 h-14 flex items-center justify-center text-3xl bg-[rgb(var(--surface))] rounded-xl flex-shrink-0 border border-[rgb(var(--border-subtle))]">
-                          <ClientIcon
-                            logo_uri={client.logo_uri}
-                            client_name={client.client_name}
-                          />
+                      <div className="mb-4 flex items-start gap-4">
+                        <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] text-3xl">
+                          <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-lg truncate mb-1">
-                            {displayName}
-                          </h3>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="mb-1 truncate text-lg font-semibold">{displayName}</h3>
                           {client.client_alias && (
-                            <p className="text-xs text-[rgb(var(--muted))] truncate">
+                            <p className="truncate text-xs text-[rgb(var(--muted))]">
                               {client.client_name}
                             </p>
                           )}
@@ -392,7 +372,7 @@ export default function ClientsPage() {
       {selected && (
         <>
           <div
-            className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40 animate-in fade-in duration-200"
+            className="animate-in fade-in fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px] duration-200"
             onClick={() => setSelected(null)}
           />
           <SidePanel
@@ -461,7 +441,7 @@ function CapabilityBadge({
     return (
       <span
         title="This client declares the MCP roots capability. Its sessions route via Workspace bindings; the per-client grant list below applies only to rare rootless reconnects."
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
+        className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
       >
         <FolderOpen className="h-3 w-3" />
         Reports workspace
@@ -471,7 +451,7 @@ function CapabilityBadge({
   return (
     <span
       title="This client does NOT declare the MCP roots capability. It always routes via the per-client grants set in this panel — configure them below."
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
     >
       <Globe className="h-3 w-3" />
       Rootless
@@ -513,22 +493,19 @@ function SidePanel({
   const aliasDirty = (client.client_alias || '') !== editAlias;
 
   return (
-    <div className="fixed right-0 top-0 bottom-0 w-full max-w-[480px] min-w-[420px] bg-[rgb(var(--surface))] border-l border-[rgb(var(--border))] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 z-50">
-      <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
+    <div className="animate-in slide-in-from-right fixed bottom-0 right-0 top-0 z-50 flex w-full min-w-[420px] max-w-[480px] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl duration-300">
+      <div className="flex-shrink-0 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
         <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-11 h-11 flex items-center justify-center text-2xl bg-[rgb(var(--background))] rounded-lg flex-shrink-0 border border-[rgb(var(--border-subtle))]">
-              <ClientIcon
-                logo_uri={client.logo_uri}
-                client_name={client.client_name}
-              />
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] text-2xl">
+              <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold truncate">
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-lg font-bold">
                 {client.client_alias || client.client_name}
               </h2>
-              <div className="flex items-center gap-2 mt-0.5">
-                <p className="text-xs text-[rgb(var(--muted))] truncate flex-1 min-w-0">
+              <div className="mt-0.5 flex items-center gap-2">
+                <p className="min-w-0 flex-1 truncate text-xs text-[rgb(var(--muted))]">
                   {client.client_alias ? client.client_name : client.client_id}
                 </p>
                 <CapabilityBadge
@@ -540,7 +517,7 @@ function SidePanel({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
+            className="flex-shrink-0 rounded-lg p-1.5 transition-colors hover:bg-[rgb(var(--surface-hover))]"
             aria-label="Close panel"
           >
             <X className="h-5 w-5" />
@@ -548,9 +525,9 @@ function SidePanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 space-y-6 overflow-y-auto p-6">
         <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))] mb-2">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
             Display name
           </h3>
           <div className="flex gap-2">
@@ -559,7 +536,7 @@ function SidePanel({
               value={editAlias}
               onChange={(e) => setEditAlias(e.target.value)}
               placeholder={client.client_name}
-              className="flex-1 px-3 py-2 text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              className="focus:ring-primary-500 focus:border-primary-500 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm focus:outline-none focus:ring-2"
             />
             <Button
               size="sm"
@@ -574,21 +551,21 @@ function SidePanel({
               )}
             </Button>
           </div>
-          <p className="text-xs text-[rgb(var(--muted))] mt-1.5">
+          <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
             An alias shown in logs and this list. Doesn't affect routing.
           </p>
         </section>
 
         <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
           <div className="flex items-start gap-3">
-            <div className="h-9 w-9 rounded-lg bg-[rgb(var(--accent))]/10 flex items-center justify-center flex-shrink-0">
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--accent))]/10">
               <FolderOpen className="h-5 w-5 text-[rgb(var(--accent))]" />
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold">Routing is workspace-driven</p>
-              <p className="text-xs text-[rgb(var(--muted))] mt-1">
-                When this client reports a folder as an MCP root, mcpmux uses the
-                matching Workspace binding to pick the Space and FeatureSet.
+              <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                When this client reports a folder as an MCP root, mcpmux uses the matching Workspace
+                binding to pick the Space and FeatureSet.
               </p>
               <button
                 onClick={onOpenWorkspaces}
@@ -619,22 +596,15 @@ function SidePanel({
         )}
 
         <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))] mb-2">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
             Client info
           </h3>
           <div className="space-y-2 text-xs">
             <InfoRow label="Client ID" value={client.client_id} mono />
             <InfoRow label="Client name" value={client.client_name} />
-            {client.software_id && (
-              <InfoRow label="Software" value={client.software_id} />
-            )}
-            {client.software_version && (
-              <InfoRow label="Version" value={client.software_version} />
-            )}
-            <InfoRow
-              label="Registered via"
-              value={client.registration_type ?? 'dynamic'}
-            />
+            {client.software_id && <InfoRow label="Software" value={client.software_id} />}
+            {client.software_version && <InfoRow label="Version" value={client.software_version} />}
+            <InfoRow label="Registered via" value={client.registration_type ?? 'dynamic'} />
             {client.last_seen && (
               <InfoRow
                 label="Last seen"
@@ -645,14 +615,14 @@ function SidePanel({
         </section>
       </div>
 
-      <div className="flex-shrink-0 p-4 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
+      <div className="flex-shrink-0 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
         <Button
           variant="ghost"
           size="sm"
           onClick={onRevoke}
-          className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+          className="w-full text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-900/20"
         >
-          <Trash2 className="h-4 w-4 mr-2" />
+          <Trash2 className="mr-2 h-4 w-4" />
           Revoke connection
         </Button>
       </div>
@@ -733,10 +703,7 @@ function RootlessGrantsSection({
       })
       .catch((e) => {
         if (cancelled) return;
-        onError(
-          'Failed to load grants',
-          e instanceof Error ? e.message : String(e)
-        );
+        onError('Failed to load grants', e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -753,9 +720,7 @@ function RootlessGrantsSection({
     setPendingFsId(fs.id);
     // Optimistic update — gateway emits ClientGrantChanged + we'll re-sync
     // via the `oauth-client-changed` listener at the parent level.
-    setGrantedIds((prev) =>
-      isGranted ? prev.filter((id) => id !== fs.id) : [...prev, fs.id]
-    );
+    setGrantedIds((prev) => (isGranted ? prev.filter((id) => id !== fs.id) : [...prev, fs.id]));
     try {
       if (isGranted) {
         await revokeOAuthClientFeatureSet(clientId, defaultSpaceId, fs.id);
@@ -766,9 +731,7 @@ function RootlessGrantsSection({
       }
     } catch (e) {
       // Roll back the optimistic update on failure.
-      setGrantedIds((prev) =>
-        isGranted ? [...prev, fs.id] : prev.filter((id) => id !== fs.id)
-      );
+      setGrantedIds((prev) => (isGranted ? [...prev, fs.id] : prev.filter((id) => id !== fs.id)));
       onError(
         isGranted ? 'Failed to revoke grant' : 'Failed to grant',
         e instanceof Error ? e.message : String(e)
@@ -780,45 +743,38 @@ function RootlessGrantsSection({
 
   return (
     <section>
-      <div className="flex items-start gap-2 mb-2">
+      <div className="mb-2 flex items-start gap-2">
         <div className="flex-1">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
             Default for rootless sessions
           </h3>
         </div>
         <span
-          className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide font-semibold text-[rgb(var(--accent))] bg-[rgb(var(--accent))]/10 px-2 py-0.5 rounded-full"
+          className="inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent))]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent))]"
           title="Used only when this client connects without reporting a workspace folder"
         >
           <Globe className="h-3 w-3" />
           Rootless only
         </span>
       </div>
-      <p className="text-xs text-[rgb(var(--muted))] mb-3 leading-relaxed">
+      <p className="mb-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
         This client doesn&apos;t declare the MCP{' '}
-        <code className="px-1 rounded bg-[rgb(var(--surface))] text-[10px]">
-          roots
-        </code>{' '}
-        capability, so its sessions route through the FeatureSets you
-        pick here instead of through Workspace bindings. Leaving the
-        list empty denies the client — rootless sessions then see only
-        the built-in
-        <code className="px-1 mx-1 rounded bg-[rgb(var(--surface))] text-[10px]">
-          mcpmux_*
-        </code>
+        <code className="rounded bg-[rgb(var(--surface))] px-1 text-[10px]">roots</code> capability,
+        so its sessions route through the FeatureSets you pick here instead of through Workspace
+        bindings. Leaving the list empty denies the client — rootless sessions then see only the
+        built-in
+        <code className="mx-1 rounded bg-[rgb(var(--surface))] px-1 text-[10px]">mcpmux_*</code>
         management tools.
       </p>
 
       {!defaultSpaceId ? (
-        <p className="text-xs text-[rgb(var(--muted))] italic">
-          No default Space configured.
-        </p>
+        <p className="text-xs italic text-[rgb(var(--muted))]">No default Space configured.</p>
       ) : isLoading ? (
         <div className="flex items-center justify-center py-6">
           <Loader2 className="h-4 w-4 animate-spin text-[rgb(var(--muted))]" />
         </div>
       ) : featureSets.length === 0 ? (
-        <p className="text-xs text-[rgb(var(--muted))] italic">
+        <p className="text-xs italic text-[rgb(var(--muted))]">
           No FeatureSets exist in the default Space yet.
         </p>
       ) : (
@@ -831,22 +787,22 @@ function RootlessGrantsSection({
           className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))]"
           data-testid="rootless-grants-list"
         >
-          <div className="p-2 border-b border-[rgb(var(--border-subtle))]">
+          <div className="border-b border-[rgb(var(--border-subtle))] p-2">
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[rgb(var(--muted))]" />
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[rgb(var(--muted))]" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={`Search ${featureSets.length} feature set${featureSets.length === 1 ? '' : 's'}…`}
-                className="w-full pl-7 pr-2.5 py-1.5 text-xs bg-[rgb(var(--surface))] border border-[rgb(var(--border-subtle))] rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="focus:ring-primary-500 w-full rounded border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] py-1.5 pl-7 pr-2.5 text-xs focus:outline-none focus:ring-2"
                 data-testid="rootless-grants-search"
               />
             </div>
           </div>
-          <div className="max-h-72 overflow-y-auto p-1.5 space-y-1">
+          <div className="max-h-72 space-y-1 overflow-y-auto p-1.5">
             {filteredFs.length === 0 ? (
-              <p className="text-xs text-[rgb(var(--muted))] italic px-2 py-3 text-center">
+              <p className="px-2 py-3 text-center text-xs italic text-[rgb(var(--muted))]">
                 No feature sets match &ldquo;{search}&rdquo;.
               </p>
             ) : (
@@ -859,17 +815,17 @@ function RootlessGrantsSection({
                     onClick={() => toggle(fs)}
                     disabled={isPending}
                     className={[
-                      'w-full flex items-center gap-2.5 px-2.5 py-2 rounded text-left text-sm transition-colors',
+                      'flex w-full items-center gap-2.5 rounded px-2.5 py-2 text-left text-sm transition-colors',
                       isGranted
                         ? 'bg-primary-500/10 hover:bg-primary-500/15'
                         : 'hover:bg-[rgb(var(--surface-hover))]',
-                      isPending ? 'opacity-60 cursor-wait' : 'cursor-pointer',
+                      isPending ? 'cursor-wait opacity-60' : 'cursor-pointer',
                     ].join(' ')}
                     data-testid={`grant-toggle-${fs.id}`}
                   >
                     <div
                       className={[
-                        'h-4 w-4 rounded border flex items-center justify-center flex-shrink-0',
+                        'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border',
                         isGranted
                           ? 'bg-primary-500 border-primary-500'
                           : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--surface))]',
@@ -881,20 +837,18 @@ function RootlessGrantsSection({
                         <Check className="h-3 w-3 text-white" strokeWidth={3} />
                       ) : null}
                     </div>
-                    <span className="flex-shrink-0 text-base leading-none">
-                      {fs.icon ?? '📦'}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{fs.name}</p>
+                    <span className="flex-shrink-0 text-base leading-none">{fs.icon ?? '📦'}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{fs.name}</p>
                       {fs.description && (
-                        <p className="text-[11px] text-[rgb(var(--muted))] truncate">
+                        <p className="truncate text-[11px] text-[rgb(var(--muted))]">
                           {fs.description}
                         </p>
                       )}
                     </div>
                     {isStarterFeatureSet(fs) && (
                       <span
-                        className="text-[9px] uppercase tracking-wide text-[rgb(var(--muted))] bg-[rgb(var(--surface))] px-1 py-0.5 rounded flex-shrink-0"
+                        className="flex-shrink-0 rounded bg-[rgb(var(--surface))] px-1 py-0.5 text-[9px] uppercase tracking-wide text-[rgb(var(--muted))]"
                         title="Auto-seeded with this Space."
                       >
                         starter
@@ -906,7 +860,7 @@ function RootlessGrantsSection({
             )}
           </div>
           {search && filteredFs.length > 0 && filteredFs.length < featureSets.length && (
-            <div className="px-3 py-1.5 text-[11px] text-[rgb(var(--muted))] border-t border-[rgb(var(--border-subtle))]">
+            <div className="border-t border-[rgb(var(--border-subtle))] px-3 py-1.5 text-[11px] text-[rgb(var(--muted))]">
               {filteredFs.length} of {featureSets.length} shown
               {grantedIds.some((id) => !filteredFs.find((f) => f.id === id)) &&
                 ' (granted FSes always visible)'}
@@ -916,12 +870,12 @@ function RootlessGrantsSection({
       )}
 
       {grantedIds.length === 0 && featureSets.length > 0 && !isLoading && (
-        <div className="mt-3 flex items-start gap-2 p-2.5 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
-          <ShieldOff className="h-4 w-4 text-[rgb(var(--muted))] mt-0.5 flex-shrink-0" />
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-2.5">
+          <ShieldOff className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
           <p className="text-[11px] text-[rgb(var(--muted))]">
-            No defaults set — rootless sessions from this client are denied.
-            That&apos;s the safe default. Pick a FeatureSet above only if
-            you trust this client to operate without a workspace folder.
+            No defaults set — rootless sessions from this client are denied. That&apos;s the safe
+            default. Pick a FeatureSet above only if you trust this client to operate without a
+            workspace folder.
           </p>
         </div>
       )}
@@ -929,21 +883,11 @@ function RootlessGrantsSection({
   );
 }
 
-function InfoRow({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex items-start gap-3 p-2 rounded-lg bg-[rgb(var(--background))] border border-[rgb(var(--border-subtle))]">
-      <span className="text-[rgb(var(--muted))] w-28 flex-shrink-0">{label}</span>
-      <span
-        className={`flex-1 min-w-0 break-all ${mono ? 'font-mono text-[10px]' : ''}`}
-      >
+    <div className="flex items-start gap-3 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] p-2">
+      <span className="w-28 flex-shrink-0 text-[rgb(var(--muted))]">{label}</span>
+      <span className={`min-w-0 flex-1 break-all ${mono ? 'font-mono text-[10px]' : ''}`}>
         {value}
       </span>
     </div>
@@ -954,29 +898,20 @@ function InfoRow({
 // Empty-state onboarding (preserved from original)
 // ---------------------------------------------------------------------------
 
-function EmptyStateOnboarding({
-  gatewayStatus,
-}: {
-  gatewayStatus: GatewayStatus;
-}) {
+function EmptyStateOnboarding({ gatewayStatus }: { gatewayStatus: GatewayStatus }) {
   return (
-    <div
-      className="max-w-4xl mx-auto space-y-6"
-      data-testid="clients-empty-connect"
-    >
+    <div className="mx-auto max-w-4xl space-y-6" data-testid="clients-empty-connect">
       <Card data-testid="clients-empty-onboarding">
         <CardContent className="p-8">
-          <div className="flex items-start gap-4 mb-1">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 text-white shadow-[0_6px_16px_-4px_rgb(99_102_241/0.45)] flex-shrink-0">
+          <div className="mb-1 flex items-start gap-4">
+            <div className="from-primary-500 to-primary-600 flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-[0_6px_16px_-4px_rgb(99_102_241/0.45)]">
               <PlugZap className="h-6 w-6" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold">
-                Let&apos;s hook up your first IDE
-              </h2>
-              <p className="text-sm text-[rgb(var(--muted))] mt-1">
-                mcpmux is one connection your AI client uses to reach every MCP
-                server. Three steps and you&apos;re done:
+              <h2 className="text-xl font-semibold">Let&apos;s hook up your first IDE</h2>
+              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                mcpmux is one connection your AI client uses to reach every MCP server. Three steps
+                and you&apos;re done:
               </p>
             </div>
           </div>
@@ -1000,7 +935,7 @@ function EmptyStateOnboarding({
               title={
                 <>
                   Approve the connection{' '}
-                  <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold uppercase tracking-wide">
+                  <span className="ml-1 inline-flex items-center rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                     right here
                   </span>
                 </>
@@ -1010,13 +945,13 @@ function EmptyStateOnboarding({
           </ol>
 
           {!gatewayStatus.running && (
-            <div className="mt-5 flex items-start gap-2 p-3 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 text-xs">
-              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+            <div className="mt-5 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-700/60 dark:bg-amber-900/20">
+              <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
               <div>
                 <p className="font-semibold text-amber-800 dark:text-amber-200">
                   Gateway is stopped
                 </p>
-                <p className="text-amber-700 dark:text-amber-300 mt-0.5">
+                <p className="mt-0.5 text-amber-700 dark:text-amber-300">
                   Start it from the Dashboard first — otherwise the IDE will hang at{' '}
                   <code>initialize</code>.
                 </p>
@@ -1050,15 +985,15 @@ function OnboardingStep({
       ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300'
       : 'bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300';
   return (
-    <li className="flex gap-3 items-start">
+    <li className="flex items-start gap-3">
       <span
-        className={`flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full font-semibold text-sm ${cls}`}
+        className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold ${cls}`}
       >
         {n}
       </span>
       <div className="flex-1">
         <p className="font-medium">{title}</p>
-        <p className="text-[rgb(var(--muted))] text-xs mt-0.5">{body}</p>
+        <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">{body}</p>
       </div>
     </li>
   );

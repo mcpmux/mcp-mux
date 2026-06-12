@@ -100,7 +100,7 @@ describe('Comprehensive: Space Isolation', () => {
     const pageSource = await browser.getPageSource();
     const hasGithubOrServer = pageSource.includes('GitHub') || pageSource.includes('github') ||
       pageSource.includes('Enable') || pageSource.includes('Disable') ||
-      (pageSource.includes('My Servers') && pageSource.includes('installed-server'));
+      (pageSource.includes('Tools') && pageSource.includes('installed-server'));
     expect(hasGithubOrServer).toBe(true);
   });
 
@@ -148,7 +148,7 @@ describe('Comprehensive: Connections page', () => {
 
     const pageSource = await browser.getPageSource();
     // Heading changed from "Connected Clients" to "Connections".
-    expect(pageSource.includes('Connections')).toBe(true);
+    expect(pageSource.includes('Apps')).toBe(true);
     // And routing is advertised as workspace-driven, not per-client.
     expect(pageSource.includes('Workspaces')).toBe(true);
   });

@@ -14,7 +14,7 @@ test.describe('Spaces Page', () => {
     await goToSpaces(page);
     
     // Check main page heading (h1 specifically)
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
   });
 
   test('should show space management UI', async ({ page }) => {
@@ -22,7 +22,7 @@ test.describe('Spaces Page', () => {
     await dashboard.navigate();
     
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
     
     // Page should have some content
     const content = page.locator('[class*="rounded"]');
@@ -72,7 +72,7 @@ test.describe('Space Management', () => {
     await goToSpaces(page);
     
     // Verify page loaded correctly with Workspaces h1 heading
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
   });
 
   test('should show workspaces page content', async ({ page }) => {
@@ -80,7 +80,7 @@ test.describe('Space Management', () => {
     await dashboard.navigate();
     
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
     
     // Page should have content elements
     const content = page.locator('[class*="rounded"]');
@@ -96,7 +96,7 @@ test.describe('Space Toast Notifications', () => {
     await dashboard.navigate();
     
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
     
     await expect(spacesPage.toastContainer).toBeAttached();
   });

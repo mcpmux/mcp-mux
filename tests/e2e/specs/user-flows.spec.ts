@@ -18,14 +18,14 @@ test.describe('Complete User Flows', () => {
     
     // 3. Navigate to discover servers
     await page.locator('nav button:has-text("Discover")').click();
-    await expect(page.locator('h1:has-text("Discover Servers")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Discover")')).toBeVisible();
     
     // 4. Navigate to settings to configure theme
     await page.locator('nav button:has-text("Settings")').click();
     await expect(page.locator('h1:has-text("Settings")')).toBeVisible();
     
     // 5. Return to dashboard
-    await page.locator('nav button:has-text("Dashboard")').click();
+    await page.locator('nav button:has-text("Home")').click();
     await expect(dashboard.heading).toBeVisible();
   });
 
@@ -37,12 +37,12 @@ test.describe('Complete User Flows', () => {
     await expect(dashboard.heading).toBeVisible();
     
     // My Servers
-    await page.locator('nav button:has-text("My Servers")').click();
-    await expect(page.locator('h1:has-text("My Servers")')).toBeVisible();
+    await page.locator('nav button:has-text("Tools")').click();
+    await expect(page.locator('h1:has-text("Tools")')).toBeVisible();
     
     // Discover
     await page.locator('nav button:has-text("Discover")').click();
-    await expect(page.locator('h1:has-text("Discover Servers")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Discover")')).toBeVisible();
     
     // Spaces (use last() to avoid space switcher)
     await page.locator('nav button:has-text("Spaces")').last().click();
@@ -53,8 +53,8 @@ test.describe('Complete User Flows', () => {
     await expect(page.locator('h1:has-text("Feature Sets")')).toBeVisible();
     
     // Clients
-    await page.locator('nav button:has-text("Clients")').click();
-    await expect(page.locator('h1:has-text("Connected Clients")')).toBeVisible();
+    await page.locator('nav button:has-text("Apps")').click();
+    await expect(page.locator('h1:has-text("Apps")')).toBeVisible();
     
     // Settings
     await page.locator('nav button:has-text("Settings")').click();
@@ -75,7 +75,7 @@ test.describe('Complete User Flows', () => {
     await expect(page.locator('html')).toHaveClass(/dark/);
     
     // Navigate away and back
-    await page.locator('nav button:has-text("Dashboard")').click();
+    await page.locator('nav button:has-text("Home")').click();
     await page.locator('nav button:has-text("Settings")').click();
     
     // Dark theme should still be active
@@ -185,6 +185,6 @@ test.describe('Error Handling', () => {
     await page.locator('nav button:has-text("Discover")').click();
     
     // Just verify page eventually loads
-    await expect(page.locator('h1:has-text("Discover Servers")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Discover")')).toBeVisible();
   });
 });

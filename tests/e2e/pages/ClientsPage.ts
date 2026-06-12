@@ -13,7 +13,7 @@ export class ClientsPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.heading = page.getByRole('heading', { name: 'Connections' });
+    this.heading = page.getByRole('heading', { name: 'Apps' });
     this.clientList = page.locator('[data-testid="client-list"]');
     this.clientCards = page.locator('[data-testid="client-card"]');
     this.emptyState = page.locator('text=No clients connected');

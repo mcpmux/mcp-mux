@@ -88,7 +88,7 @@ describe('Server Configuration - PostgreSQL', () => {
       !pageSource.includes('Cancel') || 
       pageSource.includes('Connected') || 
       pageSource.includes('Connecting') ||
-      pageSource.includes('My Servers');
+      pageSource.includes('Tools');
     
     expect(modalClosed).toBe(true);
   });

@@ -119,7 +119,7 @@ describe('Space Management - Create and Delete', () => {
     const hasSpacesList = 
       pageSource.includes('My Space') || 
       pageSource.includes('Test Space') ||
-      pageSource.includes('Workspaces');
+      pageSource.includes('Spaces');
     
     expect(hasSpacesList).toBe(true);
   });

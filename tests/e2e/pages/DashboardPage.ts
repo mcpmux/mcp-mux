@@ -17,7 +17,7 @@ export class DashboardPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.heading = page.getByRole('heading', { name: 'Dashboard' });
+    this.heading = page.getByRole('heading', { name: 'Home' });
     this.gatewayStatus = page.locator('text=Gateway:').first();
     this.gatewayToggleButton = page.getByRole('button', { name: /Start|Stop/ });
     this.serverCountCard = page.locator('text=Servers').first();

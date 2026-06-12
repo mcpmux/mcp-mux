@@ -1,14 +1,15 @@
 /**
- * Built-in Servers page.
+ * Context page (formerly "Built-in Servers").
  *
- * Home for the MCP servers McpMux ships itself — distinct from the servers the
- * user installs (those live under "My Servers"). Built-in servers and their
- * individual tools are enabled/disabled **per Space**: this page configures the
- * Space currently selected in the sidebar's Space switcher.
+ * Home for the capabilities McpMux itself provides to connected apps —
+ * distinct from the servers the user installs (those live under "Tools").
+ * Built-in servers and their individual tools are enabled/disabled
+ * **per Space**: this page configures the Space currently selected in the
+ * sidebar's Space switcher.
  *
  * Today there's one concrete built-in server — "Tool Optimization" (the
  * `mcpmux_*` self-management toolset). Memory / Skills / Plugins are scaffolded
- * as "coming soon" so the shape of the framework is visible.
+ * as "coming soon" — per the superapp plan they all land on this page.
  */
 
 import { useEffect, useState } from 'react';
@@ -165,12 +166,13 @@ export function BuiltinServersPage() {
     <div className="flex h-full flex-col" data-testid="builtin-servers-page">
       <header className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-8">
         <div className="mx-auto max-w-[2000px]">
-          <h1 className="text-3xl font-bold">Built-in Servers</h1>
+          <h1 className="text-3xl font-bold">Context</h1>
           <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
-            MCP servers that ship with McpMux — separate from the ones you install under{' '}
-            <span className="font-medium text-[rgb(var(--foreground))]">My Servers</span>. Enable
-            them and toggle their tools <span className="font-medium">per Space</span>; the choices
-            below apply to{' '}
+            Capabilities McpMux itself gives your AI apps — separate from the servers you install
+            under <span className="font-medium text-[rgb(var(--foreground))]">Tools</span>.
+            Self-management ships today; Memory, Skills, and Plugins are coming. Enable them and
+            toggle their tools <span className="font-medium">per Space</span>; the choices below
+            apply to{' '}
             <span className="font-semibold text-[rgb(var(--foreground))]">
               {space?.name ?? '…'}
             </span>{' '}
@@ -183,7 +185,7 @@ export function BuiltinServersPage() {
         <div className="mx-auto max-w-3xl space-y-6">
           {loading ? (
             <div className="flex items-center justify-center py-16">
-              <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
+              <Loader2 className="text-primary-500 h-6 w-6 animate-spin" />
             </div>
           ) : (
             servers.map((server) => (
@@ -192,7 +194,7 @@ export function BuiltinServersPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <CardTitle className="flex items-center gap-2">
-                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-500/10 text-primary-500">
+                        <span className="bg-primary-500/10 text-primary-500 flex h-8 w-8 items-center justify-center rounded-lg">
                           {SERVER_ICONS[server.id] ?? <Boxes className="h-5 w-5" />}
                         </span>
                         {server.name}

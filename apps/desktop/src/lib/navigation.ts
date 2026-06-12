@@ -18,7 +18,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Home,
   Server,
-  Brain,
+  Sparkles,
   Compass,
   Monitor,
   FolderOpen,
@@ -67,8 +67,8 @@ export const NAV_ZONES: NavZone[] = [
       },
       {
         key: 'builtin-servers',
-        label: 'Context',
-        icon: Brain,
+        label: 'Built-in',
+        icon: Sparkles,
         testId: 'nav-builtin-servers',
         hint: 'Capabilities McpMux itself provides — self-management now; memory & skills next',
       },

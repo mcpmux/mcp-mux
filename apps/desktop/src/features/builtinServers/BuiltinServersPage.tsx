@@ -1,39 +1,32 @@
 /**
- * Context page (formerly "Built-in Servers").
+ * Built-in page (formerly "Built-in Servers").
  *
- * Home for the capabilities McpMux itself provides to connected apps —
- * distinct from the servers the user installs (those live under "Tools").
- * Built-in servers and their individual tools are enabled/disabled
- * **per Space**: this page configures the Space currently selected in the
- * sidebar's Space switcher.
+ * Capabilities McpMux itself provides to connected apps — distinct from the
+ * servers the user installs under "Tools". Enabled/disabled **per Space**.
  *
- * Today there's one concrete built-in server — "Tool Optimization" (the
- * `mcpmux_*` self-management toolset). Memory / Skills / Plugins are scaffolded
- * as "coming soon" — per the superapp plan they all land on this page.
+ * Layout = three stages, responsive from narrow windows to ultrawide:
+ *   1. The shelf — every built-in capability as a uniform card (live ones
+ *      toggleable, future ones "Soon"), so the framework reads as one row,
+ *      not one giant card.
+ *   2. Detail panel — the selected capability's tools with per-tool switches.
+ *   3. Approvals & activity — grants + audit in their own bounded section
+ *      (side-by-side on wide screens, stacked on narrow), out of the card.
  */
 
 import { useEffect, useState } from 'react';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  Switch,
-  useToast,
-  ToastContainer,
-} from '@mcpmux/ui';
+import { Switch, useToast, ToastContainer } from '@mcpmux/ui';
 import {
   Sparkles,
   Brain,
   BookOpen,
   Puzzle,
+  Webhook,
   Wrench,
   Eye,
   Pencil,
   Boxes,
   Loader2,
-  Layers,
+  ShieldCheck,
 } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import {
@@ -60,19 +53,25 @@ const COMING_SOON: ComingSoonServer[] = [
   {
     id: 'memory',
     name: 'Memory',
-    description: 'Persistent notes and recall the AI can read and write across sessions.',
+    description: 'Notes and recall your AI can read and write across every app.',
     icon: <Brain className="h-5 w-5" />,
   },
   {
     id: 'skills',
     name: 'Skills',
-    description: 'Search a catalog of skills and pull the ones you want into a Space.',
+    description: 'Install skills from a catalog and target them per Space.',
     icon: <BookOpen className="h-5 w-5" />,
+  },
+  {
+    id: 'hooks',
+    name: 'Hooks',
+    description: 'Run your own automations before or after tool calls.',
+    icon: <Webhook className="h-5 w-5" />,
   },
   {
     id: 'plugins',
     name: 'Plugins',
-    description: 'Extend McpMux with community plugins exposed as first-class tools.',
+    description: 'Community plugins exposed as first-class tools.',
     icon: <Puzzle className="h-5 w-5" />,
   },
 ];
@@ -87,6 +86,7 @@ export function BuiltinServersPage() {
 
   const [servers, setServers] = useState<BuiltinServer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<string>('tool-optimization');
 
   useEffect(() => {
     if (!spaceId) return;
@@ -162,140 +162,184 @@ export function BuiltinServersPage() {
     }
   };
 
+  const selected = servers.find((s) => s.id === selectedId) ?? servers[0];
+
   return (
     <div className="flex h-full flex-col" data-testid="builtin-servers-page">
-      <header className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-8">
-        <div className="mx-auto max-w-[2000px]">
-          <h1 className="text-3xl font-bold">Context</h1>
-          <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
-            Capabilities McpMux itself gives your AI apps — separate from the servers you install
-            under <span className="font-medium text-[rgb(var(--foreground))]">Tools</span>.
-            Self-management ships today; Memory, Skills, and Plugins are coming. Enable them and
-            toggle their tools <span className="font-medium">per Space</span>; the choices below
-            apply to{' '}
+      <header className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-6 lg:p-8">
+        <div className="mx-auto max-w-[1600px]">
+          <h1 className="text-2xl font-bold tracking-tight lg:text-3xl">Built-in</h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-[rgb(var(--muted))] lg:text-base">
+            Built-in tools and additional features McpMux gives your AI apps — no install needed.
+            Self-management ships today; Memory, Skills, Hooks, and Plugins are next. Toggle
+            everything <span className="font-medium text-[rgb(var(--foreground))]">per Space</span>;
+            these settings apply to{' '}
             <span className="font-semibold text-[rgb(var(--foreground))]">
               {space?.name ?? '…'}
-            </span>{' '}
-            (switch Spaces from the sidebar).
+            </span>
+            .
           </p>
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto p-8">
-        <div className="mx-auto max-w-3xl space-y-6">
+      <div className="flex-1 overflow-auto p-6 lg:p-8">
+        <div className="mx-auto max-w-[1600px] space-y-8">
           {loading ? (
             <div className="flex items-center justify-center py-16">
-              <Loader2 className="text-primary-500 h-6 w-6 animate-spin" />
+              <Loader2 className="h-6 w-6 animate-spin text-[rgb(var(--primary))]" />
             </div>
           ) : (
-            servers.map((server) => (
-              <Card key={server.id} data-testid={`builtin-server-${server.id}`}>
-                <CardHeader>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <CardTitle className="flex items-center gap-2">
-                        <span className="bg-primary-500/10 text-primary-500 flex h-8 w-8 items-center justify-center rounded-lg">
-                          {SERVER_ICONS[server.id] ?? <Boxes className="h-5 w-5" />}
-                        </span>
-                        {server.name}
-                        <span className="rounded-md border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
-                          Built-in
-                        </span>
-                      </CardTitle>
-                      <CardDescription className="mt-2">{server.description}</CardDescription>
-                    </div>
-                    <Switch
-                      checked={server.enabled}
-                      onCheckedChange={(v) => void toggleServer(server.id, v)}
-                      data-testid={`builtin-server-toggle-${server.id}`}
-                    />
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div>
-                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-                      <Wrench className="h-3.5 w-3.5" />
-                      Tools ({server.tools.length})
-                    </div>
-                    <div
-                      className={`overflow-hidden rounded-xl border border-[rgb(var(--border))] transition-opacity ${
-                        server.enabled ? '' : 'opacity-50'
-                      }`}
-                    >
-                      <div className="divide-y divide-[rgb(var(--border-subtle))]">
-                        {server.tools.map((t) => (
-                          <div key={t.name} className="flex items-start gap-3 px-4 py-2.5">
-                            {t.write ? (
-                              <Pencil className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
-                            ) : (
-                              <Eye className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
-                            )}
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="truncate font-mono text-sm">{t.name}</span>
-                                <span
-                                  className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                                    t.write
-                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                                  }`}
-                                >
-                                  {t.write ? 'write · approval' : 'read'}
-                                </span>
-                              </div>
-                              <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
-                                {t.description}
-                              </p>
-                            </div>
+            <>
+              {/* 1 — The shelf: every capability, uniform cards. */}
+              <section>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+                  {servers.map((server) => {
+                    const isSelected = selected?.id === server.id;
+                    const enabledTools = server.tools.filter((t) => t.enabled).length;
+                    return (
+                      <div
+                        key={server.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSelectedId(server.id)}
+                        onKeyDown={(e) => e.key === 'Enter' && setSelectedId(server.id)}
+                        data-testid={`builtin-server-${server.id}`}
+                        className={`group relative cursor-pointer overflow-hidden rounded-xl border bg-[rgb(var(--card))] p-4 text-left shadow transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${
+                          isSelected
+                            ? 'border-[rgb(var(--primary))]/50'
+                            : 'border-[rgb(var(--border-subtle))] hover:border-[rgb(var(--border))]'
+                        }`}
+                      >
+                        <span
+                          aria-hidden
+                          className={`absolute inset-y-0 left-0 w-1 transition-opacity ${
+                            server.enabled ? 'bg-emerald-500' : 'bg-slate-400/60'
+                          }`}
+                        />
+                        <div className="flex items-start justify-between gap-2 pl-2">
+                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))]">
+                            {SERVER_ICONS[server.id] ?? <Boxes className="h-5 w-5" />}
+                          </span>
+                          {/* Switch sits inside a clickable card — keep its
+                              clicks from changing the selection. */}
+                          <span onClick={(e) => e.stopPropagation()}>
                             <Switch
-                              checked={t.enabled}
-                              disabled={!server.enabled}
-                              onCheckedChange={(v) => void toggleTool(server.id, t.name, v)}
-                              data-testid={`builtin-tool-toggle-${t.name}`}
+                              checked={server.enabled}
+                              onCheckedChange={(v) => void toggleServer(server.id, v)}
+                              data-testid={`builtin-server-toggle-${server.id}`}
                             />
+                          </span>
+                        </div>
+                        <div className="mt-3 pl-2">
+                          <div className="font-semibold">{server.name}</div>
+                          <p className="mt-1 line-clamp-2 text-xs text-[rgb(var(--muted))]">
+                            {server.description}
+                          </p>
+                          <div className="mt-2 text-[11px] font-medium text-[rgb(var(--muted-foreground))]">
+                            {server.enabled
+                              ? `${enabledTools}/${server.tools.length} tools on`
+                              : 'Off in this Space'}
                           </div>
-                        ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {COMING_SOON.map((s) => (
+                    <div
+                      key={s.id}
+                      className="rounded-xl border border-dashed border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 opacity-75"
+                      data-testid={`builtin-server-coming-soon-${s.id}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[rgb(var(--background))] text-[rgb(var(--muted))]">
+                          {s.icon}
+                        </span>
+                        <span className="rounded-md bg-[rgb(var(--background))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
+                          Soon
+                        </span>
+                      </div>
+                      <div className="mt-3">
+                        <div className="font-semibold">{s.name}</div>
+                        <p className="mt-1 line-clamp-2 text-xs text-[rgb(var(--muted))]">
+                          {s.description}
+                        </p>
                       </div>
                     </div>
-                  </div>
+                  ))}
+                </div>
+              </section>
 
+              {/* 2 — Detail panel for the selected capability. */}
+              {selected && (
+                <section>
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <Wrench className="h-4 w-4 text-[rgb(var(--muted))]" />
+                    <h2 className="text-sm font-semibold">
+                      {selected.name} — tools ({selected.tools.length})
+                    </h2>
+                    {!selected.enabled && (
+                      <span className="rounded-md bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        server off
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className={`overflow-hidden rounded-xl border border-[rgb(var(--border))] transition-opacity ${
+                      selected.enabled ? '' : 'opacity-50'
+                    }`}
+                  >
+                    <div className="divide-y divide-[rgb(var(--border-subtle))]">
+                      {selected.tools.map((t) => (
+                        <div key={t.name} className="flex items-start gap-3 px-4 py-2.5">
+                          {t.write ? (
+                            <Pencil className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+                          ) : (
+                            <Eye className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate font-mono text-sm">{t.name}</span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                  t.write
+                                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                                }`}
+                              >
+                                {t.write ? 'write · approval' : 'read'}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
+                              {t.description}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={t.enabled}
+                            disabled={!selected.enabled}
+                            onCheckedChange={(v) => void toggleTool(selected.id, t.name, v)}
+                            data-testid={`builtin-tool-toggle-${t.name}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {/* 3 — Approvals & activity: bounded, out of the cards. */}
+              <section>
+                <div className="mb-3 flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-[rgb(var(--muted))]" />
+                  <h2 className="text-sm font-semibold">Approvals & activity</h2>
+                </div>
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                   <MetaToolGrantsPanel />
                   <MetaToolAuditLog />
-                </CardContent>
-              </Card>
-            ))
-          )}
-
-          {/* Framework preview — servers that slot into this same shell later. */}
-          <div>
-            <div className="mb-3 flex items-center gap-2">
-              <Layers className="h-4 w-4 text-[rgb(var(--muted))]" />
-              <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">
-                More built-in servers
-              </h2>
-              <span className="text-xs text-[rgb(var(--muted))]">coming soon</span>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              {COMING_SOON.map((s) => (
-                <div
-                  key={s.id}
-                  className="rounded-xl border border-dashed border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 opacity-75"
-                  data-testid={`builtin-server-coming-soon-${s.id}`}
-                >
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[rgb(var(--background))] text-[rgb(var(--muted))]">
-                      {s.icon}
-                    </span>
-                    <span className="rounded-md bg-[rgb(var(--background))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
-                      Soon
-                    </span>
-                  </div>
-                  <div className="text-sm font-semibold">{s.name}</div>
-                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">{s.description}</p>
                 </div>
-              ))}
-            </div>
-          </div>
+              </section>
+            </>
+          )}
         </div>
       </div>
 

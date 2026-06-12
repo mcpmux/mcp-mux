@@ -50,7 +50,7 @@ test.describe('Complete User Flows', () => {
     
     // FeatureSets
     await page.locator('nav button:has-text("FeatureSets")').click();
-    await expect(page.locator('h1:has-text("Feature Sets")')).toBeVisible();
+    await expect(page.locator('h1:has-text("FeatureSets")')).toBeVisible();
     
     // Clients
     await page.locator('nav button:has-text("Apps")').click();

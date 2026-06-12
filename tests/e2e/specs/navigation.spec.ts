@@ -36,7 +36,7 @@ test.describe('Navigation', () => {
 
     // FeatureSets
     await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
-    await expect(page.locator('h1:has-text("Feature Sets")')).toBeVisible();
+    await expect(page.locator('h1:has-text("FeatureSets")')).toBeVisible();
 
     // Clients
     await page.locator('nav button:has-text("Apps")').click({ force: true });

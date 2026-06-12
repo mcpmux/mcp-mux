@@ -19,7 +19,7 @@ describe('Built-in Servers - Page shell', () => {
     await browser.saveScreenshot('./tests/e2e/screenshots/bs-01-page.png');
 
     const src = await browser.getPageSource();
-    expect(src.includes('Context')).toBe(true);
+    expect(src.includes('Built-in')).toBe(true);
     expect(src.includes('Tool Optimization')).toBe(true);
 
     // The Tool Optimization server card + its enable switch are present.

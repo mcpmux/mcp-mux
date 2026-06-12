@@ -10,7 +10,7 @@
  * the page that manages what it counts.
  */
 import { useEffect, useState } from 'react';
-import { Server, Wrench, Monitor, Globe, ArrowUpRight } from 'lucide-react';
+import { Server, Wrench, Monitor, Globe, ArrowUpRight, Compass, ArrowRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ConnectionCard } from '@/components/ConnectionCard';
@@ -83,6 +83,75 @@ function StatTile({
   );
 }
 
+/**
+ * Three-step journey shown only while the Space has zero installed servers —
+ * it walks a newcomer from empty to "my AI app has tools" and disappears
+ * forever after the first install.
+ */
+function GetStartedStrip() {
+  const navigateTo = useNavigateTo();
+  const steps = [
+    {
+      n: 1,
+      icon: Compass,
+      title: 'Pick your first tools',
+      desc: 'Browse the registry and install a server in one click.',
+      cta: 'Open Discover',
+      nav: 'registry' as NavItem,
+    },
+    {
+      n: 2,
+      icon: Server,
+      title: 'Enable it',
+      desc: 'Turn the server on so the gateway can serve its tools.',
+      cta: 'Open Tools',
+      nav: 'servers' as NavItem,
+    },
+    {
+      n: 3,
+      icon: Monitor,
+      title: 'Connect an AI app',
+      desc: 'Point Cursor, Claude, or VS Code at your gateway below.',
+      cta: 'See Apps',
+      nav: 'clients' as NavItem,
+    },
+  ];
+  return (
+    <div
+      className="overflow-hidden rounded-xl border border-[rgb(var(--primary))]/25 bg-[rgb(var(--primary))]/5"
+      data-testid="home-get-started"
+    >
+      <div className="grid grid-cols-1 divide-y divide-[rgb(var(--primary))]/15 md:grid-cols-3 md:divide-x md:divide-y-0">
+        {steps.map((s) => (
+          <button
+            key={s.n}
+            type="button"
+            onClick={() => navigateTo(s.nav)}
+            className="group flex items-start gap-3 p-4 text-left transition-colors hover:bg-[rgb(var(--primary))]/10"
+          >
+            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/15 text-sm font-bold text-[rgb(var(--primary))]">
+              {s.n}
+            </span>
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 text-sm font-semibold">
+                <s.icon className="h-3.5 w-3.5 text-[rgb(var(--primary))]" />
+                {s.title}
+              </span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-[rgb(var(--muted))]">
+                {s.desc}
+              </span>
+              <span className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-[rgb(var(--primary))]">
+                {s.cta}
+                <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function HomePage() {
   const [stats, setStats] = useState({
     installedServers: 0,
@@ -90,6 +159,7 @@ export function HomePage() {
     clients: 0,
     featureSets: 0,
   });
+  const [statsLoaded, setStatsLoaded] = useState(false);
   const viewSpace = useViewSpace();
 
   const loadStats = async () => {
@@ -108,6 +178,7 @@ export function HomePage() {
         clients: clients.length,
         featureSets: featureSets.length,
       });
+      setStatsLoaded(true);
     } catch (e) {
       console.error('Failed to load home stats:', e);
     }
@@ -141,6 +212,9 @@ export function HomePage() {
         title="Home"
         subtitle="Your AI control plane at a glance — one gateway, every app, your rules."
       />
+
+      {/* First-steps journey — only until the first server is installed. */}
+      {statsLoaded && stats.installedServers === 0 && <GetStartedStrip />}
 
       {/* Canonical connection surface — owns URL, Start/Stop, IDE grid,
           pending-approval nudge. */}

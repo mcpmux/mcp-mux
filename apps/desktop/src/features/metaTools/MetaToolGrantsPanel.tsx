@@ -122,7 +122,7 @@ export function MetaToolGrantsPanel() {
             No auto-approvals yet. Each dialog defaults to &quot;Allow once&quot;.
           </p>
         ) : (
-          <ul className="divide-y divide-[rgb(var(--border-subtle))]">
+          <ul className="max-h-64 divide-y divide-[rgb(var(--border-subtle))] overflow-y-auto">
             {grants.map((g) => {
               const key = `${g.client_id}:${g.tool_name}`;
               return (

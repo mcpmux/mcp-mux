@@ -915,37 +915,43 @@ export function ServersPage() {
         }
       />
 
-      {/* Gateway Status */}
+      {/* Gateway status — compact strip; the full surface lives on Home. */}
       <div
-        className={`rounded-xl border p-4 ${
+        className={`relative flex flex-wrap items-center justify-between gap-2 overflow-hidden rounded-lg border px-3 py-2 ${
           gatewayRunning
-            ? 'border-[rgb(var(--success))]/30 bg-[rgb(var(--success))]/10'
+            ? 'border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]'
             : 'border-[rgb(var(--warning))]/30 bg-[rgb(var(--warning))]/10'
         }`}
       >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span
-              className={`h-3 w-3 rounded-full ${gatewayRunning ? 'animate-pulse bg-[rgb(var(--success))]' : 'bg-[rgb(var(--warning))]'}`}
-            />
-            <span className="font-medium">
-              {gatewayRunning ? 'Gateway Running' : 'Gateway Stopped'}
-            </span>
-            {gatewayRunning && (
-              <code className="rounded bg-[rgb(var(--surface-elevated))] px-2 py-1 text-xs text-[rgb(var(--primary))]">
-                {gatewayUrl}
-              </code>
-            )}
-          </div>
-          {!gatewayRunning && (
-            <button
-              onClick={handleStartGateway}
-              className="rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))]"
-            >
-              Start Gateway
-            </button>
+        <span
+          aria-hidden
+          className={`absolute inset-y-0 left-0 w-1 ${
+            gatewayRunning ? 'bg-emerald-500' : 'bg-amber-500'
+          }`}
+        />
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5 pl-2 text-sm">
+          <span
+            className={`h-2 w-2 flex-shrink-0 rounded-full ${
+              gatewayRunning ? 'animate-pulse bg-[rgb(var(--success))]' : 'bg-[rgb(var(--warning))]'
+            }`}
+          />
+          <span className="font-medium">
+            {gatewayRunning ? 'Gateway running' : 'Gateway stopped'}
+          </span>
+          {gatewayRunning && (
+            <code className="truncate rounded bg-[rgb(var(--surface-dim))] px-2 py-0.5 text-xs text-[rgb(var(--primary))]">
+              {gatewayUrl}
+            </code>
           )}
         </div>
+        {!gatewayRunning && (
+          <button
+            onClick={handleStartGateway}
+            className="rounded-lg bg-[rgb(var(--primary))] px-3 py-1.5 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))]"
+          >
+            Start Gateway
+          </button>
+        )}
       </div>
 
       {/* Server List */}

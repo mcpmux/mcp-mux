@@ -904,14 +904,14 @@ function EmptyStateOnboarding({ gatewayStatus }: { gatewayStatus: GatewayStatus 
       <Card data-testid="clients-empty-onboarding">
         <CardContent className="p-8">
           <div className="mb-1 flex items-start gap-4">
-            <div className="from-primary-500 to-primary-600 flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-[0_6px_16px_-4px_rgb(99_102_241/0.45)]">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))]">
               <PlugZap className="h-6 w-6" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold">Let&apos;s hook up your first IDE</h2>
+              <h2 className="text-xl font-semibold">Connect your first AI app</h2>
               <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                mcpmux is one connection your AI client uses to reach every MCP server. Three steps
-                and you&apos;re done:
+                McpMux is one connection your AI app uses to reach every tool. Three steps and
+                you&apos;re done:
               </p>
             </div>
           </div>

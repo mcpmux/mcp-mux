@@ -19,6 +19,8 @@ import {
   Clock,
   FileJson,
   FolderOpen,
+  Compass,
+  ArrowRight,
 } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ServerActionMenu } from './ServerActionMenu';
@@ -956,28 +958,22 @@ export function ServersPage() {
 
       {/* Server List */}
       {installedServers.length === 0 ? (
-        <div className="py-12 text-center text-[rgb(var(--muted))]">
-          <div className="mb-4 text-5xl">📦</div>
-          <p className="mb-2 text-lg">No servers installed</p>
+        <div className="flex flex-col items-center rounded-xl border border-dashed border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-6 py-12 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))]">
+            <Compass className="h-6 w-6" />
+          </span>
+          <p className="mt-4 text-base font-semibold">No tools in this Space yet</p>
+          <p className="mt-1 max-w-sm text-sm text-[rgb(var(--muted))]">
+            Install an MCP server from the registry and its tools become available to every
+            connected AI app.
+          </p>
           <button
             onClick={() => navigateTo('registry')}
-            className="mt-3 inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-5 py-2.5 text-sm font-medium text-[rgb(var(--primary-foreground))] shadow-sm transition-all hover:bg-[rgb(var(--primary-hover))] hover:shadow"
+            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-5 py-2.5 text-sm font-medium text-[rgb(var(--primary-foreground))] shadow-sm transition-all hover:bg-[rgb(var(--primary-hover))] hover:shadow"
             data-testid="discover-servers-btn"
           >
-            Discover MCP Servers
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M5 12h14" />
-              <path d="m12 5 7 7-7 7" />
-            </svg>
+            Browse Discover
+            <ArrowRight className="h-4 w-4" />
           </button>
         </div>
       ) : (

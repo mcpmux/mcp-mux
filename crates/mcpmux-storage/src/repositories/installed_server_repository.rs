@@ -53,17 +53,37 @@ impl SqliteInstalledServerRepository {
     }
 
     /// Decrypt input values from storage.
-    /// Falls back to plaintext JSON for backward compatibility with unencrypted data.
-    fn decrypt_input_values(&self, stored: Option<String>) -> HashMap<String, String> {
+    ///
+    /// Three cases, kept distinct so a real failure can't masquerade as an
+    /// empty config (which would silently launch a server with all its
+    /// secrets missing):
+    ///   * `None` / empty column → no input values (`Ok(empty)`).
+    ///   * Decrypts cleanly → parse the plaintext JSON (a parse failure here
+    ///     is corruption → error).
+    ///   * Decrypt fails → it may be a legacy *unencrypted* row, so try a
+    ///     plaintext-JSON parse; if THAT also fails the data is neither
+    ///     decryptable nor valid plaintext (wrong master key or tampered
+    ///     ciphertext) → propagate a hard error rather than returning empty.
+    fn decrypt_input_values(&self, stored: Option<String>) -> Result<HashMap<String, String>> {
         let Some(data) = stored else {
-            return HashMap::new();
+            return Ok(HashMap::new());
         };
-        // Try decrypting first (new encrypted format)
-        if let Ok(json) = self.encryptor.decrypt(&data) {
-            return serde_json::from_str(&json).unwrap_or_default();
+        if data.trim().is_empty() {
+            return Ok(HashMap::new());
         }
-        // Fallback: try parsing as plaintext JSON (backward compat)
-        serde_json::from_str(&data).unwrap_or_default()
+        // Try decrypting first (new encrypted format).
+        if let Ok(json) = self.encryptor.decrypt(&data) {
+            return serde_json::from_str(&json)
+                .map_err(|e| anyhow::anyhow!("Corrupt decrypted input values (not JSON): {}", e));
+        }
+        // Fallback: legacy unencrypted row stored as plaintext JSON.
+        serde_json::from_str(&data).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to decrypt input values and data is not valid plaintext JSON \
+                 (wrong master key or tampered ciphertext): {}",
+                e
+            )
+        })
     }
 
     /// Parse a datetime string to DateTime<Utc>.
@@ -154,14 +174,17 @@ impl SqliteInstalledServerRepository {
     }
 
     /// Build InstalledServer from extracted row data (needs &self for decryption).
-    fn build_server(&self, row: RawServerRow) -> InstalledServer {
-        InstalledServer {
+    fn build_server(&self, row: RawServerRow) -> Result<InstalledServer> {
+        let input_values = self
+            .decrypt_input_values(row.input_values)
+            .map_err(|e| anyhow::anyhow!("server {}: {}", row.server_id, e))?;
+        Ok(InstalledServer {
             id: Uuid::parse_str(&row.id).unwrap_or_else(|_| Uuid::new_v4()),
             space_id: row.space_id,
             server_id: row.server_id,
             server_name: row.server_name,
             cached_definition: row.cached_definition,
-            input_values: self.decrypt_input_values(row.input_values),
+            input_values,
             enabled: row.enabled,
             env_overrides: Self::parse_json_map(row.env_overrides),
             args_append: Self::parse_json_vec(row.args_append),
@@ -170,7 +193,7 @@ impl SqliteInstalledServerRepository {
             source: Self::parse_source(row.source),
             created_at: Self::parse_datetime(&row.created_at),
             updated_at: Self::parse_datetime(&row.updated_at),
-        }
+        })
     }
 }
 
@@ -189,7 +212,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(rows.into_iter().map(|r| self.build_server(r)).collect())
+        rows.into_iter().map(|r| self.build_server(r)).collect()
     }
 
     async fn list_for_space(&self, space_id: &str) -> Result<Vec<InstalledServer>> {
@@ -205,7 +228,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([space_id], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(rows.into_iter().map(|r| self.build_server(r)).collect())
+        rows.into_iter().map(|r| self.build_server(r)).collect()
     }
 
     async fn list_by_source_file(
@@ -227,7 +250,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([&source_prefix], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(rows.into_iter().map(|r| self.build_server(r)).collect())
+        rows.into_iter().map(|r| self.build_server(r)).collect()
     }
 
     async fn get(&self, id: &Uuid) -> Result<Option<InstalledServer>> {
@@ -243,7 +266,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_row([id.to_string()], Self::extract_row)
             .optional()?;
 
-        Ok(row.map(|r| self.build_server(r)))
+        row.map(|r| self.build_server(r)).transpose()
     }
 
     async fn get_by_server_id(
@@ -263,7 +286,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_row([space_id, server_id], Self::extract_row)
             .optional()?;
 
-        Ok(row.map(|r| self.build_server(r)))
+        row.map(|r| self.build_server(r)).transpose()
     }
 
     async fn install(&self, server: &InstalledServer) -> Result<()> {
@@ -350,7 +373,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([space_id], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(rows.into_iter().map(|r| self.build_server(r)).collect())
+        rows.into_iter().map(|r| self.build_server(r)).collect()
     }
 
     async fn list_enabled_all(&self) -> Result<Vec<InstalledServer>> {
@@ -366,7 +389,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(rows.into_iter().map(|r| self.build_server(r)).collect())
+        rows.into_iter().map(|r| self.build_server(r)).collect()
     }
 
     async fn set_enabled(&self, id: &Uuid, enabled: bool) -> Result<()> {

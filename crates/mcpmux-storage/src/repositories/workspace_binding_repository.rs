@@ -21,8 +21,10 @@
 //! `WorkspaceBinding.feature_set_ids` (sorted by `sort_order`) so callers
 //! can stop reasoning about the join.
 //!
-//! Longest-prefix matching (used by the resolver) is done in-memory against
-//! `list()` since a mcpmux DB is expected to hold O(tens) of bindings.
+//! Exact-match lookup (used by the resolver) is done in-memory against
+//! `list()` since a mcpmux DB is expected to hold O(tens) of bindings. There
+//! is NO ancestor/prefix inheritance — a root matches a binding for THAT
+//! exact normalized path or nothing.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -204,7 +206,11 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        conn.execute(
+        // Parent row + junction rows are one logical write: wrap them in a
+        // transaction so a junction-insert failure rolls back the parent
+        // instead of leaving a binding with a partial/missing FeatureSet set.
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO workspace_bindings
                 (id, workspace_root, space_id, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -216,7 +222,8 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
                 binding.updated_at.to_rfc3339(),
             ],
         )?;
-        Self::rewrite_fs_for_binding(conn, &binding.id.to_string(), &binding.feature_set_ids)?;
+        Self::rewrite_fs_for_binding(&tx, &binding.id.to_string(), &binding.feature_set_ids)?;
+        tx.commit()?;
 
         Ok(())
     }
@@ -228,7 +235,9 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        let rows_affected = conn.execute(
+        // Atomic: parent UPDATE + junction rewrite must commit together.
+        let tx = conn.unchecked_transaction()?;
+        let rows_affected = tx.execute(
             "UPDATE workspace_bindings
              SET workspace_root = ?2, space_id = ?3, updated_at = ?4
              WHERE id = ?1",
@@ -247,7 +256,8 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         // Rewrite the junction. ON DELETE CASCADE on the FK means a binding
         // delete cleans up automatically, but for an update we have to do
         // it manually — the user may have re-ordered or swapped FSes.
-        Self::rewrite_fs_for_binding(conn, &binding.id.to_string(), &binding.feature_set_ids)?;
+        Self::rewrite_fs_for_binding(&tx, &binding.id.to_string(), &binding.feature_set_ids)?;
+        tx.commit()?;
 
         Ok(())
     }

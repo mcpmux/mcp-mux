@@ -277,6 +277,45 @@ async fn rootless_client_without_grants_denies() {
 }
 
 #[tokio::test]
+async fn roots_arrived_empty_falls_through_to_grants() {
+    // Regression (resolver 3.1): a roots-capable client whose roots arrived
+    // EMPTY (no folder open — Claude Desktop chat, empty editor window) is a
+    // SETTLED rootless answer and must fall through to its client grants, not
+    // hang forever in PendingRoots. Before the fix, `Some([])` was conflated
+    // with `None` (not-yet-arrived) and stranded granted clients on
+    // meta-tools-only with no recovery short of opening a folder.
+    let f = Fixture::new().await;
+    let client_id = "folderless.example/client";
+    f.make_client(client_id).await;
+    f.client_repo
+        .grant_feature_set(client_id, &f.space_id.to_string(), &f.fs_a_id)
+        .await
+        .unwrap();
+
+    f.session_roots.set_roots_capable("s", true);
+    f.session_roots.set("s", Vec::<String>::new()); // roots ARRIVED, but empty
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::ClientGrant);
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn roots_arrived_empty_without_grants_denies() {
+    // Same arrived-empty state but no grants → Deny, NOT PendingRoots, so the
+    // session settles instead of re-probing `roots/list` forever.
+    let f = Fixture::new().await;
+    f.session_roots.set_roots_capable("s", true);
+    f.session_roots.set("s", Vec::<String>::new());
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::Deny);
+    assert!(r.feature_set_ids.is_empty());
+}
+
+#[tokio::test]
 async fn capable_session_does_not_fall_through_to_grants() {
     // Critical: the leak we set out to fix. A roots-capable session whose
     // roots haven't arrived yet must NOT pick up any client grants. It

@@ -302,16 +302,8 @@ async fn test_authorization_code_not_found() {
 // Token Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_token_hash_consistency() {
-    let hash1 = InboundClientRepository::hash_token("my_secret_token");
-    let hash2 = InboundClientRepository::hash_token("my_secret_token");
-    let hash3 = InboundClientRepository::hash_token("different_token");
-
-    assert_eq!(hash1, hash2);
-    assert_ne!(hash1, hash3);
-    assert_eq!(hash1.len(), 64); // SHA-256 hex
-}
+// Note: `hash_token` determinism/length is unit-tested in the storage crate
+// (`inbound_client_repository.rs::test_hash_token`); not duplicated here.
 
 #[tokio::test]
 async fn test_save_and_find_token() {

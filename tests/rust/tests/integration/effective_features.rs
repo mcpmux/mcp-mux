@@ -19,8 +19,9 @@
 use std::sync::Arc;
 
 use mcpmux_core::{
-    normalize_workspace_root, FeatureSet, FeatureSetRepository, MemberMode, ServerFeature,
-    ServerFeatureRepository, SpaceRepository, WorkspaceBinding, WorkspaceBindingRepository,
+    normalize_workspace_root, FeatureSet, FeatureSetMember, FeatureSetRepository, MemberMode,
+    MemberType, ServerFeature, ServerFeatureRepository, SpaceRepository, WorkspaceBinding,
+    WorkspaceBindingRepository,
 };
 use mcpmux_gateway::services::{FeatureSetResolverService, ResolutionSource, SessionRootsRegistry};
 use mcpmux_gateway::{FeatureService, PrefixCacheService};
@@ -36,12 +37,16 @@ struct Ctx {
     feature_service: FeatureService,
     session_roots: Arc<SessionRootsRegistry>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
+    fs_repo: Arc<dyn FeatureSetRepository>,
     space_id: Uuid,
     space_id_str: String,
     /// FeatureSet whose members are the two `github` tools.
     fs_github: String,
     /// FeatureSet whose only member is the `firebase` tool.
     fs_firebase: String,
+    /// Raw ServerFeature ids for composing custom FeatureSets in tests.
+    gh_issue_id: String,
+    fb_deploy_id: String,
 }
 
 impl Ctx {
@@ -117,10 +122,13 @@ impl Ctx {
             feature_service,
             session_roots,
             binding_repo,
+            fs_repo,
             space_id,
             space_id_str,
             fs_github: fs_github.id,
             fs_firebase: fs_firebase.id,
+            gh_issue_id: gh_issue.id.to_string(),
+            fb_deploy_id: fb_deploy.id.to_string(),
         }
     }
 
@@ -176,6 +184,59 @@ async fn mapping_determines_effective_tools_per_session() {
     );
 }
 
+/// Multi-client, SAME workspace root: two distinct client sessions (e.g. two
+/// editors opening the same folder) must resolve to the SAME binding and see
+/// an identical toolset — the root is the routing key, not the session/client.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_clients_same_root_see_identical_tools() {
+    let ctx = Ctx::new().await;
+    let root = if cfg!(windows) {
+        "d:\\work\\shared"
+    } else {
+        "/work/shared"
+    };
+    // First client opens the folder and binds it.
+    ctx.bind("client-a", root, &ctx.fs_github).await;
+    // Second client (different session) reports the very same root.
+    ctx.session_roots.set("client-b", [root]);
+    ctx.session_roots.set_roots_capable("client-b", true);
+
+    let a = ctx.effective_tools("client-a").await;
+    let b = ctx.effective_tools("client-b").await;
+    assert_eq!(
+        a,
+        vec!["create_issue".to_string(), "list_repos".to_string()]
+    );
+    assert_eq!(
+        a, b,
+        "two clients on the same root must see identical tools"
+    );
+}
+
+/// Multi-client, DIFFERENT-shaped roots for the SAME folder: a binding created
+/// from the canonical Windows drive path must still match a client that
+/// reports that folder with a doubled leading slash (`//d:/…`, seen live from
+/// a `file:////D:/…` URI). Regression for the normalization bug that stored
+/// `\\d:\…` and silently never matched the canonical form.
+#[tokio::test(flavor = "multi_thread")]
+async fn doubled_slash_root_resolves_to_canonical_binding() {
+    let ctx = Ctx::new().await;
+    // Binding created from the canonical drive form.
+    ctx.bind("canon", "d:\\work\\proj", &ctx.fs_github).await;
+
+    // A second client reports the SAME folder via the doubled-slash form;
+    // SessionRootsRegistry::set normalizes it, and it must collapse to the
+    // canonical key so the resolver matches the existing binding.
+    ctx.session_roots.set("dslash", ["//d:/work/proj"]);
+    ctx.session_roots.set_roots_capable("dslash", true);
+
+    assert_eq!(
+        ctx.effective_tools("dslash").await,
+        vec!["create_issue".to_string(), "list_repos".to_string()],
+        "doubled-slash root must route to the binding created from the canonical form"
+    );
+}
+
 /// An *empty* mapping (a binding with zero feature sets) is valid: the session
 /// routes to the Space (source = WorkspaceBinding) but sees zero Space tools.
 /// Built-in servers (gated per Space) are layered on by the request handler and
@@ -220,4 +281,56 @@ async fn unbound_session_sees_zero_effective_tools() {
     ctx.session_roots.set_roots_capable("sess", true);
 
     assert!(ctx.effective_tools("sess").await.is_empty());
+}
+
+/// Regression (resolution #9): a composition CYCLE (FS X ⊇ Y, FS Y ⊇ X) must
+/// not infinite-loop the resolver on the live tools/list path. The command
+/// layer now blocks creating such a cycle, but the repository can still hold
+/// one (legacy data / direct writes), so the resolver must terminate
+/// defensively — returning the de-duplicated union of both sets' features.
+#[tokio::test(flavor = "multi_thread")]
+async fn composition_cycle_terminates_and_returns_union() {
+    let ctx = Ctx::new().await;
+
+    // Two custom FeatureSets that include each other.
+    let mut fs_x = FeatureSet::new_custom("CycX", ctx.space_id.to_string());
+    let mut fs_y = FeatureSet::new_custom("CycY", ctx.space_id.to_string());
+    ctx.fs_repo.create(&fs_x).await.unwrap();
+    ctx.fs_repo.create(&fs_y).await.unwrap();
+
+    let member = |fs_id: &str, mtype: MemberType, mid: String| FeatureSetMember {
+        id: Uuid::new_v4().to_string(),
+        feature_set_id: fs_id.to_string(),
+        member_type: mtype,
+        member_id: mid,
+        mode: MemberMode::Include,
+    };
+
+    // X ⊇ {gh_issue (feature), Y (featureset)}
+    fs_x.members = vec![
+        member(&fs_x.id, MemberType::Feature, ctx.gh_issue_id.clone()),
+        member(&fs_x.id, MemberType::FeatureSet, fs_y.id.clone()),
+    ];
+    // Y ⊇ {fb_deploy (feature), X (featureset)}  ← closes the cycle
+    fs_y.members = vec![
+        member(&fs_y.id, MemberType::Feature, ctx.fb_deploy_id.clone()),
+        member(&fs_y.id, MemberType::FeatureSet, fs_x.id.clone()),
+    ];
+    ctx.fs_repo.update(&fs_x).await.unwrap();
+    ctx.fs_repo.update(&fs_y).await.unwrap();
+
+    let root = if cfg!(windows) {
+        "d:\\work\\cyc"
+    } else {
+        "/work/cyc"
+    };
+    ctx.bind("sess", root, &fs_x.id).await;
+
+    // Must return (not hang) — the union of both sets' features, de-duplicated.
+    let tools = ctx.effective_tools("sess").await;
+    assert_eq!(
+        tools,
+        vec!["create_issue".to_string(), "deploy".to_string()],
+        "cyclic composition must resolve to the de-duplicated union and terminate"
+    );
 }

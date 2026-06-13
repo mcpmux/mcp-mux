@@ -80,8 +80,8 @@ impl Ctx {
 async fn creating_binding_flips_next_resolution_source() {
     let ctx = Ctx::new().await;
 
-    // Normalize both sides so the longest-prefix lookup matches — the
-    // resolver compares already-normalized strings from both stores.
+    // Normalize both sides so the exact-match lookup matches — the resolver
+    // compares already-normalized strings from both stores (no inheritance).
     let raw = if cfg!(windows) {
         "d:\\proj\\bind-me"
     } else {

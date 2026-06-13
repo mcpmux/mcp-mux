@@ -285,6 +285,10 @@ struct GatewayTestClient {
     tools_count: Arc<AtomicUsize>,
     prompts_count: Arc<AtomicUsize>,
     resources_count: Arc<AtomicUsize>,
+    /// Workspace roots this client reports when the gateway calls
+    /// `roots/list`. Empty = the client does NOT declare the `roots`
+    /// capability (rootless), matching the default editor-with-no-folder case.
+    roots: Arc<Vec<String>>,
 }
 
 impl GatewayTestClient {
@@ -296,7 +300,16 @@ impl GatewayTestClient {
             tools_count: Arc::new(AtomicUsize::new(0)),
             prompts_count: Arc::new(AtomicUsize::new(0)),
             resources_count: Arc::new(AtomicUsize::new(0)),
+            roots: Arc::new(Vec::new()),
         }
+    }
+
+    /// A roots-capable client that reports the given roots (file:// URIs or
+    /// absolute paths) when probed — models a real editor with a folder open.
+    fn with_roots(roots: Vec<String>) -> Self {
+        let mut c = Self::new();
+        c.roots = Arc::new(roots);
+        c
     }
 
     #[allow(dead_code)]
@@ -309,10 +322,24 @@ impl GatewayTestClient {
 
 impl rmcp::ClientHandler for GatewayTestClient {
     fn get_info(&self) -> ClientInfo {
+        let capabilities = if self.roots.is_empty() {
+            ClientCapabilities::default()
+        } else {
+            ClientCapabilities::builder().enable_roots().build()
+        };
         ClientInfo::new(
-            ClientCapabilities::default(),
+            capabilities,
             Implementation::new("gateway-test-client", "1.0.0"),
         )
+    }
+
+    fn list_roots(
+        &self,
+        _context: rmcp::service::RequestContext<RoleClient>,
+    ) -> impl std::future::Future<Output = Result<ListRootsResult, rmcp::ErrorData>> + Send + '_
+    {
+        let roots = self.roots.iter().map(Root::new).collect();
+        async move { Ok(ListRootsResult::new(roots)) }
     }
 
     fn on_tool_list_changed(
@@ -580,21 +607,27 @@ async fn test_gateway_content_deduping_prevents_spurious_notifications() {
     let tools_count = client_handler.tools_count.clone();
     let client = connect_client(&gw.url, client_handler).await;
 
-    // Wait for init + hash priming
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Wait for init + hash priming + the one-shot connect-time resolution
+    // flip (the resolver fires a single per-peer list_changed on first
+    // resolution so the client re-lists after roots/grants settle).
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-    // Emit ToolsChanged WITHOUT changing features (hash stays same)
+    // Snapshot the post-connect baseline, then emit ToolsChanged WITHOUT
+    // changing features. Content deduping must suppress THIS notification —
+    // we assert the count doesn't move past the baseline rather than `== 0`,
+    // so the legitimate connect-time flip doesn't mask the dedup check.
+    let baseline = tools_count.load(Ordering::SeqCst);
     gw.emit(DomainEvent::ToolsChanged {
         server_id: "srv".to_string(),
         space_id,
     });
 
-    // Wait a bit - notification should NOT be received
+    // Wait a bit - no ADDITIONAL notification should be received.
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     assert_eq!(
         tools_count.load(Ordering::SeqCst),
-        0,
+        baseline,
         "No notification should be sent when features haven't changed (content deduping)"
     );
 
@@ -746,5 +779,60 @@ async fn test_client_can_list_tools_after_notification() {
     assert_eq!(backend_tools2.len(), 0, "Still no backend tools");
 
     client.cancel().await.ok();
+    gw.shutdown();
+}
+
+// ============================================================================
+// B12: Multi-client — distinct workspace roots tracked independently
+// ============================================================================
+
+/// Two roots-capable clients (the "two editor windows on one OAuth identity"
+/// case — same injected client_id, distinct sessions) connect over real HTTP
+/// reporting DIFFERENT workspace roots. The gateway must probe each via
+/// `roots/list` and track them independently per session, with no cross-talk
+/// — the wire-level complement to the resolver/effective-features integration
+/// tests that prove per-session routing.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multi_client_distinct_roots_tracked_independently() {
+    let space_id = Uuid::new_v4();
+    let client_id = Uuid::new_v4().to_string();
+    let gw = TestGateway::start(&client_id, space_id).await;
+
+    // POSIX roots so normalization is identical on every CI platform.
+    let client_a = connect_client(
+        &gw.url,
+        GatewayTestClient::with_roots(vec!["file:///work/alpha".to_string()]),
+    )
+    .await;
+    let client_b = connect_client(
+        &gw.url,
+        GatewayTestClient::with_roots(vec!["file:///work/beta".to_string()]),
+    )
+    .await;
+
+    // Allow the on_initialized roots round-trip (gateway → client list_roots)
+    // to populate the session registry for both sessions.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let roots = gw
+        .services
+        .feature_set_resolver
+        .session_roots()
+        .list_all_roots();
+    assert!(
+        roots.iter().any(|r| r == "/work/alpha"),
+        "client A's root must be tracked (got {roots:?})"
+    );
+    assert!(
+        roots.iter().any(|r| r == "/work/beta"),
+        "client B's root must be tracked independently (got {roots:?})"
+    );
+
+    // Both sessions remain independently usable over the wire.
+    assert!(client_a.list_tools(Default::default()).await.is_ok());
+    assert!(client_b.list_tools(Default::default()).await.is_ok());
+
+    client_a.cancel().await.ok();
+    client_b.cancel().await.ok();
     gw.shutdown();
 }

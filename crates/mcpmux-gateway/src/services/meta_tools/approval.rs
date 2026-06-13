@@ -24,6 +24,7 @@
 //! client_metadata URL for DCR-registered clients like Claude Code). The
 //! broker doesn't parse it; equality + hashing is enough.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -117,6 +118,13 @@ pub struct ApprovalBroker {
     /// Published to the desktop layer; `None` means headless.
     publisher: Mutex<Option<ApprovalPublisher>>,
     timeout: Duration,
+    /// Whether write meta-tools require human approval at all. Default `true`
+    /// (every write prompts). A user can turn this OFF in Settings to trust a
+    /// local machine — then writes are auto-approved without a dialog. The
+    /// authoritative value is **persisted** in app settings
+    /// (`meta_tools.require_approval`); this in-memory flag is restored from
+    /// there on every gateway start (the broker is recreated per start).
+    require_approval: AtomicBool,
 }
 
 impl Default for ApprovalBroker {
@@ -133,12 +141,30 @@ impl ApprovalBroker {
             rate_limit: DashMap::new(),
             publisher: Mutex::new(None),
             timeout: DEFAULT_TIMEOUT,
+            require_approval: AtomicBool::new(true),
         }
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// Set whether write meta-tools require approval. `false` = auto-approve
+    /// every write (no dialog) — the user's explicit "trust this machine"
+    /// choice. Persisted by the caller; applied to the broker here.
+    pub fn set_require_approval(&self, required: bool) {
+        self.require_approval.store(required, Ordering::Relaxed);
+        if !required {
+            warn!(
+                "[ApprovalBroker] approval requirement DISABLED — meta-tool writes auto-approved"
+            );
+        }
+    }
+
+    /// Whether write meta-tools currently require approval (default `true`).
+    pub fn require_approval_enabled(&self) -> bool {
+        self.require_approval.load(Ordering::Relaxed)
     }
 
     /// Attach the desktop subscriber. Call once at app startup.
@@ -202,6 +228,7 @@ impl ApprovalBroker {
     /// Core entry point for write meta tools.
     ///
     /// Order of checks:
+    ///   0. Approval requirement disabled (user opt-out) → `AllowOnce`.
     ///   1. Always-allow hit → immediate `AllowOnce` (no dialog).
     ///   2. Rate limit overflow → `RateLimited`.
     ///   3. No publisher attached → `ApprovalRequiredNoDesktop`.
@@ -212,6 +239,17 @@ impl ApprovalBroker {
         tool_name: &str,
         payload: ApprovalPayload,
     ) -> Result<ApprovalDecision, MetaToolError> {
+        // 0. Global "require approval" switch OFF — the user has opted to
+        //    auto-approve every write on this (trusted, local) machine.
+        if !self.require_approval.load(Ordering::Relaxed) {
+            debug!(
+                %client_id,
+                tool = tool_name,
+                "[ApprovalBroker] approval requirement disabled; approving without dialog",
+            );
+            return Ok(ApprovalDecision::AllowOnce);
+        }
+
         // 1. Always-allow short-circuit.
         if self
             .always_allow
@@ -342,6 +380,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(d, ApprovalDecision::AllowOnce);
+    }
+
+    #[tokio::test]
+    async fn require_approval_off_auto_approves_without_publisher() {
+        // Default is ON (require approval).
+        let broker = ApprovalBroker::new();
+        assert!(broker.require_approval_enabled());
+
+        // OFF → writes auto-approve even with no desktop attached (which would
+        // otherwise be ApprovalRequiredNoDesktop).
+        broker.set_require_approval(false);
+        assert!(!broker.require_approval_enabled());
+        let d = broker
+            .request_approval(
+                &Uuid::new_v4().to_string(),
+                "mcpmux_manage_feature_set",
+                make_payload(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(d, ApprovalDecision::AllowOnce);
+
+        // Back ON → no publisher → safe headless deny again.
+        broker.set_require_approval(true);
+        let err = broker
+            .request_approval(
+                &Uuid::new_v4().to_string(),
+                "mcpmux_manage_feature_set",
+                make_payload(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MetaToolError::ApprovalRequiredNoDesktop));
     }
 
     #[tokio::test]

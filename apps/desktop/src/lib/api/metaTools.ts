@@ -29,6 +29,22 @@ export async function revokeMetaToolGrant(clientId: string, toolName: string): P
   return invoke('revoke_meta_tool_grant', { clientId, toolName });
 }
 
+/** Whether write meta tools require approval (default true). Persisted. */
+export async function getMetaToolsRequireApproval(): Promise<boolean> {
+  return invoke('get_meta_tools_require_approval');
+}
+
+/**
+ * Set the global "require approval for tool-management writes" switch.
+ *
+ * `required = false` makes every `mcpmux_*` write auto-approve without a
+ * dialog — an explicit "trust this machine" choice. Persisted (survives
+ * restart) and applied to the running gateway immediately.
+ */
+export async function setMetaToolsRequireApproval(required: boolean): Promise<boolean> {
+  return invoke('set_meta_tools_require_approval', { required });
+}
+
 // The mcpmux_* enablement switch is now per-Space — see
 // `@/lib/api/builtinServers` (listBuiltinServers / setBuiltinServerEnabled /
 // setBuiltinToolEnabled). The old global get/set_meta_tools_enabled were removed.

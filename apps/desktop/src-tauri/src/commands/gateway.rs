@@ -144,6 +144,26 @@ pub(crate) async fn attach_approval_publisher<R: tauri::Runtime>(
     approval_broker: &Arc<mcpmux_gateway::services::ApprovalBroker>,
     app_handle: tauri::AppHandle<R>,
 ) {
+    // Restore the persisted "require approval" switch onto the broker (which is
+    // recreated on every gateway start). Default ON when unset. This is the
+    // single chokepoint both start paths (auto-start + start_gateway command)
+    // funnel through, so the setting always survives a restart.
+    {
+        use tauri::Manager;
+        let required = match app_handle.try_state::<AppState>() {
+            Some(app_state) => app_state
+                .settings_repository
+                .get("meta_tools.require_approval")
+                .await
+                .ok()
+                .flatten()
+                .map(|v| v != "false")
+                .unwrap_or(true),
+            None => true,
+        };
+        approval_broker.set_require_approval(required);
+    }
+
     let publisher: mcpmux_gateway::services::meta_tools::ApprovalPublisher = Arc::new(move |req| {
         let app_handle = app_handle.clone();
         Box::pin(async move {

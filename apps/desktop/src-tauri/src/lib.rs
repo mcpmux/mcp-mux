@@ -910,6 +910,8 @@ pub fn run() {
             commands::respond_to_meta_tool_approval,
             commands::list_meta_tool_grants,
             commands::revoke_meta_tool_grant,
+            commands::get_meta_tools_require_approval,
+            commands::set_meta_tools_require_approval,
             // Built-in servers (per-Space enablement + per-tool toggles)
             commands::list_builtin_servers,
             commands::set_builtin_server_enabled,

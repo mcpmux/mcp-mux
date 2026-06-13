@@ -16,6 +16,12 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::commands::gateway::GatewayAppState;
+use crate::AppState;
+
+/// App-settings key for the global "require approval for tool-management
+/// writes" switch. Persisted (survives restart); the gateway restores it onto
+/// the in-memory broker on every start.
+const REQUIRE_APPROVAL_KEY: &str = "meta_tools.require_approval";
 
 #[derive(Debug, Serialize)]
 pub struct MetaToolGrantEntry {
@@ -108,4 +114,49 @@ pub async fn revoke_meta_tool_grant(
         return Ok(false);
     };
     Ok(broker.revoke_always_allow(&client_id, &tool_name))
+}
+
+/// Whether write meta-tools currently require approval (default `true`).
+/// Reads the persisted setting so the UI shows the right state even before
+/// the gateway has started.
+#[tauri::command]
+pub async fn get_meta_tools_require_approval(
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let stored = app_state
+        .settings_repository
+        .get(REQUIRE_APPROVAL_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Default ON: a missing setting means "require approval".
+    Ok(stored.map(|v| v != "false").unwrap_or(true))
+}
+
+/// Set the global "require approval for tool-management writes" switch.
+///
+/// `required = false` makes every `mcpmux_*` write auto-approve without a
+/// dialog — the user's explicit "trust this machine" choice. Persisted to app
+/// settings AND applied to the live broker (if the gateway is running) so it
+/// takes effect immediately and survives restart.
+#[tauri::command]
+pub async fn set_meta_tools_require_approval(
+    required: bool,
+    app_state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<bool, String> {
+    app_state
+        .settings_repository
+        .set(REQUIRE_APPROVAL_KEY, &required.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let broker = {
+        let state = gateway_state.read().await;
+        state.approval_broker.clone()
+    };
+    if let Some(broker) = broker {
+        broker.set_require_approval(required);
+    }
+    warn!(required, "[meta-tool] require-approval switch updated");
+    Ok(required)
 }

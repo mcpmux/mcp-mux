@@ -98,18 +98,36 @@ function AppContent() {
   const navigateTo = useNavigateTo();
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string } | null>(null);
 
-  // Auto-check for updates on startup (silent check after 5 seconds)
+  // Auto-check for updates on startup (silent check after 5 seconds).
+  // When auto-install is enabled (the default), download + install + relaunch
+  // into the new version — so a restart picks up updates with no clicks.
+  // Otherwise just surface the dismissible banner for a manual install.
   useEffect(() => {
     const checkForUpdates = async () => {
       try {
         const { check } = await import('@tauri-apps/plugin-updater');
         const update = await check();
-        if (update) {
-          console.log(`[Auto-Update] Update available: ${update.version}`);
+        if (!update) return;
+        console.log(`[Auto-Update] Update available: ${update.version}`);
+
+        // Default to auto-install; honor the persisted opt-out.
+        let autoInstall = true;
+        try {
+          autoInstall = await invoke<boolean>('get_auto_install_updates');
+        } catch {
+          /* setting unavailable → keep the auto-install default */
+        }
+
+        if (autoInstall) {
+          console.log('[Auto-Update] Auto-installing update and relaunching…');
+          await update.downloadAndInstall();
+          const { relaunch } = await import('@tauri-apps/plugin-process');
+          await relaunch();
+        } else {
           setAvailableUpdate({ version: update.version });
         }
       } catch (error) {
-        console.error('[Auto-Update] Failed to check for updates:', error);
+        console.error('[Auto-Update] Failed to check/install updates:', error);
       }
     };
 

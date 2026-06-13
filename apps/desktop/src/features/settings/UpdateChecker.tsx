@@ -8,6 +8,7 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
+  Switch,
 } from '@mcpmux/ui';
 import { Download, Loader2, CheckCircle, AlertCircle, RefreshCw, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
@@ -28,6 +29,7 @@ export function UpdateChecker() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [currentVersion, setCurrentVersion] = useState<string>('');
   const [bundleVersionMismatch, setBundleVersionMismatch] = useState<string | null>(null);
+  const [autoInstall, setAutoInstall] = useState<boolean | null>(null);
 
   // Load current version on mount
   useState(() => {
@@ -35,6 +37,24 @@ export function UpdateChecker() {
       .then(setCurrentVersion)
       .catch((err) => console.error('Failed to get version:', err));
   });
+
+  // Load the auto-install preference (default on).
+  useEffect(() => {
+    invoke<boolean>('get_auto_install_updates')
+      .then(setAutoInstall)
+      .catch(() => setAutoInstall(true));
+  }, []);
+
+  const handleToggleAutoInstall = async (next: boolean) => {
+    const prev = autoInstall;
+    setAutoInstall(next);
+    try {
+      await invoke('set_auto_install_updates', { enabled: next });
+    } catch (err) {
+      setAutoInstall(prev);
+      setMessage({ type: 'error', text: `Failed to save setting: ${err}` });
+    }
+  };
 
   // Check if the on-disk bundle version differs from the running version (Homebrew Cask upgrades)
   useEffect(() => {
@@ -165,6 +185,23 @@ export function UpdateChecker() {
             <p className="text-sm text-[rgb(var(--muted))] mt-1" data-testid="current-version">
               v{currentVersion || '0.0.5'}
             </p>
+          </div>
+
+          {/* Auto-install preference */}
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Install updates automatically</p>
+              <p className="text-xs text-[rgb(var(--muted))]">
+                Download and apply new versions on launch, then restart into the update. Turn off to
+                review each update before installing.
+              </p>
+            </div>
+            <Switch
+              checked={autoInstall ?? true}
+              disabled={autoInstall === null}
+              onCheckedChange={handleToggleAutoInstall}
+              data-testid="auto-install-updates-toggle"
+            />
           </div>
 
           {/* Bundle version mismatch (e.g., after brew upgrade) */}

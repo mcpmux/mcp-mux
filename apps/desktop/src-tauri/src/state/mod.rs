@@ -193,8 +193,12 @@ impl AppState {
         &self.spaces_dir
     }
 
-    /// Get the path to a specific space's config file
-    pub fn space_config_path(&self, space_id: &str) -> PathBuf {
+    /// Get the path to a specific space's config file.
+    ///
+    /// Fails when `space_id` is not a valid UUID — the id arrives over IPC,
+    /// so this is the path-traversal guard for every space-config command.
+    pub fn space_config_path(&self, space_id: &str) -> Result<PathBuf, String> {
         mcpmux_core::get_space_config_path(&self.spaces_dir, space_id)
+            .map_err(|e| format!("Invalid space id '{space_id}': {e}"))
     }
 }

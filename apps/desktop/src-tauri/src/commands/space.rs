@@ -69,7 +69,7 @@ pub async fn create_space(
         .map_err(|e| e.to_string())?;
 
     // Create default config file for the space (spaces_dir already exists via AppState::new)
-    let config_path = state.space_config_path(&space.id.to_string());
+    let config_path = state.space_config_path(&space.id.to_string())?;
 
     // Create default config file if it doesn't exist
     if !config_path.exists() {
@@ -143,9 +143,7 @@ pub async fn open_space_config_file(
     space_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    use std::process::Command;
-
-    let config_path = state.space_config_path(&space_id);
+    let config_path = state.space_config_path(&space_id)?;
 
     if !config_path.exists() {
         return Err(format!(
@@ -154,32 +152,11 @@ pub async fn open_space_config_file(
         ));
     }
 
-    // Open in default editor based on platform
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/C", "start", "", config_path.to_str().unwrap()])
-            .spawn()
-            .map_err(|e| format!("Failed to open file: {}", e))?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&config_path)
-            .spawn()
-            .map_err(|e| format!("Failed to open file: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(&config_path)
-            .spawn()
-            .map_err(|e| format!("Failed to open file: {}", e))?;
-    }
-
-    Ok(())
+    // Open with the OS default handler via the opener plugin — never via a
+    // shell. The previous `cmd /C start <path>` form let cmd.exe interpret
+    // metacharacters in the (then-unvalidated) path: OS command injection.
+    tauri_plugin_opener::open_path(&config_path, None::<&str>)
+        .map_err(|e| format!("Failed to open file: {}", e))
 }
 
 /// Read space configuration file
@@ -188,7 +165,7 @@ pub async fn read_space_config(
     space_id: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let config_path = state.space_config_path(&space_id);
+    let config_path = state.space_config_path(&space_id)?;
 
     // Create default config if it doesn't exist (for spaces created before this feature)
     if !config_path.exists() {
@@ -210,7 +187,7 @@ pub async fn save_space_config(
     content: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let config_path = state.space_config_path(&space_id);
+    let config_path = state.space_config_path(&space_id)?;
 
     // Validate JSON before saving
     serde_json::from_str::<serde_json::Value>(&content)
@@ -226,7 +203,7 @@ pub async fn remove_server_from_config(
     server_id: String,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let config_path = state.space_config_path(&space_id);
+    let config_path = state.space_config_path(&space_id)?;
 
     // If config file doesn't exist, nothing to remove
     if !config_path.exists() {

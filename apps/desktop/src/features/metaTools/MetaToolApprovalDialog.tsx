@@ -14,16 +14,23 @@ export interface ApprovalRequest {
   payload: {
     tool_name: string;
     summary: string;
-    diff: null | {
-      before: string[];
-      after: string[];
-      added: string[];
-      removed: string[];
-    };
+    /**
+     * Tool-list diff the dialog renders. Freeform by design — the backend's
+     * `ApprovalPayload.diff` is an arbitrary JSON value and each write tool
+     * sends a different shape (`mcpmux_create_feature_set` sends
+     * `{ added_tools }`; others may send `{ before, after, added, removed }`).
+     * Read it defensively (see `toStringArray`); never assume a field exists.
+     */
+    diff: null | Record<string, unknown>;
     raw_args: unknown;
     affects_other_clients: boolean;
   };
   expires_at_unix_secs: number;
+}
+
+/** Coerce a freeform JSON value into a `string[]`, dropping non-strings. */
+function toStringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
 type Decision = 'allow_once' | 'always_for_this_session_and_client' | 'deny';
@@ -73,14 +80,20 @@ export function MetaToolApprovalDialog() {
     [current]
   );
 
-  const diff = current?.payload.diff;
-  const toolCount = diff?.after.length ?? null;
-  const deltaLabel = useMemo(() => {
-    if (!diff) return null;
-    const added = diff.added.length;
-    const removed = diff.removed.length;
-    return `+${added} / -${removed}`;
-  }, [diff]);
+  // Normalize the freeform diff defensively — a missing field must never
+  // throw (this previously crashed on `mcpmux_create_feature_set`, whose diff
+  // is `{ added_tools }` and has no `after`).
+  const rawDiff = current?.payload.diff ?? null;
+  const added = useMemo(
+    () => [...toStringArray(rawDiff?.added), ...toStringArray(rawDiff?.added_tools)],
+    [rawDiff]
+  );
+  const removed = useMemo(() => toStringArray(rawDiff?.removed), [rawDiff]);
+  const hasBeforeAfter = rawDiff != null && ('before' in rawDiff || 'after' in rawDiff);
+  const beforeCount = toStringArray(rawDiff?.before).length;
+  const afterCount = hasBeforeAfter ? toStringArray(rawDiff?.after).length : added.length;
+  const hasDiff = rawDiff != null && (added.length > 0 || removed.length > 0 || hasBeforeAfter);
+  const deltaLabel = `+${added.length} / -${removed.length}`;
 
   if (!current) return null;
 
@@ -118,20 +131,16 @@ export function MetaToolApprovalDialog() {
             </div>
           )}
 
-          {diff && (
+          {hasDiff && (
             <div className="border border-[rgb(var(--border-subtle))] rounded text-xs">
               <div className="grid grid-cols-3 divide-x divide-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
-                <Stat label="Before" value={diff.before.length} />
-                <Stat
-                  label="After"
-                  value={toolCount ?? 0}
-                  emphasis
-                />
-                <Stat label="Delta" value={deltaLabel ?? '—'} />
+                <Stat label="Before" value={hasBeforeAfter ? beforeCount : '—'} />
+                <Stat label="After" value={afterCount} emphasis />
+                <Stat label="Delta" value={deltaLabel} />
               </div>
-              {(diff.added.length > 0 || diff.removed.length > 0) && (
+              {(added.length > 0 || removed.length > 0) && (
                 <div className="max-h-40 overflow-y-auto p-2 space-y-0.5 font-mono">
-                  {diff.added.map((t) => (
+                  {added.map((t) => (
                     <div
                       key={`+${t}`}
                       className="text-green-600 dark:text-green-400"
@@ -139,7 +148,7 @@ export function MetaToolApprovalDialog() {
                       + {t}
                     </div>
                   ))}
-                  {diff.removed.map((t) => (
+                  {removed.map((t) => (
                     <div
                       key={`-${t}`}
                       className="text-red-600 dark:text-red-400"

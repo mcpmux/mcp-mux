@@ -83,7 +83,7 @@ pub fn build_default_registry(
     // user request — the read surface is just the two list_* tools above,
     // which an LLM can stitch into the same picture without an extra hop.
     // Writes — gated by ApprovalBroker.
-    registry.register(Box::new(tools::CreateFeatureSetTool));
+    registry.register(Box::new(tools::ManageFeatureSetTool));
     registry.register(Box::new(tools::BindCurrentWorkspaceTool));
     std::sync::Arc::new(registry)
 }

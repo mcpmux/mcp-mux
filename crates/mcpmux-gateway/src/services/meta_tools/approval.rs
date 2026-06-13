@@ -119,7 +119,7 @@ pub struct ApprovalBroker {
     publisher: Mutex<Option<ApprovalPublisher>>,
     timeout: Duration,
     /// DEBUG/dev only: when set, every write meta-tool is auto-approved without
-    /// a dialog. Lets self-tests drive `mcpmux_create_feature_set` /
+    /// a dialog. Lets self-tests drive `mcpmux_manage_feature_set` /
     /// `mcpmux_bind_current_workspace` headlessly. Off by default; enabled via
     /// `MCPMUX_DEBUG_AUTO_APPROVE=1` at startup or the
     /// `set_meta_tools_auto_approve` command at runtime.

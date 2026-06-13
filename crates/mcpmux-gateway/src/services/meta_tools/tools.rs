@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use mcpmux_core::{
-    normalize_workspace_root, DomainEvent, FeatureType, MemberMode, WorkspaceBinding,
+    normalize_workspace_root, DomainEvent, FeatureType, MemberMode, ServerFeature, WorkspaceBinding,
 };
 use rmcp::model::{CallToolResult, Content};
 use serde_json::{json, Value};
@@ -209,36 +209,326 @@ fn parse_uuid_arg(args: &Value, field: &str) -> Result<Uuid, MetaToolError> {
         .map_err(|_| MetaToolError::InvalidArgument(format!("`{field}` is not a UUID: {s}")))
 }
 
+/// Trimmed non-empty string arg, or `None` (treats whitespace as absent).
+fn opt_str_arg(args: &Value, field: &str) -> Option<String> {
+    args.get(field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// String-array arg (e.g. a list of qualified tool names); empty when absent.
+fn str_array_arg(args: &Value, field: &str) -> Vec<String> {
+    args.get(field)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve qualified tool names to their `ServerFeature`s within a Space.
+/// Returns `(matched, unmatched)` so callers can fail with an actionable
+/// message instead of silently dropping names the agent got wrong.
+async fn resolve_tool_features(
+    call: &MetaToolCall<'_>,
+    space_id: Uuid,
+    names: &[String],
+) -> Result<(Vec<ServerFeature>, Vec<String>), MetaToolError> {
+    let all = call
+        .ctx
+        .server_feature_repo
+        .list_for_space(&space_id.to_string())
+        .await?;
+    let matched: Vec<ServerFeature> = all
+        .into_iter()
+        .filter(|f| f.feature_type == FeatureType::Tool && names.contains(&f.qualified_name()))
+        .collect();
+    let matched_names: Vec<String> = matched.iter().map(|f| f.qualified_name()).collect();
+    let unmatched: Vec<String> = names
+        .iter()
+        .filter(|n| !matched_names.contains(n))
+        .cloned()
+        .collect();
+    Ok((matched, unmatched))
+}
+
+/// Guard: a FeatureSet targeted by update/delete must belong to the caller's
+/// resolved Space (or be legacy/global with no `space_id`) and must be custom.
+/// Built-in sets (the auto-seeded Starter) are not mutable via MCP.
+fn ensure_custom_in_space(
+    fs: &mcpmux_core::FeatureSet,
+    space_id: Uuid,
+    fs_id: Uuid,
+) -> Result<(), MetaToolError> {
+    if let Some(fs_space) = fs.space_id.as_deref() {
+        if fs_space != space_id.to_string() {
+            return Err(MetaToolError::InvalidArgument(format!(
+                "FeatureSet '{fs_id}' belongs to a different Space"
+            )));
+        }
+    }
+    if fs.is_builtin {
+        return Err(MetaToolError::InvalidArgument(format!(
+            "FeatureSet '{fs_id}' is built-in and can't be modified or deleted via MCP"
+        )));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
-// mcpmux_create_feature_set — write (creates FS, optionally activates)
+// mcpmux_manage_feature_set — write (create / update / delete a custom FS)
 // ---------------------------------------------------------------------------
 
-pub struct CreateFeatureSetTool;
+pub struct ManageFeatureSetTool;
+
+impl ManageFeatureSetTool {
+    async fn create(
+        &self,
+        call: &MetaToolCall<'_>,
+        space_id: Uuid,
+    ) -> Result<CallToolResult, MetaToolError> {
+        let name = opt_str_arg(&call.args, "name").ok_or_else(|| {
+            MetaToolError::InvalidArgument("create requires a non-empty `name`".into())
+        })?;
+        let description = opt_str_arg(&call.args, "description");
+        let add = str_array_arg(&call.args, "add");
+        if add.is_empty() {
+            return Err(MetaToolError::InvalidArgument(
+                "create requires `add` with at least one qualified tool name".into(),
+            ));
+        }
+        let (matched, unmatched) = resolve_tool_features(call, space_id, &add).await?;
+        if !unmatched.is_empty() {
+            return Err(MetaToolError::InvalidArgument(format!(
+                "unknown tool name(s): {}",
+                unmatched.join(", ")
+            )));
+        }
+
+        let summary = format!("Create FeatureSet '{name}' with {} tool(s)", matched.len());
+        let diff = json!({
+            "added": matched.iter().map(|f| f.qualified_name()).collect::<Vec<_>>(),
+        });
+
+        let fs_repo = call.ctx.feature_set_repo.clone();
+        let event_tx = call.ctx.domain_event_tx.clone();
+        let name_c = name.clone();
+        with_approval(
+            call,
+            "mcpmux_manage_feature_set",
+            summary,
+            Some(diff),
+            false,
+            call.args.clone(),
+            || async move {
+                let mut fs = mcpmux_core::FeatureSet::new_custom(&name_c, space_id.to_string());
+                fs.description = description;
+                fs_repo.create(&fs).await?;
+                for feature in &matched {
+                    fs_repo
+                        .add_feature_member(&fs.id, &feature.id.to_string(), MemberMode::Include)
+                        .await?;
+                }
+                emit_tools_list_changed(&event_tx, space_id);
+                info!(fs_id = %fs.id, name = %name_c, "[meta_tools] manage_feature_set create applied");
+                Ok(text_result(json!({
+                    "ok": true,
+                    "action": "create",
+                    "feature_set_id": fs.id,
+                    "tool_count": matched.len(),
+                })))
+            },
+        )
+        .await
+    }
+
+    async fn update(
+        &self,
+        call: &MetaToolCall<'_>,
+        space_id: Uuid,
+    ) -> Result<CallToolResult, MetaToolError> {
+        let fs_id = parse_uuid_arg(&call.args, "feature_set_id")?;
+        let fs = call
+            .ctx
+            .feature_set_repo
+            .get_with_members(&fs_id.to_string())
+            .await?
+            .ok_or_else(|| {
+                MetaToolError::InvalidArgument(format!("FeatureSet '{fs_id}' does not exist"))
+            })?;
+        ensure_custom_in_space(&fs, space_id, fs_id)?;
+
+        let new_name = opt_str_arg(&call.args, "name");
+        let new_description = opt_str_arg(&call.args, "description");
+        let add = str_array_arg(&call.args, "add");
+        let remove = str_array_arg(&call.args, "remove");
+        if new_name.is_none() && new_description.is_none() && add.is_empty() && remove.is_empty() {
+            return Err(MetaToolError::InvalidArgument(
+                "update requires at least one of `name`, `description`, `add`, `remove`".into(),
+            ));
+        }
+
+        let (add_features, add_unmatched) = resolve_tool_features(call, space_id, &add).await?;
+        if !add_unmatched.is_empty() {
+            return Err(MetaToolError::InvalidArgument(format!(
+                "unknown tool name(s) in `add`: {}",
+                add_unmatched.join(", ")
+            )));
+        }
+        // Removes that don't resolve to a tool are simply no-ops (the tool
+        // may already be absent) — don't fail the whole update on them.
+        let (remove_features, _unmatched_removes) =
+            resolve_tool_features(call, space_id, &remove).await?;
+
+        let rename_suffix = new_name
+            .as_deref()
+            .map(|n| format!(", rename → '{n}'"))
+            .unwrap_or_default();
+        let summary = format!(
+            "Update FeatureSet '{}': +{} / -{}{}",
+            fs.name,
+            add_features.len(),
+            remove_features.len(),
+            rename_suffix
+        );
+        let diff = json!({
+            "added": add_features.iter().map(|f| f.qualified_name()).collect::<Vec<_>>(),
+            "removed": remove_features.iter().map(|f| f.qualified_name()).collect::<Vec<_>>(),
+        });
+
+        let fs_repo = call.ctx.feature_set_repo.clone();
+        let event_tx = call.ctx.domain_event_tx.clone();
+        let fs_id_s = fs_id.to_string();
+        with_approval(
+            call,
+            "mcpmux_manage_feature_set",
+            summary,
+            Some(diff),
+            true,
+            call.args.clone(),
+            || async move {
+                // Rename / description first — `update` rewrites the row from
+                // `fs.members` (the set we loaded, unchanged here), so the
+                // member deltas below still land on top.
+                if new_name.is_some() || new_description.is_some() {
+                    let mut updated = fs.clone();
+                    if let Some(n) = new_name {
+                        updated.name = n;
+                    }
+                    if let Some(d) = new_description {
+                        updated.description = Some(d);
+                    }
+                    fs_repo.update(&updated).await?;
+                }
+                for feature in &remove_features {
+                    fs_repo
+                        .remove_feature_member(&fs_id_s, &feature.id.to_string())
+                        .await?;
+                }
+                for feature in &add_features {
+                    fs_repo
+                        .add_feature_member(&fs_id_s, &feature.id.to_string(), MemberMode::Include)
+                        .await?;
+                }
+                emit_tools_list_changed(&event_tx, space_id);
+                info!(fs_id = %fs_id_s, "[meta_tools] manage_feature_set update applied");
+                Ok(text_result(json!({
+                    "ok": true,
+                    "action": "update",
+                    "feature_set_id": fs_id,
+                    "added": add_features.len(),
+                    "removed": remove_features.len(),
+                })))
+            },
+        )
+        .await
+    }
+
+    async fn delete(
+        &self,
+        call: &MetaToolCall<'_>,
+        space_id: Uuid,
+    ) -> Result<CallToolResult, MetaToolError> {
+        let fs_id = parse_uuid_arg(&call.args, "feature_set_id")?;
+        let fs = call
+            .ctx
+            .feature_set_repo
+            .get(&fs_id.to_string())
+            .await?
+            .ok_or_else(|| {
+                MetaToolError::InvalidArgument(format!("FeatureSet '{fs_id}' does not exist"))
+            })?;
+        ensure_custom_in_space(&fs, space_id, fs_id)?;
+
+        let summary = format!("Delete FeatureSet '{}'", fs.name);
+        let fs_repo = call.ctx.feature_set_repo.clone();
+        let event_tx = call.ctx.domain_event_tx.clone();
+        let fs_id_s = fs_id.to_string();
+        with_approval(
+            call,
+            "mcpmux_manage_feature_set",
+            summary,
+            None,
+            true,
+            call.args.clone(),
+            || async move {
+                fs_repo.delete(&fs_id_s).await?;
+                emit_tools_list_changed(&event_tx, space_id);
+                info!(fs_id = %fs_id_s, "[meta_tools] manage_feature_set delete applied");
+                Ok(text_result(json!({
+                    "ok": true,
+                    "action": "delete",
+                    "feature_set_id": fs_id,
+                })))
+            },
+        )
+        .await
+    }
+}
 
 #[async_trait]
-impl MetaTool for CreateFeatureSetTool {
+impl MetaTool for ManageFeatureSetTool {
     fn name(&self) -> &'static str {
-        "mcpmux_create_feature_set"
+        "mcpmux_manage_feature_set"
     }
 
     fn description(&self) -> &'static str {
-        "Create a new custom FeatureSet in the caller's resolved Space from \
-         an explicit list of qualified tool names (e.g. ['github_create_issue', \
-         'firebase_deploy']). Returns the new FS id. To make a workspace \
-         actually route through this FeatureSet, follow up with \
-         `mcpmux_bind_current_workspace`."
+        "Create, update, or delete a custom FeatureSet (a named tool bundle) in \
+         the caller's resolved Space. `action`: 'create' (needs `name` + `add` \
+         qualified tool names), 'update' (needs `feature_set_id`; pass any of \
+         `name` / `description` / `add` / `remove`), or 'delete' (needs \
+         `feature_set_id`). Tool names are the qualified names from \
+         `mcpmux_list_all_tools`. Built-in sets can't be modified. Route a \
+         workspace through a FeatureSet with `mcpmux_bind_current_workspace`."
     }
 
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
-            "required": ["name", "tool_qualified_names"],
+            "required": ["action"],
             "properties": {
-                "name": { "type": "string" },
+                "action": { "type": "string", "enum": ["create", "update", "delete"] },
+                "name": {
+                    "type": "string",
+                    "description": "FeatureSet name — required for create, optional rename on update"
+                },
                 "description": { "type": "string" },
-                "tool_qualified_names": {
+                "feature_set_id": {
+                    "type": "string",
+                    "description": "required for update and delete"
+                },
+                "add": {
                     "type": "array",
-                    "items": { "type": "string" }
+                    "items": { "type": "string" },
+                    "description": "qualified tool names to add (create uses this as the initial set)"
+                },
+                "remove": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "qualified tool names to remove (update only)"
                 }
             }
         })
@@ -249,95 +539,25 @@ impl MetaTool for CreateFeatureSetTool {
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let name = call
+        let action = call
             .args
-            .get("name")
+            .get("action")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| MetaToolError::InvalidArgument("missing `name`".into()))?
+            .unwrap_or("")
             .trim()
-            .to_string();
-        if name.is_empty() {
-            return Err(MetaToolError::InvalidArgument(
-                "`name` must not be empty or whitespace".into(),
-            ));
-        }
-        let description = call
-            .args
-            .get("description")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let qualified_names: Vec<String> = call
-            .args
-            .get("tool_qualified_names")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if qualified_names.is_empty() {
-            return Err(MetaToolError::InvalidArgument(
-                "tool_qualified_names must contain at least one entry".into(),
-            ));
-        }
-
+            .to_lowercase();
         let space_id = caller_space_id(&call).await?;
-
-        // Resolve qualified names → ServerFeature ids up-front so the
-        // approval dialog can show the exact tool count.
-        let all_features = call
-            .ctx
-            .server_feature_repo
-            .list_for_space(&space_id.to_string())
-            .await?;
-        let matched: Vec<_> = all_features
-            .iter()
-            .filter(|f| {
-                f.feature_type == FeatureType::Tool && qualified_names.contains(&f.qualified_name())
-            })
-            .cloned()
-            .collect();
-        if matched.is_empty() {
-            return Err(MetaToolError::InvalidArgument(
-                "no provided qualified_names matched any tool in this Space".into(),
-            ));
+        match action.as_str() {
+            "create" => self.create(&call, space_id).await,
+            "update" => self.update(&call, space_id).await,
+            "delete" => self.delete(&call, space_id).await,
+            "" => Err(MetaToolError::InvalidArgument(
+                "`action` is required (create | update | delete)".into(),
+            )),
+            other => Err(MetaToolError::InvalidArgument(format!(
+                "unknown action '{other}' (expected create | update | delete)"
+            ))),
         }
-
-        let summary = format!("Create FeatureSet '{name}' with {} tools", matched.len());
-        let diff = json!({
-            "added_tools": matched.iter().map(|f| f.qualified_name()).collect::<Vec<_>>(),
-        });
-
-        let fs_repo = call.ctx.feature_set_repo.clone();
-        let name_for_closure = name.clone();
-        let description_for_closure = description.clone();
-        with_approval(
-            &call,
-            "mcpmux_create_feature_set",
-            summary,
-            Some(diff),
-            false,
-            call.args.clone(),
-            || async move {
-                let mut fs =
-                    mcpmux_core::FeatureSet::new_custom(&name_for_closure, space_id.to_string());
-                fs.description = description_for_closure;
-                fs_repo.create(&fs).await?;
-                for feature in &matched {
-                    fs_repo
-                        .add_feature_member(&fs.id, &feature.id.to_string(), MemberMode::Include)
-                        .await?;
-                }
-                info!(fs_id = %fs.id, name = %name_for_closure, "[meta_tools] create_feature_set applied");
-                Ok(text_result(json!({
-                    "ok": true,
-                    "feature_set_id": fs.id,
-                    "tool_count": matched.len(),
-                })))
-            },
-        )
-        .await
     }
 }
 
@@ -354,20 +574,24 @@ impl MetaTool for BindCurrentWorkspaceTool {
     }
 
     fn description(&self) -> &'static str {
-        "Persistently bind the caller's first reported workspace root to the \
-         given FeatureSet inside the caller's resolved Space. Only a future \
-         connection that reports this EXACT root resolves to this FeatureSet — \
-         bindings are exact-match, with no subdirectory/ancestor inheritance. \
-         Requires user approval and the calling client MUST have declared MCP \
+        "Route the caller's current workspace (its first reported MCP root) to \
+         a FeatureSet inside the caller's resolved Space. Idempotent: calling \
+         it again for the same workspace REBINDS it (no separate unbind). Omit \
+         `feature_set_id` to bind the workspace to NO Space tools (built-ins \
+         still apply). Matching is exact — only a future connection reporting \
+         this EXACT root resolves here, with no subdirectory/ancestor \
+         inheritance. Requires user approval and a client that declared MCP \
          roots."
     }
 
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
-            "required": ["feature_set_id"],
             "properties": {
-                "feature_set_id": { "type": "string" }
+                "feature_set_id": {
+                    "type": "string",
+                    "description": "FeatureSet to route this workspace to; omit for no Space tools. Re-binding the same workspace replaces the previous mapping."
+                }
             }
         })
     }
@@ -377,8 +601,6 @@ impl MetaTool for BindCurrentWorkspaceTool {
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let fs_id = parse_uuid_arg(&call.args, "feature_set_id")?;
-
         let space_id = caller_space_id(&call).await?;
         let roots = call
             .session_id
@@ -391,30 +613,47 @@ impl MetaTool for BindCurrentWorkspaceTool {
         })?;
         let normalized = normalize_workspace_root(&root);
 
-        // The FeatureSet MUST exist and belong to the caller's resolved Space.
-        // Binding a cross-Space FS persists inconsistent routing state from
-        // LLM-supplied input: it would later resolve `get_tools_for_grants`
-        // against the wrong Space and silently yield an empty tool set.
-        // A FS with no space_id is legacy/global and accepted in any Space.
-        let fs = call
-            .ctx
-            .feature_set_repo
-            .get(&fs_id.to_string())
-            .await?
-            .ok_or_else(|| {
-                MetaToolError::InvalidArgument(format!("FeatureSet '{fs_id}' does not exist"))
-            })?;
-        if let Some(fs_space) = fs.space_id.as_deref() {
-            if fs_space != space_id.to_string() {
-                return Err(MetaToolError::InvalidArgument(format!(
-                    "FeatureSet '{fs_id}' belongs to a different Space and cannot be bound here"
-                )));
+        // FeatureSet is optional — omitted/empty means "no Space tools here".
+        // When given, it MUST exist and belong to the caller's resolved Space
+        // (a cross-Space binding would later resolve against the wrong Space
+        // and silently yield an empty tool set). Legacy/global (no space_id)
+        // FSes are accepted in any Space.
+        let (fs_ids, fs_label) = match opt_str_arg(&call.args, "feature_set_id") {
+            Some(s) => {
+                let fs_id = Uuid::parse_str(&s).map_err(|_| {
+                    MetaToolError::InvalidArgument(format!("`feature_set_id` is not a UUID: {s}"))
+                })?;
+                let fs = call
+                    .ctx
+                    .feature_set_repo
+                    .get(&fs_id.to_string())
+                    .await?
+                    .ok_or_else(|| {
+                        MetaToolError::InvalidArgument(format!(
+                            "FeatureSet '{fs_id}' does not exist"
+                        ))
+                    })?;
+                if let Some(fs_space) = fs.space_id.as_deref() {
+                    if fs_space != space_id.to_string() {
+                        return Err(MetaToolError::InvalidArgument(format!(
+                            "FeatureSet '{fs_id}' belongs to a different Space and cannot be bound here"
+                        )));
+                    }
+                }
+                (vec![fs_id.to_string()], fs.name)
             }
-        }
-        let fs_name = fs.name;
+            None => (Vec::new(), "(no Space tools)".to_string()),
+        };
 
+        // Upsert: rebind if a binding for this exact root already exists.
+        let existing = call
+            .ctx
+            .binding_repo
+            .find_exact_for_roots(std::slice::from_ref(&normalized))
+            .await?;
+        let verb = if existing.is_some() { "Rebind" } else { "Bind" };
         let summary = format!(
-            "Bind workspace '{normalized}' in this Space to FeatureSet '{fs_name}'. \
+            "{verb} workspace '{normalized}' in this Space to FeatureSet '{fs_label}'. \
              Affects every future connection that reports this path."
         );
 
@@ -428,21 +667,35 @@ impl MetaTool for BindCurrentWorkspaceTool {
             true,
             call.args.clone(),
             || async move {
-                let binding =
-                    WorkspaceBinding::new(normalized.clone(), space_id, fs_id.to_string());
-                binding_repo.create(&binding).await?;
+                let binding_id = match existing {
+                    Some(mut b) => {
+                        b.feature_set_ids = fs_ids.clone();
+                        b.space_id = space_id;
+                        binding_repo.update(&b).await?;
+                        b.id
+                    }
+                    None => {
+                        let binding = WorkspaceBinding::new_multi(
+                            normalized.clone(),
+                            space_id,
+                            fs_ids.clone(),
+                        );
+                        binding_repo.create(&binding).await?;
+                        binding.id
+                    }
+                };
                 info!(
                     %space_id,
                     workspace_root = %normalized,
-                    feature_set_id = %fs_id,
+                    feature_set_ids = ?fs_ids,
                     "[meta_tools] bind_current_workspace applied",
                 );
                 emit_tools_list_changed(&event_tx, space_id);
                 Ok(text_result(json!({
                     "ok": true,
-                    "binding_id": binding.id,
+                    "binding_id": binding_id,
                     "workspace_root": normalized,
-                    "feature_set_id": fs_id,
+                    "feature_set_ids": fs_ids,
                 })))
             },
         )

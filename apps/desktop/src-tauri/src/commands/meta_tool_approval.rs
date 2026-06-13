@@ -112,7 +112,7 @@ pub async fn revoke_meta_tool_grant(
 
 /// DEBUG/dev only: toggle auto-approval of all write meta tools.
 ///
-/// When on, every `mcpmux_*` write tool (create_feature_set,
+/// When on, every `mcpmux_*` write tool (manage_feature_set,
 /// bind_current_workspace, …) is approved without a dialog. This exists so a
 /// developer (or the in-app assistant) can self-create feature sets / bindings
 /// and exercise the routing end-to-end without clicking through approvals.

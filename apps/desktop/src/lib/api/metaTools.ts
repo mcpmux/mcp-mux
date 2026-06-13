@@ -36,7 +36,7 @@ export async function revokeMetaToolGrant(clientId: string, toolName: string): P
 /**
  * DEBUG/dev only: toggle auto-approval of every write meta tool.
  *
- * When on, `mcpmux_create_feature_set` / `mcpmux_bind_current_workspace` and
+ * When on, `mcpmux_manage_feature_set` / `mcpmux_bind_current_workspace` and
  * friends are approved without a dialog — so a developer can self-create
  * feature sets and bindings and exercise routing end-to-end. Session-only:
  * resets on gateway restart (to the `MCPMUX_DEBUG_AUTO_APPROVE` env default).

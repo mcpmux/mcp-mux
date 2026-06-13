@@ -67,13 +67,14 @@ pub fn builtin_servers() -> Vec<BuiltinServerDescriptor> {
                 write: false,
             },
             BuiltinToolDescriptor {
-                name: "mcpmux_create_feature_set",
-                description: "Build a focused feature set from chosen tools.",
+                name: "mcpmux_manage_feature_set",
+                description: "Create, update, or delete a custom feature set of chosen tools.",
                 write: true,
             },
             BuiltinToolDescriptor {
                 name: "mcpmux_bind_current_workspace",
-                description: "Map the current folder to a feature set so it persists.",
+                description:
+                    "Map the current folder to a feature set so it persists (re-run to rebind).",
                 write: true,
             },
         ],

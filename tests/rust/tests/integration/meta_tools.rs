@@ -319,19 +319,20 @@ async fn write_rejected_on_deny_leaves_state_unchanged() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn create_feature_set_persists_members_on_approval() {
+async fn manage_feature_set_create_persists_members_on_approval() {
     let f = Fixture::new().await;
     f.attach_auto_publisher(ApprovalDecision::AllowOnce);
 
     let result = f
         .registry
         .call(
-            "mcpmux_create_feature_set",
+            "mcpmux_manage_feature_set",
             &f.client_id,
             Some(&f.session_id),
             json!({
+                "action": "create",
                 "name": "Tiny Set",
-                "tool_qualified_names": ["github_create_issue"],
+                "add": ["github_create_issue"],
             }),
         )
         .await
@@ -349,6 +350,123 @@ async fn create_feature_set_persists_members_on_approval() {
         .unwrap();
     assert_eq!(fs.name, "Tiny Set");
     assert_eq!(fs.members.len(), 1);
+}
+
+/// create → update (add + remove + rename) → delete, all on approval.
+#[tokio::test(flavor = "multi_thread")]
+async fn manage_feature_set_update_and_delete() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+
+    // create with one tool
+    let created = Fixture::result_json(
+        &f.registry
+            .call(
+                "mcpmux_manage_feature_set",
+                &f.client_id,
+                Some(&f.session_id),
+                json!({ "action": "create", "name": "Set A", "add": ["github_create_issue"] }),
+            )
+            .await
+            .unwrap(),
+    );
+    let fs_id = created
+        .get("feature_set_id")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // update: add the firebase tool, remove the github tool, rename
+    let res = f
+        .call_tool_as_handler_would(
+            "mcpmux_manage_feature_set",
+            json!({
+                "action": "update",
+                "feature_set_id": fs_id,
+                "name": "Set B",
+                "add": ["firebase_deploy"],
+                "remove": ["github_create_issue"],
+            }),
+        )
+        .await;
+    assert!(!Fixture::is_error(&res), "update should succeed: {res:?}");
+    let fs = f
+        .feature_set_repo
+        .get_with_members(&fs_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fs.name, "Set B", "renamed");
+    let member_ids: Vec<String> = fs.members.iter().map(|m| m.member_id.clone()).collect();
+    assert_eq!(member_ids.len(), 1, "github removed, firebase added");
+
+    // delete
+    let res = f
+        .call_tool_as_handler_would(
+            "mcpmux_manage_feature_set",
+            json!({ "action": "delete", "feature_set_id": fs_id }),
+        )
+        .await;
+    assert!(!Fixture::is_error(&res), "delete should succeed: {res:?}");
+    let after = f.feature_set_repo.get(&fs_id).await.unwrap();
+    assert!(
+        after.map(|fs| fs.is_deleted).unwrap_or(true),
+        "FS should be soft-deleted"
+    );
+}
+
+/// Built-in (Starter) FeatureSets are not mutable via MCP.
+#[tokio::test(flavor = "multi_thread")]
+async fn manage_feature_set_rejects_builtin() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+
+    // Ensure the auto-seeded Starter exists, then try to delete it.
+    f.feature_set_repo
+        .ensure_builtin_for_space(&f.space_id.to_string())
+        .await
+        .unwrap();
+    let starter = f
+        .feature_set_repo
+        .get_starter_for_space(&f.space_id.to_string())
+        .await
+        .unwrap()
+        .expect("starter exists");
+
+    let res = f
+        .call_tool_as_handler_would(
+            "mcpmux_manage_feature_set",
+            json!({ "action": "delete", "feature_set_id": starter.id }),
+        )
+        .await;
+    assert!(Fixture::is_error(&res));
+    let body = Fixture::result_json(&res);
+    assert_eq!(
+        body.get("error").unwrap().as_str().unwrap(),
+        "invalid_argument"
+    );
+}
+
+/// Unknown action is rejected with an actionable error.
+#[tokio::test(flavor = "multi_thread")]
+async fn manage_feature_set_unknown_action_rejected() {
+    let f = Fixture::new().await;
+    let res = f
+        .call_tool_as_handler_would(
+            "mcpmux_manage_feature_set",
+            json!({ "action": "frobnicate" }),
+        )
+        .await;
+    assert!(Fixture::is_error(&res));
+    assert_eq!(
+        Fixture::result_json(&res)
+            .get("error")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "invalid_argument"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -431,6 +549,75 @@ async fn invalid_feature_set_argument_rejected() {
     );
 }
 
+/// Binding the same workspace twice REBINDS (upsert) instead of erroring —
+/// no separate unbind needed.
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_current_workspace_rebinds_on_second_call() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    let input = if cfg!(windows) {
+        "D:\\Projects\\Rebind"
+    } else {
+        "/proj/rebind"
+    };
+    f.session_roots.set(&f.session_id, [input]);
+
+    // Make a second FS to rebind to.
+    let other = FeatureSet::new_custom("Other", f.space_id.to_string());
+    f.feature_set_repo.create(&other).await.unwrap();
+
+    // First bind → fs_android.
+    f.registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "feature_set_id": f.fs_android_id.to_string() }),
+        )
+        .await
+        .unwrap();
+    // Rebind same root → other FS.
+    f.registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "feature_set_id": other.id }),
+        )
+        .await
+        .unwrap();
+
+    let bindings = f.binding_repo.list_for_space(&f.space_id).await.unwrap();
+    assert_eq!(bindings.len(), 1, "still one binding for the root (upsert)");
+    assert_eq!(bindings[0].feature_set_ids, vec![other.id]);
+}
+
+/// Omitting `feature_set_id` binds the workspace to NO Space tools (a valid
+/// empty mapping), without erroring.
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_current_workspace_to_empty_is_allowed() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    let input = if cfg!(windows) {
+        "D:\\Projects\\Empty"
+    } else {
+        "/proj/empty"
+    };
+    f.session_roots.set(&f.session_id, [input]);
+
+    let res = f
+        .call_tool_as_handler_would("mcpmux_bind_current_workspace", json!({}))
+        .await;
+    assert!(!Fixture::is_error(&res), "empty bind allowed: {res:?}");
+
+    let bindings = f.binding_repo.list_for_space(&f.space_id).await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert!(
+        bindings[0].feature_set_ids.is_empty(),
+        "empty FeatureSet list = no Space tools"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Registry list-as-tools shape
 // ---------------------------------------------------------------------------
@@ -443,11 +630,16 @@ async fn registry_advertises_every_default_tool_with_annotations() {
     for expected in [
         "mcpmux_list_all_tools",
         "mcpmux_list_feature_sets",
-        "mcpmux_create_feature_set",
+        "mcpmux_manage_feature_set",
         "mcpmux_bind_current_workspace",
     ] {
         assert!(names.iter().any(|n| n == expected), "missing {expected}");
     }
+    // The old single-purpose create tool was consolidated into manage.
+    assert!(
+        !names.iter().any(|n| n == "mcpmux_create_feature_set"),
+        "create_feature_set should be gone (folded into manage): {names:?}"
+    );
     // Both describe_* tools were removed — they must NOT be advertised.
     for removed in ["mcpmux_describe_resolution", "mcpmux_describe_workspace"] {
         assert!(

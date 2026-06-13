@@ -93,14 +93,27 @@ export function RegistryPage() {
     return () => clearTimeout(timer);
   }, [localSearch, searchQuery, search]);
 
-  // Track search analytics with longer debounce to capture final query only
+  // Track search analytics: one event per *settled* query, never per keystroke.
+  // The 1.2s debounce sits well past the 300ms search debounce, so by the time
+  // it fires the synchronous client-side filter has already produced results for
+  // this exact query — letting us log results_count. Zero-result searches are
+  // the clearest signal for which servers users want that the registry lacks.
   useEffect(() => {
-    if (!localSearch.trim()) return;
+    const query = localSearch.trim();
+    if (!query) return;
     const timer = setTimeout(() => {
-      capture('registry_search', { query: localSearch.trim() });
-    }, 1500);
+      // Guard: only log once the executed search reflects what the user typed,
+      // so results_count corresponds to `query` (not an in-flight edit).
+      if (searchQuery.trim() !== query) return;
+      capture('registry_search', {
+        query,
+        query_length: query.length,
+        results_count: displayServers.length,
+        has_results: displayServers.length > 0,
+      });
+    }, 1200);
     return () => clearTimeout(timer);
-  }, [localSearch]);
+  }, [localSearch, searchQuery, displayServers.length]);
 
   const handleInstall = async (id: string) => {
     const server = servers.find((s) => s.id === id);

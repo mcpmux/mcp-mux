@@ -8,6 +8,7 @@ import { ServerInstallModal } from '@/components/ServerInstallModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useAnalytics } from '@/hooks/useAnalytics';
+import { startMetaToolActivityListener } from '@/stores/metaToolActivityStore';
 import { initAnalytics, capture, optIn, optOut } from '@/lib/analytics';
 import {
   useAppStore,
@@ -160,6 +161,13 @@ function AppContent() {
       optOut();
     }
   }, [appVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start the app-wide meta-tool activity listener once at launch so the
+  // "Recent meta-tool activity" panel accumulates rows for the whole session
+  // and survives tab changes (the listener is idempotent and app-scoped).
+  useEffect(() => {
+    startMetaToolActivityListener();
+  }, []);
 
   // Sync opt-in/out when user toggles analytics
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import {
   Plus,
   Loader2,
@@ -99,6 +100,19 @@ export function FeatureSetsPage() {
     setSelectedFeatureSet(null);
     setShowCreateModal(false);
     loadData(viewSpace?.id);
+  }, [viewSpace?.id, loadData]);
+
+  // Refresh when a feature set changes outside this page — most importantly
+  // the `mcpmux_manage_feature_set` meta-tool (create/update/delete) invoked by
+  // a connected MCP client. Without this, agent-driven changes leave the list
+  // stale until the user navigates away and back.
+  useEffect(() => {
+    const un = listen('feature-set-changed', () => {
+      void loadData(viewSpace?.id);
+    });
+    return () => {
+      un.then((fn) => fn()).catch(() => {});
+    };
   }, [viewSpace?.id, loadData]);
 
   const handleCreate = async () => {

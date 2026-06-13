@@ -114,13 +114,16 @@ fn detect_style(path: &str) -> Option<PathStyle> {
 /// on the host OS. Same input always yields the same output.
 ///
 /// Rules:
-///   * Strip `file://` / `file:///` scheme (tolerating an optional host).
-///   * URL-decode percent escapes.
+///   * Strip `file://` / `file:///` scheme (case-insensitive, tolerating an
+///     optional host) and percent-decode — but ONLY when a scheme was
+///     actually present, so the function is idempotent on plain paths that
+///     contain a literal `%xx` (e.g. a folder named `proj%20demo`).
 ///   * On Windows-style paths:
-///       - Lowercase the drive letter (`D:` → `d:`).
+///       - Case-fold the WHOLE path (Windows filesystems are
+///         case-insensitive, so `D:\Foo` and `d:\foo` are the same folder).
 ///       - Use `\` as the separator throughout (`d:/foo` → `d:\foo`).
 ///       - Strip trailing separators but keep `c:\` as the root form.
-///   * On POSIX paths: strip trailing `/` but keep `/` alone.
+///   * On POSIX paths: strip trailing `/` but keep `/` alone (case-sensitive).
 ///   * On empty input: return empty string (callers filter).
 pub fn normalize_workspace_root(input: &str) -> String {
     if input.is_empty() {
@@ -148,32 +151,79 @@ pub fn normalize_workspace_root(input: &str) -> String {
 }
 
 fn strip_scheme_and_decode(input: &str) -> String {
-    let without_scheme = if let Some(rest) = input.strip_prefix("file://") {
-        // Triple-slash form `file:///abs` → `rest` = `/abs`. Host form
-        // `file://localhost/abs` → drop up to the first `/`.
-        match rest.find('/') {
-            Some(0) => rest.to_string(),
-            Some(n) => rest[n..].to_string(),
-            None => rest.to_string(),
-        }
-    } else {
-        input.to_string()
+    // Match `file://` case-insensitively (RFC 3986 schemes are
+    // case-insensitive) without allocating unless it actually matches.
+    let scheme_len = input
+        .get(..7)
+        .filter(|p| p.eq_ignore_ascii_case("file://"))
+        .map(|_| 7);
+
+    let Some(scheme_len) = scheme_len else {
+        // No scheme: NOT a URI — return verbatim. Crucially we do NOT
+        // percent-decode here, so re-normalizing an already-normalized plain
+        // path (or one whose folder name legitimately contains `%xx`) is a
+        // no-op. (Idempotency: normalize(normalize(x)) == normalize(x).)
+        return input.to_string();
     };
 
+    let rest = &input[scheme_len..];
+    let without_scheme = reconstruct_uri_path(rest);
+
+    // Scheme WAS present, so percent escapes are URI encoding — decode them.
     urlencoding::decode(&without_scheme)
         .map(|s| s.into_owned())
         .unwrap_or(without_scheme)
 }
 
-fn strip_leading_slash_before_drive(path: &str) -> String {
-    let rest = match path.strip_prefix('/') {
-        Some(r) => r,
-        None => return path.to_string(),
+/// Turn the part of a `file://` URI after the scheme into a filesystem path,
+/// preserving drive letters and UNC hosts that the naive "drop everything
+/// before the first slash" approach used to discard.
+fn reconstruct_uri_path(rest: &str) -> String {
+    // Triple-slash form `file:///abs` → rest = `/abs`: no host component.
+    if rest.starts_with('/') {
+        return rest.to_string();
+    }
+
+    // Authority form `file://<host>[/<path>]`. Split off the host.
+    let (host, path) = match rest.find('/') {
+        Some(n) => (&rest[..n], &rest[n..]), // path keeps its leading '/'
+        None => (rest, ""),
     };
-    let bytes = rest.as_bytes();
+
+    // `file://C:/Users/x` — the "host" is really a drive letter. Keep it.
+    let host_bytes = host.as_bytes();
+    let host_is_drive =
+        host_bytes.len() == 2 && host_bytes[0].is_ascii_alphabetic() && host_bytes[1] == b':';
+    if host_is_drive {
+        return format!("{host}{path}");
+    }
+
+    // Empty or local host → ordinary local path (`file:///abs` equivalent).
+    if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+        return if path.is_empty() {
+            "/".to_string()
+        } else {
+            path.to_string()
+        };
+    }
+
+    // A real remote host → UNC path `\\host\share\...`. Emit the `\\host`
+    // prefix; normalize_windows_unc converts the remaining separators.
+    format!("\\\\{host}{path}")
+}
+
+fn strip_leading_slash_before_drive(path: &str) -> String {
+    // Strip ALL leading separators before a drive letter, not just one: a
+    // `file://` URI for a Windows path can arrive with a doubled slash
+    // (`file:////D:/x` → `//D:/x`), which `detect_style` would otherwise read
+    // as a UNC path and mangle to `\\d:\x`. A genuine UNC path
+    // (`//server/share`) has a non-drive first component, so trimming then
+    // checking for `X:` leaves it untouched.
+    let trimmed = path.trim_start_matches(['/', '\\']);
+    let bytes = trimmed.as_bytes();
     let looks_like_drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     if looks_like_drive {
-        rest.to_string()
+        trimmed.to_string()
     } else {
         path.to_string()
     }
@@ -189,12 +239,11 @@ fn normalize_posix(path: &str) -> String {
 }
 
 fn normalize_windows_drive(path: &str) -> String {
-    // Lowercase the drive letter.
-    let mut chars: Vec<char> = path.chars().collect();
-    if !chars.is_empty() && chars[0].is_ascii_alphabetic() {
-        chars[0] = chars[0].to_ascii_lowercase();
-    }
-    let mut s: String = chars.into_iter().collect();
+    // Case-fold the WHOLE path, not just the drive letter: Windows
+    // filesystems are case-insensitive, and binding lookup is exact string
+    // equality, so `D:\Projects\Foo` and `d:\projects\foo` must collapse to
+    // one key or the binding silently never matches the session root.
+    let mut s = path.to_lowercase();
 
     // Convert every `/` to `\` for canonical Windows form.
     s = s.replace('/', "\\");
@@ -213,8 +262,10 @@ fn normalize_windows_drive(path: &str) -> String {
 }
 
 fn normalize_windows_unc(path: &str) -> String {
-    // `\\server\share\path` — normalize separators to `\` and strip trailing `\`.
-    let s = path.replace('/', "\\");
+    // `\\server\share\path` — case-fold (UNC server/share names are
+    // case-insensitive, same rationale as drive paths), normalize separators
+    // to `\`, and strip the trailing `\`.
+    let s = path.to_lowercase().replace('/', "\\");
     let trimmed = s.trim_end_matches('\\');
     // Preserve the leading `\\` prefix.
     if trimmed.len() < 2 {
@@ -366,26 +417,134 @@ mod tests {
     #[test]
     fn normalize_windows_plain_on_any_host() {
         // Normalization runs the same everywhere — cfg(windows) isn't involved.
+        // The WHOLE path is case-folded (Windows is case-insensitive), not
+        // just the drive letter, so bindings match regardless of casing.
         assert_eq!(
             normalize_workspace_root("D:\\Projects\\Foo"),
-            "d:\\Projects\\Foo"
+            "d:\\projects\\foo"
         );
-        assert_eq!(normalize_workspace_root("C:/work/proj"), "c:\\work\\proj");
+        assert_eq!(normalize_workspace_root("C:/Work/Proj"), "c:\\work\\proj");
     }
 
     #[test]
     fn normalize_windows_file_uri_on_any_host() {
         assert_eq!(
             normalize_workspace_root("file:///D:/Projects/Foo"),
-            "d:\\Projects\\Foo"
+            "d:\\projects\\foo"
         );
     }
 
     #[test]
-    fn normalize_windows_drive_letter_case_insensitive() {
+    fn normalize_windows_case_insensitive_full_path() {
+        // Same folder, different casing anywhere in the path → one key.
         assert_eq!(
             normalize_workspace_root("D:\\Projects\\Foo"),
-            normalize_workspace_root("d:\\Projects\\Foo")
+            normalize_workspace_root("d:\\PROJECTS\\foo")
+        );
+        // UNC server/share names are case-insensitive too.
+        assert_eq!(
+            normalize_workspace_root("\\\\SERVER\\Share\\Dir"),
+            normalize_workspace_root("\\\\server\\share\\dir")
+        );
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        // normalize(normalize(x)) == normalize(x) for every shape, including
+        // plain paths whose folder name legitimately contains a `%xx` (must
+        // NOT be percent-decoded when there was no file:// scheme).
+        for input in [
+            "/home/user/proj",
+            "/home/user/my%20proj",
+            "D:\\Projects\\Foo",
+            "C:/work/proj/",
+            "\\\\server\\share\\dir",
+            "file:///D:/Projects/My%20App",
+            "file:///home/user/my%20project",
+        ] {
+            let once = normalize_workspace_root(input);
+            let twice = normalize_workspace_root(&once);
+            assert_eq!(once, twice, "not idempotent for {input:?}");
+        }
+    }
+
+    #[test]
+    fn normalize_plain_percent_is_not_decoded() {
+        // A real folder named `proj%20demo` (no scheme) keeps its literal %.
+        assert_eq!(
+            normalize_workspace_root("d:\\proj%20demo"),
+            "d:\\proj%20demo"
+        );
+        assert_eq!(
+            normalize_workspace_root("/home/user/proj%20demo"),
+            "/home/user/proj%20demo"
+        );
+    }
+
+    #[test]
+    fn normalize_file_uri_scheme_case_insensitive() {
+        assert_eq!(
+            normalize_workspace_root("FILE:///home/user/proj"),
+            "/home/user/proj"
+        );
+    }
+
+    #[test]
+    fn normalize_file_uri_drive_letter_host() {
+        // Nonstandard `file://C:/...` — the "host" is really a drive letter.
+        assert_eq!(
+            normalize_workspace_root("file://C:/Users/x"),
+            "c:\\users\\x"
+        );
+    }
+
+    #[test]
+    fn normalize_file_uri_localhost_host() {
+        assert_eq!(
+            normalize_workspace_root("file://localhost/home/user/proj"),
+            "/home/user/proj"
+        );
+        assert_eq!(
+            normalize_workspace_root("file://localhost/D:/work"),
+            "d:\\work"
+        );
+    }
+
+    #[test]
+    fn normalize_file_uri_unc_host_reconstructed() {
+        // Standard UNC file URI keeps the host as the UNC server.
+        assert_eq!(
+            normalize_workspace_root("file://server/share/dir"),
+            "\\\\server\\share\\dir"
+        );
+    }
+
+    #[test]
+    fn normalize_doubled_slash_before_drive_is_not_unc() {
+        // Regression (live manual test): a doubled leading slash before a
+        // drive letter — from a `file:////D:/x` URI or a `//D:/x` path — must
+        // collapse to a drive path, NOT be misread as a UNC path `\\d:\x`
+        // (which then never matches the `d:\x` other clients report).
+        let expected = "d:\\mcpmux\\mcp-mux";
+        assert_eq!(normalize_workspace_root("//d:/mcpmux/mcp-mux"), expected);
+        assert_eq!(
+            normalize_workspace_root("\\\\d:\\mcpmux\\mcp-mux"),
+            expected
+        );
+        assert_eq!(
+            normalize_workspace_root("file:////D:/mcpmux/mcp-mux"),
+            expected
+        );
+        // All collapse to the SAME key as the canonical drive forms.
+        assert_eq!(normalize_workspace_root("D:\\mcpmux\\mcp-mux"), expected);
+        assert_eq!(
+            normalize_workspace_root("file:///D:/mcpmux/mcp-mux"),
+            expected
+        );
+        // A genuine UNC path (non-drive first component) is left intact.
+        assert_eq!(
+            normalize_workspace_root("//server/share"),
+            "\\\\server\\share"
         );
     }
 

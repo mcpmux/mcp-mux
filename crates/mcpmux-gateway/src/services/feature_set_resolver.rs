@@ -30,6 +30,19 @@
 //! of which OAuth client opened it. This is what makes "two VS Code windows
 //! sharing one OAuth identity" route independently.
 //!
+//! # Trust model (deliberate design decision)
+//!
+//! Roots are client-asserted, so **any** OAuth-approved local client can
+//! report roots matching **any** binding and be routed into that binding's
+//! Space — including its tools and the credentials behind them
+//! (SECURITY_AUDIT HIGH-1, accepted 2026-06-12). The boundary is the
+//! one-time client approval: every client the user approves is trusted with
+//! every workspace binding, the same way it is trusted with the local
+//! filesystem it already runs on. The gateway binds to loopback only, and
+//! unapproved clients never get a token. If per-client Space isolation is
+//! ever needed, gate Tier 1 on a per-`(client, space)` trust table before
+//! honoring the binding.
+//!
 //! Roots-capable detection is stamped at `on_initialized` time into
 //! [`SessionRootsRegistry::set_roots_capable`].
 
@@ -151,6 +164,17 @@ impl FeatureSetResolverService {
         // Tier 1 / 1b / 1c — branches on roots-capable + roots-arrived state.
         if let Some(sid) = session_id {
             let roots = self.session_roots.get(sid);
+            // Three distinct states, NOT two:
+            //   None      — roots never arrived (still in flight, or never
+            //               declared). Eligible for Tier 1c PendingRoots.
+            //   Some([])  — roots ARRIVED and the client has no folder open
+            //               (Claude Desktop chat, empty VS Code window). This
+            //               is a settled "rootless right now" answer — it must
+            //               fall through to the Tier-2 grant lookup, NOT hang
+            //               in PendingRoots forever. (Bug: conflating this with
+            //               None stranded granted clients on meta-tools-only.)
+            //   Some([..])— has roots → Tier 1 binding match.
+            let roots_arrived = roots.is_some();
             let has_roots = roots.as_ref().is_some_and(|r| !r.is_empty());
             // Three states for capability:
             //   `Some(true)`  — declared roots on initialize
@@ -197,15 +221,18 @@ impl FeatureSetResolverService {
                 });
             }
 
-            // Tier 1c: client declared `roots` but they haven't shown up
-            // yet, OR we haven't observed `initialize` yet so we don't
-            // know either way. Returning PendingRoots (empty) means the
-            // first response is empty if the on-demand probe loses the
-            // race, but the next request retries via the probe + the
-            // on_initialized list_roots task fires `list_changed` once
-            // roots actually land. Beats falling through to grants and
-            // getting permanently denied.
-            if !matches!(roots_capable_known, Some(false)) {
+            // Tier 1c: client declared `roots` but none have ARRIVED yet
+            // (roots == None), OR we haven't observed `initialize` yet so we
+            // don't know either way. Returning PendingRoots (empty) means the
+            // first response is empty if the on-demand probe loses the race,
+            // but the next request retries via the probe + the on_initialized
+            // list_roots task fires `list_changed` once roots actually land.
+            //
+            // Crucially gated on `!roots_arrived`: if roots already arrived
+            // empty (`Some([])`), this is a settled answer — skip PendingRoots
+            // and fall through to Tier 2 so a granted-but-folderless client
+            // still gets its tools.
+            if !roots_arrived && !matches!(roots_capable_known, Some(false)) {
                 debug!(
                     session_id = %sid,
                     capability = ?roots_capable_known,
@@ -224,11 +251,15 @@ impl FeatureSetResolverService {
         // (the desktop UI's preview HTTP path lands here too). Consult the
         // per-client grant table.
         if let Some(cid) = client_id {
+            // Propagate storage errors instead of treating them as "no
+            // grants": a transient DB failure must surface as a request
+            // error, not a silent deny (which would also record a `None`
+            // fingerprint and fire a spurious Deny→Grant flip-notification
+            // cycle once the error clears).
             let grants = self
                 .client_repo
                 .get_grants_for_space(cid, &default_space_id.to_string())
-                .await
-                .unwrap_or_default();
+                .await?;
             if !grants.is_empty() {
                 debug!(
                     client_id = %cid,
@@ -260,11 +291,4 @@ impl FeatureSetResolverService {
             source: ResolutionSource::Deny,
         })
     }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Resolver decision-table tests live in the integration test crate
-    //! (`tests/rust/tests/integration/feature_set_resolver.rs`) so they can
-    //! share the mock repositories with the other gateway tests.
 }

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::services::PrefixCacheService;
 use mcpmux_core::{
@@ -91,6 +91,12 @@ impl FeatureResolutionService {
             space_id
         );
 
+        // Tracks FeatureSet ids already entered on this resolution so a
+        // composition cycle (A includes B, B includes A — creatable via two
+        // legal UI calls, see add_feature_set_member's cycle guard) can't
+        // recurse forever and hang/OOM the gateway on every list/call.
+        let mut visited: HashSet<String> = HashSet::new();
+
         for fs_id in feature_set_ids {
             let feature_set = match self.feature_set_repo.get_with_members(fs_id).await? {
                 Some(fs) => {
@@ -106,6 +112,10 @@ impl FeatureResolutionService {
                 }
             };
 
+            if !visited.insert(fs_id.clone()) {
+                continue;
+            }
+
             // Both Default and Custom sets use explicit members; the
             // resolution is identical — walk the members and build up
             // allow/exclude sets.
@@ -114,6 +124,7 @@ impl FeatureResolutionService {
                 &all_features,
                 &mut allowed_feature_ids,
                 &mut excluded_feature_ids,
+                &mut visited,
             )
             .await?;
         }
@@ -169,6 +180,7 @@ impl FeatureResolutionService {
         all_features: &[ServerFeature],
         allowed: &mut HashSet<String>,
         excluded: &mut HashSet<String>,
+        visited: &mut HashSet<String>,
     ) -> Result<()> {
         for member in &feature_set.members {
             match member.member_type {
@@ -183,14 +195,29 @@ impl FeatureResolutionService {
                 MemberType::FeatureSet => {
                     // Composition: recurse into the nested FS, walking its
                     // members the same way. Both Default and Custom sets
-                    // are purely member-driven now.
+                    // are purely member-driven now. `visited` breaks cycles
+                    // (and prunes diamond re-visits) so a cyclic composition
+                    // can't loop forever on this hot routing path.
+                    if !visited.insert(member.member_id.clone()) {
+                        warn!(
+                            "[FeatureResolution] Skipping already-visited FeatureSet {} (composition cycle or diamond)",
+                            member.member_id
+                        );
+                        continue;
+                    }
                     if let Some(nested_fs) = self
                         .feature_set_repo
                         .get_with_members(&member.member_id)
                         .await?
                     {
-                        Box::pin(self.resolve_members(&nested_fs, all_features, allowed, excluded))
-                            .await?;
+                        Box::pin(self.resolve_members(
+                            &nested_fs,
+                            all_features,
+                            allowed,
+                            excluded,
+                            visited,
+                        ))
+                        .await?;
                     }
                 }
             }

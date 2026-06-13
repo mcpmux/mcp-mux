@@ -63,12 +63,6 @@ impl SpacePrefixCache {
     fn is_prefix_available(&self, prefix: &str) -> bool {
         !self.prefix_to_server.contains_key(prefix)
     }
-
-    /// Clear all mappings
-    fn clear(&mut self) {
-        self.server_to_prefix.clear();
-        self.prefix_to_server.clear();
-    }
 }
 
 /// Service for managing server prefix resolution and caching
@@ -140,14 +134,12 @@ impl PrefixCacheService {
         // TODO: Add verified status priority when registry supports it
         servers.sort_by_key(|a| a.created_at);
 
-        // Clear existing cache for this space
-        self.clear_space(space_id).await;
-
-        // Assign prefixes in priority order
-        let mut caches = self.caches.write().await;
-        let cache = caches
-            .entry(space_id.to_string())
-            .or_insert_with(SpacePrefixCache::new);
+        // Build the new prefix table OFFLINE, then swap it in with a single
+        // write-lock insert. The discovery lookups below await; holding the
+        // cache write lock across them (the previous shape) blocked
+        // `get_prefix_for_server` / `resolve_qualified_name` — the
+        // tools/list and routing hot path — for the whole resolution pass.
+        let mut cache = SpacePrefixCache::new();
 
         for server in servers {
             // Skip disabled servers
@@ -190,10 +182,17 @@ impl PrefixCacheService {
             cache.assign(server.server_id.clone(), prefix);
         }
 
+        let assigned = cache.server_to_prefix.len();
+        // Atomic swap — also replaces the old "clear then repopulate" shape,
+        // so readers never observe a half-built table.
+        self.caches
+            .write()
+            .await
+            .insert(space_id.to_string(), cache);
+
         info!(
             "[PrefixCache] Startup resolution complete for space {}: {} servers processed",
-            space_id,
-            cache.server_to_prefix.len()
+            space_id, assigned
         );
 
         Ok(())
@@ -309,16 +308,6 @@ impl PrefixCacheService {
                     prefix, server_id, space_id
                 );
             }
-        }
-    }
-
-    /// Clear cache for a space (used during startup resolution)
-    pub async fn clear_space(&self, space_id: &str) {
-        let mut caches = self.caches.write().await;
-
-        if let Some(cache) = caches.get_mut(space_id) {
-            cache.clear();
-            debug!("[PrefixCache] Cleared cache for space {}", space_id);
         }
     }
 

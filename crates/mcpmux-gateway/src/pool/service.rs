@@ -76,6 +76,12 @@ pub struct PoolStats {
 pub struct PoolService {
     /// Active server instances keyed by (space_id, server_id)
     instances: DashMap<(Uuid, String), Arc<ServerInstance>>,
+    /// Per-(space, server) connect mutex. Serializes `connect_server` so two
+    /// concurrent callers can't both miss the `instances` check, both insert
+    /// (second overwriting the first), and both spawn real backend
+    /// connections — two live child processes for stdio servers. Entries are
+    /// never removed: the key space is bounded by configured servers.
+    connect_locks: DashMap<(Uuid, String), Arc<tokio::sync::Mutex<()>>>,
     /// Connection service
     connection_service: Arc<ConnectionService>,
     /// Feature service
@@ -92,6 +98,7 @@ impl PoolService {
     ) -> Self {
         Self {
             instances: DashMap::new(),
+            connect_locks: DashMap::new(),
             connection_service,
             feature_service,
             token_service,
@@ -260,8 +267,20 @@ impl PoolService {
     pub async fn connect_server(&self, ctx: &ConnectionContext) -> ConnectionResult {
         let key = (ctx.space_id, ctx.server_id.to_string());
 
-        // Check for existing instance
-        if let Some(instance) = self.instances.get(&key) {
+        // Single-flight per key: the late caller waits, then reuses the
+        // winner's instance via the health check below instead of racing it.
+        // (Clone the Arc out so the DashMap entry guard drops before .await.)
+        let connect_lock = self
+            .connect_locks
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _connect_guard = connect_lock.lock().await;
+
+        // Check for existing instance. Clone the Arc out of the DashMap so
+        // no shard guard is held across the reconnect `.await` below.
+        let existing = self.instances.get(&key).map(|e| e.value().clone());
+        if let Some(instance) = existing {
             if instance.is_healthy() {
                 debug!(
                     "[PoolService] Reusing existing instance for {}/{}",

@@ -134,9 +134,19 @@ impl Default for ApprovalBroker {
 
 impl ApprovalBroker {
     pub fn new() -> Self {
+        // Auto-approve is a DEBUG-ONLY bypass of the sole human-in-the-loop
+        // control for write meta-tools. Compile the env-var read out of
+        // release builds entirely (`debug_assertions` is off in `--release`)
+        // so a stray `MCPMUX_DEBUG_AUTO_APPROVE` inherited from the parent
+        // shell / CI / launcher can never silently disable the approval
+        // dialog in a shipped binary.
+        #[cfg(debug_assertions)]
         let auto = std::env::var("MCPMUX_DEBUG_AUTO_APPROVE")
             .map(|v| matches!(v.as_str(), "1" | "true"))
             .unwrap_or(false);
+        #[cfg(not(debug_assertions))]
+        let auto = false;
+
         if auto {
             warn!(
                 "[ApprovalBroker] MCPMUX_DEBUG_AUTO_APPROVE set — meta-tool writes auto-approved"
@@ -158,9 +168,26 @@ impl ApprovalBroker {
     }
 
     /// DEBUG/dev only: toggle auto-approval of all write meta tools.
+    ///
+    /// In release builds this is inert — a request to enable auto-approve is
+    /// ignored and logged, so production binaries cannot turn off the
+    /// approval dialog at runtime (the Tauri command stays registered for a
+    /// uniform IPC surface, but has no effect).
     pub fn set_auto_approve(&self, on: bool) {
-        self.auto_approve.store(on, Ordering::Relaxed);
-        warn!(on, "[ApprovalBroker] auto-approve toggled (DEBUG)");
+        #[cfg(debug_assertions)]
+        {
+            self.auto_approve.store(on, Ordering::Relaxed);
+            warn!(on, "[ApprovalBroker] auto-approve toggled (DEBUG)");
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            if on {
+                warn!(
+                    "[ApprovalBroker] set_auto_approve(true) ignored in release build — \
+                     meta-tool approval cannot be disabled in production"
+                );
+            }
+        }
     }
 
     /// Whether write meta tools are currently auto-approved.

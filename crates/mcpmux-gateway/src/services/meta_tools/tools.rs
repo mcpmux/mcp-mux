@@ -254,7 +254,13 @@ impl MetaTool for CreateFeatureSetTool {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| MetaToolError::InvalidArgument("missing `name`".into()))?
+            .trim()
             .to_string();
+        if name.is_empty() {
+            return Err(MetaToolError::InvalidArgument(
+                "`name` must not be empty or whitespace".into(),
+            ));
+        }
         let description = call
             .args
             .get("description")
@@ -385,13 +391,27 @@ impl MetaTool for BindCurrentWorkspaceTool {
         })?;
         let normalized = normalize_workspace_root(&root);
 
-        let fs_name = call
+        // The FeatureSet MUST exist and belong to the caller's resolved Space.
+        // Binding a cross-Space FS persists inconsistent routing state from
+        // LLM-supplied input: it would later resolve `get_tools_for_grants`
+        // against the wrong Space and silently yield an empty tool set.
+        // A FS with no space_id is legacy/global and accepted in any Space.
+        let fs = call
             .ctx
             .feature_set_repo
             .get(&fs_id.to_string())
             .await?
-            .map(|fs| fs.name)
-            .unwrap_or_else(|| fs_id.to_string());
+            .ok_or_else(|| {
+                MetaToolError::InvalidArgument(format!("FeatureSet '{fs_id}' does not exist"))
+            })?;
+        if let Some(fs_space) = fs.space_id.as_deref() {
+            if fs_space != space_id.to_string() {
+                return Err(MetaToolError::InvalidArgument(format!(
+                    "FeatureSet '{fs_id}' belongs to a different Space and cannot be bound here"
+                )));
+            }
+        }
+        let fs_name = fs.name;
 
         let summary = format!(
             "Bind workspace '{normalized}' in this Space to FeatureSet '{fs_name}'. \

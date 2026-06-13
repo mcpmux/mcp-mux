@@ -216,8 +216,9 @@ pub trait InboundMcpClientRepository: Send + Sync {
 /// Workspace binding repository trait
 ///
 /// Bindings map normalized filesystem paths to FeatureSets on a per-Space basis.
-/// Matching is longest-prefix-wins; callers are expected to pass
-/// already-normalized paths (see [`crate::domain::normalize_workspace_root`]).
+/// Matching is EXACT (no ancestor/prefix inheritance — see `find_exact_for_roots`);
+/// callers are expected to pass already-normalized paths (see
+/// [`crate::domain::normalize_workspace_root`]).
 #[async_trait]
 pub trait WorkspaceBindingRepository: Send + Sync {
     /// List every binding across all Spaces.

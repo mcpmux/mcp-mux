@@ -364,6 +364,25 @@ pub async fn add_feature_set_member(
                 ));
             }
         }
+
+        // Prevent INDIRECT composition cycles (A⊇B then B⊇A, or longer
+        // chains). Direct self-reference is caught above; here we walk the
+        // candidate child's member graph and reject if it can transitively
+        // reach this feature set. Without this the resolver would loop on
+        // every list/call (it now breaks cycles defensively, but persisting
+        // one is still invalid state). Bounded by visited-set dedup.
+        if reaches_feature_set(
+            &state,
+            &input.member_id,
+            &feature_set_id,
+            &mut std::collections::HashSet::new(),
+        )
+        .await
+        {
+            return Err(
+                "Cannot add this feature set: it would create a composition cycle".to_string(),
+            );
+        }
     }
 
     let member = FeatureSetMember {
@@ -522,4 +541,42 @@ pub async fn set_feature_set_members(
     }
 
     Ok(feature_set.into())
+}
+
+/// Does `start_fs_id` transitively compose `target_fs_id` (i.e. would adding
+/// `start_fs_id` as a member of `target_fs_id` close a cycle)?
+///
+/// Walks the composition graph via `FeatureSet` members of type
+/// `FeatureSet`, depth-first, deduping with `visited`. Repository read
+/// errors and missing sets are treated as "no path" — they can't form a
+/// cycle, and the resolver breaks any residual cycle defensively.
+fn reaches_feature_set<'a>(
+    state: &'a AppState,
+    start_fs_id: &'a str,
+    target_fs_id: &'a str,
+    visited: &'a mut std::collections::HashSet<String>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+    Box::pin(async move {
+        if start_fs_id == target_fs_id {
+            return true;
+        }
+        if !visited.insert(start_fs_id.to_string()) {
+            return false;
+        }
+        let Ok(Some(fs)) = state
+            .feature_set_repository
+            .get_with_members(start_fs_id)
+            .await
+        else {
+            return false;
+        };
+        for member in &fs.members {
+            if member.member_type == MemberType::FeatureSet
+                && reaches_feature_set(state, &member.member_id, target_fs_id, visited).await
+            {
+                return true;
+            }
+        }
+        false
+    })
 }

@@ -476,6 +476,12 @@ impl DomainEvent {
             // A Space's built-in-server config changes the tool list every
             // session resolving to that Space sees.
             Self::BuiltinServerConfigChanged { .. } => true,
+            // Deleting a Space cascade-removes its bindings; deleting a
+            // FeatureSet strips its tools from every binding referencing it.
+            // Both leave live sessions holding stale tool lists unless we push
+            // list_changed.
+            Self::SpaceDeleted { .. } => true,
+            Self::FeatureSetDeleted { .. } => true,
             // WorkspaceNeedsBinding is a UI prompt — doesn't itself change what
             // tools a client sees, just invites the user to configure.
             // All other events don't affect MCP capabilities

@@ -179,11 +179,20 @@ impl Transport for StdioTransport {
             "Connecting to STDIO server"
         );
 
-        // Log connection attempt
+        // Log connection attempt. Do NOT log resolved args — `${input:...}`
+        // placeholders are already substituted by this point, so secret
+        // inputs passed as CLI args (a common MCP server pattern, e.g.
+        // `--api-key sk-...`) would land in plaintext `current.log` and
+        // defeat the encrypted-credentials guarantee. Log the command and an
+        // arg count only.
         self.log(
             LogLevel::Info,
             LogSource::Connection,
-            format!("Connecting to server: {} {:?}", self.command, self.args),
+            format!(
+                "Connecting to server: {} ({} arg(s))",
+                self.command,
+                self.args.len()
+            ),
         )
         .await;
 

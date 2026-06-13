@@ -14,10 +14,10 @@
 const DISABLE_ALL_NOTIFICATIONS: bool = false;
 
 use mcpmux_core::{DomainEvent, FeatureType};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use rmcp::{service::Peer, RoleServer};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -64,6 +64,14 @@ pub struct MCPNotifier {
     /// State hash tracker: (space_id, notification_type) -> content_hash
     /// Prevents sending notifications when content hasn't actually changed
     state_hashes: Arc<RwLock<HashMap<(Uuid, NotificationType), u64>>>,
+    /// Keys that currently have a trailing-edge retry task scheduled.
+    ///
+    /// The throttle must *defer*, never *drop*: two real mutations inside
+    /// one throttle window used to lose the second notification, leaving
+    /// clients on the intermediate state until an unrelated event fired.
+    /// When a send is throttled we schedule exactly one retry for the end
+    /// of the window; this set dedupes concurrent schedulers.
+    pending_retries: Arc<Mutex<HashSet<(Uuid, NotificationType)>>>,
 }
 
 /// Type of list_changed notification for throttling
@@ -117,6 +125,7 @@ impl MCPNotifier {
             feature_service,
             throttle_tracker: Arc::new(RwLock::new(HashMap::new())),
             state_hashes: Arc::new(RwLock::new(HashMap::new())),
+            pending_retries: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -265,44 +274,81 @@ impl MCPNotifier {
         }
     }
 
-    /// Check if we should throttle this notification (returns true if throttled)
-    ///
-    /// Note: This only checks the throttle status, it does NOT update the timestamp.
-    /// The caller is responsible for updating the timestamp after sending the notification.
-    ///
-    /// **Enterprise-Grade Throttling Logic:**
-    /// - Per-space, per-notification-type throttling
-    /// - Prevents cascade: Client query → Backend notification → Forward → Client refetch → Loop
-    /// - Window is long enough (10s) to break rapid-fire notification cycles
-    fn should_throttle(&self, space_id: Uuid, notification_type: NotificationType) -> bool {
-        let now = Instant::now();
-        let key = (space_id, notification_type);
-
+    /// Time left in the throttle window for this key, or `None` when a send
+    /// is allowed right now. Callers that get `Some(remaining)` must defer
+    /// via [`Self::schedule_trailing_retry`] rather than dropping the
+    /// notification.
+    fn throttle_remaining(
+        &self,
+        space_id: Uuid,
+        notification_type: NotificationType,
+    ) -> Option<Duration> {
         let tracker = self.throttle_tracker.read();
+        let last_sent = tracker.get(&(space_id, notification_type))?;
+        let elapsed = Instant::now().duration_since(*last_sent);
+        if elapsed < THROTTLE_WINDOW {
+            debug!(
+                space_id = %space_id,
+                notification_type = ?notification_type,
+                elapsed_secs = elapsed.as_secs_f64(),
+                window_secs = THROTTLE_WINDOW.as_secs_f64(),
+                "[MCPNotifier] ⏸️ Throttling {} notification (sent {:.1}s ago, window: {:.1}s)",
+                match notification_type {
+                    NotificationType::Tools => "tools/list_changed",
+                    NotificationType::Prompts => "prompts/list_changed",
+                    NotificationType::Resources => "resources/list_changed",
+                    NotificationType::All => "batch (all types)",
+                },
+                elapsed.as_secs_f64(),
+                THROTTLE_WINDOW.as_secs_f64()
+            );
+            Some(THROTTLE_WINDOW - elapsed)
+        } else {
+            None
+        }
+    }
 
-        if let Some(last_sent) = tracker.get(&key) {
-            let elapsed = now.duration_since(*last_sent);
-            if elapsed < THROTTLE_WINDOW {
-                debug!(
-                    space_id = %space_id,
-                    notification_type = ?notification_type,
-                    elapsed_secs = elapsed.as_secs_f64(),
-                    window_secs = THROTTLE_WINDOW.as_secs_f64(),
-                    "[MCPNotifier] ⏸️ Throttling {} notification (sent {:.1}s ago, window: {:.1}s)",
-                    match notification_type {
-                        NotificationType::Tools => "tools/list_changed",
-                        NotificationType::Prompts => "prompts/list_changed",
-                        NotificationType::Resources => "resources/list_changed",
-                        NotificationType::All => "batch (all types)",
-                    },
-                    elapsed.as_secs_f64(),
-                    THROTTLE_WINDOW.as_secs_f64()
-                );
-                return true;
+    /// Schedule a one-shot re-dispatch for the end of the throttle window.
+    ///
+    /// At most one retry per `(space, type)` is in flight at a time. The
+    /// `All` retry re-enters `notify_all_list_changed` with `force=true`
+    /// because the dropped trigger may itself have been forced (binding /
+    /// grant writes change the *effective* list without changing the
+    /// space-level content hash); the typed retries re-run the normal
+    /// hash-gated path, so a retry whose content settled back is dropped
+    /// by the dedup rather than spamming the client.
+    fn schedule_trailing_retry(
+        &self,
+        space_id: Uuid,
+        notification_type: NotificationType,
+        remaining: Duration,
+    ) {
+        {
+            let mut pending = self.pending_retries.lock();
+            if !pending.insert((space_id, notification_type)) {
+                return; // a retry for this key is already scheduled
             }
         }
-
-        false
+        debug!(
+            space_id = %space_id,
+            notification_type = ?notification_type,
+            delay_ms = remaining.as_millis() as u64,
+            "[MCPNotifier] ⏲️ Deferring throttled notification to window end"
+        );
+        let this = self.clone();
+        tokio::spawn(async move {
+            // Small epsilon past the window end so the re-check passes.
+            tokio::time::sleep(remaining + Duration::from_millis(50)).await;
+            this.pending_retries
+                .lock()
+                .remove(&(space_id, notification_type));
+            match notification_type {
+                NotificationType::All => this.notify_all_list_changed(space_id, true).await,
+                NotificationType::Tools => this.notify_tools_list_changed(space_id).await,
+                NotificationType::Prompts => this.notify_prompts_list_changed(space_id).await,
+                NotificationType::Resources => this.notify_resources_list_changed(space_id).await,
+            }
+        });
     }
 
     /// Mark all notification types as just sent for a space
@@ -441,11 +487,15 @@ impl MCPNotifier {
                 self.notify_peer_lists_changed(&client_id).await;
             }
 
-            // A workspace binding was created / updated / deleted. Every
-            // session in the space may now resolve to a different FS, so
-            // broadcast all three list_changed notifications. `force=true`
-            // bypasses the content-hash dedupe because the resolver's output
-            // changed even when backend tool content hasn't.
+            // A workspace binding was created / updated / deleted. Notify
+            // EVERY registered session, not just the ones resolving into the
+            // event's space: a binding delete (or root edit) moves the
+            // affected sessions OUT of that space — re-resolving them after
+            // the mutation lands them in their fallback space, so a
+            // space-filtered fanout can never reach exactly the sessions
+            // whose toolset just changed. Binding writes are rare and
+            // session counts are small; the blunt broadcast is cheaper than
+            // reconstructing pre-mutation resolutions.
             DomainEvent::WorkspaceBindingChanged {
                 space_id,
                 workspace_root,
@@ -453,9 +503,9 @@ impl MCPNotifier {
                 info!(
                     space_id = %space_id,
                     workspace_root = %workspace_root,
-                    "[MCPNotifier] 📨 WorkspaceBindingChanged - notifying all clients in space"
+                    "[MCPNotifier] 📨 WorkspaceBindingChanged - notifying ALL sessions"
                 );
-                self.notify_all_list_changed(space_id, true).await;
+                self.notify_all_sessions_lists_changed().await;
             }
 
             // A Space's built-in-server config changed (a built-in server or one
@@ -470,6 +520,29 @@ impl MCPNotifier {
                     "[MCPNotifier] 📨 BuiltinServerConfigChanged - notifying clients in space"
                 );
                 self.notify_all_list_changed(space_id, true).await;
+            }
+
+            // A FeatureSet was deleted. Bindings/grants referencing it now
+            // resolve to a smaller tool set, but the session still resolves
+            // into the FS's Space, so the space-scoped fanout reaches it.
+            DomainEvent::FeatureSetDeleted { space_id, .. } => {
+                info!(
+                    %space_id,
+                    "[MCPNotifier] 📨 FeatureSetDeleted - notifying clients in space"
+                );
+                self.notify_all_list_changed(space_id, true).await;
+            }
+
+            // A Space was deleted. Its bindings cascade away, so affected
+            // sessions re-resolve OUT of this (now-gone) space — a
+            // space-filtered fanout can't reach them. Notify ALL sessions,
+            // same rationale as WorkspaceBindingChanged.
+            DomainEvent::SpaceDeleted { space_id } => {
+                info!(
+                    %space_id,
+                    "[MCPNotifier] 📨 SpaceDeleted - notifying ALL sessions"
+                );
+                self.notify_all_sessions_lists_changed().await;
             }
 
             // ============ Backend Server Notifications (Pass-through with Throttling) ============
@@ -643,12 +716,10 @@ impl MCPNotifier {
 
         // CRITICAL: Check throttle FIRST before doing any work
         // This prevents cascade: Multiple events → Multiple batch calls → Multiple notifications → Loop
-        if self.should_throttle(space_id, NotificationType::All) {
-            debug!(
-                space_id = %space_id,
-                "[MCPNotifier] ⏸️ Batch notification throttled (recently sent all types within {}s window)",
-                THROTTLE_WINDOW.as_secs()
-            );
+        // Throttled ≠ dropped: defer one re-send to the window end so the
+        // second of two rapid mutations still reaches clients.
+        if let Some(remaining) = self.throttle_remaining(space_id, NotificationType::All) {
+            self.schedule_trailing_retry(space_id, NotificationType::All, remaining);
             return;
         }
 
@@ -715,12 +786,14 @@ impl MCPNotifier {
             }
         }
 
-        // 2. Throttling (Secondary Defense against Oscillation)
-        if self.should_throttle(space_id, NotificationType::Tools) {
+        // 2. Throttling (Secondary Defense against Oscillation) — defer,
+        // don't drop: the content hash above already proved a real change.
+        if let Some(remaining) = self.throttle_remaining(space_id, NotificationType::Tools) {
             warn!(
                 space_id = %space_id,
-                "[MCPNotifier] ⚠️ Throttling rapid REAL tool changes"
+                "[MCPNotifier] ⚠️ Throttling rapid REAL tool changes (deferred to window end)"
             );
+            self.schedule_trailing_retry(space_id, NotificationType::Tools, remaining);
             return;
         }
 
@@ -894,8 +967,9 @@ impl MCPNotifier {
             }
         }
 
-        // 2. Throttling
-        if self.should_throttle(space_id, NotificationType::Prompts) {
+        // 2. Throttling — defer, don't drop (content hash proved a change).
+        if let Some(remaining) = self.throttle_remaining(space_id, NotificationType::Prompts) {
+            self.schedule_trailing_retry(space_id, NotificationType::Prompts, remaining);
             return;
         }
 
@@ -967,8 +1041,9 @@ impl MCPNotifier {
             }
         }
 
-        // 2. Throttling
-        if self.should_throttle(space_id, NotificationType::Resources) {
+        // 2. Throttling — defer, don't drop (content hash proved a change).
+        if let Some(remaining) = self.throttle_remaining(space_id, NotificationType::Resources) {
+            self.schedule_trailing_retry(space_id, NotificationType::Resources, remaining);
             return;
         }
 
@@ -1073,45 +1148,97 @@ impl MCPNotifier {
         );
 
         for (session_id, peer) in &live {
-            match peer.notify_tool_list_changed().await {
-                Ok(_) => debug!(
-                    %session_id,
-                    %client_id,
-                    "[MCPNotifier] ✅ Sent tools/list_changed to session (per-client)"
-                ),
-                Err(e) => warn!(
-                    %session_id,
-                    %client_id,
-                    error = ?e,
-                    "[MCPNotifier] failed tools/list_changed"
-                ),
-            }
-            match peer.notify_prompt_list_changed().await {
-                Ok(_) => debug!(
-                    %session_id,
-                    %client_id,
-                    "[MCPNotifier] ✅ Sent prompts/list_changed to session (per-client)"
-                ),
-                Err(e) => warn!(
-                    %session_id,
-                    %client_id,
-                    error = ?e,
-                    "[MCPNotifier] failed prompts/list_changed"
-                ),
-            }
-            match peer.notify_resource_list_changed().await {
-                Ok(_) => debug!(
-                    %session_id,
-                    %client_id,
-                    "[MCPNotifier] ✅ Sent resources/list_changed to session (per-client)"
-                ),
-                Err(e) => warn!(
-                    %session_id,
-                    %client_id,
-                    error = ?e,
-                    "[MCPNotifier] failed resources/list_changed"
-                ),
-            }
+            Self::push_lists_to_session(session_id, client_id, peer).await;
+        }
+    }
+
+    /// Force-push all three list_changed notifications to EVERY registered
+    /// session with an active stream, regardless of which space each
+    /// session currently resolves into. Bypasses the space-level hash
+    /// dedup and throttle: the trigger (a workspace-binding write) changes
+    /// the *resolution*, which the per-space content hash cannot observe.
+    async fn notify_all_sessions_lists_changed(&self) {
+        if DISABLE_ALL_NOTIFICATIONS {
+            trace!("[MCPNotifier] 🚫 disabled — skipping all-session list_changed");
+            return;
+        }
+
+        let snapshot: Vec<(String, String, Arc<Peer<RoleServer>>)> = {
+            let sessions = self.sessions.read();
+            sessions
+                .iter()
+                .filter(|(_, e)| e.has_active_stream)
+                .map(|(sid, e)| (sid.clone(), e.client_id.clone(), e.peer.clone()))
+                .collect()
+        };
+        let dead = self.reap_dead_sessions(
+            &snapshot
+                .iter()
+                .map(|(sid, _, peer)| (sid.clone(), peer.clone()))
+                .collect::<Vec<_>>(),
+        );
+        let dead_set: HashSet<&str> = dead.iter().map(String::as_str).collect();
+        let live: Vec<_> = snapshot
+            .into_iter()
+            .filter(|(sid, _, _)| !dead_set.contains(sid.as_str()))
+            .collect();
+
+        if live.is_empty() {
+            debug!("[MCPNotifier] no active sessions — skipping all-session list_changed");
+            return;
+        }
+
+        info!(
+            session_count = live.len(),
+            "[MCPNotifier] 📤 all-session list_changed (workspace binding changed)"
+        );
+
+        for (session_id, client_id, peer) in &live {
+            Self::push_lists_to_session(session_id, client_id, peer).await;
+        }
+    }
+
+    /// Push all three list_changed notifications to one session, logging
+    /// each outcome. Shared by the per-client and all-session fanouts.
+    async fn push_lists_to_session(session_id: &str, client_id: &str, peer: &Peer<RoleServer>) {
+        match peer.notify_tool_list_changed().await {
+            Ok(_) => debug!(
+                %session_id,
+                %client_id,
+                "[MCPNotifier] ✅ Sent tools/list_changed to session (per-peer)"
+            ),
+            Err(e) => warn!(
+                %session_id,
+                %client_id,
+                error = ?e,
+                "[MCPNotifier] failed tools/list_changed"
+            ),
+        }
+        match peer.notify_prompt_list_changed().await {
+            Ok(_) => debug!(
+                %session_id,
+                %client_id,
+                "[MCPNotifier] ✅ Sent prompts/list_changed to session (per-peer)"
+            ),
+            Err(e) => warn!(
+                %session_id,
+                %client_id,
+                error = ?e,
+                "[MCPNotifier] failed prompts/list_changed"
+            ),
+        }
+        match peer.notify_resource_list_changed().await {
+            Ok(_) => debug!(
+                %session_id,
+                %client_id,
+                "[MCPNotifier] ✅ Sent resources/list_changed to session (per-peer)"
+            ),
+            Err(e) => warn!(
+                %session_id,
+                %client_id,
+                error = ?e,
+                "[MCPNotifier] failed resources/list_changed"
+            ),
         }
     }
 }

@@ -761,6 +761,15 @@ impl ServerHandler for McpMuxGatewayHandler {
         let session_id_owned = extract_session_id(&context.extensions);
         let session_id = session_id_owned.as_deref();
 
+        // Bridge the init race on the call side too: a tools/call can land
+        // while a roots-capable session is still PendingRoots (client
+        // resumed and immediately invoked a tool it listed on a previous
+        // connection). Without the probe it resolves to empty FS ids and
+        // fails "not allowed by the current grants" — breaking the
+        // list==call invariant the list handlers already uphold.
+        self.ensure_roots_probed(&context.peer, session_id, &oauth_ctx.client_id)
+            .await;
+
         // Resolve routing once — the binding's target space is authoritative
         // (may differ from oauth_ctx.space_id). Needed both to gate the
         // per-Space meta tools below and to route a normal tool call.
@@ -933,11 +942,16 @@ impl ServerHandler for McpMuxGatewayHandler {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let session_id_owned = extract_session_id(&context.extensions);
+        // Same init-race bridge as call_tool — keep list==get symmetric.
+        self.ensure_roots_probed(
+            &context.peer,
+            session_id_owned.as_deref(),
+            &oauth_ctx.client_id,
+        )
+        .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(
-                extract_session_id(&context.extensions).as_deref(),
-                &oauth_ctx.client_id,
-            )
+            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
         // Authorize + route by matching the requested qualified name against
@@ -1041,11 +1055,16 @@ impl ServerHandler for McpMuxGatewayHandler {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let session_id_owned = extract_session_id(&context.extensions);
+        // Same init-race bridge as call_tool — keep list==read symmetric.
+        self.ensure_roots_probed(
+            &context.peer,
+            session_id_owned.as_deref(),
+            &oauth_ctx.client_id,
+        )
+        .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(
-                extract_session_id(&context.extensions).as_deref(),
-                &oauth_ctx.client_id,
-            )
+            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
             .await?;
 
         // Authorize + route by matching the requested URI against the resolved

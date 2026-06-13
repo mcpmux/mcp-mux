@@ -233,7 +233,14 @@ impl RoutingService {
             actual_tool_name, server_id
         );
 
-        // Log the tool call attempt
+        // Log the tool call attempt. Persist only the argument KEY names, not
+        // their values — tool arguments routinely carry secrets/PII, and this
+        // log is written to plaintext `current.log`. Keys alone are enough to
+        // debug routing without leaking payloads.
+        let arg_keys: Vec<&str> = arguments
+            .as_object()
+            .map(|o| o.keys().map(String::as_str).collect())
+            .unwrap_or_default();
         self.log(
             &space_id,
             &server_id,
@@ -241,7 +248,7 @@ impl RoutingService {
             format!("Calling tool: {}", actual_tool_name),
             Some(serde_json::json!({
                 "tool": actual_tool_name,
-                "arguments": arguments
+                "argument_keys": arg_keys
             })),
         )
         .await;

@@ -15,19 +15,7 @@
 
 import { useEffect, useState } from 'react';
 import { Switch, useToast, ToastContainer } from '@mcpmux/ui';
-import {
-  Sparkles,
-  Brain,
-  BookOpen,
-  Puzzle,
-  Webhook,
-  Wrench,
-  Eye,
-  Pencil,
-  Boxes,
-  Loader2,
-  ShieldCheck,
-} from 'lucide-react';
+import { Sparkles, Brain, Wrench, Eye, Pencil, Boxes, Loader2, ShieldCheck } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
 import {
   listBuiltinServers,
@@ -55,24 +43,6 @@ const COMING_SOON: ComingSoonServer[] = [
     name: 'Memory',
     description: 'Notes and recall your AI can read and write across every app.',
     icon: <Brain className="h-5 w-5" />,
-  },
-  {
-    id: 'skills',
-    name: 'Skills',
-    description: 'Install skills from a catalog and target them per Space.',
-    icon: <BookOpen className="h-5 w-5" />,
-  },
-  {
-    id: 'hooks',
-    name: 'Hooks',
-    description: 'Run your own automations before or after tool calls.',
-    icon: <Webhook className="h-5 w-5" />,
-  },
-  {
-    id: 'plugins',
-    name: 'Plugins',
-    description: 'Community plugins exposed as first-class tools.',
-    icon: <Puzzle className="h-5 w-5" />,
   },
 ];
 
@@ -171,14 +141,23 @@ export function BuiltinServersPage() {
           <h1 className="text-2xl font-bold tracking-tight lg:text-3xl">Built-in</h1>
           <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-[rgb(var(--muted))] lg:text-base">
             Built-in tools and additional features McpMux gives your AI apps — no install needed.
-            Self-management ships today; Memory, Skills, Hooks, and Plugins are next. Toggle
-            everything <span className="font-medium text-[rgb(var(--foreground))]">per Space</span>;
-            these settings apply to{' '}
-            <span className="font-semibold text-[rgb(var(--foreground))]">
+            Self-management ships today; Memory is next. Toggle everything{' '}
+            <span className="font-medium text-[rgb(var(--foreground))]">per Space</span>.
+          </p>
+          {/* Active-Space scope — made prominent so toggles aren't applied to
+              the wrong Space. Built-in config is per-Space, but clients route
+              to a Space via their workspace-root binding, which may differ
+              from the Space selected here. */}
+          <div
+            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[rgb(var(--primary))]/30 bg-[rgb(var(--primary))]/10 px-3 py-2"
+            data-testid="builtin-active-space"
+          >
+            <Boxes className="h-4 w-4 flex-shrink-0 text-[rgb(var(--primary))]" />
+            <span className="text-sm text-[rgb(var(--muted))]">These settings apply to</span>
+            <span className="text-sm font-semibold text-[rgb(var(--foreground))]">
               {space?.name ?? '…'}
             </span>
-            .
-          </p>
+          </div>
         </div>
       </header>
 

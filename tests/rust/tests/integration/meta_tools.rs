@@ -38,6 +38,9 @@ struct Fixture {
     feature_set_repo: Arc<dyn FeatureSetRepository>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
     session_roots: Arc<SessionRootsRegistry>,
+    /// Domain-event sender the registry writes to; tests subscribe to assert
+    /// the events the desktop UI / MCPNotifier react to are actually emitted.
+    event_tx: broadcast::Sender<DomainEvent>,
     space_id: Uuid,
     /// Opaque client identity (UUID-as-string here; in production for DCR
     /// clients this can be a `client_metadata` URL).
@@ -113,6 +116,7 @@ impl Fixture {
 
         let broker = Arc::new(ApprovalBroker::new().with_timeout(Duration::from_millis(500)));
         let (tx, _rx) = broadcast::channel::<DomainEvent>(32);
+        let event_tx = tx.clone();
 
         let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> =
             Arc::new(SqliteSpaceBuiltinConfigRepository::new(db.clone()));
@@ -139,11 +143,18 @@ impl Fixture {
             feature_set_repo,
             binding_repo,
             session_roots,
+            event_tx,
             space_id,
             client_id,
             session_id,
             fs_android_id,
         }
+    }
+
+    /// Subscribe to the registry's domain-event stream. Subscribe BEFORE the
+    /// call under test — broadcast only delivers messages sent after subscribe.
+    fn subscribe(&self) -> broadcast::Receiver<DomainEvent> {
+        self.event_tx.subscribe()
     }
 
     /// Attach a publisher that always auto-approves with the given decision.
@@ -523,6 +534,59 @@ async fn bind_current_workspace_creates_binding_with_normalized_root() {
     assert_eq!(
         bindings[0].feature_set_ids,
         vec![f.fs_android_id.to_string()]
+    );
+}
+
+/// A successful bind must emit `WorkspaceBindingChanged` (not a generic
+/// FeatureSet-members event) — that's the event the desktop Workspaces tab
+/// refreshes on, and the one MCPNotifier turns into a list_changed push.
+/// Regression guard for "workspace mapping didn't refresh in the UI".
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_current_workspace_emits_workspace_binding_changed() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    let mut rx = f.subscribe();
+
+    let input = if cfg!(windows) {
+        "D:\\Projects\\Notify\\"
+    } else {
+        "/proj/notify"
+    };
+    f.session_roots.set(&f.session_id, [input]);
+
+    f.registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "feature_set_id": f.fs_android_id.to_string() }),
+        )
+        .await
+        .unwrap();
+
+    // The stream also carries the central MetaToolInvoked audit event, so scan
+    // for the binding-changed signal specifically rather than asserting on the
+    // first event received.
+    let expected_root = normalize_workspace_root(input);
+    let mut found = false;
+    for _ in 0..8 {
+        match tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
+            Ok(Ok(DomainEvent::WorkspaceBindingChanged {
+                space_id,
+                workspace_root,
+            })) => {
+                assert_eq!(space_id, f.space_id);
+                assert_eq!(workspace_root, expected_root);
+                found = true;
+                break;
+            }
+            Ok(Ok(_other)) => continue,   // e.g. MetaToolInvoked — skip
+            Ok(Err(_)) | Err(_) => break, // channel closed/lagged or timed out
+        }
+    }
+    assert!(
+        found,
+        "bind must emit WorkspaceBindingChanged so the Workspaces UI refreshes"
     );
 }
 

@@ -690,7 +690,15 @@ impl MetaTool for BindCurrentWorkspaceTool {
                     feature_set_ids = ?fs_ids,
                     "[meta_tools] bind_current_workspace applied",
                 );
-                emit_tools_list_changed(&event_tx, space_id);
+                // A binding change isn't a FeatureSet-membership change — emit
+                // the binding-specific event. It both drives MCPNotifier's
+                // list_changed push to peers AND is the event the desktop
+                // Workspaces tab refreshes on (`workspace-binding-changed`).
+                // Using FeatureSetMembersChanged here left that tab stale.
+                let _ = event_tx.send(DomainEvent::WorkspaceBindingChanged {
+                    space_id,
+                    workspace_root: normalized.clone(),
+                });
                 Ok(text_result(json!({
                     "ok": true,
                     "binding_id": binding_id,

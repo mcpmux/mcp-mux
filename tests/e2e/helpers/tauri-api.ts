@@ -217,16 +217,6 @@ export async function grantOAuthClientFeatureSet(
   });
 }
 
-/** DEBUG: toggle auto-approval of every write meta tool (session-only). */
-export async function setMetaToolsAutoApprove(enabled: boolean): Promise<boolean> {
-  return invoke<boolean>('set_meta_tools_auto_approve', { enabled });
-}
-
-/** Read the current DEBUG auto-approve state. */
-export async function getMetaToolsAutoApprove(): Promise<boolean> {
-  return invoke<boolean>('get_meta_tools_auto_approve');
-}
-
 // ============================================================================
 // Server Feature Seeding API (for E2E / screenshots)
 // ============================================================================

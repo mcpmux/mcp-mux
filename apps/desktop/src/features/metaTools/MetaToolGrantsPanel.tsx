@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FlaskConical, KeyRound, Loader2, Trash2 } from 'lucide-react';
-import { Button, Card, CardContent, CardHeader, CardTitle, Switch } from '@mcpmux/ui';
+import { KeyRound, Loader2, Trash2 } from 'lucide-react';
+import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
 import {
-  getMetaToolsAutoApprove,
   listMetaToolGrants,
   revokeMetaToolGrant,
-  setMetaToolsAutoApprove,
   type MetaToolGrantEntry,
 } from '@/lib/api/metaTools';
 
@@ -23,7 +21,6 @@ export function MetaToolGrantsPanel() {
   const [grants, setGrants] = useState<MetaToolGrantEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
-  const [autoApprove, setAutoApprove] = useState<boolean | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -40,23 +37,6 @@ export function MetaToolGrantsPanel() {
     const i = setInterval(load, 10_000);
     return () => clearInterval(i);
   }, [load]);
-
-  useEffect(() => {
-    getMetaToolsAutoApprove()
-      .then(setAutoApprove)
-      .catch(() => setAutoApprove(false));
-  }, []);
-
-  const handleToggleAutoApprove = async (next: boolean) => {
-    const prev = autoApprove;
-    setAutoApprove(next);
-    try {
-      await setMetaToolsAutoApprove(next);
-    } catch (e) {
-      setAutoApprove(prev);
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
 
   const handleRevoke = async (g: MetaToolGrantEntry) => {
     const key = `${g.client_id}:${g.tool_name}`;
@@ -85,33 +65,6 @@ export function MetaToolGrantsPanel() {
       </CardHeader>
       <CardContent>
         {error && <div className="mb-2 text-sm text-red-600 dark:text-red-400">{error}</div>}
-
-        {/* DEBUG: bypass the approval dialog entirely. For developers driving
-            mcpmux_* writes (create feature sets / bindings) from a client to
-            self-test routing. Session-only; resets on gateway restart. */}
-        <div
-          className="mb-4 flex items-start justify-between gap-3 rounded-lg border border-amber-300/60 bg-amber-50 p-3 dark:border-amber-700/50 dark:bg-amber-900/20"
-          data-testid="meta-tool-auto-approve"
-        >
-          <div className="flex min-w-0 gap-2">
-            <FlaskConical className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                Auto-approve writes (debug)
-              </div>
-              <p className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-300/80">
-                Skip the approval dialog for every <code className="font-mono">mcpmux_*</code>{' '}
-                write. For self-testing only — resets on gateway restart.
-              </p>
-            </div>
-          </div>
-          <Switch
-            checked={autoApprove ?? false}
-            disabled={autoApprove === null}
-            onCheckedChange={(v) => void handleToggleAutoApprove(v)}
-            data-testid="meta-tool-auto-approve-toggle"
-          />
-        </div>
 
         {grants === null ? (
           <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">

@@ -24,7 +24,6 @@
 //! client_metadata URL for DCR-registered clients like Claude Code). The
 //! broker doesn't parse it; equality + hashing is enough.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -118,12 +117,6 @@ pub struct ApprovalBroker {
     /// Published to the desktop layer; `None` means headless.
     publisher: Mutex<Option<ApprovalPublisher>>,
     timeout: Duration,
-    /// DEBUG/dev only: when set, every write meta-tool is auto-approved without
-    /// a dialog. Lets self-tests drive `mcpmux_manage_feature_set` /
-    /// `mcpmux_bind_current_workspace` headlessly. Off by default; enabled via
-    /// `MCPMUX_DEBUG_AUTO_APPROVE=1` at startup or the
-    /// `set_meta_tools_auto_approve` command at runtime.
-    auto_approve: AtomicBool,
 }
 
 impl Default for ApprovalBroker {
@@ -134,65 +127,18 @@ impl Default for ApprovalBroker {
 
 impl ApprovalBroker {
     pub fn new() -> Self {
-        // Auto-approve is a DEBUG-ONLY bypass of the sole human-in-the-loop
-        // control for write meta-tools. Compile the env-var read out of
-        // release builds entirely (`debug_assertions` is off in `--release`)
-        // so a stray `MCPMUX_DEBUG_AUTO_APPROVE` inherited from the parent
-        // shell / CI / launcher can never silently disable the approval
-        // dialog in a shipped binary.
-        #[cfg(debug_assertions)]
-        let auto = std::env::var("MCPMUX_DEBUG_AUTO_APPROVE")
-            .map(|v| matches!(v.as_str(), "1" | "true"))
-            .unwrap_or(false);
-        #[cfg(not(debug_assertions))]
-        let auto = false;
-
-        if auto {
-            warn!(
-                "[ApprovalBroker] MCPMUX_DEBUG_AUTO_APPROVE set — meta-tool writes auto-approved"
-            );
-        }
         Self {
             pending: DashMap::new(),
             always_allow: DashMap::new(),
             rate_limit: DashMap::new(),
             publisher: Mutex::new(None),
             timeout: DEFAULT_TIMEOUT,
-            auto_approve: AtomicBool::new(auto),
         }
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
-    }
-
-    /// DEBUG/dev only: toggle auto-approval of all write meta tools.
-    ///
-    /// In release builds this is inert — a request to enable auto-approve is
-    /// ignored and logged, so production binaries cannot turn off the
-    /// approval dialog at runtime (the Tauri command stays registered for a
-    /// uniform IPC surface, but has no effect).
-    pub fn set_auto_approve(&self, on: bool) {
-        #[cfg(debug_assertions)]
-        {
-            self.auto_approve.store(on, Ordering::Relaxed);
-            warn!(on, "[ApprovalBroker] auto-approve toggled (DEBUG)");
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            if on {
-                warn!(
-                    "[ApprovalBroker] set_auto_approve(true) ignored in release build — \
-                     meta-tool approval cannot be disabled in production"
-                );
-            }
-        }
-    }
-
-    /// Whether write meta tools are currently auto-approved.
-    pub fn auto_approve_enabled(&self) -> bool {
-        self.auto_approve.load(Ordering::Relaxed)
     }
 
     /// Attach the desktop subscriber. Call once at app startup.
@@ -266,16 +212,6 @@ impl ApprovalBroker {
         tool_name: &str,
         payload: ApprovalPayload,
     ) -> Result<ApprovalDecision, MetaToolError> {
-        // 0. DEBUG auto-approve — bypass the dialog entirely (dev/self-test).
-        if self.auto_approve.load(Ordering::Relaxed) {
-            warn!(
-                %client_id,
-                tool = tool_name,
-                "[ApprovalBroker] DEBUG auto-approve — bypassing dialog",
-            );
-            return Ok(ApprovalDecision::AllowOnce);
-        }
-
         // 1. Always-allow short-circuit.
         if self
             .always_allow
@@ -389,37 +325,6 @@ mod tests {
             .request_approval(
                 &Uuid::new_v4().to_string(),
                 "mcpmux_pin_this_session",
-                make_payload(),
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(err, MetaToolError::ApprovalRequiredNoDesktop));
-    }
-
-    #[tokio::test]
-    async fn auto_approve_bypasses_dialog() {
-        // DEBUG mode: even with NO publisher attached (which normally yields
-        // ApprovalRequiredNoDesktop), auto-approve returns AllowOnce so
-        // self-tests can drive write meta tools headlessly. Toggling off
-        // restores the safe headless deny.
-        let broker = ApprovalBroker::new();
-        broker.set_auto_approve(true);
-        assert!(broker.auto_approve_enabled());
-        let d = broker
-            .request_approval(
-                &Uuid::new_v4().to_string(),
-                "mcpmux_bind_current_workspace",
-                make_payload(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(d, ApprovalDecision::AllowOnce);
-
-        broker.set_auto_approve(false);
-        let err = broker
-            .request_approval(
-                &Uuid::new_v4().to_string(),
-                "mcpmux_bind_current_workspace",
                 make_payload(),
             )
             .await

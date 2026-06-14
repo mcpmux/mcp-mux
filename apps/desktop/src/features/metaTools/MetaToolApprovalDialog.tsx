@@ -15,6 +15,13 @@ export interface ApprovalRequest {
     tool_name: string;
     summary: string;
     /**
+     * Name of the Space this write targets. Surfaced as a chip so a change
+     * aimed at a Space other than the one the user expects is obvious — a
+     * client may now pass any `space_id`. Absent for writes with no single
+     * target Space.
+     */
+    space_name?: string | null;
+    /**
      * Tool-list diff the dialog renders. Freeform by design — the backend's
      * `ApprovalPayload.diff` is an arbitrary JSON value and each write tool
      * sends a different shape (`mcpmux_create_feature_set` sends
@@ -112,9 +119,19 @@ export function MetaToolApprovalDialog() {
         <CardContent className="space-y-4">
           <div className="text-sm">
             <p className="font-medium">{current.payload.summary}</p>
-            <p className="text-xs text-[rgb(var(--muted))] mt-1 font-mono">
-              tool:&nbsp;{current.payload.tool_name}
-            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              {current.payload.space_name && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-2 py-0.5 text-xs"
+                  data-testid="meta-tool-approval-space"
+                >
+                  Space:&nbsp;<span className="font-medium">{current.payload.space_name}</span>
+                </span>
+              )}
+              <span className="text-xs text-[rgb(var(--muted))] font-mono">
+                tool:&nbsp;{current.payload.tool_name}
+              </span>
+            </div>
           </div>
 
           {current.payload.affects_other_clients && (

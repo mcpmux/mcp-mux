@@ -29,6 +29,11 @@ describe('Built-in Servers - Tool Optimization UI', () => {
     const card = await byTestId('builtin-server-tool-optimization');
     await expect(card).toBeDisplayed();
 
+    // Selecting the capability surfaces the `@mux` trigger tip so users learn
+    // the language for driving these tools from their AI client.
+    await safeClick(card);
+    await expect(await byTestId('builtin-mux-trigger-tip')).toBeDisplayed();
+
     const space = await getDefaultSpace();
     if (!space) throw new Error('No default space — cannot set up test');
 
@@ -79,8 +84,9 @@ describe('Meta tools - Approval dialog', () => {
       request_id: requestId,
       client_id: '00000000-0000-0000-0000-0000000000aa',
       payload: {
-        tool_name: 'mcpmux_pin_this_session',
-        summary: 'E2E: pin to FeatureSet "tiny" (3 tools)',
+        tool_name: 'mcpmux_manage_feature_set',
+        summary: "Update FeatureSet 'tiny' in Space 'My Space': +0 / -2",
+        space_name: 'My Space',
         diff: {
           before: ['github_create_issue', 'firebase_deploy', 'slack_send'],
           after: ['github_create_issue'],
@@ -96,6 +102,9 @@ describe('Meta tools - Approval dialog', () => {
     const dialog = await byTestId('meta-tool-approval-dialog');
     await dialog.waitForDisplayed({ timeout: TIMEOUT.medium });
 
+    // The target Space is named so cross-Space changes are obvious.
+    await expect(await byTestId('meta-tool-approval-space')).toBeDisplayed();
+
     // Every button is present and clickable.
     await expect(await byTestId('meta-tool-approval-allow-once')).toBeDisplayed();
     await expect(await byTestId('meta-tool-approval-always')).toBeDisplayed();
@@ -110,10 +119,11 @@ describe('Meta tools - Approval dialog', () => {
       request_id: requestId,
       client_id: '00000000-0000-0000-0000-0000000000bb',
       payload: {
-        tool_name: 'mcpmux_set_space_active',
-        summary: 'E2E deny: change space active FS',
+        tool_name: 'mcpmux_bind_current_workspace',
+        summary: "E2E deny: bind workspace in Space 'My Space'",
+        space_name: 'My Space',
         diff: null,
-        raw_args: {},
+        raw_args: { space_id: '22222222-2222-2222-2222-222222222222' },
         affects_other_clients: true,
       },
       expires_at_unix_secs: Math.floor(Date.now() / 1000) + 60,

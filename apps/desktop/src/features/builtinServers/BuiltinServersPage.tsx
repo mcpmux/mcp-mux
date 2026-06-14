@@ -263,6 +263,20 @@ export function BuiltinServersPage() {
                       </span>
                     )}
                   </div>
+                  <p
+                    className="mb-3 text-xs text-[rgb(var(--muted))]"
+                    data-testid="builtin-mux-trigger-tip"
+                  >
+                    Tip: in your AI client, start a request with{' '}
+                    <code className="rounded bg-[rgb(var(--surface))] px-1 py-0.5 font-mono text-[11px]">
+                      @mux
+                    </code>{' '}
+                    so it knows to drive these tools — e.g.{' '}
+                    <span className="italic">
+                      “@mux build a minimal toolset for this repo”
+                    </span>
+                    . Reads are silent; writes ask for your approval.
+                  </p>
                   <div
                     className={`overflow-hidden rounded-xl border border-[rgb(var(--border))] transition-opacity ${
                       selected.enabled ? '' : 'opacity-50'

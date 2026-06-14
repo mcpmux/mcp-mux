@@ -41,6 +41,7 @@ pnpm exec wdio run tests/e2e/wdio.conf.ts --spec tests/e2e/specs/capture-screens
 | `server-expanded.png` | Server card expanded showing tools, prompts, resources |
 | `space-switcher.png` | Sidebar with space switcher dropdown open (full window) |
 | `install-modal.png` | Server install modal from registry |
+| `meta-tool-approval.png` | Tool Optimization approval dialog — names the target Space; shown when an MCP client requests a `mcpmux_*` write (full window) |
 
 ### Web Screenshots
 

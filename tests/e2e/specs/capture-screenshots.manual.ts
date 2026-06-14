@@ -559,6 +559,43 @@ describe('Screenshot Capture', function () {
     await saveScreenshot('tool-optimization');
   });
 
+  it('captures the meta-tool approval dialog (self-management authorization)', async () => {
+    const nav = await byTestId('nav-builtin-servers');
+    await safeClick(nav);
+    await browser.pause(1500);
+    // The approval dialog is a global listener — emit a synthetic write request
+    // (as if an MCP client asked to compose a FeatureSet) so it renders. Mirrors
+    // the real ApprovalRequest shape, including the target-Space name.
+    await browser.execute((data: unknown) => {
+      (window as unknown as { __TAURI_TEST_API__?: { emit: (e: string, d: unknown) => void } })
+        .__TAURI_TEST_API__?.emit('meta-tool-approval-request', data);
+    }, {
+      request_id: 'shot-approval',
+      client_id: '00000000-0000-0000-0000-0000000000aa',
+      payload: {
+        tool_name: 'mcpmux_manage_feature_set',
+        summary: "Create FeatureSet 'Frontend' in Space 'My Space' with 6 tool(s)",
+        space_name: 'My Space',
+        diff: {
+          added: [
+            'github_create_issue',
+            'github_search_code',
+            'filesystem_read_file',
+            'filesystem_write_file',
+            'notion_search_pages',
+            'slack_send_message',
+          ],
+        },
+        raw_args: { action: 'create', name: 'Frontend' },
+        affects_other_clients: false,
+      },
+      expires_at_unix_secs: 4102444800,
+    });
+    await browser.pause(900);
+    // Full window — the dialog is a fixed overlay over the whole app.
+    await saveFullScreenshot('meta-tool-approval');
+  });
+
   it('captures Connected Clients with approval modal', async () => {
     const nav = await byTestId('nav-clients');
     await safeClick(nav);

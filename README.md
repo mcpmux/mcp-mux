@@ -111,13 +111,19 @@ Create isolated Spaces — each with their own servers, credentials, and permiss
 
 Your AI client tells McpMux which folder it's working in (its MCP *root*). McpMux uses that to **route each workspace to its own toolset** — open your backend repo and the AI sees your database and deploy tools; open a docs folder and it sees only search and filesystem. Map a folder once in the **Workspaces** tab (or let the AI do it — see below) and every future session from that exact path resolves automatically. Matching is per-folder and exact, so nothing leaks across projects.
 
+![Workspaces — map a folder to the Space and FeatureSet it should get](docs/screenshots/workspaces.png)
+
 ### Control What Each Client Can Do
 
-Not every AI client should have the same power. Create Feature Sets — permission bundles that control exactly which tools, prompts, and resources a client can access. Build a "Read Only" set for cautious workflows, a "React Development" set with just GitHub and Filesystem, or a "Full Stack Dev" set with everything. Assign them per-client so each tool only goes where you want it.
+Not every AI client should have the same power. Create Feature Sets — curated bundles that control exactly which tools, prompts, and resources are exposed. Build a "Read Only" set for cautious workflows, a "React Development" set with just GitHub and Filesystem, or a "Full Stack Dev" set with everything — then route a folder to it via a Workspace mapping. A FeatureSet's included features *are* the effective toolset a session resolves to.
+
+![Feature Sets — pick exactly which tools each bundle exposes, per server](docs/screenshots/featureset-detail.png)
 
 ### See and Manage Every Connected Client
 
-Cursor, VS Code, Windsurf, Claude Code — see every AI client connected to your gateway in real time. Click any client to manage its workspace, grant or revoke feature sets, and see exactly which tools it can access. New clients authenticate via OAuth with a one-click approval flow.
+Cursor, VS Code, Windsurf, Claude Code — see every AI app connected to your gateway in real time, with live status. Routing is **workspace-driven**: each app's toolset is decided by the Workspace binding for the folder it reports, not configured per app. Open any app to rename it, see how it's routed, or revoke its connection. New apps authenticate via OAuth with a one-click approval flow.
+
+![Connected apps — routing is workspace-driven per reported folder](docs/screenshots/client-detail.png)
 
 ### Let Your AI Curate Its Own Toolset
 
@@ -129,7 +135,11 @@ Start a request with **`@mux`** and the assistant can:
 - **Compose** a focused FeatureSet of just the tools it needs — `mcpmux_manage_feature_set`
 - **Pin** the current folder to that set so it sticks — `mcpmux_bind_current_workspace`
 
+![Tool Optimization — the built-in self-management tools the AI drives, reads silent and writes gated](docs/screenshots/tool-optimization.png)
+
 Reads are silent; anything that changes your setup pops a **one-click approval dialog that names the exact Space** — the AI proposes, you decide. The `@mux` trigger keeps these requests cleanly separated from your real work, and every operation can target a specific Space by id.
+
+![Approval — every self-management write asks first, showing the target Space and the exact tool diff](docs/screenshots/meta-tool-approval.png)
 
 > *"@mux build a minimal toolset for this Next.js repo and pin it to this folder."*
 

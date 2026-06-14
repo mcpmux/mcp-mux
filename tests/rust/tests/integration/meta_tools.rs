@@ -266,9 +266,109 @@ async fn list_feature_sets_returns_space_contents() {
     assert_eq!(sets.len(), 3, "Default + 2 custom expected");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn search_tools_matches_name_server_and_description() {
+    let f = Fixture::new().await;
+
+    // By qualified name / server id.
+    let by_name = Fixture::result_json(
+        &f.registry
+            .call(
+                "mcpmux_search_tools",
+                &f.client_id,
+                Some(&f.session_id),
+                json!({ "query": "github" }),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(by_name.get("match_count").unwrap().as_u64().unwrap(), 1);
+    let tools = by_name.get("tools").unwrap().as_array().unwrap();
+    assert_eq!(
+        tools[0].get("qualified_name").unwrap().as_str().unwrap(),
+        "github_create_issue"
+    );
+
+    // By description text ("Deploy to Firebase").
+    let by_desc = Fixture::result_json(
+        &f.registry
+            .call(
+                "mcpmux_search_tools",
+                &f.client_id,
+                Some(&f.session_id),
+                json!({ "query": "deploy" }),
+            )
+            .await
+            .unwrap(),
+    );
+    let desc_tools = by_desc.get("tools").unwrap().as_array().unwrap();
+    assert_eq!(desc_tools.len(), 1);
+    assert_eq!(
+        desc_tools[0]
+            .get("qualified_name")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "firebase_deploy"
+    );
+
+    // No match → empty, not an error.
+    let none = Fixture::result_json(
+        &f.registry
+            .call(
+                "mcpmux_search_tools",
+                &f.client_id,
+                Some(&f.session_id),
+                json!({ "query": "zzzznotathing" }),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(none.get("match_count").unwrap().as_u64().unwrap(), 0);
+    assert!(none.get("tools").unwrap().as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_tools_requires_query() {
+    let f = Fixture::new().await;
+    let res = f
+        .call_tool_as_handler_would("mcpmux_search_tools", json!({}))
+        .await;
+    assert!(Fixture::is_error(&res));
+    assert_eq!(
+        Fixture::result_json(&res)
+            .get("error")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "invalid_argument"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_tools_caps_results_at_limit_and_flags_truncation() {
+    let f = Fixture::new().await;
+    // "e" appears in both seeded tools' names/descriptions → 2 matches.
+    let body = Fixture::result_json(
+        &f.registry
+            .call(
+                "mcpmux_search_tools",
+                &f.client_id,
+                Some(&f.session_id),
+                json!({ "query": "e", "limit": 1 }),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(body.get("match_count").unwrap().as_u64().unwrap(), 2);
+    assert_eq!(body.get("returned").unwrap().as_u64().unwrap(), 1);
+    assert!(body.get("truncated").unwrap().as_bool().unwrap());
+    assert_eq!(body.get("tools").unwrap().as_array().unwrap().len(), 1);
+}
+
 // `describe_resolution` and `describe_workspace` were both removed at the
-// user's request — the read surface is now just `list_all_tools` and
-// `list_feature_sets`. Behavior previously asserted here is covered by
+// user's request — the read surface is now `list_all_tools`, `search_tools`,
+// and `list_feature_sets`. Behavior previously asserted here is covered by
 // `FeatureSetResolverService`'s own tests in
 // `tests/rust/tests/integration/feature_set_resolver.rs`.
 
@@ -693,6 +793,7 @@ async fn registry_advertises_every_default_tool_with_annotations() {
     let names: Vec<_> = tools.iter().map(|t| t.name.to_string()).collect();
     for expected in [
         "mcpmux_list_all_tools",
+        "mcpmux_search_tools",
         "mcpmux_list_feature_sets",
         "mcpmux_manage_feature_set",
         "mcpmux_bind_current_workspace",

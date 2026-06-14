@@ -78,10 +78,11 @@ pub fn build_default_registry(
     let mut registry = MetaToolRegistry::new(ctx);
     // Reads — no approval needed.
     registry.register(Box::new(tools::ListAllToolsTool));
+    registry.register(Box::new(tools::SearchToolsTool));
     registry.register(Box::new(tools::ListFeatureSetsTool));
     // Both `describe_resolution` and `describe_workspace` were removed by
-    // user request — the read surface is just the two list_* tools above,
-    // which an LLM can stitch into the same picture without an extra hop.
+    // user request — the read surface is the list_* tools above plus
+    // `search_tools`, which an LLM can stitch into the same picture.
     // Writes — gated by ApprovalBroker.
     registry.register(Box::new(tools::ManageFeatureSetTool));
     registry.register(Box::new(tools::BindCurrentWorkspaceTool));

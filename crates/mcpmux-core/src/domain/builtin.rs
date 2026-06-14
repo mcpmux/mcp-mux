@@ -62,6 +62,11 @@ pub fn builtin_servers() -> Vec<BuiltinServerDescriptor> {
                 write: false,
             },
             BuiltinToolDescriptor {
+                name: "mcpmux_search_tools",
+                description: "Find tools by keyword without pulling the whole catalog.",
+                write: false,
+            },
+            BuiltinToolDescriptor {
                 name: "mcpmux_list_feature_sets",
                 description: "See the feature sets defined in the Space.",
                 write: false,

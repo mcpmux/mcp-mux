@@ -111,6 +111,117 @@ impl MetaTool for ListAllToolsTool {
 }
 
 // ---------------------------------------------------------------------------
+// mcpmux_search_tools — read
+// ---------------------------------------------------------------------------
+
+pub struct SearchToolsTool;
+
+/// Default cap on returned matches — keeps the payload (and the agent's token
+/// spend) bounded when a broad query matches many tools.
+const SEARCH_TOOLS_DEFAULT_LIMIT: usize = 25;
+/// Hard ceiling so a caller can't request an unbounded dump via `limit`.
+const SEARCH_TOOLS_MAX_LIMIT: usize = 100;
+
+#[async_trait]
+impl MetaTool for SearchToolsTool {
+    fn name(&self) -> &'static str {
+        "mcpmux_search_tools"
+    }
+
+    fn description(&self) -> &'static str {
+        "Search the tools installed in the caller's resolved Space by keyword, \
+         without the current FeatureSet filter applied. Prefer this over \
+         `mcpmux_list_all_tools` when you know roughly what you're looking for — \
+         it returns only matches, so it's far cheaper than dumping the whole \
+         catalog. `query` is matched case-insensitively against each tool's \
+         qualified name, description, and server id. Optional `limit` (default \
+         25, max 100). Returns an array of \
+         {server_id, qualified_name, description, available}."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "keyword(s) matched against tool name, description, and server id"
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": SEARCH_TOOLS_MAX_LIMIT,
+                    "description": "max matches to return (default 25)"
+                }
+            }
+        })
+    }
+
+    async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
+        let query = opt_str_arg(&call.args, "query").ok_or_else(|| {
+            MetaToolError::InvalidArgument("search requires a non-empty `query`".into())
+        })?;
+        let needle = query.to_lowercase();
+
+        // `limit`: clamp to [1, MAX]; fall back to the default when absent or
+        // not a positive integer.
+        let limit = call
+            .args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| (n as usize).clamp(1, SEARCH_TOOLS_MAX_LIMIT))
+            .unwrap_or(SEARCH_TOOLS_DEFAULT_LIMIT);
+
+        let space_id = caller_space_id(&call).await?;
+        let features = call
+            .ctx
+            .server_feature_repo
+            .list_for_space(&space_id.to_string())
+            .await?;
+
+        let mut matches: Vec<&ServerFeature> = features
+            .iter()
+            .filter(|f| f.feature_type == FeatureType::Tool)
+            .filter(|f| {
+                f.qualified_name().to_lowercase().contains(&needle)
+                    || f.server_id.to_lowercase().contains(&needle)
+                    || f.description
+                        .as_deref()
+                        .map(|d| d.to_lowercase().contains(&needle))
+                        .unwrap_or(false)
+            })
+            .collect();
+
+        // Stable, predictable ordering before truncating to `limit`.
+        matches.sort_by_key(|f| f.qualified_name());
+        let total = matches.len();
+        let truncated = total > limit;
+
+        let tools: Vec<_> = matches
+            .into_iter()
+            .take(limit)
+            .map(|f| {
+                json!({
+                    "server_id": f.server_id,
+                    "qualified_name": f.qualified_name(),
+                    "description": f.description,
+                    "available": f.is_available,
+                })
+            })
+            .collect();
+
+        Ok(text_result(json!({
+            "query": query,
+            "match_count": total,
+            "returned": tools.len(),
+            "truncated": truncated,
+            "tools": tools,
+        })))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // mcpmux_list_feature_sets — read
 // ---------------------------------------------------------------------------
 

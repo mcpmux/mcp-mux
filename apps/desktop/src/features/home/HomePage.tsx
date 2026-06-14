@@ -9,12 +9,12 @@
  * row of stat tiles that double as navigation — every tile is a button into
  * the page that manages what it counts.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Server, Wrench, Monitor, Globe, ArrowUpRight, Compass, ArrowRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ConnectionCard } from '@/components/ConnectionCard';
-import { useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
+import { useGatewayEvents, useServerStatusEvents, useDomainEvents } from '@/hooks/useDomainEvents';
 import { useViewSpace, useNavigateTo } from '@/stores';
 import type { NavItem } from '@/stores/types';
 import { spaceAccentColor } from '@/lib/spaceAccent';
@@ -162,7 +162,7 @@ export function HomePage() {
   const [statsLoaded, setStatsLoaded] = useState(false);
   const viewSpace = useViewSpace();
 
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
       const [clients, featureSets, gateway, installedServers] = await Promise.all([
         import('@/lib/api/clients').then((m) => m.listClients()),
@@ -182,13 +182,12 @@ export function HomePage() {
     } catch (e) {
       console.error('Failed to load home stats:', e);
     }
-  };
+  }, [viewSpace?.id]);
 
   // Load on mount and when the viewed Space changes.
   useEffect(() => {
     loadStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewSpace?.id]);
+  }, [loadStats]);
 
   // Keep `Tools: X/Y` honest across gateway start/stop and backend churn.
   // ConnectionCard owns the actual running/URL UI.
@@ -205,6 +204,20 @@ export function HomePage() {
       loadStats();
     }
   });
+
+  // Keep the FeatureSets + Clients tiles live when those change anywhere —
+  // e.g. an MCP client composing a FeatureSet via `mcpmux_manage_feature_set`,
+  // or a new app authenticating. Without this the counts go stale until a
+  // Space switch or reload.
+  const { subscribe } = useDomainEvents();
+  useEffect(() => {
+    const unsubs = [
+      subscribe('feature-set-changed', () => void loadStats()),
+      subscribe('client-changed', () => void loadStats()),
+      subscribe('server-changed', () => void loadStats()),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, [subscribe, loadStats]);
 
   return (
     <div className="space-y-6">

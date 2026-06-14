@@ -57,8 +57,13 @@ pub fn builtin_servers() -> Vec<BuiltinServerDescriptor> {
         default_enabled: true,
         tools: vec![
             BuiltinToolDescriptor {
+                name: "mcpmux_list_spaces",
+                description: "List all Spaces so the AI can target one by id.",
+                write: false,
+            },
+            BuiltinToolDescriptor {
                 name: "mcpmux_list_all_tools",
-                description: "Browse every tool available in the resolved Space, unfiltered.",
+                description: "Browse every tool available in a Space, unfiltered.",
                 write: false,
             },
             BuiltinToolDescriptor {

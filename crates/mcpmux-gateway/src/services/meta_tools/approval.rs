@@ -73,6 +73,12 @@ pub struct ApprovalPayload {
     /// Human summary the dialog puts above the diff. e.g.
     /// "Pin this connection to FeatureSet 'android-dev' (12 tools)".
     pub summary: String,
+    /// Name of the Space this write targets, surfaced as a labeled chip so the
+    /// user can see (and reject) a change aimed at a Space other than the one
+    /// they expect — important now that a client may pass any `space_id`.
+    /// `None` for writes with no single target Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_name: Option<String>,
     /// Tool-list diff the dialog shows to make the change concrete.
     /// Optional because some writes (e.g. create_feature_set without
     /// activation) don't shift the caller's resolved toolset.
@@ -350,6 +356,7 @@ mod tests {
         ApprovalPayload {
             tool_name: "mcpmux_pin_this_session".into(),
             summary: "test".into(),
+            space_name: None,
             diff: None,
             raw_args: serde_json::json!({}),
             affects_other_clients: false,

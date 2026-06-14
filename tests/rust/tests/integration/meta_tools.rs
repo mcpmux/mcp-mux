@@ -35,8 +35,10 @@ struct Fixture {
     broker: Arc<ApprovalBroker>,
     #[allow(dead_code)]
     client_repo: Arc<dyn InboundMcpClientRepository>,
+    space_repo: Arc<dyn SpaceRepository>,
     feature_set_repo: Arc<dyn FeatureSetRepository>,
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
+    server_feature_repo: Arc<dyn ServerFeatureRepository>,
     session_roots: Arc<SessionRootsRegistry>,
     /// Domain-event sender the registry writes to; tests subscribe to assert
     /// the events the desktop UI / MCPNotifier react to are actually emitted.
@@ -140,8 +142,10 @@ impl Fixture {
             registry,
             broker,
             client_repo,
+            space_repo,
             feature_set_repo,
             binding_repo,
+            server_feature_repo,
             session_roots,
             event_tx,
             space_id,
@@ -732,6 +736,154 @@ async fn builtin_descriptor_matches_registered_meta_tools() {
     );
     // Sanity: the new search tool is present and read-only.
     assert_eq!(described.get("mcpmux_search_tools"), Some(&false));
+    assert_eq!(described.get("mcpmux_list_spaces"), Some(&false));
+}
+
+// ---------------------------------------------------------------------------
+// space_id targeting — a client may inspect/configure any Space it can see
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_spaces_returns_all_spaces_including_default() {
+    let f = Fixture::new().await;
+    let other = mcpmux_core::Space::new("Second Space");
+    f.space_repo.create(&other).await.unwrap();
+
+    let body = Fixture::result_json(
+        &f.registry
+            .call(
+                "mcpmux_list_spaces",
+                &f.client_id,
+                Some(&f.session_id),
+                json!({}),
+            )
+            .await
+            .unwrap(),
+    );
+    let spaces = body.get("spaces").unwrap().as_array().unwrap();
+    assert!(spaces
+        .iter()
+        .any(|s| s.get("id").and_then(|v| v.as_str()) == Some(f.space_id.to_string().as_str())));
+    assert!(spaces
+        .iter()
+        .any(|s| s.get("name").and_then(|v| v.as_str()) == Some("Second Space")));
+    assert!(spaces
+        .iter()
+        .any(|s| s.get("is_default").and_then(|v| v.as_bool()) == Some(true)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_unknown_space_id_is_rejected() {
+    let f = Fixture::new().await;
+    let res = f
+        .call_tool_as_handler_would(
+            "mcpmux_list_all_tools",
+            json!({ "space_id": Uuid::new_v4().to_string() }),
+        )
+        .await;
+    assert!(Fixture::is_error(&res));
+    assert_eq!(
+        Fixture::result_json(&res)
+            .get("error")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "invalid_argument"
+    );
+}
+
+/// A client can compose a FeatureSet in a Space *other* than its resolved one
+/// by passing `space_id` — the write lands there, not in the caller's Space.
+#[tokio::test(flavor = "multi_thread")]
+async fn manage_feature_set_create_targets_explicit_space() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+
+    // A second Space with its own tool to add.
+    let other = mcpmux_core::Space::new("Other Space");
+    f.space_repo.create(&other).await.unwrap();
+    let mut tool = ServerFeature::tool(other.id, "linear", "create_ticket");
+    tool.description = Some("Create a Linear ticket".into());
+    f.server_feature_repo.upsert(&tool).await.unwrap();
+
+    let res = f
+        .registry
+        .call(
+            "mcpmux_manage_feature_set",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({
+                "action": "create",
+                "space_id": other.id.to_string(),
+                "name": "Linear",
+                "add": ["linear_create_ticket"],
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !Fixture::is_error(&res),
+        "cross-space create allowed: {res:?}"
+    );
+
+    // Landed in the targeted Space, not the caller's resolved (default) Space.
+    let in_other = f
+        .feature_set_repo
+        .list_by_space(&other.id.to_string())
+        .await
+        .unwrap();
+    assert!(in_other.iter().any(|fs| fs.name == "Linear"));
+    let in_default = f
+        .feature_set_repo
+        .list_by_space(&f.space_id.to_string())
+        .await
+        .unwrap();
+    assert!(!in_default.iter().any(|fs| fs.name == "Linear"));
+}
+
+/// A client can bind its current workspace into a *different* Space via
+/// `space_id`; the binding is created in that Space (gated by approval).
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_current_workspace_targets_explicit_space() {
+    let f = Fixture::new().await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+
+    let other = mcpmux_core::Space::new("Bind Target");
+    f.space_repo.create(&other).await.unwrap();
+
+    let input = if cfg!(windows) {
+        "D:\\Projects\\CrossSpace"
+    } else {
+        "/proj/crossspace"
+    };
+    f.session_roots.set(&f.session_id, [input]);
+
+    // Omit feature_set_id (bind to no Space tools) but target the OTHER Space.
+    let res = f
+        .registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "space_id": other.id.to_string() }),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !Fixture::is_error(&res),
+        "cross-space bind allowed: {res:?}"
+    );
+
+    let bindings = f.binding_repo.list_for_space(&other.id).await.unwrap();
+    assert_eq!(bindings.len(), 1, "binding created in the targeted Space");
+    assert_eq!(bindings[0].space_id, other.id);
+    // Nothing leaked into the caller's resolved (default) Space.
+    assert!(f
+        .binding_repo
+        .list_for_space(&f.space_id)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -836,6 +988,7 @@ async fn registry_advertises_every_default_tool_with_annotations() {
     let tools = f.registry.list_as_tools();
     let names: Vec<_> = tools.iter().map(|t| t.name.to_string()).collect();
     for expected in [
+        "mcpmux_list_spaces",
         "mcpmux_list_all_tools",
         "mcpmux_search_tools",
         "mcpmux_list_feature_sets",

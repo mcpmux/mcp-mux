@@ -354,7 +354,21 @@ impl ServerHandler for McpMuxGatewayHandler {
         info.server_info = server_info;
         info.instructions = Some(
             "McpMux aggregates multiple MCP servers. Use tools/prompts/resources \
-             from your authorized backend servers."
+             from your authorized backend servers to do the user's work.\n\n\
+             The `mcpmux_*` tools are different: they are McpMux's own \
+             self-management / tool-optimization controls, NOT tools for the \
+             user's task. Use them ONLY when the user is explicitly managing \
+             their McpMux setup — discovering available tools, composing or \
+             editing FeatureSets, listing Spaces, or routing (binding) a \
+             workspace to a FeatureSet. The trigger word is `@mux`: when a user \
+             message contains `@mux` (e.g. \"@mux build a minimal toolset for \
+             this repo\"), treat it as a McpMux tool-optimization request and use \
+             the `mcpmux_*` tools to fulfill it. Otherwise do not call them. \
+             Reads (mcpmux_list_spaces / list_all_tools / search_tools / \
+             list_feature_sets) are safe to call freely once the user has opted \
+             in; writes (manage_feature_set, bind_current_workspace) prompt the \
+             user for approval. Most operations accept an optional `space_id` \
+             (from mcpmux_list_spaces) to target a specific Space."
                 .to_string(),
         );
         info

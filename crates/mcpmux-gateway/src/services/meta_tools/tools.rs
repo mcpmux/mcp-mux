@@ -64,6 +64,43 @@ async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
     ))
 }
 
+/// Resolve the Space an operation targets: an explicit `space_id` arg when the
+/// caller names one (validated to exist), otherwise the caller's resolved
+/// Space. This is what lets a client manage ANY Space it can discover via
+/// `mcpmux_list_spaces` — writes stay gated by the approval dialog, which names
+/// the target Space so cross-Space changes are a conscious user choice.
+async fn target_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError> {
+    match opt_str_arg(&call.args, "space_id") {
+        Some(s) => {
+            let id = Uuid::parse_str(&s).map_err(|_| {
+                MetaToolError::InvalidArgument(format!("`space_id` is not a UUID: {s}"))
+            })?;
+            call.ctx.space_repo.get(&id).await?.ok_or_else(|| {
+                MetaToolError::InvalidArgument(format!("Space '{id}' does not exist"))
+            })?;
+            Ok(id)
+        }
+        None => caller_space_id(call).await,
+    }
+}
+
+/// Human-readable Space name for approval summaries; falls back to the id.
+async fn space_label(call: &MetaToolCall<'_>, space_id: Uuid) -> String {
+    match call.ctx.space_repo.get(&space_id).await {
+        Ok(Some(space)) => space.name,
+        _ => space_id.to_string(),
+    }
+}
+
+/// The optional `space_id` input-schema property shared by every meta tool.
+/// Omitted ⇒ the tool targets the caller's resolved Space (back-compatible).
+fn space_id_schema_prop() -> Value {
+    json!({
+        "type": "string",
+        "description": "Target Space id (from mcpmux_list_spaces). Omit to use the current workspace's resolved Space."
+    })
+}
+
 // ---------------------------------------------------------------------------
 // mcpmux_list_all_tools — read
 // ---------------------------------------------------------------------------
@@ -77,18 +114,22 @@ impl MetaTool for ListAllToolsTool {
     }
 
     fn description(&self) -> &'static str {
-        "List every tool installed in the caller's resolved Space, without \
-         the current FeatureSet filter applied. Use this to see what the \
-         workspace could expose before composing a custom FeatureSet. \
-         Returns an array of {server_id, qualified_name, description, available}."
+        "List every tool installed in a Space (default: the caller's resolved \
+         Space; pass `space_id` to target another), without the current \
+         FeatureSet filter applied. Use this to see what could be exposed \
+         before composing a custom FeatureSet. Returns an array of \
+         {server_id, qualified_name, description, available}."
     }
 
     fn input_schema(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": { "space_id": space_id_schema_prop() }
+        })
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let space_id = caller_space_id(&call).await?;
+        let space_id = target_space_id(&call).await?;
         let features = call
             .ctx
             .server_feature_repo
@@ -106,7 +147,7 @@ impl MetaTool for ListAllToolsTool {
                 })
             })
             .collect();
-        Ok(text_result(json!({ "tools": tools })))
+        Ok(text_result(json!({ "space_id": space_id, "tools": tools })))
     }
 }
 
@@ -129,13 +170,13 @@ impl MetaTool for SearchToolsTool {
     }
 
     fn description(&self) -> &'static str {
-        "Search the tools installed in the caller's resolved Space by keyword, \
-         without the current FeatureSet filter applied. Prefer this over \
-         `mcpmux_list_all_tools` when you know roughly what you're looking for — \
-         it returns only matches, so it's far cheaper than dumping the whole \
-         catalog. `query` is matched case-insensitively against each tool's \
-         qualified name, description, and server id. Optional `limit` (default \
-         25, max 100). Returns an array of \
+        "Search the tools installed in a Space by keyword (default: the caller's \
+         resolved Space; pass `space_id` to target another), without the current \
+         FeatureSet filter applied. Prefer this over `mcpmux_list_all_tools` when \
+         you know roughly what you're looking for — it returns only matches, so \
+         it's far cheaper than dumping the whole catalog. `query` is matched \
+         case-insensitively against each tool's qualified name, description, and \
+         server id. Optional `limit` (default 25, max 100). Returns an array of \
          {server_id, qualified_name, description, available}."
     }
 
@@ -153,7 +194,8 @@ impl MetaTool for SearchToolsTool {
                     "minimum": 1,
                     "maximum": SEARCH_TOOLS_MAX_LIMIT,
                     "description": "max matches to return (default 25)"
-                }
+                },
+                "space_id": space_id_schema_prop()
             }
         })
     }
@@ -173,7 +215,7 @@ impl MetaTool for SearchToolsTool {
             .map(|n| (n as usize).clamp(1, SEARCH_TOOLS_MAX_LIMIT))
             .unwrap_or(SEARCH_TOOLS_DEFAULT_LIMIT);
 
-        let space_id = caller_space_id(&call).await?;
+        let space_id = target_space_id(&call).await?;
         let features = call
             .ctx
             .server_feature_repo
@@ -212,12 +254,55 @@ impl MetaTool for SearchToolsTool {
             .collect();
 
         Ok(text_result(json!({
+            "space_id": space_id,
             "query": query,
             "match_count": total,
             "returned": tools.len(),
             "truncated": truncated,
             "tools": tools,
         })))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mcpmux_list_spaces — read
+// ---------------------------------------------------------------------------
+
+pub struct ListSpacesTool;
+
+#[async_trait]
+impl MetaTool for ListSpacesTool {
+    fn name(&self) -> &'static str {
+        "mcpmux_list_spaces"
+    }
+
+    fn description(&self) -> &'static str {
+        "List every Space McpMux knows about. Returns an array of \
+         {id, name, is_default, description}. Use a returned `id` as the \
+         `space_id` argument to other tools to inspect or configure a specific \
+         Space (e.g. compose a FeatureSet in one Space and bind the current \
+         workspace to it). The Space marked `is_default` is the fallback when a \
+         workspace has no binding."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {} })
+    }
+
+    async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
+        let spaces = call.ctx.space_repo.list().await?;
+        let spaces: Vec<_> = spaces
+            .iter()
+            .map(|s| {
+                json!({
+                    "id": s.id,
+                    "name": s.name,
+                    "is_default": s.is_default,
+                    "description": s.description,
+                })
+            })
+            .collect();
+        Ok(text_result(json!({ "spaces": spaces })))
     }
 }
 
@@ -234,18 +319,22 @@ impl MetaTool for ListFeatureSetsTool {
     }
 
     fn description(&self) -> &'static str {
-        "List every FeatureSet defined in the caller's resolved Space — \
-         built-ins and custom. Each entry carries `id`, `name`, `description`, \
-         `type`, and `is_builtin`. Use before composing a new FeatureSet so \
-         you don't recreate one that already fits."
+        "List every FeatureSet defined in a Space (default: the caller's resolved \
+         Space; pass `space_id` to target another) — built-ins and custom. Each \
+         entry carries `id`, `name`, `description`, `type`, and `is_builtin`. Use \
+         before composing a new FeatureSet so you don't recreate one that already \
+         fits."
     }
 
     fn input_schema(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": { "space_id": space_id_schema_prop() }
+        })
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let space_id = caller_space_id(&call).await?;
+        let space_id = target_space_id(&call).await?;
         let space = call
             .ctx
             .space_repo
@@ -284,10 +373,12 @@ impl MetaTool for ListFeatureSetsTool {
 /// mutation. Returns the broker's decision so the caller can proceed only
 /// on success. `mutate` is the thing that runs post-approval and is
 /// expected to emit `tools/list_changed` when relevant.
+#[allow(clippy::too_many_arguments)]
 async fn with_approval<F, Fut, T>(
     call: &MetaToolCall<'_>,
     tool_name: &'static str,
     summary: String,
+    space_name: Option<String>,
     diff: Option<Value>,
     affects_other_clients: bool,
     raw_args: Value,
@@ -300,6 +391,7 @@ where
     let payload = ApprovalPayload {
         tool_name: tool_name.to_string(),
         summary,
+        space_name,
         diff,
         raw_args,
         affects_other_clients,
@@ -419,7 +511,11 @@ impl ManageFeatureSetTool {
             )));
         }
 
-        let summary = format!("Create FeatureSet '{name}' with {} tool(s)", matched.len());
+        let space = space_label(call, space_id).await;
+        let summary = format!(
+            "Create FeatureSet '{name}' in Space '{space}' with {} tool(s)",
+            matched.len()
+        );
         let diff = json!({
             "added": matched.iter().map(|f| f.qualified_name()).collect::<Vec<_>>(),
         });
@@ -431,6 +527,7 @@ impl ManageFeatureSetTool {
             call,
             "mcpmux_manage_feature_set",
             summary,
+            Some(space),
             Some(diff),
             false,
             call.args.clone(),
@@ -498,8 +595,9 @@ impl ManageFeatureSetTool {
             .as_deref()
             .map(|n| format!(", rename → '{n}'"))
             .unwrap_or_default();
+        let space = space_label(call, space_id).await;
         let summary = format!(
-            "Update FeatureSet '{}': +{} / -{}{}",
+            "Update FeatureSet '{}' in Space '{space}': +{} / -{}{}",
             fs.name,
             add_features.len(),
             remove_features.len(),
@@ -517,6 +615,7 @@ impl ManageFeatureSetTool {
             call,
             "mcpmux_manage_feature_set",
             summary,
+            Some(space),
             Some(diff),
             true,
             call.args.clone(),
@@ -574,7 +673,8 @@ impl ManageFeatureSetTool {
             })?;
         ensure_custom_in_space(&fs, space_id, fs_id)?;
 
-        let summary = format!("Delete FeatureSet '{}'", fs.name);
+        let space = space_label(call, space_id).await;
+        let summary = format!("Delete FeatureSet '{}' in Space '{space}'", fs.name);
         let fs_repo = call.ctx.feature_set_repo.clone();
         let event_tx = call.ctx.domain_event_tx.clone();
         let fs_id_s = fs_id.to_string();
@@ -582,6 +682,7 @@ impl ManageFeatureSetTool {
             call,
             "mcpmux_manage_feature_set",
             summary,
+            Some(space),
             None,
             true,
             call.args.clone(),
@@ -607,13 +708,15 @@ impl MetaTool for ManageFeatureSetTool {
     }
 
     fn description(&self) -> &'static str {
-        "Create, update, or delete a custom FeatureSet (a named tool bundle) in \
-         the caller's resolved Space. `action`: 'create' (needs `name` + `add` \
-         qualified tool names), 'update' (needs `feature_set_id`; pass any of \
-         `name` / `description` / `add` / `remove`), or 'delete' (needs \
-         `feature_set_id`). Tool names are the qualified names from \
-         `mcpmux_list_all_tools`. Built-in sets can't be modified. Route a \
-         workspace through a FeatureSet with `mcpmux_bind_current_workspace`."
+        "Create, update, or delete a custom FeatureSet (a named tool bundle) in a \
+         Space (default: the caller's resolved Space; pass `space_id` from \
+         `mcpmux_list_spaces` to target another). `action`: 'create' (needs \
+         `name` + `add` qualified tool names), 'update' (needs `feature_set_id`; \
+         pass any of `name` / `description` / `add` / `remove`), or 'delete' \
+         (needs `feature_set_id`). Tool names are the qualified names from \
+         `mcpmux_list_all_tools`/`mcpmux_search_tools`. Built-in sets can't be \
+         modified. Requires user approval. Route a workspace through a FeatureSet \
+         with `mcpmux_bind_current_workspace`."
     }
 
     fn input_schema(&self) -> Value {
@@ -640,7 +743,8 @@ impl MetaTool for ManageFeatureSetTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "qualified tool names to remove (update only)"
-                }
+                },
+                "space_id": space_id_schema_prop()
             }
         })
     }
@@ -657,7 +761,7 @@ impl MetaTool for ManageFeatureSetTool {
             .unwrap_or("")
             .trim()
             .to_lowercase();
-        let space_id = caller_space_id(&call).await?;
+        let space_id = target_space_id(&call).await?;
         match action.as_str() {
             "create" => self.create(&call, space_id).await,
             "update" => self.update(&call, space_id).await,
@@ -685,14 +789,15 @@ impl MetaTool for BindCurrentWorkspaceTool {
     }
 
     fn description(&self) -> &'static str {
-        "Route the caller's current workspace (its first reported MCP root) to \
-         a FeatureSet inside the caller's resolved Space. Idempotent: calling \
-         it again for the same workspace REBINDS it (no separate unbind). Omit \
-         `feature_set_id` to bind the workspace to NO Space tools (built-ins \
-         still apply). Matching is exact — only a future connection reporting \
-         this EXACT root resolves here, with no subdirectory/ancestor \
-         inheritance. Requires user approval and a client that declared MCP \
-         roots."
+        "Route the caller's current workspace (its first reported MCP root) to a \
+         FeatureSet in a Space — by default the caller's resolved Space, or pass \
+         `space_id` (from `mcpmux_list_spaces`) to route this workspace into a \
+         different Space entirely. Idempotent: calling it again for the same \
+         workspace REBINDS it (no separate unbind). Omit `feature_set_id` to bind \
+         the workspace to NO Space tools (built-ins still apply). Matching is \
+         exact — only a future connection reporting this EXACT root resolves \
+         here, with no subdirectory/ancestor inheritance. Requires user approval \
+         and a client that declared MCP roots."
     }
 
     fn input_schema(&self) -> Value {
@@ -701,8 +806,9 @@ impl MetaTool for BindCurrentWorkspaceTool {
             "properties": {
                 "feature_set_id": {
                     "type": "string",
-                    "description": "FeatureSet to route this workspace to; omit for no Space tools. Re-binding the same workspace replaces the previous mapping."
-                }
+                    "description": "FeatureSet to route this workspace to (must live in the target Space); omit for no Space tools. Re-binding the same workspace replaces the previous mapping."
+                },
+                "space_id": space_id_schema_prop()
             }
         })
     }
@@ -712,7 +818,7 @@ impl MetaTool for BindCurrentWorkspaceTool {
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let space_id = caller_space_id(&call).await?;
+        let space_id = target_space_id(&call).await?;
         let roots = call
             .session_id
             .and_then(|sid| call.ctx.session_roots.get(sid))
@@ -725,8 +831,8 @@ impl MetaTool for BindCurrentWorkspaceTool {
         let normalized = normalize_workspace_root(&root);
 
         // FeatureSet is optional — omitted/empty means "no Space tools here".
-        // When given, it MUST exist and belong to the caller's resolved Space
-        // (a cross-Space binding would later resolve against the wrong Space
+        // When given, it MUST exist and belong to the *target* Space (a binding
+        // whose FS lives in another Space would resolve against the wrong Space
         // and silently yield an empty tool set). Legacy/global (no space_id)
         // FSes are accepted in any Space.
         let (fs_ids, fs_label) = match opt_str_arg(&call.args, "feature_set_id") {
@@ -747,7 +853,7 @@ impl MetaTool for BindCurrentWorkspaceTool {
                 if let Some(fs_space) = fs.space_id.as_deref() {
                     if fs_space != space_id.to_string() {
                         return Err(MetaToolError::InvalidArgument(format!(
-                            "FeatureSet '{fs_id}' belongs to a different Space and cannot be bound here"
+                            "FeatureSet '{fs_id}' is not in the target Space — bind it within its own Space, or pass that Space's `space_id`"
                         )));
                     }
                 }
@@ -763,8 +869,9 @@ impl MetaTool for BindCurrentWorkspaceTool {
             .find_exact_for_roots(std::slice::from_ref(&normalized))
             .await?;
         let verb = if existing.is_some() { "Rebind" } else { "Bind" };
+        let space = space_label(&call, space_id).await;
         let summary = format!(
-            "{verb} workspace '{normalized}' in this Space to FeatureSet '{fs_label}'. \
+            "{verb} workspace '{normalized}' to FeatureSet '{fs_label}' in Space '{space}'. \
              Affects every future connection that reports this path."
         );
 
@@ -774,6 +881,7 @@ impl MetaTool for BindCurrentWorkspaceTool {
             &call,
             "mcpmux_bind_current_workspace",
             summary,
+            Some(space),
             None,
             true,
             call.args.clone(),

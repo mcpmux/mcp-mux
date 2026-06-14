@@ -528,6 +528,37 @@ describe('Screenshot Capture', function () {
     await saveScreenshot('featuresets');
   });
 
+  it('captures Workspaces (per-folder routing)', async () => {
+    const nav = await byTestId('nav-workspaces');
+    await safeClick(nav);
+    await browser.pause(2000);
+    // Open the "map a folder" form so the binding UI (root + FeatureSet picker)
+    // is visible even without a live client reporting roots.
+    try {
+      const toggle = await byTestId('workspace-binding-create-toggle');
+      await safeClick(toggle);
+      await browser.pause(800);
+    } catch {
+      // form may already be open or the page empty — capture whatever renders
+    }
+    await saveScreenshot('workspaces');
+  });
+
+  it('captures Tool Optimization (built-in self-management)', async () => {
+    const nav = await byTestId('nav-builtin-servers');
+    await safeClick(nav);
+    await browser.pause(2000);
+    // Select the Tool Optimization capability to reveal its tool list + @mux tip.
+    try {
+      const card = await byTestId('builtin-server-tool-optimization');
+      await safeClick(card);
+      await browser.pause(800);
+    } catch {
+      // fall back to the shelf overview
+    }
+    await saveScreenshot('tool-optimization');
+  });
+
   it('captures Connected Clients with approval modal', async () => {
     const nav = await byTestId('nav-clients');
     await safeClick(nav);

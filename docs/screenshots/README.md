@@ -26,6 +26,8 @@ pnpm exec wdio run tests/e2e/wdio.conf.ts --spec tests/e2e/specs/capture-screens
 | `discover.png` | Discover | content area | Server registry (mock bundle with 14 servers) |
 | `spaces.png` | Spaces | content area | Workspace cards (default + 5 additional) |
 | `featuresets.png` | FeatureSets | content area | Permission bundles |
+| `workspaces.png` | Workspaces | content area | Per-folder routing — map a folder (MCP root) to a FeatureSet/Space |
+| `tool-optimization.png` | Built-in Servers | content area | Tool Optimization shelf: meta-tool list + `@mux` trigger tip |
 | `clients.png` | Clients | full window | OAuth consent modal over connected clients (Cursor, VS Code, Windsurf, Claude Code) |
 | `settings.png` | Settings | content area | App settings page |
 

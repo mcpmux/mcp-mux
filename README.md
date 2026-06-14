@@ -79,7 +79,7 @@ Lightweight and cross-platform — built in Rust with Tauri 2, McpMux uses minim
 
 **3.** Done. Every tool from every server is available in every client, right now.
 
-McpMux routes calls to the right server, refreshes OAuth tokens automatically, and keeps credentials encrypted in your OS keychain — you never think about it again.
+McpMux routes calls to the right server, refreshes OAuth tokens automatically, and keeps credentials encrypted in your OS keychain — you never think about it again. It also keeps **itself** current: new versions download and install on launch by default (toggle in Settings), so a restart is all it takes.
 
 ---
 
@@ -107,6 +107,12 @@ Create isolated Spaces — each with their own servers, credentials, and permiss
 
 ![Workspaces — switch context instantly from the sidebar](docs/screenshots/space-switcher.png)
 
+### Different Tools for Different Folders
+
+Your AI client tells McpMux which folder it's working in (its MCP *root*). McpMux uses that to **route each workspace to its own toolset** — open your backend repo and the AI sees your database and deploy tools; open a docs folder and it sees only search and filesystem. Map a folder once in the **Workspaces** tab (or let the AI do it — see below) and every future session from that exact path resolves automatically. Matching is per-folder and exact, so nothing leaks across projects.
+
+![Workspaces — route each folder to its own FeatureSet](docs/screenshots/workspaces.png)
+
 ### Control What Each Client Can Do
 
 Not every AI client should have the same power. Create Feature Sets — permission bundles that control exactly which tools, prompts, and resources a client can access. Build a "Read Only" set for cautious workflows, a "React Development" set with just GitHub and Filesystem, or a "Full Stack Dev" set with everything. Assign them per-client so each tool only goes where you want it.
@@ -118,6 +124,22 @@ Not every AI client should have the same power. Create Feature Sets — permissi
 Cursor, VS Code, Windsurf, Claude Code — see every AI client connected to your gateway in real time. Click any client to manage its workspace, grant or revoke feature sets, and see exactly which tools it can access. New clients authenticate via OAuth with a one-click approval flow.
 
 ![Client Management — per-client permissions and effective features](docs/screenshots/client-detail.png)
+
+### Let Your AI Curate Its Own Toolset
+
+Hand an assistant a hundred tools and it burns tokens and reaches for the wrong one. McpMux ships a built-in **Tool Optimization** capability so the AI can keep *itself* lean — straight from chat, no config files.
+
+Start a request with **`@mux`** and the assistant can:
+
+- **Discover** what's available — `mcpmux_list_spaces`, `mcpmux_list_all_tools`, `mcpmux_search_tools`
+- **Compose** a focused FeatureSet of just the tools it needs — `mcpmux_manage_feature_set`
+- **Pin** the current folder to that set so it sticks — `mcpmux_bind_current_workspace`
+
+Reads are silent; anything that changes your setup pops a **one-click approval dialog that names the exact Space** — the AI proposes, you decide. The `@mux` trigger keeps these requests cleanly separated from your real work, and every operation can target a specific Space by id.
+
+> *"@mux build a minimal toolset for this Next.js repo and pin it to this folder."*
+
+![Tool Optimization — the AI composes and pins its own toolset, gated by your approval](docs/screenshots/tool-optimization.png)
 
 ---
 

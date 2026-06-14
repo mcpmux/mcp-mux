@@ -690,6 +690,50 @@ async fn bind_current_workspace_emits_workspace_binding_changed() {
     );
 }
 
+/// The Tool Optimization built-in descriptor (`builtin_servers()`) is the
+/// single source of truth the desktop UI renders and per-tool toggles read
+/// from. It must stay in lockstep with the tools the gateway actually
+/// registers — otherwise the shelf shows a tool the gateway won't dispatch
+/// (or hides one it will). Guards both directions, including write flags.
+#[tokio::test(flavor = "multi_thread")]
+async fn builtin_descriptor_matches_registered_meta_tools() {
+    use std::collections::BTreeMap;
+
+    let f = Fixture::new().await;
+
+    // name -> is_write, from what the gateway advertises (writes carry the
+    // destructive_hint annotation).
+    let registered: BTreeMap<String, bool> = f
+        .registry
+        .list_as_tools()
+        .iter()
+        .map(|t| {
+            let is_write = t
+                .annotations
+                .as_ref()
+                .and_then(|a| a.destructive_hint)
+                .unwrap_or(false);
+            (t.name.to_string(), is_write)
+        })
+        .collect();
+
+    let descriptor = mcpmux_core::builtin_server(TOOL_OPTIMIZATION_SERVER_ID)
+        .expect("Tool Optimization descriptor exists");
+    let described: BTreeMap<String, bool> = descriptor
+        .tools
+        .iter()
+        .map(|t| (t.name.to_string(), t.write))
+        .collect();
+
+    assert_eq!(
+        registered, described,
+        "registered meta-tools and the Tool Optimization descriptor drifted \
+         (name set or write flags differ)"
+    );
+    // Sanity: the new search tool is present and read-only.
+    assert_eq!(described.get("mcpmux_search_tools"), Some(&false));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn invalid_feature_set_argument_rejected() {
     let f = Fixture::new().await;

@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Check, Plus, Loader2 } from 'lucide-react';
-import { Button, useToast, ToastContainer } from '@mcpmux/ui';
 import { useAppStore, useViewSpace, useSpaces, useIsLoading } from '@/stores';
-import { createSpace } from '@/lib/api/spaces';
 import { spaceAccentTint } from '@/lib/spaceAccent';
+import { CreateSpaceModal } from '@/features/spaces/CreateSpaceModal';
 
 /** Space icon inside a soft tile tinted with the Space's accent color. */
 function SpaceGlyph({
@@ -42,23 +41,18 @@ interface SpaceSwitcherProps {
  */
 export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [showCreateInput, setShowCreateInput] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { toasts, success, error: showError, dismiss } = useToast();
 
   const spaces = useSpaces();
   const viewSpace = useViewSpace();
   const isLoadingSpaces = useIsLoading('spaces');
   const setViewSpaceInStore = useAppStore((state) => state.setViewSpace);
-  const addSpace = useAppStore((state) => state.addSpace);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
-        setShowCreateInput(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -70,27 +64,8 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
     setIsOpen(false);
   };
 
-  const handleCreateSpace = async () => {
-    if (!newName.trim()) return;
-    setIsCreating(true);
-    try {
-      const space = await createSpace(newName.trim(), '🌐');
-      addSpace(space);
-      setViewSpaceInStore(space.id);
-      setNewName('');
-      setShowCreateInput(false);
-      setIsOpen(false);
-      success('Space created', `"${space.name}" has been created`);
-    } catch (e) {
-      showError('Failed to create space', e instanceof Error ? e.message : String(e));
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
   return (
     <div ref={dropdownRef} className={`relative ${className}`}>
-      <ToastContainer toasts={toasts} onClose={dismiss} />
       {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
@@ -169,46 +144,29 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
           {/* Divider */}
           <div className="mx-1.5 border-t border-[rgb(var(--border))]" />
 
-          {/* Create New */}
+          {/* Create New — opens the shared modal (name + icon picker) */}
           <div className="p-1.5">
-            {showCreateInput ? (
-              <div className="flex gap-2 p-1">
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Space name..."
-                  autoFocus
-                  className="input flex-1 py-1.5"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleCreateSpace();
-                    if (e.key === 'Escape') {
-                      setShowCreateInput(false);
-                      setNewName('');
-                    }
-                  }}
-                />
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={handleCreateSpace}
-                  disabled={isCreating || !newName.trim()}
-                >
-                  {isCreating ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Add'}
-                </Button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowCreateInput(true)}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-[rgb(var(--muted))] transition-all duration-150 hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))]"
-              >
-                <Plus className="h-4 w-4" />
-                Create new space
-              </button>
-            )}
+            <button
+              onClick={() => {
+                setShowCreateModal(true);
+                setIsOpen(false);
+              }}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-[rgb(var(--muted))] transition-all duration-150 hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))]"
+              data-testid="space-switcher-create"
+            >
+              <Plus className="h-4 w-4" />
+              Create new space
+            </button>
           </div>
         </div>
       )}
+
+      {/* New space: name + icon picker. On success, switch to the new Space. */}
+      <CreateSpaceModal
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onCreated={(space) => setViewSpaceInStore(space.id)}
+      />
     </div>
   );
 }

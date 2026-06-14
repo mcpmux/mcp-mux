@@ -1,24 +1,15 @@
 import { useState } from 'react';
 import { Plus, Trash2, Loader2, Search, Layout, AlertCircle } from 'lucide-react';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-  Button,
-  useToast,
-  ToastContainer,
-  useConfirm,
-} from '@mcpmux/ui';
+import { Card, CardContent, Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import { useAppStore, useSpaces, useIsLoading } from '@/stores';
-import { createSpace, deleteSpace } from '@/lib/api/spaces';
+import { deleteSpace } from '@/lib/api/spaces';
+import { CreateSpaceModal } from './CreateSpaceModal';
 
 export function SpacesPage() {
   const spaces = useSpaces();
   const isLoading = useIsLoading('spaces');
 
   // Store actions
-  const addSpace = useAppStore((state) => state.addSpace);
   const removeSpace = useAppStore((state) => state.removeSpace);
 
   // Local state
@@ -28,32 +19,8 @@ export function SpacesPage() {
   const { confirm, ConfirmDialogElement } = useConfirm();
   const { toasts, success, error: showError, dismiss } = useToast();
 
-  // Create Modal State
+  // Create Modal State (creation logic lives in the shared CreateSpaceModal)
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newSpaceName, setNewSpaceName] = useState('');
-  const [newSpaceIcon, setNewSpaceIcon] = useState('🌐');
-  const [isCreating, setIsCreating] = useState(false);
-
-  const handleCreate = async () => {
-    if (!newSpaceName.trim()) return;
-
-    setIsCreating(true);
-    setError(null);
-    try {
-      const space = await createSpace(newSpaceName.trim(), newSpaceIcon);
-      addSpace(space);
-      setNewSpaceName('');
-      setNewSpaceIcon('🌐');
-      setShowCreateModal(false);
-      success('Space created', `"${space.name}" has been created`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      showError('Failed to create space', msg);
-    } finally {
-      setIsCreating(false);
-    }
-  };
 
   const handleDelete = async (id: string) => {
     const spaceName = spaces.find((s) => s.id === id)?.name || 'this space';
@@ -224,113 +191,9 @@ export function SpacesPage() {
           </div>
         </div>
 
-        {/* Create Modal */}
-        {showCreateModal && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-            data-testid="create-space-modal-overlay"
-          >
-            <Card
-              className="animate-in fade-in zoom-in-95 mx-4 w-full max-w-md shadow-2xl duration-200"
-              data-testid="create-space-modal"
-            >
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span className="flex items-center gap-2">
-                    <Plus className="h-5 w-5" />
-                    Create Workspace
-                  </span>
-                  <button
-                    onClick={() => setShowCreateModal(false)}
-                    className="rounded p-1 hover:bg-[rgb(var(--surface-hover))]"
-                  >
-                    <XIcon className="h-4 w-4" />
-                  </button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">Icon</label>
-                  <div className="flex gap-2 overflow-x-auto p-1 pb-2">
-                    {['🌐', '💻', '🚀', '🏢', '🏠', '🔒', '🧪', '📦'].map((icon) => (
-                      <button
-                        key={icon}
-                        onClick={() => setNewSpaceIcon(icon)}
-                        className={`flex h-10 w-10 items-center justify-center rounded-lg border text-xl transition-all ${
-                          newSpaceIcon === icon
-                            ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-500 ring-primary-500/20 ring-2'
-                            : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]'
-                        }`}
-                      >
-                        {icon}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">Name *</label>
-                  <input
-                    type="text"
-                    value={newSpaceName}
-                    onChange={(e) => setNewSpaceName(e.target.value)}
-                    placeholder="e.g., Personal, Work, Project X"
-                    className="focus:ring-primary-500 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2.5 focus:outline-none focus:ring-2"
-                    autoFocus
-                    data-testid="create-space-name-input"
-                  />
-                </div>
-
-                <div className="flex gap-3 pt-2">
-                  <Button
-                    variant="ghost"
-                    onClick={() => setShowCreateModal(false)}
-                    className="flex-1"
-                    data-testid="create-space-cancel-btn"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={handleCreate}
-                    disabled={isCreating || !newSpaceName.trim()}
-                    className="flex-1"
-                    data-testid="create-space-submit-btn"
-                  >
-                    {isCreating ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      'Create Space'
-                    )}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+        <CreateSpaceModal open={showCreateModal} onClose={() => setShowCreateModal(false)} />
       </div>
     </>
-  );
-}
-
-// Helper component for X icon to avoid import conflict or missing import
-function XIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
   );
 }
 

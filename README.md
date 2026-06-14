@@ -111,19 +111,13 @@ Create isolated Spaces — each with their own servers, credentials, and permiss
 
 Your AI client tells McpMux which folder it's working in (its MCP *root*). McpMux uses that to **route each workspace to its own toolset** — open your backend repo and the AI sees your database and deploy tools; open a docs folder and it sees only search and filesystem. Map a folder once in the **Workspaces** tab (or let the AI do it — see below) and every future session from that exact path resolves automatically. Matching is per-folder and exact, so nothing leaks across projects.
 
-![Workspaces — route each folder to its own FeatureSet](docs/screenshots/workspaces.png)
-
 ### Control What Each Client Can Do
 
 Not every AI client should have the same power. Create Feature Sets — permission bundles that control exactly which tools, prompts, and resources a client can access. Build a "Read Only" set for cautious workflows, a "React Development" set with just GitHub and Filesystem, or a "Full Stack Dev" set with everything. Assign them per-client so each tool only goes where you want it.
 
-![Feature Sets — granular per-server tool selection](docs/screenshots/featureset-detail.png)
-
 ### See and Manage Every Connected Client
 
 Cursor, VS Code, Windsurf, Claude Code — see every AI client connected to your gateway in real time. Click any client to manage its workspace, grant or revoke feature sets, and see exactly which tools it can access. New clients authenticate via OAuth with a one-click approval flow.
-
-![Client Management — per-client permissions and effective features](docs/screenshots/client-detail.png)
 
 ### Let Your AI Curate Its Own Toolset
 
@@ -138,8 +132,6 @@ Start a request with **`@mux`** and the assistant can:
 Reads are silent; anything that changes your setup pops a **one-click approval dialog that names the exact Space** — the AI proposes, you decide. The `@mux` trigger keeps these requests cleanly separated from your real work, and every operation can target a specific Space by id.
 
 > *"@mux build a minimal toolset for this Next.js repo and pin it to this folder."*
-
-![Tool Optimization — the AI composes and pins its own toolset, gated by your approval](docs/screenshots/tool-optimization.png)
 
 ---
 

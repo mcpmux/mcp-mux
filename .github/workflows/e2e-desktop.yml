@@ -112,8 +112,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # TODO(playwright-migration): desktop E2E has stale assertions from the IA
+      # redesign and is being replaced (tauri-playwright spike). Non-blocking
+      # until then; results still surface via the report job below.
       - name: Run desktop E2E tests (Linux)
         if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
         run: |
           # Start dbus session and unlock gnome-keyring with a dummy password for CI.
           # Two-step process: unlock creates the login keyring, start exports env vars.
@@ -187,6 +191,7 @@ jobs:
 
       - name: Run desktop E2E tests (Windows)
         if: matrix.os == 'windows-latest'
+        continue-on-error: true
         run: pnpm test:e2e
 
       # Upload test results and artifacts

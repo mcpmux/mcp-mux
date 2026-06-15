@@ -16,7 +16,13 @@ let initialized = false;
 /** Initialize PostHog with app-level super properties. */
 export function initAnalytics(appVersion: string) {
   if (initialized || typeof window === 'undefined') return;
-  if (!POSTHOG_KEY) return;
+  if (!POSTHOG_KEY) {
+    // The #1 reason no events show up in local dev: the key isn't loaded.
+    // Vite only reads env at startup and only exposes `VITE_`-prefixed vars,
+    // so a missing/empty key here means restart dev or check apps/desktop/.env*.
+    console.info('[analytics] disabled — VITE_POSTHOG_KEY is not set; events are dropped');
+    return;
+  }
 
   posthog.init(POSTHOG_KEY, {
     api_host: POSTHOG_HOST,
@@ -35,11 +41,25 @@ export function initAnalytics(appVersion: string) {
   });
 
   initialized = true;
+  console.info(`[analytics] initialized (host=${POSTHOG_HOST})`);
 }
 
 /** Capture an analytics event (no-op if not initialized or opted out). */
 export function capture(event: string, properties?: Record<string, unknown>) {
-  if (!initialized) return;
+  if (!initialized) {
+    // Dev aid: surface dropped events so a missing key / un-run init is obvious
+    // when debugging "why isn't <event> in PostHog?".
+    if (import.meta.env.DEV) {
+      console.debug(`[analytics] dropped "${event}" — analytics not initialized`);
+    }
+    return;
+  }
+  if (posthog.has_opted_out_capturing()) {
+    if (import.meta.env.DEV) {
+      console.debug(`[analytics] dropped "${event}" — user opted out of analytics`);
+    }
+    return;
+  }
   posthog.capture(event, properties);
 }
 

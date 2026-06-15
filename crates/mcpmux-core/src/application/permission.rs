@@ -9,24 +9,22 @@ use uuid::Uuid;
 
 use crate::domain::{DomainEvent, FeatureSet, FeatureSetMember, MemberMode};
 use crate::event_bus::EventSender;
-use crate::repository::{FeatureSetRepository, InboundMcpClientRepository};
+use crate::repository::FeatureSetRepository;
 
-/// Application service for feature sets and grants management
+/// Application service for feature sets.
+///
+/// Grants no longer exist — routing is driven by WorkspaceBinding and each
+/// Space's Default feature set. This service therefore only covers FS
+/// creation, edits, and membership.
 pub struct PermissionAppService {
     feature_set_repo: Arc<dyn FeatureSetRepository>,
-    client_repo: Option<Arc<dyn InboundMcpClientRepository>>,
     event_sender: EventSender,
 }
 
 impl PermissionAppService {
-    pub fn new(
-        feature_set_repo: Arc<dyn FeatureSetRepository>,
-        client_repo: Option<Arc<dyn InboundMcpClientRepository>>,
-        event_sender: EventSender,
-    ) -> Self {
+    pub fn new(feature_set_repo: Arc<dyn FeatureSetRepository>, event_sender: EventSender) -> Self {
         Self {
             feature_set_repo,
-            client_repo,
             event_sender,
         }
     }
@@ -282,152 +280,5 @@ impl PermissionAppService {
         self.feature_set_repo
             .get_feature_members(feature_set_id)
             .await
-    }
-
-    // ========================================================================
-    // GRANT OPERATIONS
-    // ========================================================================
-
-    /// Grant a feature set to a client for a space
-    ///
-    /// Emits: `GrantIssued`
-    pub async fn grant_feature_set(
-        &self,
-        client_id: Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> Result<()> {
-        let client_repo = self
-            .client_repo
-            .as_ref()
-            .ok_or_else(|| anyhow!("Client repository not configured"))?;
-
-        // Verify client exists
-        client_repo
-            .get(&client_id)
-            .await?
-            .ok_or_else(|| anyhow!("Client not found"))?;
-
-        // Verify feature set exists
-        self.feature_set_repo
-            .get(feature_set_id)
-            .await?
-            .ok_or_else(|| anyhow!("Feature set not found"))?;
-
-        client_repo
-            .grant_feature_set(&client_id, space_id, feature_set_id)
-            .await?;
-
-        // Parse space_id to UUID
-        let space_uuid =
-            Uuid::parse_str(space_id).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
-
-        info!(
-            client_id = %client_id,
-            space_id = space_id,
-            feature_set_id = feature_set_id,
-            "[PermissionAppService] Granted feature set to client"
-        );
-
-        // Emit event - this will trigger MCP notifications to connected clients
-        self.event_sender.emit(DomainEvent::GrantIssued {
-            client_id: client_id.to_string(),
-            space_id: space_uuid,
-            feature_set_id: feature_set_id.to_string(),
-        });
-
-        Ok(())
-    }
-
-    /// Revoke a feature set from a client
-    ///
-    /// Emits: `GrantRevoked`
-    pub async fn revoke_feature_set(
-        &self,
-        client_id: Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> Result<()> {
-        let client_repo = self
-            .client_repo
-            .as_ref()
-            .ok_or_else(|| anyhow!("Client repository not configured"))?;
-
-        client_repo
-            .revoke_feature_set(&client_id, space_id, feature_set_id)
-            .await?;
-
-        // Parse space_id to UUID
-        let space_uuid =
-            Uuid::parse_str(space_id).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
-
-        info!(
-            client_id = %client_id,
-            space_id = space_id,
-            feature_set_id = feature_set_id,
-            "[PermissionAppService] Revoked feature set from client"
-        );
-
-        // Emit event
-        self.event_sender.emit(DomainEvent::GrantRevoked {
-            client_id: client_id.to_string(),
-            space_id: space_uuid,
-            feature_set_id: feature_set_id.to_string(),
-        });
-
-        Ok(())
-    }
-
-    /// Get all grants for a client in a space
-    pub async fn get_grants_for_space(
-        &self,
-        client_id: Uuid,
-        space_id: &str,
-    ) -> Result<Vec<String>> {
-        let client_repo = self
-            .client_repo
-            .as_ref()
-            .ok_or_else(|| anyhow!("Client repository not configured"))?;
-
-        client_repo.get_grants_for_space(&client_id, space_id).await
-    }
-
-    /// Set all grants for a client in a space (replaces existing)
-    ///
-    /// Emits: `ClientGrantsUpdated`
-    pub async fn set_grants_for_space(
-        &self,
-        client_id: Uuid,
-        space_id: &str,
-        feature_set_ids: Vec<String>,
-    ) -> Result<()> {
-        let client_repo = self
-            .client_repo
-            .as_ref()
-            .ok_or_else(|| anyhow!("Client repository not configured"))?;
-
-        client_repo
-            .set_grants_for_space(&client_id, space_id, &feature_set_ids)
-            .await?;
-
-        // Parse space_id to UUID
-        let space_uuid =
-            Uuid::parse_str(space_id).map_err(|e| anyhow!("Invalid space ID: {}", e))?;
-
-        info!(
-            client_id = %client_id,
-            space_id = space_id,
-            count = feature_set_ids.len(),
-            "[PermissionAppService] Updated client grants"
-        );
-
-        // Emit event
-        self.event_sender.emit(DomainEvent::ClientGrantsUpdated {
-            client_id: client_id.to_string(),
-            space_id: space_uuid,
-            feature_set_ids,
-        });
-
-        Ok(())
     }
 }

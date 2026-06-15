@@ -108,8 +108,6 @@ fn build_inbound_client_from_request(
     response_types: Vec<String>,
     token_endpoint_auth_method: String,
     client_alias: Option<String>,
-    connection_mode: String,
-    locked_space_id: Option<String>,
     last_seen: Option<String>,
     created_at: String,
     updated_at: String,
@@ -135,12 +133,13 @@ fn build_inbound_client_from_request(
         metadata_url: None,
         metadata_cached_at: None,
         metadata_cache_ttl: None,
-        // MCP client settings
-        connection_mode,
-        locked_space_id,
         last_seen,
         created_at,
         updated_at,
+        // Capability bits default off / unknown; the gateway flips them
+        // on the first `initialize` for any session of this client.
+        reports_roots: false,
+        roots_capability_known: false,
     }
 }
 
@@ -170,21 +169,71 @@ impl DcrError {
     }
 }
 
+/// Check whether a requested redirect URI matches one in the registered list.
+///
+/// Per RFC 8252 §7.3, when the registered redirect URI is a loopback address
+/// (`127.0.0.1`, `::1`, or `localhost`), the authorization server MUST ignore
+/// the port component when matching — native public clients obtain an ephemeral
+/// port from the OS at request time, so the port will differ between the DCR
+/// registration and the `/authorize` request.
+///
+/// For non-loopback URIs (HTTPS, custom schemes like `cursor://`), strict
+/// byte-exact equality is required.
+pub fn is_redirect_uri_allowed(registered: &[String], requested: &str) -> bool {
+    registered
+        .iter()
+        .any(|r| redirect_uri_matches(r, requested))
+}
+
+fn redirect_uri_matches(registered: &str, requested: &str) -> bool {
+    if registered == requested {
+        return true;
+    }
+
+    let (Ok(reg_url), Ok(req_url)) = (url::Url::parse(registered), url::Url::parse(requested))
+    else {
+        return false;
+    };
+
+    let is_loopback = |u: &url::Url| match u.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        None => false,
+    };
+
+    if !is_loopback(&reg_url) || !is_loopback(&req_url) {
+        return false;
+    }
+
+    reg_url.scheme() == req_url.scheme()
+        && reg_url.host() == req_url.host()
+        && reg_url.path() == req_url.path()
+}
+
 /// Validate redirect URIs per RFC 8252 (OAuth 2.0 for Native Apps)
 ///
 /// Allowed redirect URI types:
 /// 1. Loopback: http://127.0.0.1:PORT/... or http://localhost:PORT/...
 /// 2. Custom URL schemes: cursor://, vscode://, claude://, etc.
 ///
-/// NOT allowed:
+/// NOT allowed (these are filtered from the request, not hard-failed):
 /// - https:// URLs (except for confidential clients with proper secrets)
 /// - http:// URLs to non-loopback addresses
+///
+/// Invalid URIs are silently skipped rather than rejecting the entire registration.
+/// This is necessary because some clients (notably Cursor) send a mix of valid and
+/// invalid redirect URIs in a single DCR request — failing the whole registration
+/// would lock those clients out entirely, even though they only ever use the valid
+/// URIs in practice. An error is only returned if zero valid URIs remain.
 pub fn validate_redirect_uris(uris: &[String]) -> Result<(), DcrError> {
     if uris.is_empty() {
         return Err(DcrError::invalid_redirect_uri(
             "At least one redirect_uri is required",
         ));
     }
+
+    let mut valid_count = 0;
 
     for uri in uris {
         let is_loopback = uri.starts_with("http://127.0.0.1")
@@ -196,20 +245,28 @@ pub fn validate_redirect_uris(uris: &[String]) -> Result<(), DcrError> {
         let is_custom_scheme = !uri.starts_with("http://") && !uri.starts_with("https://");
 
         if !is_loopback && !is_custom_scheme {
+            // Skip invalid URIs (e.g. https://www.cursor.com/agents/mcp/oauth/callback)
+            // rather than rejecting the entire registration — clients like Cursor send a
+            // mix of valid and invalid URIs and only ever use the valid ones in practice.
             warn!(
-                "[DCR] Rejected redirect_uri: {} (must be loopback or custom scheme)",
+                "[DCR] Skipping invalid redirect_uri: {} (must be loopback or custom scheme)",
                 uri
             );
-            return Err(DcrError::invalid_redirect_uri(
-                "Redirect URI must be loopback (http://127.0.0.1 or http://localhost) \
-                 or a custom URL scheme (e.g., cursor://, vscode://)",
-            ));
+            continue;
         }
 
         debug!(
             "[DCR] Validated redirect_uri: {} (loopback={}, custom_scheme={})",
             uri, is_loopback, is_custom_scheme
         );
+        valid_count += 1;
+    }
+
+    if valid_count == 0 {
+        return Err(DcrError::invalid_redirect_uri(
+            "No valid redirect_uris provided — must include at least one loopback \
+             (http://127.0.0.1 or http://localhost) or custom URL scheme (e.g., cursor://, vscode://)",
+        ));
     }
 
     Ok(())
@@ -290,9 +347,7 @@ pub async fn process_dcr_request(
             grant_types.clone(),
             response_types.clone(),
             token_endpoint_auth_method.clone(),
-            existing.client_alias,    // Preserve user-set alias
-            existing.connection_mode, // Preserve connection mode
-            existing.locked_space_id, // Preserve locked space
+            existing.client_alias, // Preserve user-set alias
             existing.last_seen,
             existing.created_at,
             now,
@@ -360,9 +415,7 @@ pub async fn process_dcr_request(
         grant_types.clone(),
         response_types.clone(),
         token_endpoint_auth_method.clone(),
-        None,                        // No alias yet
-        "follow_active".to_string(), // Default connection mode
-        None,                        // No locked space
+        None, // No alias yet
         Some(now_str.clone()),
         now_str.clone(),
         now_str,
@@ -420,9 +473,110 @@ mod tests {
 
     #[test]
     fn test_reject_invalid_uris() {
-        // Invalid URIs (non-loopback http)
+        // Invalid URIs (non-loopback http) — fail when no valid URIs remain
         assert!(validate_redirect_uris(&["http://example.com/callback".to_string()]).is_err());
         assert!(validate_redirect_uris(&["https://example.com/callback".to_string()]).is_err());
+    }
+
+    #[test]
+    fn test_mixed_valid_and_invalid_uris_pass() {
+        // Real-world case: Cursor sends a mix of valid (custom scheme + loopback) and
+        // invalid (https) URIs. Registration must succeed as long as at least one valid
+        // URI is present — otherwise clients that send any non-loopback HTTPS URI cannot
+        // register at all.
+        let uris = vec![
+            "cursor://anysphere.cursor-mcp/oauth/callback".to_string(),
+            "https://www.cursor.com/agents/mcp/oauth/callback".to_string(),
+            "http://localhost:8787/callback".to_string(),
+        ];
+        assert!(validate_redirect_uris(&uris).is_ok());
+    }
+
+    #[test]
+    fn test_all_invalid_uris_fail() {
+        let uris = vec![
+            "https://www.cursor.com/agents/mcp/oauth/callback".to_string(),
+            "http://example.com/callback".to_string(),
+        ];
+        assert!(validate_redirect_uris(&uris).is_err());
+    }
+
+    #[test]
+    fn loopback_ignores_port_per_rfc_8252() {
+        // Registered with one port, requested with another — must match.
+        let registered = vec!["http://127.0.0.1:12345/callback".to_string()];
+        assert!(is_redirect_uri_allowed(
+            &registered,
+            "http://127.0.0.1:44307/callback"
+        ));
+        assert!(is_redirect_uri_allowed(
+            &registered,
+            "http://127.0.0.1:1/callback"
+        ));
+
+        let localhost = vec!["http://localhost:3000/callback".to_string()];
+        assert!(is_redirect_uri_allowed(
+            &localhost,
+            "http://localhost:55555/callback"
+        ));
+
+        let ipv6 = vec!["http://[::1]:8080/callback".to_string()];
+        assert!(is_redirect_uri_allowed(&ipv6, "http://[::1]:9999/callback"));
+    }
+
+    #[test]
+    fn loopback_requires_matching_scheme_host_and_path() {
+        let registered = vec!["http://127.0.0.1:8080/callback".to_string()];
+        // Different path
+        assert!(!is_redirect_uri_allowed(
+            &registered,
+            "http://127.0.0.1:8080/other"
+        ));
+        // Different host family — 127.0.0.1 and localhost are not interchangeable
+        // (per RFC 8252, clients SHOULD NOT use `localhost`; treat as distinct).
+        assert!(!is_redirect_uri_allowed(
+            &registered,
+            "http://localhost:8080/callback"
+        ));
+        // HTTPS vs HTTP
+        assert!(!is_redirect_uri_allowed(
+            &registered,
+            "https://127.0.0.1:8080/callback"
+        ));
+    }
+
+    #[test]
+    fn non_loopback_requires_exact_match() {
+        // HTTPS: exact match only (no port flex)
+        let https = vec!["https://app.example.com/callback".to_string()];
+        assert!(is_redirect_uri_allowed(
+            &https,
+            "https://app.example.com/callback"
+        ));
+        assert!(!is_redirect_uri_allowed(
+            &https,
+            "https://app.example.com:8443/callback"
+        ));
+
+        // Custom scheme: exact match only
+        let custom = vec!["cursor://callback".to_string()];
+        assert!(is_redirect_uri_allowed(&custom, "cursor://callback"));
+        assert!(!is_redirect_uri_allowed(&custom, "cursor://other"));
+    }
+
+    #[test]
+    fn unparseable_uris_fall_back_to_strict_equality() {
+        let registered = vec!["not-a-url".to_string()];
+        assert!(is_redirect_uri_allowed(&registered, "not-a-url"));
+        assert!(!is_redirect_uri_allowed(&registered, "not-a-url-either"));
+    }
+
+    #[test]
+    fn empty_registered_list_denies_everything() {
+        assert!(!is_redirect_uri_allowed(
+            &[],
+            "http://127.0.0.1:8080/callback"
+        ));
     }
 
     // Note: Integration tests for idempotent registration are better handled

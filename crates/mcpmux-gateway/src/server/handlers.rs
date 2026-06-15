@@ -14,7 +14,9 @@ use tracing::{debug, error, info, warn};
 
 use super::{GatewayState, ServiceContainer};
 use crate::auth::{create_access_token, create_refresh_token};
-use crate::oauth::{process_dcr_request, DcrError, DcrRequest, DcrResponse};
+use crate::oauth::{
+    is_redirect_uri_allowed, process_dcr_request, DcrError, DcrRequest, DcrResponse,
+};
 
 /// App State structure holding both GatewayState and ServiceContainer
 #[derive(Clone)]
@@ -171,63 +173,71 @@ pub async fn oauth_authorize(
         );
     }
 
-    // Resolve and validate client (CIMD or traditional)
-    {
+    // Resolve and validate client (CIMD or traditional).
+    //
+    // IMPORTANT: clone the service handle out and DROP the state lock before
+    // `resolve_client()` — CIMD client ids resolve via an outbound HTTP fetch
+    // (10 s timeout), and `oauth_middleware` takes this same write-preferring
+    // RwLock on every MCP request, so a read guard held across the fetch plus
+    // one queued writer would stall all MCP traffic.
+    let client_metadata_service = {
         let gateway_state = state.read().await;
+        gateway_state.client_metadata_service_arc()
+    };
+    let Some(client_metadata_service) = client_metadata_service else {
+        error!("[OAuth] ClientMetadataService not available");
+        return oauth_error_redirect(
+            &params.redirect_uri,
+            "server_error",
+            "Service not available",
+            params.state.as_deref(),
+        );
+    };
 
-        let client_metadata_service = match gateway_state.client_metadata_service() {
-            Some(s) => s,
-            None => {
-                error!("[OAuth] ClientMetadataService not available");
+    // Resolve client (handles CIMD URL or traditional client_id). The same
+    // resolution also yields the consent page's display name — resolve once.
+    let display_name = match client_metadata_service
+        .resolve_client(&params.client_id)
+        .await
+    {
+        Ok(Some(client)) => {
+            // Validate redirect_uri against resolved client.
+            // Per RFC 8252 §7.3, loopback redirect URIs are matched ignoring the port,
+            // since native public clients use an ephemeral OS-assigned port at request
+            // time that may differ from the one captured at DCR.
+            if !is_redirect_uri_allowed(&client.redirect_uris, &params.redirect_uri) {
+                warn!(
+                    "[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})",
+                    params.redirect_uri, client.redirect_uris
+                );
                 return oauth_error_redirect(
                     &params.redirect_uri,
-                    "server_error",
-                    "Service not available",
+                    "invalid_redirect_uri",
+                    "Redirect URI not registered for this client",
                     params.state.as_deref(),
                 );
             }
-        };
-
-        // Resolve client (handles CIMD URL or traditional client_id)
-        let client = match client_metadata_service
-            .resolve_client(&params.client_id)
-            .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                warn!("[OAuth] Unknown client_id: {}", params.client_id);
-                return oauth_error_redirect(
-                    &params.redirect_uri,
-                    "invalid_client",
-                    "Client not registered",
-                    params.state.as_deref(),
-                );
-            }
-            Err(e) => {
-                error!("[OAuth] Client resolution failed: {}", e);
-                return oauth_error_redirect(
-                    &params.redirect_uri,
-                    "server_error",
-                    "Client resolution error",
-                    params.state.as_deref(),
-                );
-            }
-        };
-
-        // Validate redirect_uri against resolved client
-        if !client.redirect_uris.contains(&params.redirect_uri) {
-            warn!(
-                "[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})",
-                params.redirect_uri, client.redirect_uris
-            );
+            client.client_name
+        }
+        Ok(None) => {
+            warn!("[OAuth] Unknown client_id: {}", params.client_id);
             return oauth_error_redirect(
                 &params.redirect_uri,
-                "invalid_redirect_uri",
-                "Redirect URI not registered for this client",
+                "invalid_client",
+                "Client not registered",
                 params.state.as_deref(),
             );
         }
-    }
+        Err(e) => {
+            error!("[OAuth] Client resolution failed: {}", e);
+            return oauth_error_redirect(
+                &params.redirect_uri,
+                "server_error",
+                "Client resolution error",
+                params.state.as_deref(),
+            );
+        }
+    };
 
     // PKCE is required for public clients
     if params.code_challenge.is_none() {
@@ -256,19 +266,6 @@ pub async fn oauth_authorize(
         "[OAuth] Showing consent page for client: {}",
         params.client_id
     );
-
-    // Get client display name from metadata service for new clients
-    let display_name = {
-        let gateway_state = state.read().await;
-        if let Some(service) = gateway_state.client_metadata_service() {
-            match service.resolve_client(&params.client_id).await {
-                Ok(Some(client)) => client.client_name,
-                _ => "Unknown Application".to_string(),
-            }
-        } else {
-            "Unknown Application".to_string()
-        }
-    };
 
     // Store pending authorization request with expiration (5 minutes)
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -317,6 +314,12 @@ pub async fn oauth_authorize(
     info!("[OAuth] Deep link URL: {}", deep_link_url);
 
     let app_name = branding::DISPLAY_NAME;
+
+    // HTML-escape the client-supplied display name before interpolating it
+    // into the consent page — DCR/CIMD `client_name` is attacker-controlled
+    // (reflected XSS otherwise). The raw name stays on the pending
+    // authorization for the desktop UI, which renders it as text via React.
+    let display_name_html = html_escape_text(&display_name);
 
     // HTML page that triggers the deep link
     // The page shows a brief message while the app opens
@@ -430,7 +433,7 @@ pub async fn oauth_authorize(
         </p>
 
         <div class="client-info">
-            <div class="client-name">{display_name}</div>
+            <div class="client-name">{display_name_html}</div>
             <div class="client-id">wants to connect</div>
         </div>
 
@@ -466,6 +469,24 @@ pub async fn oauth_authorize(
     );
 
     axum::response::Html(html).into_response()
+}
+
+/// Minimal HTML entity escaping for untrusted text interpolated into
+/// gateway-served HTML. Covers every character that can break out of a
+/// text node or a double-quoted attribute value.
+fn html_escape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Helper to create OAuth error redirect
@@ -941,9 +962,6 @@ pub struct OAuthClientInfoResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_cache_ttl: Option<i64>,
 
-    // MCP client preferences
-    pub connection_mode: String,
-    pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
 }
@@ -979,8 +997,6 @@ pub async fn oauth_list_clients(
                     metadata_url: c.metadata_url,
                     metadata_cached_at: c.metadata_cached_at,
                     metadata_cache_ttl: c.metadata_cache_ttl,
-                    connection_mode: c.connection_mode,
-                    locked_space_id: c.locked_space_id,
                     last_seen: c.last_seen,
                     created_at: c.created_at,
                 })
@@ -999,8 +1015,6 @@ pub async fn oauth_list_clients(
 #[derive(Debug, Deserialize)]
 pub struct UpdateClientRequest {
     pub client_alias: Option<String>,
-    pub connection_mode: Option<String>,
-    pub locked_space_id: Option<String>,
 }
 
 /// Update client settings (connection mode, alias, etc.)
@@ -1049,11 +1063,14 @@ pub async fn oauth_get_client_features(
         space_id, client_id
     );
 
-    // Step 2: Get client grants (SRP: AuthorizationService)
+    // Step 2: Get client grants via the resolver.
+    // No MCP session context here (this is an HTTP API endpoint for the
+    // desktop UI), so workspace-binding resolution is skipped; the
+    // resolver falls back to the Space's Default FeatureSet.
     let feature_set_ids = match state
         .services
         .authorization_service
-        .get_client_grants(&client_id, &space_id)
+        .get_client_grants(&client_id, &space_id, None)
         .await
     {
         Ok(grants) => grants,
@@ -1175,35 +1192,7 @@ pub async fn oauth_update_client(
         return (StatusCode::SERVICE_UNAVAILABLE, "Database not available").into_response();
     };
 
-    // Validate connection_mode if provided
-    if let Some(ref mode) = req.connection_mode {
-        if !["follow_active", "locked", "ask_on_change"].contains(&mode.as_str()) {
-            return (StatusCode::BAD_REQUEST, "Invalid connection_mode").into_response();
-        }
-    }
-
-    // Handle locked_space_id: convert to Option<Option<String>>
-    let locked_space_id = if req.connection_mode.as_deref() == Some("locked") {
-        Some(req.locked_space_id.clone())
-    } else if req.connection_mode.as_deref() == Some("follow_active")
-        || req.connection_mode.as_deref() == Some("ask_on_change")
-    {
-        // Clear locked_space_id when switching away from locked mode
-        Some(None)
-    } else {
-        // Don't change if not explicitly setting mode
-        None
-    };
-
-    match repo
-        .update_client_settings(
-            &client_id,
-            req.client_alias,
-            req.connection_mode,
-            locked_space_id,
-        )
-        .await
-    {
+    match repo.update_client_alias(&client_id, req.client_alias).await {
         Ok(Some(client)) => {
             let response = OAuthClientInfoResponse {
                 client_id: client.client_id,
@@ -1219,8 +1208,6 @@ pub async fn oauth_update_client(
                 metadata_url: client.metadata_url,
                 metadata_cached_at: client.metadata_cached_at,
                 metadata_cache_ttl: client.metadata_cache_ttl,
-                connection_mode: client.connection_mode,
-                locked_space_id: client.locked_space_id,
                 last_seen: client.last_seen,
                 created_at: client.created_at,
             };

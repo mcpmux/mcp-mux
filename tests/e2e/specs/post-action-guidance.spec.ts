@@ -7,8 +7,8 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("My Servers")').click();
-      await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
+      await page.locator('nav button:has-text("Tools")').click();
+      await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
 
       // Check for empty state with discover button
       const emptyState = page.locator('text=No servers installed');
@@ -23,7 +23,7 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("My Servers")').click();
+      await page.locator('nav button:has-text("Tools")').click();
 
       const emptyState = page.locator('text=No servers installed');
       if (await emptyState.isVisible().catch(() => false)) {
@@ -31,7 +31,7 @@ test.describe('Post-Action User Guidance', () => {
         await discoverBtn.click();
 
         // Should now be on the Discover page
-        await expect(page.getByRole('heading', { name: 'Discover Servers' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
       }
     });
   });
@@ -63,7 +63,7 @@ test.describe('Post-Action User Guidance', () => {
         // Toast should appear with action button
         await expect(page.getByTestId('toast-success')).toBeVisible({ timeout: 5000 });
         await expect(page.getByTestId('toast-action')).toBeVisible();
-        await expect(page.getByTestId('toast-action')).toContainText('My Servers');
+        await expect(page.getByTestId('toast-action')).toContainText('Tools');
       }
     });
 
@@ -82,26 +82,26 @@ test.describe('Post-Action User Guidance', () => {
         await page.getByTestId('toast-action').click();
 
         // Should navigate to My Servers
-        await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
       }
     });
   });
 
   test.describe('OAuth consent post-approval guidance', () => {
     // Skip in web mode - OAuth consent requires Tauri deep link events
-    test.skip('should show success state with Manage Permissions button after approval', async ({ page }) => {
-      // This test requires the OAuthConsentModal to be triggered via a deep link event
-      // which is only available in the full Tauri desktop app
+    test.skip('should show success state with Open Workspaces button after approval', async ({
+      page,
+    }) => {
+      // This test requires the OAuthConsentModal to be triggered via a deep link
+      // event, which is only available in the full Tauri desktop app.
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      // After approval, the modal should show:
-      // - "Client Approved" heading
-      // - "Manage Permissions" button
-      // - "Later" button
-      const manageBtn = page.locator('[data-testid="go-to-clients-btn"]');
-      await expect(manageBtn).toBeVisible();
-      await expect(manageBtn).toContainText('Manage Permissions');
+      // In the v2 flow the post-approval screen sends users to Workspaces
+      // (where routing per folder lives), not to a per-client permissions page.
+      const openWorkspacesBtn = page.locator('[data-testid="go-to-workspaces-btn"]');
+      await expect(openWorkspacesBtn).toBeVisible();
+      await expect(openWorkspacesBtn).toContainText('Open Workspaces');
     });
   });
 });

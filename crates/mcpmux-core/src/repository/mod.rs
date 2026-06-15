@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     Client, Credential, CredentialType, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
-    OutboundOAuthRegistration, ServerFeature, Space,
+    OutboundOAuthRegistration, ServerFeature, Space, WorkspaceBinding,
 };
 
 /// Result type for repository operations
@@ -157,35 +157,17 @@ pub trait FeatureSetRepository: Send + Sync {
     /// Delete a feature set (soft delete)
     async fn delete(&self, id: &str) -> RepoResult<()>;
 
-    /// Get builtin feature sets for a space
-    async fn list_builtin(&self, space_id: &str) -> RepoResult<Vec<FeatureSet>>;
+    /// Get the auto-seeded "Starter" FeatureSet for a Space, if it
+    /// exists. Routing-irrelevant under resolver v3 — UI helpers use it
+    /// to suggest a default selection in the binding/grant pickers.
+    async fn get_starter_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>>;
 
-    /// Get server-all featureset for a server in a space
-    async fn get_server_all(
-        &self,
-        space_id: &str,
-        server_id: &str,
-    ) -> RepoResult<Option<FeatureSet>>;
-
-    /// Create server-all featureset if it doesn't exist
-    async fn ensure_server_all(
-        &self,
-        space_id: &str,
-        server_id: &str,
-        server_name: &str,
-    ) -> RepoResult<FeatureSet>;
-
-    /// Get the "Default" featureset for a space
-    async fn get_default_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>>;
-
-    /// Get the "All" featureset for a space
-    async fn get_all_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>>;
-
-    /// Ensure builtin feature sets exist for a space (All + Default)
+    /// Ensure the auto-seeded Starter FeatureSet exists for a Space.
+    ///
+    /// Called during Space creation and any time a defensive re-seed is
+    /// needed (Workspace inspector references the Starter as a "preview"
+    /// for unbound roots and would crash with `None`).
     async fn ensure_builtin_for_space(&self, space_id: &str) -> RepoResult<()>;
-
-    /// Delete server-all feature set for a server (used when uninstalling)
-    async fn delete_server_all(&self, space_id: &str, server_id: &str) -> RepoResult<()>;
 
     /// Add an individual feature as a member of a feature set
     async fn add_feature_member(
@@ -207,6 +189,9 @@ pub trait FeatureSetRepository: Send + Sync {
 ///
 /// Manages MCP client entities (apps connecting TO McpMux).
 /// Works with the unified `inbound_clients` table.
+///
+/// Only identity is persisted here — routing is resolved per-session
+/// via WorkspaceBinding and each Space's Default feature set.
 #[async_trait]
 pub trait InboundMcpClientRepository: Send + Sync {
     /// Get all clients
@@ -226,46 +211,45 @@ pub trait InboundMcpClientRepository: Send + Sync {
 
     /// Delete a client
     async fn delete(&self, id: &Uuid) -> RepoResult<()>;
+}
 
-    /// Grant a feature set to a client for a specific space
-    async fn grant_feature_set(
+/// Workspace binding repository trait
+///
+/// Bindings map normalized filesystem paths to FeatureSets on a per-Space basis.
+/// Matching is EXACT (no ancestor/prefix inheritance — see `find_exact_for_roots`);
+/// callers are expected to pass already-normalized paths (see
+/// [`crate::domain::normalize_workspace_root`]).
+#[async_trait]
+pub trait WorkspaceBindingRepository: Send + Sync {
+    /// List every binding across all Spaces.
+    async fn list(&self) -> RepoResult<Vec<WorkspaceBinding>>;
+
+    /// List bindings for a specific Space.
+    async fn list_for_space(&self, space_id: &Uuid) -> RepoResult<Vec<WorkspaceBinding>>;
+
+    /// Fetch a binding by id.
+    async fn get(&self, id: &Uuid) -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Insert a new binding. Fails on `(space_id, workspace_root)` conflict.
+    async fn create(&self, binding: &WorkspaceBinding) -> RepoResult<()>;
+
+    /// Update an existing binding (e.g., point to a different FS).
+    async fn update(&self, binding: &WorkspaceBinding) -> RepoResult<()>;
+
+    /// Delete a binding by id.
+    async fn delete(&self, id: &Uuid) -> RepoResult<()>;
+
+    /// Resolve which binding applies for a set of candidate workspace roots.
+    ///
+    /// EXACT match only — a folder resolves to a binding whose `workspace_root`
+    /// equals one of the candidates. There is NO ancestor/prefix inheritance:
+    /// `d:\a\b` does not pick up a binding on `d:\a`. Every candidate MUST
+    /// already be normalized. Returns the first matching binding (each binding
+    /// carries its own target Space).
+    async fn find_exact_for_roots(
         &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> RepoResult<()>;
-
-    /// Revoke a feature set from a client for a specific space
-    async fn revoke_feature_set(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> RepoResult<()>;
-
-    /// Get all feature set IDs granted to a client for a specific space
-    async fn get_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-    ) -> RepoResult<Vec<String>>;
-
-    /// Get all grants for a client (all spaces)
-    async fn get_all_grants(
-        &self,
-        client_id: &Uuid,
-    ) -> RepoResult<std::collections::HashMap<String, Vec<String>>>;
-
-    /// Set all grants for a client in a space (replaces existing)
-    async fn set_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_ids: &[String],
-    ) -> RepoResult<()>;
-
-    /// Check if client has any grants for a space
-    async fn has_grants_for_space(&self, client_id: &Uuid, space_id: &str) -> RepoResult<bool>;
+        candidate_roots: &[String],
+    ) -> RepoResult<Option<WorkspaceBinding>>;
 }
 
 /// Credential repository trait (local-only, never synced)
@@ -356,4 +340,43 @@ pub trait AppSettingsRepository: Send + Sync {
 
     /// Get all settings with a given prefix (e.g., "gateway." returns all gateway settings)
     async fn list_by_prefix(&self, prefix: &str) -> RepoResult<Vec<(String, String)>>;
+}
+
+/// Per-Space configuration for built-in MCP servers.
+///
+/// Built-in servers (e.g. "Tool Optimization", the `mcpmux_*` tools) and their
+/// individual tools are enabled/disabled **per Space**. Absence of a stored
+/// row means "default": the server uses its descriptor's `default_enabled`, and
+/// every tool is on. Only deviations from the default are persisted.
+#[async_trait]
+pub trait SpaceBuiltinConfigRepository: Send + Sync {
+    /// The stored enable override for a built-in server in a Space, or `None`
+    /// when the Space has never overridden it (callers fall back to the
+    /// descriptor's `default_enabled`).
+    async fn server_enabled_override(
+        &self,
+        space_id: &str,
+        server_id: &str,
+    ) -> RepoResult<Option<bool>>;
+
+    /// Tool names explicitly disabled for `(space, server)`. Any tool not in
+    /// this list is enabled.
+    async fn disabled_tools(&self, space_id: &str, server_id: &str) -> RepoResult<Vec<String>>;
+
+    /// Enable/disable a built-in server for a Space.
+    async fn set_server_enabled(
+        &self,
+        space_id: &str,
+        server_id: &str,
+        enabled: bool,
+    ) -> RepoResult<()>;
+
+    /// Enable/disable an individual tool of a built-in server for a Space.
+    async fn set_tool_enabled(
+        &self,
+        space_id: &str,
+        server_id: &str,
+        tool_name: &str,
+        enabled: bool,
+    ) -> RepoResult<()>;
 }

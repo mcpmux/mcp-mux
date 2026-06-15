@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useAppStore } from '../../../apps/desktop/src/stores/appStore';
-import { createTestSpace, createDefaultSpace, createTestSpaces, Space } from '../fixtures';
+import { createTestSpace, createDefaultSpace, createTestSpaces } from '../fixtures';
 
 describe('appStore', () => {
   beforeEach(() => {
     // Reset store to initial state before each test
     useAppStore.setState({
       spaces: [],
-      activeSpaceId: null,
       viewSpaceId: null,
       activeNav: 'home',
       pendingClientId: null,
@@ -25,14 +24,14 @@ describe('appStore', () => {
       expect(useAppStore.getState().spaces).toEqual(spaces);
     });
 
-    it('should auto-select first space as active when none selected', () => {
+    it('should auto-select first space as the view when none selected', () => {
       const spaces = createTestSpaces(3);
       useAppStore.getState().setSpaces(spaces);
 
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[0].id);
+      expect(useAppStore.getState().viewSpaceId).toBe(spaces[0].id);
     });
 
-    it('should prefer default space when auto-selecting', () => {
+    it('should prefer the default space when auto-selecting the view', () => {
       const spaces = [
         createTestSpace({ name: 'Space 1', is_default: false }),
         createDefaultSpace({ name: 'Default' }),
@@ -40,96 +39,37 @@ describe('appStore', () => {
       ];
       useAppStore.getState().setSpaces(spaces);
 
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[1].id);
+      expect(useAppStore.getState().viewSpaceId).toBe(spaces[1].id);
     });
 
-    it('should set viewSpaceId to activeSpaceId when not set', () => {
-      const spaces = createTestSpaces(2);
-      useAppStore.getState().setSpaces(spaces);
-
-      expect(useAppStore.getState().viewSpaceId).toBe(useAppStore.getState().activeSpaceId);
-    });
-
-    it('should reset viewSpaceId if current view space no longer exists', () => {
-      const spaces = createTestSpaces(2);
-      useAppStore.setState({ viewSpaceId: 'non-existent-id' });
-      useAppStore.getState().setSpaces(spaces);
-
-      expect(useAppStore.getState().viewSpaceId).toBe(useAppStore.getState().activeSpaceId);
-    });
-
-    it('should reset activeSpaceId when persisted value points to deleted space', () => {
-      const spaces = [
-        createTestSpace({ name: 'Space A', is_default: false }),
-        createDefaultSpace({ name: 'Default Space' }),
-      ];
-      // Simulate a persisted activeSpaceId that no longer exists in the spaces list
-      useAppStore.setState({ activeSpaceId: 'deleted-space-id' });
-      useAppStore.getState().setSpaces(spaces);
-
-      // Should fallback to the default space
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[1].id);
-    });
-
-    it('should reset activeSpaceId to first space when no default exists', () => {
-      const spaces = [
-        createTestSpace({ name: 'Space A', is_default: false }),
-        createTestSpace({ name: 'Space B', is_default: false }),
-      ];
-      useAppStore.setState({ activeSpaceId: 'deleted-space-id' });
-      useAppStore.getState().setSpaces(spaces);
-
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[0].id);
-    });
-
-    it('should keep activeSpaceId when it still exists in spaces list', () => {
+    it('should keep viewSpaceId when it still exists in the spaces list', () => {
       const spaces = createTestSpaces(3);
-      useAppStore.setState({ activeSpaceId: spaces[1].id });
+      useAppStore.setState({ viewSpaceId: spaces[1].id });
       useAppStore.getState().setSpaces(spaces);
-
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[1].id);
-    });
-
-    it('should reset both activeSpaceId and viewSpaceId when both point to deleted spaces', () => {
-      const spaces = [createDefaultSpace({ name: 'My Space' })];
-      useAppStore.setState({
-        activeSpaceId: 'deleted-active-id',
-        viewSpaceId: 'deleted-view-id',
-      });
-      useAppStore.getState().setSpaces(spaces);
-
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[0].id);
-      expect(useAppStore.getState().viewSpaceId).toBe(spaces[0].id);
-    });
-  });
-
-  describe('setActiveSpace', () => {
-    it('should set active space id', () => {
-      const spaces = createTestSpaces(3);
-      useAppStore.getState().setSpaces(spaces);
-      useAppStore.getState().setActiveSpace(spaces[2].id);
-
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[2].id);
-    });
-
-    it('should follow with viewSpaceId when they were the same', () => {
-      const spaces = createTestSpaces(3);
-      useAppStore.getState().setSpaces(spaces);
-      // viewSpaceId should now equal activeSpaceId (both spaces[0].id)
-
-      useAppStore.getState().setActiveSpace(spaces[1].id);
 
       expect(useAppStore.getState().viewSpaceId).toBe(spaces[1].id);
     });
 
-    it('should not change viewSpaceId when different from activeSpaceId', () => {
-      const spaces = createTestSpaces(3);
+    it('should reset viewSpaceId to the default space when the persisted view is gone', () => {
+      const spaces = [
+        createTestSpace({ name: 'Space A', is_default: false }),
+        createDefaultSpace({ name: 'Default Space' }),
+      ];
+      useAppStore.setState({ viewSpaceId: 'deleted-space-id' });
       useAppStore.getState().setSpaces(spaces);
-      useAppStore.getState().setViewSpace(spaces[2].id);
 
-      useAppStore.getState().setActiveSpace(spaces[1].id);
+      expect(useAppStore.getState().viewSpaceId).toBe(spaces[1].id);
+    });
 
-      expect(useAppStore.getState().viewSpaceId).toBe(spaces[2].id);
+    it('should reset viewSpaceId to the first space when no default exists', () => {
+      const spaces = [
+        createTestSpace({ name: 'Space A', is_default: false }),
+        createTestSpace({ name: 'Space B', is_default: false }),
+      ];
+      useAppStore.setState({ viewSpaceId: 'deleted-space-id' });
+      useAppStore.getState().setSpaces(spaces);
+
+      expect(useAppStore.getState().viewSpaceId).toBe(spaces[0].id);
     });
   });
 
@@ -151,38 +91,31 @@ describe('appStore', () => {
       expect(useAppStore.getState().spaces).toContainEqual(space);
     });
 
-    it('should set active space when first space is added', () => {
+    it('should set viewSpaceId when first space is added', () => {
       const space = createTestSpace();
       useAppStore.getState().addSpace(space);
 
-      expect(useAppStore.getState().activeSpaceId).toBe(space.id);
+      expect(useAppStore.getState().viewSpaceId).toBe(space.id);
     });
 
-    it('should set active space when default space is added', () => {
+    it('should snap viewSpaceId to a newly added default space', () => {
       const existing = createTestSpace();
       const defaultSpace = createDefaultSpace();
 
       useAppStore.getState().addSpace(existing);
       useAppStore.getState().addSpace(defaultSpace);
 
-      expect(useAppStore.getState().activeSpaceId).toBe(defaultSpace.id);
+      expect(useAppStore.getState().viewSpaceId).toBe(defaultSpace.id);
     });
 
-    it('should not change active space when non-default space is added', () => {
+    it('should not change viewSpaceId when adding a non-default space', () => {
       const first = createTestSpace({ name: 'First' });
       const second = createTestSpace({ name: 'Second' });
 
       useAppStore.getState().addSpace(first);
       useAppStore.getState().addSpace(second);
 
-      expect(useAppStore.getState().activeSpaceId).toBe(first.id);
-    });
-
-    it('should initialize viewSpaceId when first space is added', () => {
-      const space = createTestSpace();
-      useAppStore.getState().addSpace(space);
-
-      expect(useAppStore.getState().viewSpaceId).toBe(space.id);
+      expect(useAppStore.getState().viewSpaceId).toBe(first.id);
     });
   });
 
@@ -196,29 +129,23 @@ describe('appStore', () => {
       expect(useAppStore.getState().spaces.find((s) => s.id === spaces[1].id)).toBeUndefined();
     });
 
-    it('should select first remaining space when active space is removed', () => {
-      const spaces = createTestSpaces(3);
-      useAppStore.getState().setSpaces(spaces);
-      useAppStore.getState().removeSpace(spaces[0].id);
+    it('should fall back to the default space when the viewed space is removed', () => {
+      const def = createDefaultSpace({ name: 'Default' });
+      const other = createTestSpace({ name: 'Other', is_default: false });
+      useAppStore.getState().setSpaces([def, other]);
+      useAppStore.getState().setViewSpace(other.id);
 
-      expect(useAppStore.getState().activeSpaceId).toBe(spaces[1].id);
+      useAppStore.getState().removeSpace(other.id);
+
+      expect(useAppStore.getState().viewSpaceId).toBe(def.id);
     });
 
-    it('should set activeSpaceId to null when last space is removed', () => {
+    it('should set viewSpaceId to null when last space is removed', () => {
       const space = createTestSpace();
       useAppStore.getState().addSpace(space);
       useAppStore.getState().removeSpace(space.id);
 
-      expect(useAppStore.getState().activeSpaceId).toBeNull();
-    });
-
-    it('should update viewSpaceId when viewed space is removed', () => {
-      const spaces = createTestSpaces(3);
-      useAppStore.getState().setSpaces(spaces);
-      useAppStore.getState().setViewSpace(spaces[1].id);
-      useAppStore.getState().removeSpace(spaces[1].id);
-
-      expect(useAppStore.getState().viewSpaceId).toBe(useAppStore.getState().activeSpaceId);
+      expect(useAppStore.getState().viewSpaceId).toBeNull();
     });
   });
 

@@ -10,14 +10,11 @@ use uuid::Uuid;
 
 use crate::domain::{DomainEvent, InstallationSource, InstalledServer, ServerDefinition};
 use crate::event_bus::EventSender;
-use crate::repository::{
-    CredentialRepository, FeatureSetRepository, InstalledServerRepository, ServerFeatureRepository,
-};
+use crate::repository::{CredentialRepository, InstalledServerRepository, ServerFeatureRepository};
 
 /// Application service for server installation and management
 pub struct ServerAppService {
     server_repo: Arc<dyn InstalledServerRepository>,
-    feature_set_repo: Option<Arc<dyn FeatureSetRepository>>,
     feature_repo: Option<Arc<dyn ServerFeatureRepository>>,
     credential_repo: Option<Arc<dyn CredentialRepository>>,
     event_sender: EventSender,
@@ -26,14 +23,12 @@ pub struct ServerAppService {
 impl ServerAppService {
     pub fn new(
         server_repo: Arc<dyn InstalledServerRepository>,
-        feature_set_repo: Option<Arc<dyn FeatureSetRepository>>,
         feature_repo: Option<Arc<dyn ServerFeatureRepository>>,
         credential_repo: Option<Arc<dyn CredentialRepository>>,
         event_sender: EventSender,
     ) -> Self {
         Self {
             server_repo,
-            feature_set_repo,
             feature_repo,
             credential_repo,
             event_sender,
@@ -86,20 +81,6 @@ impl ServerAppService {
 
         self.server_repo.install(&server).await?;
 
-        // Create server-all feature set
-        if let Some(ref fs_repo) = self.feature_set_repo {
-            if let Err(e) = fs_repo
-                .ensure_server_all(&space_id_str, server_id, &definition.name)
-                .await
-            {
-                tracing::warn!(
-                    server_id = server_id,
-                    error = %e,
-                    "Failed to create server-all feature set"
-                );
-            }
-        }
-
         info!(
             space_id = %space_id,
             server_id = server_id,
@@ -146,17 +127,6 @@ impl ServerAppService {
                     server_id = server_id,
                     file = %file_path.display(),
                     "Removed server from config file"
-                );
-            }
-        }
-
-        // Delete server-all feature set
-        if let Some(ref fs_repo) = self.feature_set_repo {
-            if let Err(e) = fs_repo.delete_server_all(&space_id_str, server_id).await {
-                warn!(
-                    server_id = server_id,
-                    error = %e,
-                    "Failed to delete server-all feature set"
                 );
             }
         }

@@ -134,7 +134,6 @@ impl ApplicationServicesBuilder {
             server: self.installed_server_repo.map(|r| {
                 ServerAppService::new(
                     r,
-                    self.feature_set_repo.clone(),
                     self.server_feature_repo.clone(),
                     self.credential_repo.clone(),
                     sender.clone(),
@@ -142,7 +141,7 @@ impl ApplicationServicesBuilder {
             }),
             permission: self
                 .feature_set_repo
-                .map(|r| PermissionAppService::new(r, self.client_repo.clone(), sender.clone())),
+                .map(|r| PermissionAppService::new(r, sender.clone())),
             client: self
                 .client_repo
                 .map(|r| ClientAppService::new(r, sender.clone())),

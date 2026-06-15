@@ -188,7 +188,7 @@ async fn test_space_repository_concurrent_reads() {
 
     // Create a space
     let space = fixtures::test_space("Concurrent Test");
-    let space_id = space.id.clone();
+    let space_id = space.id;
     SpaceRepository::create(repo.as_ref(), &space)
         .await
         .unwrap();
@@ -197,7 +197,7 @@ async fn test_space_repository_concurrent_reads() {
     let mut handles = vec![];
     for _ in 0..5 {
         let repo_clone = Arc::clone(&repo);
-        let id = space_id.clone();
+        let id = space_id;
         handles.push(tokio::spawn(async move {
             SpaceRepository::get(repo_clone.as_ref(), &id).await
         }));

@@ -6,6 +6,7 @@ import Editor, { type Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useToast, ToastContainer } from '@mcpmux/ui';
 import USER_SPACE_CONFIG_SCHEMA from '../../../../schemas/user-space.schema.json';
+import { RequestServerCTA } from './Contribute';
 
 interface ConfigEditorModalProps {
   spaceId: string;
@@ -219,6 +220,12 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
           <span className="text-xs text-[rgb(var(--muted))]">
             Ctrl+S save &middot; Ctrl+Shift+F format
           </span>
+        </div>
+
+        {/* Contribute / Request CTA — surfaces the registry templates so users
+            don't have to hand-roll a definition if one already exists upstream. */}
+        <div className="px-4 py-3 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))]">
+          <RequestServerCTA />
         </div>
 
         {/* Editor Area */}

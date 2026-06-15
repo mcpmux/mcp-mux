@@ -43,24 +43,24 @@ impl SpaceAppService {
         self.space_repo.get(&id).await
     }
 
-    /// Get the active (default) space
-    pub async fn get_active(&self) -> Result<Option<Space>> {
+    /// Get the system's default Space (the routing fallback when a session
+    /// reports no root or no `WorkspaceBinding` matches).
+    pub async fn get_default(&self) -> Result<Option<Space>> {
         self.space_repo.get_default().await
     }
 
     /// Create a new space
+    ///
+    /// User-created spaces are NEVER marked as default — the canonical
+    /// default is the seeded "My Space" row, restored by migration 008 if
+    /// it goes missing. The previous "first-created becomes default" branch
+    /// caused durable corruption on installs that hit it.
     ///
     /// Emits: `SpaceCreated`
     pub async fn create(&self, name: &str, icon: Option<String>) -> Result<Space> {
         let mut space = Space::new(name);
         if let Some(icon) = &icon {
             space = space.with_icon(icon);
-        }
-
-        // If no spaces exist, make this one the default
-        let existing = self.space_repo.list().await?;
-        if existing.is_empty() {
-            space = space.set_default();
         }
 
         // Persist
@@ -155,38 +155,5 @@ impl SpaceAppService {
             .emit(DomainEvent::SpaceDeleted { space_id: id });
 
         Ok(())
-    }
-
-    /// Set the active space
-    ///
-    /// Emits: `SpaceActivated`
-    pub async fn set_active(&self, id: Uuid) -> Result<Space> {
-        // Get current active space
-        let old_space = self.space_repo.get_default().await?;
-
-        // Get new space
-        let new_space = self
-            .space_repo
-            .get(&id)
-            .await?
-            .ok_or_else(|| anyhow!("Space not found"))?;
-
-        // Set as default
-        self.space_repo.set_default(&id).await?;
-
-        info!(
-            space_id = %id,
-            name = %new_space.name,
-            "[SpaceAppService] Activated space"
-        );
-
-        // Emit event
-        self.event_sender.emit(DomainEvent::SpaceActivated {
-            from_space_id: old_space.map(|s| s.id),
-            to_space_id: new_space.id,
-            to_space_name: new_space.name.clone(),
-        });
-
-        Ok(new_space)
     }
 }

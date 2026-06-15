@@ -368,7 +368,16 @@ impl ServerHandler for McpMuxGatewayHandler {
              list_feature_sets) are safe to call freely once the user has opted \
              in; writes (manage_feature_set, bind_current_workspace) prompt the \
              user for approval. Most operations accept an optional `space_id` \
-             (from mcpmux_list_spaces) to target a specific Space."
+             (from mcpmux_list_spaces) to target a specific Space.\n\n\
+             When optimizing, start minimal and expand on demand. Use \
+             `mcpmux_search_tools` to find just the tools the current task needs \
+             and compose a small FeatureSet, then grow it later \
+             (`mcpmux_manage_feature_set` action 'update' with `add`) only as new \
+             needs arise. Prefer this over dumping the whole catalog with \
+             `mcpmux_list_all_tools` and adding everything upfront — a lean set is \
+             faster to assemble, cheaper in tokens, and keeps the agent's tool \
+             list focused. Don't over-curate: a few clearly-needed tools now beats \
+             an exhaustive set, and re-optimizing is cheap."
                 .to_string(),
         );
         info

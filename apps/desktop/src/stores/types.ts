@@ -1,14 +1,36 @@
 import { Space } from '@/lib/api/spaces';
 
+export type NavItem =
+  | 'home'
+  | 'registry'
+  | 'servers'
+  | 'spaces'
+  | 'featuresets'
+  | 'workspaces'
+  | 'clients'
+  | 'builtin-servers'
+  | 'settings';
+
 export interface AppState {
   // Spaces
   spaces: Space[];
-  activeSpaceId: string | null;
+  /**
+   * The space the user is currently viewing in the desktop app. Pure
+   * UI navigation state — has no effect on gateway routing, which always
+   * resolves via reported workspace root → WorkspaceBinding (or the
+   * built-in default Space when no binding matches).
+   */
   viewSpaceId: string | null;
+
+  // Navigation
+  activeNav: NavItem;
+  /** Client ID to auto-select when navigating to Clients page */
+  pendingClientId: string | null;
 
   // UI state
   sidebarCollapsed: boolean;
   theme: 'light' | 'dark' | 'system';
+  analyticsEnabled: boolean;
 
   // Loading states
   loading: {
@@ -20,19 +42,22 @@ export interface AppState {
 export interface AppActions {
   // Spaces
   setSpaces: (spaces: Space[]) => void;
-  setActiveSpace: (id: string | null) => void;
   setViewSpace: (id: string | null) => void;
   addSpace: (space: Space) => void;
   removeSpace: (id: string) => void;
   updateSpace: (id: string, updates: Partial<Space>) => void;
 
+  // Navigation
+  navigateTo: (nav: NavItem) => void;
+  setPendingClientId: (id: string | null) => void;
+
   // UI
   toggleSidebar: () => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
+  setAnalyticsEnabled: (enabled: boolean) => void;
 
   // Loading
   setLoading: (key: keyof AppState['loading'], value: boolean) => void;
 }
 
 export type AppStore = AppState & AppActions;
-

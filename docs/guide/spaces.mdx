@@ -1,0 +1,96 @@
+---
+title: Spaces — Isolated Workspaces
+description: Spaces let you organize MCP servers into isolated environments with separate credentials. Keep work, personal, and client projects completely separated in McpMux.
+---
+
+Spaces are isolated workspaces in McpMux. Each Space has its own server configurations, credentials, and enabled servers — keeping different contexts completely separate.
+
+## Why Spaces
+
+Without Spaces, all your MCP credentials and server configurations live in a single shared context. This means:
+
+- Your work GitHub token is accessible alongside personal projects
+- Client credentials from different customers can leak across contexts
+- Switching between project contexts requires manual reconfiguration
+- There's no way to limit which servers are available for which work
+
+Spaces solve this by providing **complete isolation** between environments.
+
+![Workspaces page showing My Space (active), Open Source, Personal, and Work spaces](https://mcpmux.com/screenshots/spaces.png)
+
+## How Spaces Work
+
+Each Space is an independent environment containing:
+
+- **Installed servers** — which MCP servers are available in this Space
+- **Server configurations** — per-Space credentials, environment variables, and settings
+- **FeatureSets** — permission bundles scoped to this Space
+- **Workspace bindings** — which project folders route to this Space and the FeatureSet they resolve to (see [Workspaces](/docs/workspaces/))
+
+### Active Space
+
+Only one Space can be **active** at a time. The active Space is the **fallback** for any session whose folder isn't mapped to a specific Space via a [Workspace](/docs/workspaces/) binding. It determines:
+
+- Which servers the gateway connects to
+- Which tools an unmapped session sees (its active-Space FeatureSet)
+- Which credentials are injected into server connections
+
+Switching the active Space immediately changes what servers and tools are available — no restart required.
+
+![Space switcher dropdown in the sidebar for quick context switching](https://mcpmux.com/screenshots/space-switcher.png)
+
+### Default-Enabled Servers
+
+When you install a server, you can mark it as **default-enabled**. Default-enabled servers are automatically available in all Spaces without needing to install them individually. This is useful for universal tools like Filesystem or Brave Search that you want everywhere.
+
+## Common Space Configurations
+
+### Work vs Personal
+
+The most common setup separates work and personal contexts:
+
+| | Work Space | Personal Space |
+|---|---|---|
+| GitHub | Work org token | Personal token |
+| Slack | Company workspace | — |
+| AWS | Production credentials | Personal account |
+| Notion | Team workspace | Personal workspace |
+
+### Multi-Client Freelancing
+
+Freelancers and consultants can create a Space per client:
+
+- **Client-Alpha** — their GitHub, Jira, and Slack
+- **Client-Beta** — their GitHub and Linear
+- **Personal** — your own tools and projects
+
+Each client's credentials are completely isolated. There's no risk of accidentally using Client-Alpha's API key while working on Client-Beta.
+
+### Dev / Staging / Prod
+
+For operations work, separate Spaces prevent accidentally running production commands:
+
+- **Development** — local services, test databases
+- **Staging** — staging API keys, staging databases
+- **Production** — production credentials (used sparingly and intentionally)
+
+## Managing Spaces
+
+### Creating a Space
+
+Navigate to **Spaces** in McpMux and click **Create Space**. Give it a name and optional icon.
+
+### Switching Active Space
+
+Click on any Space to set it as active. The dashboard and server list update immediately to reflect the new context. Any session whose folder isn't mapped to a specific Space follows the active Space automatically.
+
+### Deleting a Space
+
+Deleting a Space removes all its server configurations and stored credentials. This action is irreversible. The servers themselves (their definitions) remain in the registry — only the per-Space installation and credentials are deleted.
+
+## Next Steps
+
+- [Configure FeatureSets](/docs/feature-sets/) to control permissions within a Space
+- [Route folders with Workspaces](/docs/workspaces/) so each project resolves to the right Space
+- [Set up Clients](/docs/clients/) and approve the apps that connect
+- [Manage Servers](/docs/servers/) to install and configure per-Space server instances

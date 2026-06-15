@@ -23,7 +23,7 @@ pub use oauth::{OAuthConfig, OAuthManager, OAuthToken};
 pub use permissions::{PermissionFilter, PermissionSet};
 pub use server::{
     AutoConnectResult, DependenciesBuilder, GatewayConfig, GatewayDependencies, GatewayServer,
-    GatewayState, PendingAuthorization, StartupOrchestrator,
+    GatewayServerHandle, GatewayState, PendingAuthorization, StartupOrchestrator,
 };
 
 // Pool module - SOLID architecture
@@ -48,6 +48,7 @@ pub use pool::{
     McpClientConnection,
     McpClientHandler,
     OAuthCallback,
+    OAuthCompleteEvent,
     OAuthInitResult,
     OAuthTokenInfo,
     // OAuth

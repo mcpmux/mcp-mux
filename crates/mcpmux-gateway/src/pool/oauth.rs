@@ -255,36 +255,6 @@ impl OutboundOAuthManager {
         scopes.iter().map(|s| s.as_str()).collect()
     }
 
-    /// Add RFC 8707 'resource' parameter to authorization URL.
-    ///
-    /// The resource parameter tells the Authorization Server which protected resource
-    /// (MCP server) the client is requesting access to. This enables the AS to:
-    /// - Issue tokens scoped to the specific resource
-    /// - Apply resource-specific policies
-    /// - Prevent token replay at other resources
-    ///
-    /// Some servers (like Miro) require this parameter.
-    fn add_resource_parameter(auth_url: &str, server_url: &str) -> String {
-        use url::Url;
-
-        match Url::parse(auth_url) {
-            Ok(mut url) => {
-                // Add the resource parameter with the MCP server URL
-                url.query_pairs_mut().append_pair("resource", server_url);
-                info!("[OAuth] Added RFC 8707 resource parameter: {}", server_url);
-                url.to_string()
-            }
-            Err(e) => {
-                warn!(
-                    "[OAuth] Failed to parse auth URL to add resource parameter: {}",
-                    e
-                );
-                // Return original URL if parsing fails
-                auth_url.to_string()
-            }
-        }
-    }
-
     /// Subscribe to OAuth completion events
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<OAuthCompleteEvent> {
         self.completion_tx.subscribe()
@@ -533,33 +503,88 @@ impl OutboundOAuthManager {
                             }
                         }
 
-                        // Return a nice HTML page that auto-closes
-                        Html(
-                            r#"
-<!DOCTYPE html>
-<html>
+                        // Return a branded HTML page that auto-closes
+                        let app_name = branding::DISPLAY_NAME;
+                        Html(format!(
+                            r##"<!DOCTYPE html>
+<html lang="en">
 <head>
-    <title>Authorization Complete</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{app_name} - Authorization Complete</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-               display: flex; justify-content: center; align-items: center; 
-               height: 100vh; margin: 0; background: #f5f5f5; }
-        .container { text-align: center; padding: 40px; background: white; 
-                     border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; margin-bottom: 16px; }
-        p { color: #666; }
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1a1210 0%, #2a1c17 50%, #1e1412 100%);
+            color: #e6e6e6;
+            padding: 1rem;
+        }}
+        .container {{
+            text-align: center;
+            max-width: 400px;
+        }}
+        .logo {{
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 1.5rem;
+        }}
+        .check {{
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 1rem;
+            background: rgba(74, 222, 128, 0.12);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .check svg {{
+            width: 24px;
+            height: 24px;
+        }}
+        h1 {{
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: #fff;
+        }}
+        .subtitle {{
+            color: #a0917e;
+            line-height: 1.5;
+            margin-bottom: 1.5rem;
+        }}
+        .note {{
+            font-size: 0.875rem;
+            color: #7a6e62;
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>✓ Authorization Complete</h1>
-        <p>You can close this window and return to McpMux.</p>
-        <script>setTimeout(() => window.close(), 2000);</script>
+        <svg class="logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#DA7756"/><stop offset="100%" stop-color="#B8553A"/></linearGradient><mask id="m"><rect width="32" height="32" fill="white"/><circle cx="12" cy="17.5" r="1.75" fill="black"/><circle cx="20" cy="17.5" r="1.75" fill="black"/><ellipse cx="16" cy="20.6" rx="1" ry="0.75" fill="black"/></mask></defs>
+            <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+            <path d="M 16 25.3 C 8.7 25.3 4.9 21.3 4.9 17.2 C 4.9 14 6.3 13.4 8.3 15.4 C 8.1 10.3 6.1 5 7.2 4.4 C 8.9 3.4 11.8 8.2 13.4 12.2 C 14.3 10.7 14.9 10.3 16 10.3 C 17.1 10.3 17.7 10.7 18.6 12.2 C 20.2 8.2 23.1 3.4 24.8 4.4 C 25.9 5 23.9 10.3 23.7 15.4 C 25.7 13.4 27.1 14 27.1 17.2 C 27.1 21.3 23.3 25.3 16 25.3 Z" fill="white" opacity="0.88" mask="url(#m)"/>
+            <path d="M 13.9 22.2 Q 16 24.3 18.1 22.2" stroke="white" stroke-width="0.9" stroke-linecap="round" fill="none" opacity="0.95"/>
+        </svg>
+        <div class="check">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <h1>Authorization Complete</h1>
+        <p class="subtitle">
+            You can close this window and return to {app_name}.
+        </p>
+        <p class="note">This window will close automatically.</p>
     </div>
+    <script>setTimeout(function(){{ window.close(); }}, 2000);</script>
 </body>
-</html>
-                    "#,
-                        )
+</html>"##
+                        ))
                     },
                 ),
             )
@@ -994,12 +1019,11 @@ impl OutboundOAuthManager {
                 let scopes = Self::get_scopes_from_metadata(&discovered_metadata);
 
                 // Then configure client with the existing registration
-                let config = rmcp::transport::auth::OAuthClientConfig {
-                    client_id: reg.client_id.clone(),
-                    client_secret: None,
-                    scopes: scopes.clone(),
-                    redirect_uri: redirect_uri.clone(),
-                };
+                let mut config = rmcp::transport::auth::OAuthClientConfig::new(
+                    reg.client_id.clone(),
+                    redirect_uri.clone(),
+                );
+                config.scopes = scopes.clone();
 
                 if let Err(e) = manager.configure_client(config) {
                     self.log(
@@ -1029,17 +1053,23 @@ impl OutboundOAuthManager {
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to get auth URL: {}", e))?;
 
-                // Create session manually
-                oauth_state = OAuthState::Session(rmcp::transport::auth::AuthorizationSession {
-                    auth_manager: std::mem::replace(
-                        manager,
-                        rmcp::transport::auth::AuthorizationManager::new(server_url)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("Failed: {}", e))?,
+                // Create session manually (reusing the existing registration).
+                // We already called configure_client + get_authorization_url above,
+                // so we use `for_scope_upgrade` to wrap the pre-computed values without
+                // re-registering the client via DCR.
+                let taken_manager = std::mem::replace(
+                    manager,
+                    rmcp::transport::auth::AuthorizationManager::new(server_url)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed: {}", e))?,
+                );
+                oauth_state = OAuthState::Session(
+                    rmcp::transport::auth::AuthorizationSession::for_scope_upgrade(
+                        taken_manager,
+                        auth_url.clone(),
+                        &redirect_uri,
                     ),
-                    auth_url: auth_url.clone(),
-                    redirect_uri: redirect_uri.clone(),
-                });
+                );
             }
             (false, None) // Not a new registration, no metadata to save
         } else {
@@ -1191,11 +1221,6 @@ impl OutboundOAuthManager {
                 return Err(anyhow::anyhow!("Failed to get auth URL: {}", e));
             }
         };
-
-        // Add RFC 8707 'resource' parameter to the authorization URL.
-        // This tells the Authorization Server which protected resource (MCP server)
-        // the token is being requested for. Some servers (like Miro) require this.
-        let auth_url = Self::add_resource_parameter(&auth_url, server_url);
 
         // Extract state parameter from auth_url
         let state = match Self::extract_state_from_url(&auth_url) {
@@ -1627,5 +1652,59 @@ impl OutboundOAuthManager {
 impl Default for OutboundOAuthManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod resource_param_tests {
+    use rmcp::transport::auth::{AuthorizationManager, AuthorizationMetadata};
+
+    /// The gateway delegates authorize-URL construction entirely to rmcp's
+    /// `AuthorizationManager::get_authorization_url` (via `create_auth_manager` /
+    /// `start_oauth_flow`). rmcp appends the RFC 8707 `resource` parameter itself, so the
+    /// gateway must NOT add a second one. This guards against re-introducing the removed
+    /// `add_resource_parameter` wrapper, which produced `?resource=...&resource=...` —
+    /// rejected by strict authorization servers (e.g. Supabase) and broke OAuth login.
+    #[tokio::test]
+    async fn authorize_url_has_exactly_one_resource_param() {
+        let base_url = "https://mcp.example.test/";
+
+        let mut manager = AuthorizationManager::new(base_url)
+            .await
+            .expect("construct AuthorizationManager");
+
+        // `AuthorizationMetadata` is `#[non_exhaustive]` in rmcp 1.5, so it can't be
+        // built with a struct literal from outside the crate. Deserialize it instead.
+        let metadata: AuthorizationMetadata = serde_json::from_value(serde_json::json!({
+            "authorization_endpoint": "https://auth.example.test/authorize",
+            "token_endpoint": "https://auth.example.test/token",
+            "response_types_supported": ["code"],
+            "code_challenge_methods_supported": ["S256"],
+        }))
+        .expect("build AuthorizationMetadata");
+        manager.set_metadata(metadata);
+        manager
+            .configure_client_id("test-client")
+            .expect("configure client id");
+
+        let auth_url = manager
+            .get_authorization_url(&["openid"])
+            .await
+            .expect("generate authorization url");
+
+        let parsed = url::Url::parse(&auth_url).expect("authorize url should parse");
+        let resource_values: Vec<String> = parsed
+            .query_pairs()
+            .filter(|(k, _)| k == "resource")
+            .map(|(_, v)| v.into_owned())
+            .collect();
+
+        assert_eq!(
+            resource_values.len(),
+            1,
+            "authorize URL must carry exactly one RFC 8707 resource param, \
+             got {resource_values:?} in {auth_url}"
+        );
+        assert_eq!(resource_values[0], base_url);
     }
 }

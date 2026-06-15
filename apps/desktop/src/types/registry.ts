@@ -8,8 +8,10 @@ export interface InputDefinition {
   label: string;
   description?: string;
   /** Input type - determines how the field is rendered */
-  type?: 'text' | 'password' | 'boolean' | 'number' | 'url';
+  type?: 'text' | 'boolean' | 'number' | 'url' | 'select' | 'file_path' | 'directory_path';
   required?: boolean;
+  /** Predefined options for select input type */
+  options?: { value: string; label: string; description?: string }[];
   secret?: boolean;
   placeholder?: string;
   /** URL to obtain credentials/values */

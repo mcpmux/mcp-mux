@@ -52,27 +52,21 @@ impl TestNotificationHandler {
 
 impl ServerHandler for TestNotificationHandler {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: Default::default(),
-            capabilities: ServerCapabilities::builder()
-                .enable_tools_with(ToolsCapability {
-                    list_changed: Some(true), // Key: advertise notification support
-                })
-                .enable_prompts_with(PromptsCapability {
-                    list_changed: Some(true),
-                })
-                .enable_resources_with(ResourcesCapability {
-                    subscribe: Some(false),
-                    list_changed: Some(true),
-                })
-                .build(),
-            server_info: Implementation {
-                name: "test-notification-server".to_string(),
-                version: "1.0.0".to_string(),
-                ..Default::default()
-            },
-            instructions: None,
-        }
+        let capabilities = ServerCapabilities::builder()
+            .enable_tools_with(ToolsCapability {
+                list_changed: Some(true), // Key: advertise notification support
+            })
+            .enable_prompts_with(PromptsCapability {
+                list_changed: Some(true),
+            })
+            .enable_resources_with(ResourcesCapability {
+                subscribe: Some(false),
+                list_changed: Some(true),
+            })
+            .build();
+        let mut info = ServerInfo::new(capabilities);
+        info.server_info = Implementation::new("test-notification-server", "1.0.0");
+        info
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
@@ -122,15 +116,16 @@ impl ServerHandler for TestNotificationHandler {
 async fn start_test_server(handler: TestNotificationHandler) -> (String, CancellationToken) {
     let ct = CancellationToken::new();
 
+    let mut http_cfg = StreamableHttpServerConfig::default();
+    http_cfg.stateful_mode = true;
+    http_cfg.json_response = false;
+    http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(15));
+    http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
+    http_cfg.cancellation_token = ct.child_token();
     let service = StreamableHttpService::new(
         move || Ok(handler.clone()),
         Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig {
-            stateful_mode: true,
-            sse_keep_alive: Some(std::time::Duration::from_secs(15)),
-            sse_retry: Some(std::time::Duration::from_secs(3)),
-            cancellation_token: ct.child_token(),
-        },
+        http_cfg,
     );
 
     let router = axum::Router::new().nest_service("/mcp", service);
@@ -162,16 +157,10 @@ async fn test_stateful_session_management() {
 
     // Connect client
     let transport = StreamableHttpClientTransport::from_uri(url.as_str());
-    let client = ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "test-client".to_string(),
-            version: "1.0.0".to_string(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+    let client = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("test-client", "1.0.0"),
+    )
     .serve(transport)
     .await
     .expect("client should connect");
@@ -303,16 +292,10 @@ impl NotificationTrackingClient {
 
 impl rmcp::ClientHandler for NotificationTrackingClient {
     fn get_info(&self) -> ClientInfo {
-        ClientInfo {
-            protocol_version: Default::default(),
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "notification-tracking-client".to_string(),
-                version: "1.0.0".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        ClientInfo::new(
+            ClientCapabilities::default(),
+            Implementation::new("notification-tracking-client", "1.0.0"),
+        )
     }
 
     fn on_tool_list_changed(
@@ -614,16 +597,10 @@ async fn test_session_persists_across_requests() {
     let (url, ct) = start_test_server(handler.clone()).await;
 
     let transport = StreamableHttpClientTransport::from_uri(url.as_str());
-    let client = ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "session-test-client".to_string(),
-            version: "1.0.0".to_string(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+    let client = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("session-test-client", "1.0.0"),
+    )
     .serve(transport)
     .await
     .expect("client should connect");
@@ -650,12 +627,7 @@ async fn test_session_persists_across_requests() {
 
     // Call a tool
     let result = client
-        .call_tool(CallToolRequestParams {
-            name: "test_tool".into(),
-            arguments: None,
-            meta: None,
-            task: None,
-        })
+        .call_tool(CallToolRequestParams::new("test_tool"))
         .await
         .expect("call_tool");
     assert!(!result.content.is_empty());
@@ -682,16 +654,10 @@ async fn test_protocol_version_negotiation() {
 
     // Connect with default (latest) protocol version
     let transport = StreamableHttpClientTransport::from_uri(url.as_str());
-    let client = ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "protocol-test-client".to_string(),
-            version: "1.0.0".to_string(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+    let client = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("protocol-test-client", "1.0.0"),
+    )
     .serve(transport)
     .await
     .expect("client should connect with default protocol version");

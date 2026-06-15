@@ -138,8 +138,8 @@ const FEATURE_SETS = [
 ];
 
 const OAUTH_CLIENTS = [
-  { client_id: 'cursor-001', registration_type: 'dcr', client_name: 'Cursor', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'cursor', software_version: '0.45.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T09:30:00Z', created_at: '2026-01-20T10:00:00Z', has_active_tokens: true },
-  { client_id: 'vscode-001', registration_type: 'dcr', client_name: 'VS Code', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'vscode', software_version: '1.96.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T08:45:00Z', created_at: '2026-01-22T10:00:00Z', has_active_tokens: true },
+  { client_id: 'cursor-001', registration_type: 'dcr', client_name: 'Cursor', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'cursor', software_version: '0.45.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T09:30:00Z', created_at: '2026-01-20T10:00:00Z' },
+  { client_id: 'vscode-001', registration_type: 'dcr', client_name: 'VS Code', client_alias: null, redirect_uris: ['http://localhost:9315/callback'], scope: null, approved: true, logo_uri: null, client_uri: null, software_id: 'vscode', software_version: '1.96.0', metadata_url: null, metadata_cached_at: null, metadata_cache_ttl: null, connection_mode: 'follow_active', locked_space_id: null, last_seen: '2026-02-07T08:45:00Z', created_at: '2026-01-22T10:00:00Z' },
 ];
 
 function mkRegistry(id, name, desc, alias, icon, categories, auth, transportType, publisher, caps, hostingType, badges) {
@@ -224,9 +224,7 @@ function buildMockHandler() {
     window.__TAURI_INTERNALS__.invoke = async function(cmd, args) {
       switch (cmd) {
         case 'list_spaces': return SPACES;
-        case 'get_active_space': return SPACES[0];
         case 'get_space': return SPACES.find(s => s.id === args?.id) || SPACES[0];
-        case 'set_active_space': return null;
         case 'create_space': return { id: crypto.randomUUID(), name: args?.name, icon: args?.icon, description: null, is_default: false, sort_order: 3, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
         case 'get_gateway_status': return { running: true, url: 'http://localhost:9315', active_sessions: 2, connected_backends: 6 };
         case 'start_gateway': return null;

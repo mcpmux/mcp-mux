@@ -6,6 +6,7 @@ import Editor, { type Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useToast, ToastContainer } from '@mcpmux/ui';
 import USER_SPACE_CONFIG_SCHEMA from '../../../../schemas/user-space.schema.json';
+import { RequestServerCTA } from './Contribute';
 
 interface ConfigEditorModalProps {
   spaceId: string;
@@ -163,13 +164,18 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
       <div className="bg-[rgb(var(--surface))] w-full max-w-4xl h-[80vh] rounded-xl shadow-2xl flex flex-col border border-[rgb(var(--border))]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[rgb(var(--border))]">
-          <div>
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              Add Custom Server
-            </h3>
-            <p className="text-sm text-[rgb(var(--muted))]">
-              Edit the JSON configuration for space: {spaceName}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10 border border-[rgb(var(--primary))]/20">
+              <Save className="h-4 w-4 text-[rgb(var(--primary))]" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold">
+                Custom Server Configuration
+              </h3>
+              <p className="text-xs text-[rgb(var(--muted))]">
+                {spaceName} &middot; JSON config
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -180,22 +186,22 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
         </div>
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 p-2 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))]">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))]">
           <button
             onClick={handleSave}
             disabled={isSaving || isLoading || !isValidJson}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] rounded-md hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50 transition-colors"
+            className="flex items-center gap-2 px-3.5 py-1.5 text-sm font-medium bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] rounded-lg hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50 shadow-sm transition-colors"
           >
             {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save Changes
+            Save
           </button>
-          
-          <div className="h-4 w-px bg-[rgb(var(--border))]" />
+
+          <div className="h-5 w-px bg-[rgb(var(--border))]" />
 
           <button
             onClick={handleFormat}
             disabled={isLoading || !isValidJson}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] rounded-md transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] rounded-lg transition-colors disabled:opacity-50"
             title="Format JSON (Ctrl+Shift+F)"
           >
             <Wand2 className="h-4 w-4" />
@@ -203,13 +209,23 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
           </button>
 
           <div className="flex-1" />
-          
+
           {!isValidJson && (
             <span className="flex items-center gap-1.5 text-xs text-[rgb(var(--error))] px-2 font-medium">
               <AlertTriangle className="h-3 w-3" />
               {validationErrors.length > 0 ? 'Schema Error' : 'Invalid JSON'}
             </span>
           )}
+
+          <span className="text-xs text-[rgb(var(--muted))]">
+            Ctrl+S save &middot; Ctrl+Shift+F format
+          </span>
+        </div>
+
+        {/* Contribute / Request CTA — surfaces the registry templates so users
+            don't have to hand-roll a definition if one already exists upstream. */}
+        <div className="px-4 py-3 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))]">
+          <RequestServerCTA />
         </div>
 
         {/* Editor Area */}

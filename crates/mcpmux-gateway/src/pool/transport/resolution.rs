@@ -68,11 +68,14 @@ pub fn build_transport_config(
             // 1. Start with registry env
             for (k, v) in env {
                 let resolved_value = resolve_placeholders(v, &effective_values);
+                // Log only the key and the (pre-resolution) template `v` — the
+                // template carries `${input:...}` placeholders, never the
+                // secret. The resolved value is intentionally NOT logged: it
+                // may be an API key/token and these logs can persist.
                 tracing::debug!(
-                    "[TransportResolution] Registry env: {}={} → {}",
+                    "[TransportResolution] Registry env: {}={} → (resolved)",
                     k,
-                    v,
-                    resolved_value
+                    v
                 );
                 resolved_env.insert(k.clone(), resolved_value);
             }

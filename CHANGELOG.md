@@ -1,104 +1,97 @@
 # Changelog
 
-## [0.0.12](https://github.com/ion-ash/mcp-mux/compare/v0.0.11...v0.0.12) (2026-02-14)
+## [0.3.0](https://github.com/mcpmux/mcp-mux/compare/v0.2.3...v0.3.0) (2026-02-25)
 
 
 ### Features
 
-* Capture and stream process stderr to server log manager ([#63](https://github.com/ion-ash/mcp-mux/issues/63)) ([96795b0](https://github.com/ion-ash/mcp-mux/commit/96795b0b54ecfaa9743bb9e6045bfc86ddadcc2f))
-* Streamable HTTP transport with SSE notifications and E2E tests ([#61](https://github.com/ion-ash/mcp-mux/issues/61)) ([ca5b0ff](https://github.com/ion-ash/mcp-mux/commit/ca5b0ffab19aa395a75c5f10a18ab0e6efb1752a))
-* support default values for input definitions ([#70](https://github.com/ion-ash/mcp-mux/issues/70)) ([a1d9599](https://github.com/ion-ash/mcp-mux/commit/a1d9599601c212c1b7054fc4c5c76f065e0ea920))
-* update logo with bolder strokes and regenerate icons/screenshots ([#71](https://github.com/ion-ash/mcp-mux/issues/71)) ([68c292c](https://github.com/ion-ash/mcp-mux/commit/68c292c424671edf4a914484a7af570770fac71e))
+* post-action UX guidance, ConfirmDialog, and client auto-select ([#136](https://github.com/mcpmux/mcp-mux/issues/136)) ([44d934c](https://github.com/mcpmux/mcp-mux/commit/44d934c678c4d7a2eebc996928e2fb37c07d7a8e))
 
-## [0.0.11](https://github.com/ion-ash/mcp-mux/compare/v0.0.10...v0.0.11) (2026-02-12)
+## [0.2.3](https://github.com/mcpmux/mcp-mux/compare/v0.2.2...v0.2.3) (2026-02-21)
 
 
 ### Bug Fixes
 
-* Claude client icon resolving ([#68](https://github.com/ion-ash/mcp-mux/issues/68)) ([c54128e](https://github.com/ion-ash/mcp-mux/commit/c54128e0fbff96bd110de4e4dea45580dfad224c))
-* Fix refresh token issue ([#69](https://github.com/ion-ash/mcp-mux/issues/69)) ([0eba047](https://github.com/ion-ash/mcp-mux/commit/0eba047922d3313121b5dd89e62f8b6aae9fe1db))
+* allow process restart after update and detect Homebrew version mismatch ([#134](https://github.com/mcpmux/mcp-mux/issues/134)) ([ecdbaca](https://github.com/mcpmux/mcp-mux/commit/ecdbacafaff573f497ce6db8614fa39993a28a32))
+* debounce analytics search tracking to capture final query ([#132](https://github.com/mcpmux/mcp-mux/issues/132)) ([0f17ddb](https://github.com/mcpmux/mcp-mux/commit/0f17ddb768b5d309a3a73cc6df492f656e205f69))
+
+## [0.2.2](https://github.com/mcpmux/mcp-mux/compare/v0.2.1...v0.2.2) (2026-02-20)
+
+
+### Bug Fixes
+
+* detect OAuth requirement from unexpected content-type responses ([#128](https://github.com/mcpmux/mcp-mux/issues/128)) ([d894d17](https://github.com/mcpmux/mcp-mux/commit/d894d17c7c4c5841b7eb39dc1d7068dbcb447656))
+* wire up HTTP definition headers orthogonally from auth ([#125](https://github.com/mcpmux/mcp-mux/issues/125)) ([04380e0](https://github.com/mcpmux/mcp-mux/commit/04380e0979ab428351185d381001d209e6a4993b))
 
 
 ### Documentation
 
-* add mcpmux.com links and download references to README ([#64](https://github.com/ion-ash/mcp-mux/issues/64)) ([04ab100](https://github.com/ion-ash/mcp-mux/commit/04ab1006d68860ff6f347ef6cd68dd3d678c3352))
+* add user guide with screenshots ([#130](https://github.com/mcpmux/mcp-mux/issues/130)) ([a97a133](https://github.com/mcpmux/mcp-mux/commit/a97a1333520fc1ac54f061344970cf493807ca87))
+* add user guide with screenshots ([#131](https://github.com/mcpmux/mcp-mux/issues/131)) ([ee28e8b](https://github.com/mcpmux/mcp-mux/commit/ee28e8be432d2b1532f3f98067ba9004c4a18374))
 
-## [0.0.10](https://github.com/ion-ash/mcp-mux/compare/v0.0.9...v0.0.10) (2026-02-10)
-
-
-### Bug Fixes
-
-* suppress console window for stdio MCP servers on Windows ([#59](https://github.com/ion-ash/mcp-mux/issues/59)) ([98f862c](https://github.com/ion-ash/mcp-mux/commit/98f862cae83f24c4397fe8e6204215c68b0baf92))
-
-## [0.0.9](https://github.com/ion-ash/mcp-mux/compare/v0.0.8...v0.0.9) (2026-02-09)
+## [0.2.1](https://github.com/mcpmux/mcp-mux/compare/v0.2.0...v0.2.1) (2026-02-19)
 
 
 ### Bug Fixes
 
-* render server icon URLs as images instead of raw text ([#57](https://github.com/ion-ash/mcp-mux/issues/57)) ([5a94708](https://github.com/ion-ash/mcp-mux/commit/5a94708dcddd47c26183bd18c6abd348c91f976c))
+* regenerate ICO with proper sizes & increase connection timeout ([#123](https://github.com/mcpmux/mcp-mux/issues/123)) ([2d88b25](https://github.com/mcpmux/mcp-mux/commit/2d88b259e9ca1bbc1ac57405854d732d8437cce3))
 
-## [0.0.8](https://github.com/ion-ash/mcp-mux/compare/v0.0.7...v0.0.8) (2026-02-09)
+
+### Refactoring
+
+* remove Password and Textarea from InputType enum ([#122](https://github.com/mcpmux/mcp-mux/issues/122)) ([bd06386](https://github.com/mcpmux/mcp-mux/commit/bd06386e04020da381135761a631ab38543ae414))
+
+## [0.2.0](https://github.com/mcpmux/mcp-mux/compare/v0.1.2...v0.2.0) (2026-02-18)
 
 
 ### Features
 
-* Add custom server configuration fields (env vars, args, headers) ([#54](https://github.com/ion-ash/mcp-mux/issues/54)) ([37ce0f5](https://github.com/ion-ash/mcp-mux/commit/37ce0f575883680e2ee12354e3bfea48e7a9337e))
+* add select, file_path, and directory_path input types ([#121](https://github.com/mcpmux/mcp-mux/issues/121)) ([942ee1a](https://github.com/mcpmux/mcp-mux/commit/942ee1ae88f60aa1454bc97cec3839bcacf74454))
 
 
 ### Bug Fixes
 
-* Update screenshots and Logo ([#56](https://github.com/ion-ash/mcp-mux/issues/56)) ([e6fb736](https://github.com/ion-ash/mcp-mux/commit/e6fb736ca7a79c13f227cdb470e735df447ea7cd))
+* add one-click IDE install for VS Code and Cursor ([#119](https://github.com/mcpmux/mcp-mux/issues/119)) ([5b280fb](https://github.com/mcpmux/mcp-mux/commit/5b280fbfdcd04165827b7662ba6896cea96deb83))
+* version display & update check ([#117](https://github.com/mcpmux/mcp-mux/issues/117)) ([b40c59b](https://github.com/mcpmux/mcp-mux/commit/b40c59bfb7b9ec19be8848abe04e38ba6fed1422))
+
+## [0.1.2](https://github.com/mcpmux/mcp-mux/compare/v0.1.1...v0.1.2) (2026-02-18)
+
+
+### Bug Fixes
+
+* resolve npx/node PATH on macOS GUI apps ([#113](https://github.com/mcpmux/mcp-mux/issues/113)) ([98c013d](https://github.com/mcpmux/mcp-mux/commit/98c013d4e6955e678949df6068c038e1b8cf00fc))
 
 
 ### Documentation
 
-* add comprehensive light-theme screenshots for all features ([#47](https://github.com/ion-ash/mcp-mux/issues/47)) ([cefa644](https://github.com/ion-ash/mcp-mux/commit/cefa644daad6c23640db6bc767eb1dd0e43199f0))
-* comprehensive README rewrite with features, security, and archi… ([#44](https://github.com/ion-ash/mcp-mux/issues/44)) ([243d3a3](https://github.com/ion-ash/mcp-mux/commit/243d3a369f34cfb02c5e82085e90c68e5bed963d))
+* improve README first impression with problem/fix diagrams ([#109](https://github.com/mcpmux/mcp-mux/issues/109)) ([b15482b](https://github.com/mcpmux/mcp-mux/commit/b15482b32a016e3ca92753f26212f5827f744903))
 
-## [0.0.7](https://github.com/ion-ash/mcp-mux/compare/v0.0.6...v0.0.7) (2026-02-07)
+## [0.1.1](https://github.com/mcpmux/mcp-mux/compare/v0.1.0...v0.1.1) (2026-02-16)
 
 
 ### Bug Fixes
 
-* ux improvements and fixes ([#42](https://github.com/ion-ash/mcp-mux/issues/42)) ([fa52576](https://github.com/ion-ash/mcp-mux/commit/fa52576fc79102af992f71ef059f8f7eb937a23d))
+* file-based keychain fallback for headless Linux/WSL ([#103](https://github.com/mcpmux/mcp-mux/issues/103)) ([9b60e0b](https://github.com/mcpmux/mcp-mux/commit/9b60e0bbe47a2318e7352efd3ba8b1888f393f38))
+* stdio enable error UI state ([#104](https://github.com/mcpmux/mcp-mux/issues/104)) ([b4598e6](https://github.com/mcpmux/mcp-mux/commit/b4598e60e12d3389717fc2252bac8eb29e96f9c9))
 
-## [0.0.6](https://github.com/ion-ash/mcp-mux/compare/v0.0.5...v0.0.6) (2026-02-06)
+## [0.1.0](https://github.com/mcpmux/mcp-mux/compare/v0.0.1...v0.1.0) (2026-02-16)
 
+First public release of McpMux — the unified MCP gateway and manager for AI clients.
 
 ### Features
 
-* add autostart and system tray functionality ([#38](https://github.com/ion-ash/mcp-mux/issues/38)) ([cc99fcf](https://github.com/ion-ash/mcp-mux/commit/cc99fcf412f24f48edba12b8f0359fa71b5247c6))
-* implement Tauri updater functionality ([#36](https://github.com/ion-ash/mcp-mux/issues/36)) ([d355c68](https://github.com/ion-ash/mcp-mux/commit/d355c68a4b33901adb7f9be8c0765252f8c3577f))
-
-## [0.0.5](https://github.com/ion-ash/mcp-mux/compare/v0.0.4...v0.0.5) (2026-02-05)
-
-
-### Bug Fixes
-
-* **oauth:** remove credential caching to enable automatic token refresh ([#33](https://github.com/ion-ash/mcp-mux/issues/33)) ([f398cfa](https://github.com/ion-ash/mcp-mux/commit/f398cfad7f1f92956f528b5e4640049de77b5ac3))
-
-## [0.0.4](https://github.com/ion-ash/mcp-mux/compare/v0.0.3...v0.0.4) (2026-02-05)
-
-
-### Bug Fixes
-
-* enable createUpdaterArtifacts for updater signatures ([c620e56](https://github.com/ion-ash/mcp-mux/commit/c620e56f9cae7cea4b7682ff49be37da3d1f670e))
-
-## [0.0.3](https://github.com/ion-ash/mcp-mux/compare/v0.0.2...v0.0.3) (2026-02-05)
-
-
-### Features
-
-* initial release of McpMux desktop app ([72181e2](https://github.com/ion-ash/mcp-mux/commit/72181e2b462f4f70eb586758e8bd029dcb3b7631))
-
-
-### Bug Fixes
-
-* add projectPath to tauri-action for monorepo support ([0299a23](https://github.com/ion-ash/mcp-mux/commit/0299a23c5f995b4bae670ef709134967a19c6ee3))
-
-## [0.0.2](https://github.com/ion-ash/mcp-mux/compare/v0.0.1...v0.0.2) (2026-02-05)
-
-
-### Features
-
-* initial release of McpMux desktop app ([72181e2](https://github.com/ion-ash/mcp-mux/commit/72181e2b462f4f70eb586758e8bd029dcb3b7631))
+* Unified MCP gateway — configure servers once, connect every AI client through a single endpoint
+* Encrypted credential storage via OS keychain (DPAPI, Keychain, Secret Service) with AES-256-GCM field-level encryption
+* Spaces for organizing servers into workspaces with per-client access key authentication
+* FeatureSet filtering — fine-grained control over tools, resources, and prompts per client
+* OAuth 2.1 + PKCE with automatic token refresh for OAuth-enabled MCP servers
+* Server discovery — browse and install from the community registry at mcpmux.com
+* Streamable HTTP transport with SSE notifications
+* Stdio transport with platform-specific process isolation
+* Server connection logging with MCP protocol notifications and stderr capture
+* Custom server configuration fields — environment variables, arguments, and headers
+* Default values for server input definitions
+* McpMux-branded OAuth authorization pages
+* System tray with autostart on login
+* Built-in auto-updater with signed releases
+* Cross-platform installers — Windows (NSIS), macOS (DMG via Homebrew), Linux (APT + AppImage + .deb)

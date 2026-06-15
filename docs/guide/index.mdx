@@ -1,0 +1,86 @@
+---
+title: What is McpMux
+description: Configure MCP servers once, connect every AI client through a single endpoint. McpMux is a free desktop app and local gateway for MCP server management with encrypted credential storage.
+---
+
+![McpMux desktop app — dashboard with gateway running, server stats, and client configuration](https://mcpmux.com/screenshots/features-hero.png)
+
+## The Problem
+
+Every AI-powered development tool — Cursor, Claude Desktop, VS Code, Windsurf, ChatGPT, JetBrains — requires its own MCP server configuration. This means:
+
+- **Duplicate configurations** across every tool, each with slightly different JSON formats
+- **Plaintext credentials** scattered in config files on disk
+- **No access control** — every client sees every tool from every server
+- **Manual context switching** when moving between work, personal, and client projects
+- **No visibility** into which servers are connected or what tools are available
+
+## The Solution
+
+**McpMux** is a free, open-source desktop app that solves all of these problems. Configure your MCP servers once in McpMux, then connect every AI client through a single `localhost:45818` endpoint.
+
+```
+AI Clients (Cursor, Claude, VS Code, …)
+        ↓
+McpMux Gateway (localhost:45818/mcp)
+        ↓
+MCP Servers (GitHub, Slack, PostgreSQL, …)
+```
+
+![McpMux dashboard showing gateway status, connected servers, FeatureSets, clients, and connection config](https://mcpmux.com/screenshots/dashboard.png)
+
+McpMux sits between your AI clients and your MCP servers. It handles:
+
+- **Routing** — directs each MCP request to the correct server
+- **Authentication** — manages OAuth tokens, API keys, and credentials
+- **Permissions** — controls which tools each client can access via FeatureSets
+- **Encryption** — stores all credentials with AES-256-GCM in the OS keychain
+- **Isolation** — separates environments with Spaces (work, personal, client projects)
+
+## Key Concepts
+
+### [Spaces](/docs/spaces/)
+
+Isolated workspaces with separate server configurations and credentials. Keep your work GitHub token completely separate from your personal one.
+
+### [Workspaces](/docs/workspaces/)
+
+Folder-based routing. Map a project folder to a Space + FeatureSet so each session resolves to exactly the tools that folder should get — automatically, per folder.
+
+### [FeatureSets](/docs/feature-sets/)
+
+Permission bundles that control which MCP tools, resources, and prompts a session can access. Create read-only views, role-based access, or domain-specific bundles.
+
+### [Tool Optimization](/docs/tool-optimization/)
+
+Built-in `@mux` meta-tools that let the AI curate its own toolset from chat — discover, compose, and pin a focused set, with writes gated by a one-click approval.
+
+### [Clients](/docs/clients/)
+
+AI applications connected to McpMux. Approve each with one click; their tools are decided by the folder they open via workspace-driven routing, not configured per app.
+
+### [Servers](/docs/servers/)
+
+MCP servers installed and managed through McpMux. Supports both local stdio servers and remote HTTP endpoints with automatic credential injection.
+
+### [Gateway](/docs/gateway/)
+
+The local HTTP server running on `localhost:45818` that routes MCP requests, manages OAuth tokens, filters tools by permissions, and pools server connections.
+
+## Supported Clients
+
+McpMux works with every MCP-compatible AI client:
+
+- **Cursor** — AI code editor
+- **Claude Desktop** — Anthropic's desktop app
+- **Claude Code** — CLI coding assistant
+- **VS Code** — with GitHub Copilot or Cline extensions
+- **ChatGPT Desktop** — OpenAI's desktop app
+- **Windsurf** — AI-powered IDE
+- **JetBrains IDEs** — IntelliJ, WebStorm, PyCharm, and more
+- **Zed** — next-generation code editor
+- **Gemini CLI** — Google's command-line AI
+
+## Get Started
+
+Ready to try McpMux? Follow the [Getting Started guide](/docs/getting-started/) to install the app, add your first MCP server, and connect your AI client in under 5 minutes.

@@ -106,4 +106,10 @@ describe('ServerDetailModal', () => {
     render(<ServerDetailModal server={server} {...defaultProps} />);
     expect(screen.getByText('Uninstall')).toBeInTheDocument();
   });
+
+  it('should render View JSON button in footer', () => {
+    const server = makeServer();
+    render(<ServerDetailModal server={server} {...defaultProps} />);
+    expect(screen.getByText('View JSON')).toBeInTheDocument();
+  });
 });

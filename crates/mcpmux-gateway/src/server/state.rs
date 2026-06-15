@@ -51,8 +51,6 @@ pub struct GatewayState {
     pub oauth_tokens: HashMap<String, super::super::oauth::OAuthToken>,
     /// Pending authorization codes (code -> PendingAuthorization)
     pub pending_authorizations: HashMap<String, PendingAuthorization>,
-    /// Set of client_ids that have been issued tokens (for "active" status)
-    pub clients_with_tokens: std::collections::HashSet<String>,
     /// JWT signing secret (for issuing access tokens)
     pub jwt_signing_secret: Option<Zeroizing<[u8; JWT_SECRET_SIZE]>>,
     /// Database connection (for persistent OAuth storage)
@@ -74,7 +72,6 @@ impl GatewayState {
             access_keys: HashMap::new(),
             oauth_tokens: HashMap::new(),
             pending_authorizations: HashMap::new(),
-            clients_with_tokens: std::collections::HashSet::new(),
             jwt_signing_secret: None,
             db: None,
             inbound_client_repository: None,
@@ -127,6 +124,18 @@ impl GatewayState {
     /// Get the client metadata service
     pub fn client_metadata_service(&self) -> Option<&ClientMetadataService> {
         self.client_metadata_service.as_ref().map(|s| s.as_ref())
+    }
+
+    /// Clone the client metadata service handle out of the state.
+    ///
+    /// Use this (and drop the state guard) before calling
+    /// `resolve_client()`: CIMD client ids resolve via an outbound HTTP
+    /// fetch (10 s timeout), and `GatewayState`'s write-preferring RwLock
+    /// is taken by `oauth_middleware` on every MCP request — holding a
+    /// read guard across the fetch can stall all MCP traffic behind one
+    /// queued writer.
+    pub fn client_metadata_service_arc(&self) -> Option<Arc<ClientMetadataService>> {
+        self.client_metadata_service.clone()
     }
 
     /// Check if database is connected

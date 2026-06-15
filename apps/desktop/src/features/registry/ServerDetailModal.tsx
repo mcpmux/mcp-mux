@@ -2,8 +2,11 @@
  * Server detail modal for viewing full server information.
  */
 
+import { useState } from 'react';
+import { Code } from 'lucide-react';
 import type { ServerViewModel } from '../../types/registry';
 import { ServerIcon } from '../../components/ServerIcon';
+import { ServerDefinitionModal } from '../../components/ServerDefinitionModal';
 
 interface ServerDetailModalProps {
   server: ServerViewModel;
@@ -20,6 +23,8 @@ export function ServerDetailModal({
   onUninstall,
   isLoading,
 }: ServerDetailModalProps) {
+  const [showDefinition, setShowDefinition] = useState(false);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -361,6 +366,13 @@ export function ServerDetailModal({
         {/* Footer */}
         <div className="flex justify-end gap-3 p-6 border-t border-[rgb(var(--border))]">
           <button
+            onClick={() => setShowDefinition(true)}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] transition-colors mr-auto"
+          >
+            <Code className="h-4 w-4 text-[rgb(var(--muted))]" />
+            View JSON
+          </button>
+          <button
             onClick={onClose}
             className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
           >
@@ -385,6 +397,13 @@ export function ServerDetailModal({
           )}
         </div>
       </div>
+
+      {showDefinition && (
+        <ServerDefinitionModal
+          server={server}
+          onClose={() => setShowDefinition(false)}
+        />
+      )}
     </div>
   );
 }

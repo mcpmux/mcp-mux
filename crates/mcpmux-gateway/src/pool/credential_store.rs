@@ -5,6 +5,7 @@
 //! CredentialStore interface.
 
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
@@ -159,6 +160,19 @@ impl DatabaseCredentialStore {
     }
 }
 
+/// Current time as seconds since UNIX epoch, matching rmcp's `AuthorizationManager::now_epoch_secs()`.
+///
+/// Used when loading credentials from the database: since `build_token_response` recalculates
+/// `expires_in` as remaining time from the stored `expires_at`, setting `token_received_at = now`
+/// makes rmcp's expiry arithmetic correct (`remaining = expires_in - (now - received_at)` = `expires_in`),
+/// enabling proactive token refresh before expiry instead of waiting for a 401.
+fn now_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 #[async_trait]
 impl CredentialStore for DatabaseCredentialStore {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
@@ -204,22 +218,24 @@ impl CredentialStore for DatabaseCredentialStore {
                     self.space_id, self.server_id, reg.client_id
                 );
                 let token_response = Self::build_token_response(access, refresh_cred.as_ref());
-                Some(StoredCredentials {
-                    client_id: reg.client_id,
-                    token_response: Some(token_response),
-                    granted_scopes: Vec::new(),
-                })
+                Some(StoredCredentials::new(
+                    reg.client_id,
+                    Some(token_response),
+                    Vec::new(),
+                    Some(now_epoch_secs()),
+                ))
             }
             (Some(reg), None) => {
                 debug!(
                     "[CredentialStore] Loaded registration (no token) for {}/{}, client_id={} - will reuse for DCR",
                     self.space_id, self.server_id, reg.client_id
                 );
-                Some(StoredCredentials {
-                    client_id: reg.client_id,
-                    token_response: None,
-                    granted_scopes: Vec::new(),
-                })
+                Some(StoredCredentials::new(
+                    reg.client_id,
+                    None,
+                    Vec::new(),
+                    Some(now_epoch_secs()),
+                ))
             }
             (None, Some(access)) => {
                 warn!(
@@ -227,11 +243,12 @@ impl CredentialStore for DatabaseCredentialStore {
                     self.space_id, self.server_id
                 );
                 let token_response = Self::build_token_response(access, refresh_cred.as_ref());
-                Some(StoredCredentials {
-                    client_id: String::new(),
-                    token_response: Some(token_response),
-                    granted_scopes: Vec::new(),
-                })
+                Some(StoredCredentials::new(
+                    String::new(),
+                    Some(token_response),
+                    Vec::new(),
+                    Some(now_epoch_secs()),
+                ))
             }
             (None, None) => {
                 debug!(
@@ -269,12 +286,13 @@ fn build_token_response(
     refresh_token: Option<String>,
     expires_in: Option<std::time::Duration>,
 ) -> OAuthTokenResponse {
-    use oauth2::{EmptyExtraTokenFields, StandardTokenResponse};
+    use oauth2::StandardTokenResponse;
+    use rmcp::transport::auth::VendorExtraTokenFields;
 
     let mut response = StandardTokenResponse::new(
         AccessToken::new(access_token),
         BasicTokenType::Bearer,
-        EmptyExtraTokenFields {},
+        VendorExtraTokenFields::default(),
     );
 
     if let Some(refresh) = refresh_token {
@@ -584,11 +602,12 @@ mod tests {
             Some(std::time::Duration::from_secs(3600)),
         );
 
-        let credentials = StoredCredentials {
-            client_id: "new-client-id".to_string(),
-            token_response: Some(token_response),
-            granted_scopes: Vec::new(),
-        };
+        let credentials = StoredCredentials::new(
+            "new-client-id".to_string(),
+            Some(token_response),
+            Vec::new(),
+            None,
+        );
 
         store.save(credentials).await.unwrap();
 
@@ -642,11 +661,12 @@ mod tests {
             Some(std::time::Duration::from_secs(3600)),
         );
 
-        let credentials = StoredCredentials {
-            client_id: "client-id".to_string(),
-            token_response: Some(token_response),
-            granted_scopes: Vec::new(),
-        };
+        let credentials = StoredCredentials::new(
+            "client-id".to_string(),
+            Some(token_response),
+            Vec::new(),
+            None,
+        );
 
         store.save(credentials).await.unwrap();
 

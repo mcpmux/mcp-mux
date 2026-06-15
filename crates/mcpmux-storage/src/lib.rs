@@ -56,6 +56,8 @@ mod database;
 pub mod keychain;
 #[cfg(windows)]
 pub mod keychain_dpapi;
+#[cfg(not(windows))]
+pub mod keychain_file;
 mod repositories;
 
 pub use crypto::{generate_master_key, FieldEncryptor, KEY_SIZE};
@@ -66,6 +68,8 @@ pub use keychain::{
 };
 #[cfg(windows)]
 pub use keychain_dpapi::{DpapiJwtSecretProvider, DpapiKeyProvider};
+#[cfg(not(windows))]
+pub use keychain_file::{FileJwtSecretProvider, FileKeyProvider};
 pub use repositories::*;
 
 /// Default database file name.
@@ -95,15 +99,27 @@ pub fn create_key_provider(
 
     #[cfg(not(windows))]
     {
-        let _ = data_dir; // suppress unused warning
-        Ok(Box::new(KeychainKeyProvider::new()?))
+        // Try OS keychain first, fall back to file-based storage if unavailable
+        match KeychainKeyProvider::new() {
+            Ok(provider) => match provider.get_or_create_key() {
+                Ok(_) => return Ok(Box::new(provider)),
+                Err(e) => tracing::warn!(
+                    "OS keychain unavailable ({e}), using file-based key storage. \
+                     For better security, install gnome-keyring or another Secret Service provider."
+                ),
+            },
+            Err(e) => {
+                tracing::warn!("OS keychain unavailable ({e}), using file-based key storage.")
+            }
+        }
+        Ok(Box::new(FileKeyProvider::new(data_dir)?))
     }
 }
 
 /// Create the platform-appropriate JWT secret provider.
 ///
 /// - **Windows**: Uses DPAPI file-based storage.
-/// - **macOS/Linux**: Uses the OS keychain.
+/// - **macOS/Linux**: Uses the OS keychain, with file-based fallback if unavailable.
 pub fn create_jwt_secret_provider(
     data_dir: &std::path::Path,
 ) -> anyhow::Result<Box<dyn JwtSecretProvider>> {
@@ -114,7 +130,17 @@ pub fn create_jwt_secret_provider(
 
     #[cfg(not(windows))]
     {
-        let _ = data_dir;
-        Ok(Box::new(KeychainJwtSecretProvider::new()?))
+        match KeychainJwtSecretProvider::new() {
+            Ok(provider) => match provider.get_or_create_secret() {
+                Ok(_) => return Ok(Box::new(provider)),
+                Err(e) => tracing::warn!(
+                    "OS keychain unavailable for JWT secret ({e}), using file-based storage."
+                ),
+            },
+            Err(e) => tracing::warn!(
+                "OS keychain unavailable for JWT secret ({e}), using file-based storage."
+            ),
+        }
+        Ok(Box::new(FileJwtSecretProvider::new(data_dir)?))
     }
 }

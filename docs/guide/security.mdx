@@ -1,0 +1,102 @@
+---
+title: Security & Credential Encryption
+description: McpMux encrypts all credentials with AES-256-GCM and stores encryption keys in the OS keychain. No plaintext credentials ever touch disk. Learn about McpMux's security model.
+---
+
+Security is a core design principle of McpMux. Every credential — API keys, OAuth tokens, passwords — is encrypted before it ever touches disk. McpMux never stores plaintext credentials.
+
+## The Problem with MCP Credentials Today
+
+Without McpMux, MCP server credentials are stored in plaintext JSON configuration files:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "env": {
+        "GITHUB_TOKEN": "ghp_abc123_YOUR_REAL_TOKEN_HERE"
+      }
+    }
+  }
+}
+```
+
+These files sit in your home directory, readable by any process on your machine. If your machine is compromised, every MCP credential is immediately exposed.
+
+## How McpMux Protects Credentials
+
+### AES-256-GCM Encryption
+
+Every credential stored by McpMux is encrypted using **AES-256-GCM** (Galois/Counter Mode) — the same standard used by banks and governments. Each credential gets its own encryption, so compromising one doesn't expose others.
+
+### OS Keychain Integration
+
+Encryption keys are stored in the operating system's secure keychain:
+
+| Platform | Keychain |
+|----------|----------|
+| Windows | **DPAPI** (Data Protection API) — tied to your Windows user account |
+| macOS | **Keychain** — protected by your login password and Secure Enclave |
+| Linux | **Secret Service** (GNOME Keyring / KWallet) — encrypted with your login session |
+
+The encryption keys never exist as plaintext files. They're protected by the OS and require your user session to access.
+
+### Per-Token Encryption
+
+McpMux doesn't use a single master key for all credentials. Each stored token is encrypted with its own derived key, meaning:
+
+- Compromising one credential doesn't expose others
+- Rotating a credential doesn't require re-encrypting everything
+- Deletion of a credential securely removes its encryption key
+
+### Memory Zeroization
+
+Sensitive values in memory are securely wiped using the `zeroize` crate when they're no longer needed. This prevents credentials from lingering in memory after use, reducing the window for memory-based attacks.
+
+## Per-Space Credential Isolation
+
+Credentials are scoped to individual Spaces. Your work GitHub token in the "Work" Space is completely separate from your personal GitHub token in the "Personal" Space. They use different encryption keys and are stored independently.
+
+This means:
+- Switching Spaces switches credentials — no cross-contamination
+- Deleting a Space securely removes all its credentials
+- Different team members can use different credentials for the same service
+
+## Before vs After
+
+| | Without McpMux | With McpMux |
+|---|---|---|
+| **Storage** | Plaintext JSON files | AES-256-GCM encrypted database |
+| **Key management** | None — keys are in the file | OS keychain (DPAPI / Keychain / Secret Service) |
+| **Isolation** | All credentials in one file | Per-Space, per-token isolation |
+| **Access control** | Any process can read | Requires user session + keychain access |
+| **Token refresh** | Manual | Automatic with encrypted storage |
+| **Memory** | Tokens may linger | Zeroized after use |
+| **Audit** | No visibility | Server logs and connection tracking |
+
+## OAuth Security
+
+For servers using OAuth 2.1, McpMux implements the full security specification:
+
+- **PKCE** (Proof Key for Code Exchange) — prevents authorization code interception
+- **Short-lived tokens** — access tokens expire after approximately 1 hour
+- **Automatic refresh** — tokens are refreshed transparently before expiry
+- **Encrypted storage** — both access and refresh tokens are encrypted at rest
+- **Consent UI** — OAuth authorization requests show a consent dialog in the desktop app, ensuring the user explicitly approves each connection
+
+![Consent dialog — every new app connection must be explicitly approved in the desktop app](https://mcpmux.com/screenshots/clients.png)
+
+## Deep Link Security
+
+When McpMux receives an OAuth authorization request via deep link (`mcpmux://authorize?request_id=xxx`):
+
+- Only the `request_id` is passed in the URL — no client information or credentials
+- The consent token is shared only via local IPC, never over HTTP
+- The desktop app validates the request server-side before showing the consent dialog
+
+## Next Steps
+
+- [Get started with McpMux](/docs/getting-started/) to see encryption in action
+- [Learn about Spaces](/docs/spaces/) for credential isolation
+- [Configure Servers](/docs/servers/) with encrypted credential storage
+- [Download McpMux](/download/) to protect your MCP credentials today

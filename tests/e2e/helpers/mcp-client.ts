@@ -6,6 +6,10 @@
  *
  * This enables tests to connect an MCP client to the gateway
  * without going through the browser-based consent flow.
+ *
+ * IMPORTANT: The `/oauth/consent/approve` HTTP endpoint is only available
+ * when `MCPMUX_E2E_TEST=1` environment variable is set. In production,
+ * consent approval is restricted to Tauri IPC (desktop app UI) only.
  */
 
 import crypto from 'node:crypto';
@@ -31,7 +35,7 @@ function generatePkce(): { codeVerifier: string; codeChallenge: string } {
 export async function registerOAuthClient(
   clientName: string,
   redirectUri: string = 'http://localhost:0/callback',
-  port?: number,
+  port?: number
 ): Promise<string> {
   const res = await fetch(gatewayUrl('/oauth/register', port), {
     method: 'POST',
@@ -70,7 +74,7 @@ export async function registerOAuthClient(
 export async function obtainAccessToken(
   clientId: string,
   redirectUri: string = 'http://localhost:0/callback',
-  port?: number,
+  port?: number
 ): Promise<string> {
   const { codeVerifier, codeChallenge } = generatePkce();
   const state = crypto.randomUUID();
@@ -93,7 +97,9 @@ export async function obtainAccessToken(
   // Format: mcpmux://authorize?request_id=<id>
   const requestIdMatch = html.match(/request_id=([^"&\s]+)/);
   if (!requestIdMatch) {
-    throw new Error(`Could not extract request_id from authorize response. HTML: ${html.substring(0, 500)}`);
+    throw new Error(
+      `Could not extract request_id from authorize response. HTML: ${html.substring(0, 500)}`
+    );
   }
   const requestId = decodeURIComponent(requestIdMatch[1]);
 

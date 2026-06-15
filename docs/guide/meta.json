@@ -1,0 +1,19 @@
+{
+  "root": true,
+  "pages": [
+    "---Getting Started---",
+    "index",
+    "getting-started",
+    "---Core Concepts---",
+    "spaces",
+    "workspaces",
+    "feature-sets",
+    "clients",
+    "servers",
+    "---Advanced---",
+    "tool-optimization",
+    "gateway",
+    "server-definitions",
+    "security"
+  ]
+}

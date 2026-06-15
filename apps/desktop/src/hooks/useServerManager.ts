@@ -80,6 +80,10 @@ export function useServerManager({
   const [error, setError] = useState<string | null>(null);
   const prevSpaceId = useRef<string | null>(null);
 
+  // Stable ref for onFeaturesChange to avoid re-subscribing on every render
+  const onFeaturesChangeRef = useRef(onFeaturesChange);
+  onFeaturesChangeRef.current = onFeaturesChange;
+
   // Fetch initial statuses
   const refresh = useCallback(async () => {
     if (!spaceId) return;
@@ -124,8 +128,14 @@ export function useServerManager({
 
     const unsubscribers: Array<() => void> = [];
 
+    // Event listeners are async (Tauri listen() returns a Promise).
+    // Events emitted between the initial getServerStatuses fetch and listener
+    // activation are lost. Track when all listeners are ready, then re-fetch
+    // statuses to catch any events missed during the gap.
+    const listenerPromises: Array<Promise<() => void>> = [];
+
     // Status changes
-    onServerStatus((event: ServerStatusEvent) => {
+    const statusPromise = onServerStatus((event: ServerStatusEvent) => {
       if (event.space_id !== spaceId) return;
 
       setStatuses((prev) => {
@@ -155,30 +165,43 @@ export function useServerManager({
           return next;
         });
       }
-    }).then((unlisten) => unsubscribers.push(unlisten));
+    });
+    statusPromise.then((unlisten) => unsubscribers.push(unlisten));
+    listenerPromises.push(statusPromise);
 
     // Auth progress
-    onAuthProgress((event: AuthProgressEvent) => {
+    const authPromise = onAuthProgress((event: AuthProgressEvent) => {
       if (event.space_id !== spaceId) return;
 
       setAuthProgress((prev) => ({
         ...prev,
         [event.server_id]: event.remaining_seconds,
       }));
-    }).then((unlisten) => unsubscribers.push(unlisten));
+    });
+    authPromise.then((unlisten) => unsubscribers.push(unlisten));
+    listenerPromises.push(authPromise);
 
-    // Features updated
-    if (onFeaturesChange) {
-      onFeaturesUpdated((event: FeaturesUpdatedEvent) => {
+    // Features updated (always subscribe, use ref to call latest callback)
+    const featuresPromise = onFeaturesUpdated(
+      (event: FeaturesUpdatedEvent) => {
         if (event.space_id !== spaceId) return;
-        onFeaturesChange(event);
-      }).then((unlisten) => unsubscribers.push(unlisten));
-    }
+        onFeaturesChangeRef.current?.(event);
+      }
+    );
+    featuresPromise.then((unlisten) => unsubscribers.push(unlisten));
+    listenerPromises.push(featuresPromise);
+
+    // Once all listeners are active, re-fetch statuses to close the gap
+    // between the initial fetch and listener activation (startup race fix)
+    Promise.all(listenerPromises).then(() => {
+      refresh();
+    });
 
     return () => {
       unsubscribers.forEach((fn) => fn());
     };
-  }, [spaceId, onFeaturesChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spaceId]);
 
   // Actions
   const enable = useCallback(

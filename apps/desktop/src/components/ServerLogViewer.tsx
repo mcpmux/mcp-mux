@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { X, Download, Trash2, RefreshCw } from 'lucide-react';
-import { useToast, ToastContainer } from '@mcpmux/ui';
+import { useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import { getServerLogs, clearServerLogs, getServerLogFile, type ServerLogEntry } from '@/lib/api/logs';
 
 interface ServerLogViewerProps {
@@ -41,6 +41,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const shouldScrollRef = useRef(true);
   const { toasts, success, error: showError, dismiss } = useToast();
+  const { confirm, ConfirmDialogElement } = useConfirm();
 
   const loadLogs = async () => {
     try {
@@ -93,7 +94,12 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
   };
 
   const handleClearLogs = async () => {
-    if (!confirm('Clear all logs for this server? This cannot be undone.')) {
+    if (!await confirm({
+      title: 'Clear logs',
+      message: `Clear all logs for "${serverName}"? This cannot be undone.`,
+      confirmLabel: 'Clear',
+      variant: 'danger',
+    })) {
       return;
     }
     
@@ -135,6 +141,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <ToastContainer toasts={toasts} onClose={dismiss} />
+      {ConfirmDialogElement}
       <div className="bg-[rgb(var(--card))] border border-[rgb(var(--border-subtle))] rounded-xl shadow-xl w-[90vw] h-[85vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[rgb(var(--border-subtle))]">

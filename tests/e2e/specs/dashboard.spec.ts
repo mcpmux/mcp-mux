@@ -22,16 +22,16 @@ test.describe('Dashboard', () => {
     await expect(dashboard.activeSpaceCard).toBeVisible();
   });
 
-  test('should display client config section', async ({ page }) => {
+  test('should display connect IDEs section', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
 
-    // Config section should be visible
-    await expect(page.locator('text=Connect Your Client')).toBeVisible();
-    await expect(dashboard.configCopyButton).toBeVisible();
+    // Connect IDEs section should be visible
+    await expect(page.locator('text=Connect Your IDEs')).toBeVisible();
+    await expect(page.locator('[data-testid="client-grid"]')).toBeVisible();
   });
 
-  test('should copy config to clipboard', async ({ page, context, browserName }) => {
+  test('should copy config via JSON button', async ({ page, context, browserName }) => {
     // Clipboard permissions only work on Chromium
     test.skip(browserName !== 'chromium', 'Clipboard permissions not supported');
 
@@ -40,9 +40,12 @@ test.describe('Dashboard', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
 
-    await dashboard.copyConfig();
+    // Click the JSON config icon to open popover
+    await page.locator('[data-testid="client-icon-copy-config"]').click();
+    // Click copy button in popover
+    await page.locator('[data-testid="copy-config-btn"]').click();
 
     // Check for success message
-    await expect(page.locator('text=copied')).toBeVisible({ timeout: 2000 });
+    await expect(page.locator('text=Copied!')).toBeVisible({ timeout: 2000 });
   });
 });

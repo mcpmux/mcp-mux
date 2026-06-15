@@ -9,34 +9,32 @@ export default {
   theme: {
     extend: {
       colors: {
-        // McpMux brand colors — terracotta/warm palette
+        // McpMux brand colors — terra palette
         primary: {
-          50: '#fef7f4',
-          100: '#fde8df',
-          200: '#fbd0be',
-          300: '#f6ab8a',
+          50: '#fff8f5',
+          100: '#fef0e8',
+          200: '#fde0d0',
+          300: '#f5c7b0',
           400: '#E8956A',
           500: '#DA7756',
-          600: '#C96442',
+          600: '#C4704E',
           700: '#B8553A',
-          800: '#8B3D20',
-          900: '#6B2E18',
-          950: '#3D1A0D',
+          800: '#954321',
+          900: '#8B3D20',
+          950: '#5C2810',
         },
         // McpMux extended brand palette
         mcpmux: {
           terracotta: '#DA7756',
           sienna: '#B8553A',
-          deep: '#C2593A',
-          warm: '#E8956A',
-          ember: '#C96442',
-          amber: '#D4945A',
-          cream: '#FDF2E9',
-          'cream-deep': '#F5E0D0',
-          dark: '#1A120E',
-          'dark-surface': '#2D1A12',
-          ochre: '#C68B59',
-          burnt: '#8B3D20',
+          'warm-coral': '#E8956A',
+          cream: '#FFF5EE',
+          mist: '#FDF2E9',
+          wash: '#F5E0D0',
+          dark: '#141416',
+          'dark-surface': '#1E1410',
+          'deep-cocoa': '#8B3D20',
+          glow: '#F5C7B0',
         },
         // Surface colors (uses CSS variables)
         surface: {

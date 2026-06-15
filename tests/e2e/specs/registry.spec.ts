@@ -7,7 +7,7 @@ test.describe('Registry/Discover Page', () => {
     await dashboard.navigate();
     
     await page.locator('nav button:has-text("Discover")').click();
-    await expect(page.getByRole('heading', { name: 'Discover Servers' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
   });
 
   test('should display search input', async ({ page }) => {
@@ -160,6 +160,29 @@ test.describe('Registry Server Icon Rendering', () => {
         const src = await modalIconImg.getAttribute('src');
         expect(src).toMatch(/^https?:\/\//);
       }
+
+      // Close modal
+      await page.keyboard.press('Escape');
+    }
+  });
+});
+
+test.describe('Registry Server Detail Modal', () => {
+  test('should show View JSON button in server detail modal', async ({ page }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.navigate();
+
+    await page.locator('nav button:has-text("Discover")').click();
+    await page.waitForTimeout(500);
+
+    // Click first server card to open detail modal
+    const firstCard = page.locator('[data-testid^="server-card-"]').first();
+    if (await firstCard.isVisible().catch(() => false)) {
+      await firstCard.click();
+      await page.waitForTimeout(300);
+
+      // The detail modal footer should contain "View JSON" button
+      await expect(page.locator('.fixed button:has-text("View JSON")')).toBeVisible();
 
       // Close modal
       await page.keyboard.press('Escape');

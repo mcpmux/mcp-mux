@@ -24,6 +24,11 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
   Update: vi.fn(),
 }));
 
+// Mock Tauri dialog plugin
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn(),
+}));
+
 // Mock Tauri process plugin
 vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: vi.fn(),

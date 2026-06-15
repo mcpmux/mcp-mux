@@ -36,7 +36,14 @@ pub use event_bus::{
 
 use std::path::{Path, PathBuf};
 
-/// Get the path to a space's configuration file (relative to a base spaces directory)
-pub fn get_space_config_path(spaces_dir: &Path, space_id: &str) -> PathBuf {
-    spaces_dir.join(format!("{}.json", space_id))
+/// Get the path to a space's configuration file (relative to a base spaces directory).
+///
+/// `space_id` must parse as a UUID — IPC callers pass attacker-influenceable
+/// strings, and joining them raw would allow path traversal (`../..`) or, on
+/// Windows, full path replacement (`Path::join` with an absolute path
+/// discards the base). The canonical hyphenated form of the *parsed* UUID is
+/// used as the filename, never the raw input.
+pub fn get_space_config_path(spaces_dir: &Path, space_id: &str) -> Result<PathBuf, uuid::Error> {
+    let id = uuid::Uuid::parse_str(space_id)?;
+    Ok(spaces_dir.join(format!("{}.json", id)))
 }

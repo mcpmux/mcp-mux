@@ -14,7 +14,9 @@ use tracing::{debug, error, info, warn};
 
 use super::{GatewayState, ServiceContainer};
 use crate::auth::{create_access_token, create_refresh_token};
-use crate::oauth::{process_dcr_request, DcrError, DcrRequest, DcrResponse};
+use crate::oauth::{
+    is_redirect_uri_allowed, process_dcr_request, DcrError, DcrRequest, DcrResponse,
+};
 
 /// App State structure holding both GatewayState and ServiceContainer
 #[derive(Clone)]
@@ -136,6 +138,11 @@ pub struct PendingAuthorization {
     pub code_challenge_method: Option<String>,
     /// Unix timestamp when this request expires
     pub expires_at: i64,
+    /// Consent token: cryptographic secret shared only via Tauri IPC.
+    /// Prevents any process from approving consent via HTTP without going
+    /// through the desktop app UI. Only present on initial consent requests
+    /// (not on auth-code entries used for token exchange).
+    pub consent_token: Option<String>,
 }
 
 /// OAuth authorization endpoint
@@ -166,63 +173,71 @@ pub async fn oauth_authorize(
         );
     }
 
-    // Resolve and validate client (CIMD or traditional)
-    {
+    // Resolve and validate client (CIMD or traditional).
+    //
+    // IMPORTANT: clone the service handle out and DROP the state lock before
+    // `resolve_client()` — CIMD client ids resolve via an outbound HTTP fetch
+    // (10 s timeout), and `oauth_middleware` takes this same write-preferring
+    // RwLock on every MCP request, so a read guard held across the fetch plus
+    // one queued writer would stall all MCP traffic.
+    let client_metadata_service = {
         let gateway_state = state.read().await;
+        gateway_state.client_metadata_service_arc()
+    };
+    let Some(client_metadata_service) = client_metadata_service else {
+        error!("[OAuth] ClientMetadataService not available");
+        return oauth_error_redirect(
+            &params.redirect_uri,
+            "server_error",
+            "Service not available",
+            params.state.as_deref(),
+        );
+    };
 
-        let client_metadata_service = match gateway_state.client_metadata_service() {
-            Some(s) => s,
-            None => {
-                error!("[OAuth] ClientMetadataService not available");
+    // Resolve client (handles CIMD URL or traditional client_id). The same
+    // resolution also yields the consent page's display name — resolve once.
+    let display_name = match client_metadata_service
+        .resolve_client(&params.client_id)
+        .await
+    {
+        Ok(Some(client)) => {
+            // Validate redirect_uri against resolved client.
+            // Per RFC 8252 §7.3, loopback redirect URIs are matched ignoring the port,
+            // since native public clients use an ephemeral OS-assigned port at request
+            // time that may differ from the one captured at DCR.
+            if !is_redirect_uri_allowed(&client.redirect_uris, &params.redirect_uri) {
+                warn!(
+                    "[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})",
+                    params.redirect_uri, client.redirect_uris
+                );
                 return oauth_error_redirect(
                     &params.redirect_uri,
-                    "server_error",
-                    "Service not available",
+                    "invalid_redirect_uri",
+                    "Redirect URI not registered for this client",
                     params.state.as_deref(),
                 );
             }
-        };
-
-        // Resolve client (handles CIMD URL or traditional client_id)
-        let client = match client_metadata_service
-            .resolve_client(&params.client_id)
-            .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                warn!("[OAuth] Unknown client_id: {}", params.client_id);
-                return oauth_error_redirect(
-                    &params.redirect_uri,
-                    "invalid_client",
-                    "Client not registered",
-                    params.state.as_deref(),
-                );
-            }
-            Err(e) => {
-                error!("[OAuth] Client resolution failed: {}", e);
-                return oauth_error_redirect(
-                    &params.redirect_uri,
-                    "server_error",
-                    "Client resolution error",
-                    params.state.as_deref(),
-                );
-            }
-        };
-
-        // Validate redirect_uri against resolved client
-        if !client.redirect_uris.contains(&params.redirect_uri) {
-            warn!(
-                "[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})",
-                params.redirect_uri, client.redirect_uris
-            );
+            client.client_name
+        }
+        Ok(None) => {
+            warn!("[OAuth] Unknown client_id: {}", params.client_id);
             return oauth_error_redirect(
                 &params.redirect_uri,
-                "invalid_redirect_uri",
-                "Redirect URI not registered for this client",
+                "invalid_client",
+                "Client not registered",
                 params.state.as_deref(),
             );
         }
-    }
+        Err(e) => {
+            error!("[OAuth] Client resolution failed: {}", e);
+            return oauth_error_redirect(
+                &params.redirect_uri,
+                "server_error",
+                "Client resolution error",
+                params.state.as_deref(),
+            );
+        }
+    };
 
     // PKCE is required for public clients
     if params.code_challenge.is_none() {
@@ -252,25 +267,24 @@ pub async fn oauth_authorize(
         params.client_id
     );
 
-    // Get client display name from metadata service for new clients
-    let display_name = {
-        let gateway_state = state.read().await;
-        if let Some(service) = gateway_state.client_metadata_service() {
-            match service.resolve_client(&params.client_id).await {
-                Ok(Some(client)) => client.client_name,
-                _ => "Unknown Application".to_string(),
-            }
-        } else {
-            "Unknown Application".to_string()
-        }
-    };
-
     // Store pending authorization request with expiration (5 minutes)
     let request_id = uuid::Uuid::new_v4().to_string();
     let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64 + 300) // 5 minutes
         .unwrap_or(i64::MAX);
+
+    // Generate consent_token: a cryptographic secret shared only via Tauri IPC.
+    // This prevents any external process from approving consent by calling an
+    // HTTP endpoint directly—only the desktop app UI that retrieves this token
+    // via get_pending_consent can submit a valid approval.
+    let consent_token = {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let mut bytes = [0u8; 32];
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut bytes);
+        URL_SAFE_NO_PAD.encode(bytes)
+    };
 
     {
         let mut gateway_state = state.write().await;
@@ -285,6 +299,7 @@ pub async fn oauth_authorize(
                 code_challenge: params.code_challenge.clone(),
                 code_challenge_method: params.code_challenge_method.clone(),
                 expires_at,
+                consent_token: Some(consent_token),
             },
         );
     }
@@ -300,11 +315,17 @@ pub async fn oauth_authorize(
 
     let app_name = branding::DISPLAY_NAME;
 
+    // HTML-escape the client-supplied display name before interpolating it
+    // into the consent page — DCR/CIMD `client_name` is attacker-controlled
+    // (reflected XSS otherwise). The raw name stays on the pending
+    // authorization for the desktop UI, which renders it as text via React.
+    let display_name_html = html_escape_text(&display_name);
+
     // HTML page that triggers the deep link
     // The page shows a brief message while the app opens
     // Industry standard: Don't auto-close, let user close after approval
     let html = format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -318,7 +339,7 @@ pub async fn oauth_authorize(
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+            background: linear-gradient(135deg, #1a1210 0%, #2a1c17 50%, #1e1412 100%);
             color: #e6e6e6;
             padding: 1rem;
         }}
@@ -326,16 +347,10 @@ pub async fn oauth_authorize(
             text-align: center;
             max-width: 400px;
         }}
-        .icon {{
+        .logo {{
             width: 64px;
             height: 64px;
             margin: 0 auto 1.5rem;
-            background: linear-gradient(135deg, #64ffda 0%, #00bcd4 100%);
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2rem;
         }}
         h1 {{
             font-size: 1.5rem;
@@ -344,25 +359,25 @@ pub async fn oauth_authorize(
             color: #fff;
         }}
         .subtitle {{
-            color: #8892b0;
+            color: #a0917e;
             margin-bottom: 2rem;
             line-height: 1.5;
         }}
         .client-info {{
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(218,119,86,0.06);
+            border: 1px solid rgba(218,119,86,0.15);
             border-radius: 12px;
             padding: 1rem;
             margin-bottom: 1.5rem;
         }}
         .client-name {{
             font-weight: 500;
-            color: #64ffda;
+            color: #DA7756;
             margin-bottom: 0.25rem;
         }}
         .client-id {{
             font-size: 0.75rem;
-            color: #6a7394;
+            color: #7a6e62;
             word-break: break-all;
         }}
         .action {{
@@ -370,8 +385,8 @@ pub async fn oauth_authorize(
         }}
         .btn {{
             display: inline-block;
-            background: linear-gradient(135deg, #64ffda 0%, #00bcd4 100%);
-            color: #0f0f23;
+            background: linear-gradient(135deg, #DA7756 0%, #B8553A 100%);
+            color: #fff;
             padding: 0.75rem 2rem;
             border-radius: 8px;
             text-decoration: none;
@@ -383,12 +398,12 @@ pub async fn oauth_authorize(
         }}
         .btn:hover {{
             transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(100, 255, 218, 0.3);
+            box-shadow: 0 4px 20px rgba(218, 119, 86, 0.35);
         }}
         .btn-secondary {{
             background: transparent;
             border: 1px solid rgba(255,255,255,0.2);
-            color: #8892b0;
+            color: #a0917e;
             margin-top: 1rem;
         }}
         .btn-secondary:hover {{
@@ -400,28 +415,33 @@ pub async fn oauth_authorize(
         .note {{
             margin-top: 2rem;
             font-size: 0.875rem;
-            color: #6a7394;
+            color: #7a6e62;
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="icon">🔐</div>
+        <svg class="logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#DA7756"/><stop offset="100%" stop-color="#B8553A"/></linearGradient><mask id="m"><rect width="32" height="32" fill="white"/><circle cx="12" cy="17.5" r="1.75" fill="black"/><circle cx="20" cy="17.5" r="1.75" fill="black"/><ellipse cx="16" cy="20.6" rx="1" ry="0.75" fill="black"/></mask></defs>
+            <rect width="32" height="32" rx="7" fill="url(#bg)"/>
+            <path d="M 16 25.3 C 8.7 25.3 4.9 21.3 4.9 17.2 C 4.9 14 6.3 13.4 8.3 15.4 C 8.1 10.3 6.1 5 7.2 4.4 C 8.9 3.4 11.8 8.2 13.4 12.2 C 14.3 10.7 14.9 10.3 16 10.3 C 17.1 10.3 17.7 10.7 18.6 12.2 C 20.2 8.2 23.1 3.4 24.8 4.4 C 25.9 5 23.9 10.3 23.7 15.4 C 25.7 13.4 27.1 14 27.1 17.2 C 27.1 21.3 23.3 25.3 16 25.3 Z" fill="white" opacity="0.88" mask="url(#m)"/>
+            <path d="M 13.9 22.2 Q 16 24.3 18.1 22.2" stroke="white" stroke-width="0.9" stroke-linecap="round" fill="none" opacity="0.95"/>
+        </svg>
         <h1>Authorization Request</h1>
         <p class="subtitle">
             Complete authorization in {app_name}
         </p>
-        
+
         <div class="client-info">
-            <div class="client-name">{display_name}</div>
+            <div class="client-name">{display_name_html}</div>
             <div class="client-id">wants to connect</div>
         </div>
-        
+
         <div class="action">
             <a href="{deep_link_url}" class="btn">Open {app_name}</a>
             <button class="btn btn-secondary" onclick="window.close()">Close this tab</button>
         </div>
-        
+
         <p class="note">
             If prompted by your browser, click "Open" to allow.
         </p>
@@ -434,7 +454,7 @@ pub async fn oauth_authorize(
             iframe.style.display = 'none';
             iframe.src = "{deep_link_url}";
             document.body.appendChild(iframe);
-            
+
             // Fallback: remove iframe after a short delay
             // The protocol handler should have fired by then
             setTimeout(function() {{
@@ -445,10 +465,28 @@ pub async fn oauth_authorize(
         }})();
     </script>
 </body>
-</html>"#
+</html>"##
     );
 
     axum::response::Html(html).into_response()
+}
+
+/// Minimal HTML entity escaping for untrusted text interpolated into
+/// gateway-served HTML. Covers every character that can break out of a
+/// text node or a double-quoted attribute value.
+fn html_escape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Helper to create OAuth error redirect
@@ -585,12 +623,9 @@ pub async fn oauth_token(
             let client_id_for_tracking = pending.client_id.clone();
             drop(gateway_state);
 
-            // Track that this client has active tokens and emit event
+            // Update last_seen and emit event
             {
-                let mut gateway_state = state.write().await;
-                gateway_state
-                    .clients_with_tokens
-                    .insert(client_id_for_tracking.clone());
+                let gateway_state = state.read().await;
 
                 // Update last_seen in database
                 if let Some(repo) = gateway_state.inbound_client_repository() {
@@ -851,6 +886,7 @@ pub async fn oauth_consent_approve(
                 code_challenge: pending.code_challenge.clone(),
                 code_challenge_method: pending.code_challenge_method.clone(),
                 expires_at: code_expires_at,
+                consent_token: None, // Auth code entries don't need consent tokens
             },
         );
 
@@ -926,12 +962,8 @@ pub struct OAuthClientInfoResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata_cache_ttl: Option<i64>,
 
-    // MCP client preferences
-    pub connection_mode: String,
-    pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
-    pub has_active_tokens: bool,
 }
 
 /// List all registered OAuth clients
@@ -951,28 +983,22 @@ pub async fn oauth_list_clients(
         Ok(db_clients) => {
             let clients: Vec<OAuthClientInfoResponse> = db_clients
                 .into_iter()
-                .map(|c| {
-                    let has_active = gateway_state.clients_with_tokens.contains(&c.client_id);
-                    OAuthClientInfoResponse {
-                        client_id: c.client_id,
-                        registration_type: c.registration_type.as_str().to_string(),
-                        client_name: c.client_name,
-                        client_alias: c.client_alias,
-                        redirect_uris: c.redirect_uris,
-                        scope: c.scope,
-                        logo_uri: c.logo_uri,
-                        client_uri: c.client_uri,
-                        software_id: c.software_id,
-                        software_version: c.software_version,
-                        metadata_url: c.metadata_url,
-                        metadata_cached_at: c.metadata_cached_at,
-                        metadata_cache_ttl: c.metadata_cache_ttl,
-                        connection_mode: c.connection_mode,
-                        locked_space_id: c.locked_space_id,
-                        last_seen: c.last_seen,
-                        created_at: c.created_at,
-                        has_active_tokens: has_active,
-                    }
+                .map(|c| OAuthClientInfoResponse {
+                    client_id: c.client_id,
+                    registration_type: c.registration_type.as_str().to_string(),
+                    client_name: c.client_name,
+                    client_alias: c.client_alias,
+                    redirect_uris: c.redirect_uris,
+                    scope: c.scope,
+                    logo_uri: c.logo_uri,
+                    client_uri: c.client_uri,
+                    software_id: c.software_id,
+                    software_version: c.software_version,
+                    metadata_url: c.metadata_url,
+                    metadata_cached_at: c.metadata_cached_at,
+                    metadata_cache_ttl: c.metadata_cache_ttl,
+                    last_seen: c.last_seen,
+                    created_at: c.created_at,
                 })
                 .collect();
             info!("[OAuth] Listed {} clients from database", clients.len());
@@ -989,8 +1015,6 @@ pub async fn oauth_list_clients(
 #[derive(Debug, Deserialize)]
 pub struct UpdateClientRequest {
     pub client_alias: Option<String>,
-    pub connection_mode: Option<String>,
-    pub locked_space_id: Option<String>,
 }
 
 /// Update client settings (connection mode, alias, etc.)
@@ -1039,11 +1063,14 @@ pub async fn oauth_get_client_features(
         space_id, client_id
     );
 
-    // Step 2: Get client grants (SRP: AuthorizationService)
+    // Step 2: Get client grants via the resolver.
+    // No MCP session context here (this is an HTTP API endpoint for the
+    // desktop UI), so workspace-binding resolution is skipped; the
+    // resolver falls back to the Space's Default FeatureSet.
     let feature_set_ids = match state
         .services
         .authorization_service
-        .get_client_grants(&client_id, &space_id)
+        .get_client_grants(&client_id, &space_id, None)
         .await
     {
         Ok(grants) => grants,
@@ -1165,39 +1192,8 @@ pub async fn oauth_update_client(
         return (StatusCode::SERVICE_UNAVAILABLE, "Database not available").into_response();
     };
 
-    // Validate connection_mode if provided
-    if let Some(ref mode) = req.connection_mode {
-        if !["follow_active", "locked", "ask_on_change"].contains(&mode.as_str()) {
-            return (StatusCode::BAD_REQUEST, "Invalid connection_mode").into_response();
-        }
-    }
-
-    // Handle locked_space_id: convert to Option<Option<String>>
-    let locked_space_id = if req.connection_mode.as_deref() == Some("locked") {
-        Some(req.locked_space_id.clone())
-    } else if req.connection_mode.as_deref() == Some("follow_active")
-        || req.connection_mode.as_deref() == Some("ask_on_change")
-    {
-        // Clear locked_space_id when switching away from locked mode
-        Some(None)
-    } else {
-        // Don't change if not explicitly setting mode
-        None
-    };
-
-    match repo
-        .update_client_settings(
-            &client_id,
-            req.client_alias,
-            req.connection_mode,
-            locked_space_id,
-        )
-        .await
-    {
+    match repo.update_client_alias(&client_id, req.client_alias).await {
         Ok(Some(client)) => {
-            let has_active = gateway_state
-                .clients_with_tokens
-                .contains(&client.client_id);
             let response = OAuthClientInfoResponse {
                 client_id: client.client_id,
                 registration_type: client.registration_type.as_str().to_string(),
@@ -1212,11 +1208,8 @@ pub async fn oauth_update_client(
                 metadata_url: client.metadata_url,
                 metadata_cached_at: client.metadata_cached_at,
                 metadata_cache_ttl: client.metadata_cache_ttl,
-                connection_mode: client.connection_mode,
-                locked_space_id: client.locked_space_id,
                 last_seen: client.last_seen,
                 created_at: client.created_at,
-                has_active_tokens: has_active,
             };
             info!("[OAuth] Client updated: {}", response.client_id);
             Json(response).into_response()
@@ -1246,7 +1239,7 @@ pub async fn oauth_delete_client(
 ) -> Response {
     info!("[OAuth] Deleting client: {}", client_id);
 
-    let mut gateway_state = state.write().await;
+    let gateway_state = state.read().await;
 
     let Some(repo) = gateway_state.inbound_client_repository() else {
         warn!("[OAuth] Database not available for client deletion");
@@ -1255,8 +1248,6 @@ pub async fn oauth_delete_client(
 
     match repo.delete_client(&client_id).await {
         Ok(true) => {
-            // Remove from active tokens set
-            gateway_state.clients_with_tokens.remove(&client_id);
             info!("[OAuth] Client deleted: {}", client_id);
             StatusCode::NO_CONTENT.into_response()
         }

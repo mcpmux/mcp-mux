@@ -140,11 +140,11 @@ impl TestGateway {
             metadata_url: None,
             metadata_cached_at: None,
             metadata_cache_ttl: None,
-            connection_mode: "follow_active".to_string(),
-            locked_space_id: None,
             last_seen: None,
             created_at: now.clone(),
             updated_at: now,
+            reports_roots: false,
+            roots_capability_known: false,
         };
         inbound_client_repo
             .save_client(&test_client)
@@ -198,7 +198,7 @@ impl TestGateway {
 
         // Create MCPNotifier
         let notifier = Arc::new(MCPNotifier::new(
-            services.space_resolver_service.clone(),
+            services.feature_set_resolver.clone(),
             services.pool_services.feature_service.clone(),
         ));
 
@@ -210,15 +210,16 @@ impl TestGateway {
         let handler = McpMuxGatewayHandler::new(services.clone(), notifier.clone());
 
         // Build MCP service
+        let mut http_cfg = StreamableHttpServerConfig::default();
+        http_cfg.stateful_mode = true;
+        http_cfg.json_response = false;
+        http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(15));
+        http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
+        http_cfg.cancellation_token = ct.child_token();
         let mcp_service = StreamableHttpService::new(
             move || Ok(handler.clone()),
             Arc::new(LocalSessionManager::default()),
-            StreamableHttpServerConfig {
-                stateful_mode: true,
-                sse_keep_alive: Some(std::time::Duration::from_secs(15)),
-                sse_retry: Some(std::time::Duration::from_secs(3)),
-                cancellation_token: ct.child_token(),
-            },
+            http_cfg,
         );
 
         // Build router with test OAuth middleware
@@ -284,6 +285,10 @@ struct GatewayTestClient {
     tools_count: Arc<AtomicUsize>,
     prompts_count: Arc<AtomicUsize>,
     resources_count: Arc<AtomicUsize>,
+    /// Workspace roots this client reports when the gateway calls
+    /// `roots/list`. Empty = the client does NOT declare the `roots`
+    /// capability (rootless), matching the default editor-with-no-folder case.
+    roots: Arc<Vec<String>>,
 }
 
 impl GatewayTestClient {
@@ -295,7 +300,16 @@ impl GatewayTestClient {
             tools_count: Arc::new(AtomicUsize::new(0)),
             prompts_count: Arc::new(AtomicUsize::new(0)),
             resources_count: Arc::new(AtomicUsize::new(0)),
+            roots: Arc::new(Vec::new()),
         }
+    }
+
+    /// A roots-capable client that reports the given roots (file:// URIs or
+    /// absolute paths) when probed — models a real editor with a folder open.
+    fn with_roots(roots: Vec<String>) -> Self {
+        let mut c = Self::new();
+        c.roots = Arc::new(roots);
+        c
     }
 
     #[allow(dead_code)]
@@ -308,16 +322,24 @@ impl GatewayTestClient {
 
 impl rmcp::ClientHandler for GatewayTestClient {
     fn get_info(&self) -> ClientInfo {
-        ClientInfo {
-            protocol_version: Default::default(),
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "gateway-test-client".to_string(),
-                version: "1.0.0".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        let capabilities = if self.roots.is_empty() {
+            ClientCapabilities::default()
+        } else {
+            ClientCapabilities::builder().enable_roots().build()
+        };
+        ClientInfo::new(
+            capabilities,
+            Implementation::new("gateway-test-client", "1.0.0"),
+        )
+    }
+
+    fn list_roots(
+        &self,
+        _context: rmcp::service::RequestContext<RoleClient>,
+    ) -> impl std::future::Future<Output = Result<ListRootsResult, rmcp::ErrorData>> + Send + '_
+    {
+        let roots = self.roots.iter().map(Root::new).collect();
+        async move { Ok(ListRootsResult::new(roots)) }
     }
 
     fn on_tool_list_changed(
@@ -484,12 +506,14 @@ async fn test_gateway_forwards_server_disconnect_to_client() {
 // ============================================================================
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_gateway_forwards_grant_change_to_client() {
+async fn test_gateway_forwards_feature_set_member_change_to_client() {
+    // Replaces the old "grant change" test. Per-client grants are gone, so
+    // the corresponding signal now is `FeatureSetMembersChanged` — emitted
+    // when a user edits which features a Space's FS exposes.
     let space_id = Uuid::new_v4();
     let client_id = Uuid::new_v4().to_string();
     let gw = TestGateway::start(&client_id, space_id).await;
 
-    // Seed a feature so hash has content
     let tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool1");
     gw.feature_repo.upsert(&tool).await.unwrap();
 
@@ -499,15 +523,14 @@ async fn test_gateway_forwards_grant_change_to_client() {
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Add another feature so hash changes
     let new_tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool2");
     gw.feature_repo.upsert(&new_tool).await.unwrap();
 
-    // Emit GrantIssued event
-    gw.emit(DomainEvent::GrantIssued {
-        client_id: client_id.clone(),
+    gw.emit(DomainEvent::FeatureSetMembersChanged {
         space_id,
         feature_set_id: "fs-test".to_string(),
+        added_count: 1,
+        removed_count: 0,
     });
 
     let result =
@@ -515,7 +538,51 @@ async fn test_gateway_forwards_grant_change_to_client() {
 
     assert!(
         result.is_ok(),
-        "Client should receive list_changed when grant is issued"
+        "Client should receive list_changed when a FS's members change"
+    );
+
+    client.cancel().await.ok();
+    gw.shutdown();
+}
+
+// ============================================================================
+// B4b: Gateway forwards WorkspaceBindingChanged to every peer in the space
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_gateway_forwards_workspace_binding_change_to_client() {
+    // User just created / updated / deleted a binding. Every connected MCP
+    // client that resolves into this Space must re-fetch its tool list,
+    // since the binding could have flipped the root → (space, FS) mapping.
+    let space_id = Uuid::new_v4();
+    let client_id = Uuid::new_v4().to_string();
+    let gw = TestGateway::start(&client_id, space_id).await;
+
+    // Seed then add another tool so the content hash changes and the
+    // notifier actually forwards the event (it dedupes on identical hash).
+    let tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool1");
+    gw.feature_repo.upsert(&tool).await.unwrap();
+
+    let client_handler = GatewayTestClient::new();
+    let tools_changed = client_handler.tools_changed.clone();
+    let client = connect_client(&gw.url, client_handler).await;
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let new_tool = tests::features::test_tool(&space_id.to_string(), "srv", "tool2");
+    gw.feature_repo.upsert(&new_tool).await.unwrap();
+
+    gw.emit(DomainEvent::WorkspaceBindingChanged {
+        space_id,
+        workspace_root: "/abs/proj".to_string(),
+    });
+
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(5), tools_changed.notified()).await;
+
+    assert!(
+        result.is_ok(),
+        "Client should receive list_changed when a WorkspaceBinding is changed",
     );
 
     client.cancel().await.ok();
@@ -540,21 +607,27 @@ async fn test_gateway_content_deduping_prevents_spurious_notifications() {
     let tools_count = client_handler.tools_count.clone();
     let client = connect_client(&gw.url, client_handler).await;
 
-    // Wait for init + hash priming
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Wait for init + hash priming + the one-shot connect-time resolution
+    // flip (the resolver fires a single per-peer list_changed on first
+    // resolution so the client re-lists after roots/grants settle).
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-    // Emit ToolsChanged WITHOUT changing features (hash stays same)
+    // Snapshot the post-connect baseline, then emit ToolsChanged WITHOUT
+    // changing features. Content deduping must suppress THIS notification —
+    // we assert the count doesn't move past the baseline rather than `== 0`,
+    // so the legitimate connect-time flip doesn't mask the dedup check.
+    let baseline = tools_count.load(Ordering::SeqCst);
     gw.emit(DomainEvent::ToolsChanged {
         server_id: "srv".to_string(),
         space_id,
     });
 
-    // Wait a bit - notification should NOT be received
+    // Wait a bit - no ADDITIONAL notification should be received.
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     assert_eq!(
         tools_count.load(Ordering::SeqCst),
-        0,
+        baseline,
         "No notification should be sent when features haven't changed (content deduping)"
     );
 
@@ -675,20 +748,91 @@ async fn test_client_can_list_tools_after_notification() {
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Initially no tools (empty feature repo = empty tools list)
+    // Initially no BACKEND tools (empty feature repo). The gateway always
+    // appends its built-in `mcpmux_*` meta tools regardless of FS resolution,
+    // so we assert on the non-meta subset here.
     let tools = client
         .list_tools(Default::default())
         .await
         .expect("list_tools should work");
-    assert_eq!(tools.tools.len(), 0, "Should start with no tools");
+    let backend_tools: Vec<_> = tools
+        .tools
+        .iter()
+        .filter(|t| !t.name.starts_with("mcpmux_"))
+        .collect();
+    assert_eq!(
+        backend_tools.len(),
+        0,
+        "Should start with no backend tools; meta tools are always present"
+    );
 
-    // list_tools should still work after re-fetch
+    // list_tools should still work after re-fetch.
     let tools2 = client
         .list_tools(Default::default())
         .await
         .expect("second list_tools should work");
-    assert_eq!(tools2.tools.len(), 0, "Still no tools");
+    let backend_tools2: Vec<_> = tools2
+        .tools
+        .iter()
+        .filter(|t| !t.name.starts_with("mcpmux_"))
+        .collect();
+    assert_eq!(backend_tools2.len(), 0, "Still no backend tools");
 
     client.cancel().await.ok();
+    gw.shutdown();
+}
+
+// ============================================================================
+// B12: Multi-client — distinct workspace roots tracked independently
+// ============================================================================
+
+/// Two roots-capable clients (the "two editor windows on one OAuth identity"
+/// case — same injected client_id, distinct sessions) connect over real HTTP
+/// reporting DIFFERENT workspace roots. The gateway must probe each via
+/// `roots/list` and track them independently per session, with no cross-talk
+/// — the wire-level complement to the resolver/effective-features integration
+/// tests that prove per-session routing.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multi_client_distinct_roots_tracked_independently() {
+    let space_id = Uuid::new_v4();
+    let client_id = Uuid::new_v4().to_string();
+    let gw = TestGateway::start(&client_id, space_id).await;
+
+    // POSIX roots so normalization is identical on every CI platform.
+    let client_a = connect_client(
+        &gw.url,
+        GatewayTestClient::with_roots(vec!["file:///work/alpha".to_string()]),
+    )
+    .await;
+    let client_b = connect_client(
+        &gw.url,
+        GatewayTestClient::with_roots(vec!["file:///work/beta".to_string()]),
+    )
+    .await;
+
+    // Allow the on_initialized roots round-trip (gateway → client list_roots)
+    // to populate the session registry for both sessions.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    let roots = gw
+        .services
+        .feature_set_resolver
+        .session_roots()
+        .list_all_roots();
+    assert!(
+        roots.iter().any(|r| r == "/work/alpha"),
+        "client A's root must be tracked (got {roots:?})"
+    );
+    assert!(
+        roots.iter().any(|r| r == "/work/beta"),
+        "client B's root must be tracked independently (got {roots:?})"
+    );
+
+    // Both sessions remain independently usable over the wire.
+    assert!(client_a.list_tools(Default::default()).await.is_ok());
+    assert!(client_b.list_tools(Default::default()).await.is_ok());
+
+    client_a.cancel().await.ok();
+    client_b.cancel().await.ok();
     gw.shutdown();
 }

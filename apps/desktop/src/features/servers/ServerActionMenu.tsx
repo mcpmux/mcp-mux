@@ -6,11 +6,12 @@
  * - Refresh: Quick reconnect with existing credentials
  * - Reconnect: Logout + re-authenticate (OAuth only)
  * - View Logs: Open log viewer
+ * - View Definition: View server definition JSON
  * - Uninstall: Remove server
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { MoreVertical, Settings, RefreshCw, RotateCcw, FileText, Trash2 } from 'lucide-react';
+import { MoreVertical, Settings, RefreshCw, RotateCcw, FileText, Code, Trash2 } from 'lucide-react';
 
 export interface ServerActionMenuProps {
   serverId: string;
@@ -23,12 +24,12 @@ export interface ServerActionMenuProps {
   onRefresh: () => void;
   onReconnect: () => void;
   onViewLogs: () => void;
+  onViewDefinition: () => void;
   onUninstall: () => void;
-  disabled?: boolean;
 }
 
 export function ServerActionMenu({
-  serverId: _serverId,
+  serverId,
   serverName: _serverName,
   hasInputs,
   isOAuth,
@@ -38,8 +39,8 @@ export function ServerActionMenu({
   onRefresh,
   onReconnect,
   onViewLogs,
+  onViewDefinition,
   onUninstall,
-  disabled = false,
 }: ServerActionMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -88,12 +89,12 @@ export function ServerActionMenu({
       <button
         ref={buttonRef}
         onClick={() => setIsOpen(!isOpen)}
-        disabled={disabled}
-        className="p-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-50"
+        className="p-2 text-sm rounded-lg bg-[rgb(var(--surface-hover))] border border-[rgb(var(--border))] text-[rgb(var(--foreground))]/70 hover:bg-[rgb(var(--surface-elevated))] hover:text-[rgb(var(--foreground))] transition-colors"
         title="More actions"
         aria-label="More actions"
         aria-expanded={isOpen}
         aria-haspopup="menu"
+        data-testid={`action-menu-${serverId}`}
       >
         <MoreVertical className="h-4 w-4" />
       </button>
@@ -145,9 +146,21 @@ export function ServerActionMenu({
             onClick={() => handleAction(onViewLogs)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
             role="menuitem"
+            data-testid={`view-logs-${serverId}`}
           >
             <FileText className="h-4 w-4 text-[rgb(var(--muted))]" />
             View Logs
+          </button>
+
+          {/* View Definition - always visible */}
+          <button
+            onClick={() => handleAction(onViewDefinition)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
+            role="menuitem"
+            data-testid={`view-definition-${serverId}`}
+          >
+            <Code className="h-4 w-4 text-[rgb(var(--muted))]" />
+            View Definition
           </button>
 
           {/* Separator */}
@@ -158,6 +171,7 @@ export function ServerActionMenu({
             onClick={() => handleAction(onUninstall)}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--error))] hover:bg-[rgb(var(--error))]/10 transition-colors"
             role="menuitem"
+            data-testid={`uninstall-menu-${serverId}`}
           >
             <Trash2 className="h-4 w-4" />
             Uninstall

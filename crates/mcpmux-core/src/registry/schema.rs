@@ -339,7 +339,7 @@ mod tests {
                 {
                     "id": "GITHUB_PERSONAL_ACCESS_TOKEN",
                     "label": "GitHub Personal Access Token",
-                    "type": "password",
+                    "type": "text",
                     "required": true,
                     "secret": true,
                     "obtain": {

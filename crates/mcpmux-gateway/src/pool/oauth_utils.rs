@@ -101,17 +101,16 @@ pub fn convert_to_stored_metadata(metadata: &AuthorizationMetadata) -> StoredOAu
 /// This is used when loading saved metadata and setting it on the RMCP manager
 /// to bypass discovery.
 pub fn convert_from_stored_metadata(stored: &StoredOAuthMetadata) -> AuthorizationMetadata {
-    AuthorizationMetadata {
-        authorization_endpoint: stored.authorization_endpoint.clone(),
-        token_endpoint: stored.token_endpoint.clone(),
-        registration_endpoint: stored.registration_endpoint.clone(),
-        issuer: stored.issuer.clone(),
-        jwks_uri: stored.jwks_uri.clone(),
-        scopes_supported: stored.scopes_supported.clone(),
-        response_types_supported: stored.response_types_supported.clone(),
-        additional_fields: stored.additional_fields.clone(),
-        ..Default::default()
-    }
+    let mut metadata = AuthorizationMetadata::default();
+    metadata.authorization_endpoint = stored.authorization_endpoint.clone();
+    metadata.token_endpoint = stored.token_endpoint.clone();
+    metadata.registration_endpoint = stored.registration_endpoint.clone();
+    metadata.issuer = stored.issuer.clone();
+    metadata.jwks_uri = stored.jwks_uri.clone();
+    metadata.scopes_supported = stored.scopes_supported.clone();
+    metadata.response_types_supported = stored.response_types_supported.clone();
+    metadata.additional_fields = stored.additional_fields.clone();
+    metadata
 }
 
 #[cfg(test)]

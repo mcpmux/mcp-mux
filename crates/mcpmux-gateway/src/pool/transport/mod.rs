@@ -6,7 +6,8 @@
 
 mod http;
 pub mod resolution;
-mod stdio; // Expose resolution module
+pub mod shell_env;
+mod stdio;
 
 use std::collections::HashMap;
 use std::sync::Arc;

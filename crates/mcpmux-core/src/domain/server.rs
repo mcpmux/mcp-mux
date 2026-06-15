@@ -140,7 +140,7 @@ pub struct InputDefinition {
     pub id: String,
     pub label: String,
     #[serde(default = "default_input_type")]
-    pub r#type: String, // "text", "password", etc.
+    pub r#type: String, // "text", "number", "boolean", "url", etc. Masking controlled by `secret` field.
     #[serde(default)]
     pub required: bool,
     #[serde(default)]

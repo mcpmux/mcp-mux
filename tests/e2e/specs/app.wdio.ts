@@ -56,7 +56,7 @@ describe('McpMux Application', () => {
     await safeClick(clientsButton);
     await browser.pause(1500);
     const pageSource = await browser.getPageSource();
-    expect(pageSource.includes('Connected Clients') || pageSource.includes('Clients')).toBe(true);
+    expect(pageSource.includes('Apps') || pageSource.includes('clients-page')).toBe(true);
   });
 
   it('should navigate to FeatureSets page', async () => {

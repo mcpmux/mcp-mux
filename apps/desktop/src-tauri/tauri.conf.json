@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "McpMux",
-  "version": "0.0.12",
+  "mainBinaryName": "mcpmux",
+  "version": "0.3.0",
   "identifier": "com.mcpmux.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
@@ -20,9 +21,13 @@
     },
     "updater": {
       "endpoints": [
-        "https://github.com/ion-ash/mcp-mux/releases/latest/download/latest.json"
+        "https://api.mcpmux.com/v1/update/latest.json",
+        "https://github.com/mcpmux/mcp-mux/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCQUZGMEVCMEZBOTk5RTcKUldUbm1ha1A2L0N2ZTlOZjN5T3pGOHBHRUlibytMY2tPeWJkQ01heDJzdTJqK3B3a2lBdDZ1T1oK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCQUZGMEVCMEZBOTk5RTcKUldUbm1ha1A2L0N2ZTlOZjN5T3pGOHBHRUlibytMY2tPeWJkQ01heDJzdTJqK3B3a2lBdDZ1T1oK",
+      "windows": {
+        "installMode": "passive"
+      }
     }
   },
   "app": {
@@ -45,7 +50,14 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": "all",
+    "targets": [
+      "app",
+      "dmg",
+      "deb",
+      "rpm",
+      "appimage",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -85,18 +97,23 @@
     },
     "linux": {
       "deb": {
+        "section": "utils",
         "depends": [
-          "libsecret-1-0",
-          "gnome-keyring",
           "librsvg2-2"
+        ],
+        "recommends": [
+          "libsecret-1-0",
+          "gnome-keyring"
         ],
         "desktopTemplate": "linux/mcpmux.desktop"
       },
       "rpm": {
         "depends": [
-          "libsecret",
-          "gnome-keyring",
           "librsvg2"
+        ],
+        "recommends": [
+          "libsecret",
+          "gnome-keyring"
         ]
       }
     }

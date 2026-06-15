@@ -4,10 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Re-publish an existing draft release (e.g. v0.1.1). Leave empty for normal release-please flow.'
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,6 +20,19 @@ env:
 jobs:
   # ─────────────────────────────────────────────────────────────
   # Release Please: Create/update release PR with version bump
+  #
+  # When a release PR is merged, release-please creates a published
+  # release (required for git tag creation — draft releases don't
+  # create tags, which breaks version tracking). We immediately
+  # convert it to draft so users never see an empty release.
+  #
+  # This is safe because:
+  # - /releases/latest API returns the PREVIOUS release while draft
+  # - Tauri updater checks /releases/latest/download/latest.json
+  #   → still resolves to old release → no broken updates
+  # - discover.ui fetches /releases/latest → still gets old release
+  # - Once publish-release un-drafts, /latest atomically switches
+  #   to the new release with all artifacts already attached
   # ─────────────────────────────────────────────────────────────
   release-please:
     runs-on: ubuntu-latest
@@ -23,112 +41,415 @@ jobs:
       pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
+      release_id: ${{ steps.release.outputs.id }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.major }}.${{ steps.release.outputs.minor }}.${{ steps.release.outputs.patch }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          # Use manifest mode for Rust project
           manifest-file: .release-please-manifest.json
           config-file: release-please-config.json
 
+      # release-please creates a published release (so the git tag is created
+      # and version tracking works). Immediately convert to draft so users
+      # don't see an empty release while artifacts are being built.
+      # Uses github-script (not gh CLI) for minimal latency — the octokit
+      # client is pre-authenticated, no process spawn needed.
+      - name: Convert release to draft
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ steps.release.outputs.id }},
+              draft: true,
+            });
+
   # ─────────────────────────────────────────────────────────────
-  # Build Release: Build Tauri app when release is created
+  # Build Release: Build Tauri app when a stable release is created.
+  # Uploads to the pre-created draft release with full Apple signing.
   # ─────────────────────────────────────────────────────────────
   build-release:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: linux
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: windows
-          # macOS builds disabled until signing key is available
-          # - os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   artifact: macos-arm
-          # - os: macos-15
-          #   target: x86_64-apple-darwin
-          #   artifact: macos-intel
-
-    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      release_id: ${{ needs.release-please.outputs.release_id }}
+      apple_full_signing: true
+
+  # ─────────────────────────────────────────────────────────────
+  # Pre-release: every non-release merge to main ships an automated
+  # pre-release so the Pre-release update channel always tracks main.
+  #
+  # The version is release-please's *pending* next stable version
+  # (X.Y.Z) plus a -pre.<run_number> suffix, so SemVer ordering holds:
+  #   0.3.0  <  0.4.0-pre.317  <  0.4.0-pre.318  <  0.4.0
+  # release-please runs in manifest mode, so these v*-pre.* tags are
+  # invisible to its version tracking and never interfere.
+  # ─────────────────────────────────────────────────────────────
+  prerelease-version:
+    needs: release-please
+    # release-please-action sets release_created to 'true' or leaves it empty
+    # (never the literal 'false'), so gate on != 'true', not == 'false'.
+    if: needs.release-please.outputs.release_created != 'true' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      release_id: ${{ steps.draft.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux deps
-        if: matrix.os == 'ubuntu-latest'
-        uses: ./.github/actions/install-linux-deps
-        with:
-          verify_glib: 'false'
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Compute pre-release version
+        id: compute
         env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}-release
-        env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile
-
-      # Import Apple certificate for macOS signing
-      - name: Import Apple certificate
-        if: matrix.os == 'macos-latest' || matrix.os == 'macos-15'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "$APPLE_CERTIFICATE" ]; then
-            echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
-            security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-            security default-keychain -s build.keychain
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-            security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-            rm certificate.p12
+          set -euo pipefail
+          BOT_BRANCH="release-please--branches--main--components--mcpmux"
+          BASE=""
+          # Prefer release-please's pending next version (held in the manifest
+          # on its release-PR branch). This is exactly the X.Y.Z that merging
+          # the release PR will cut, so the pre-releases preview that version.
+          if CONTENT=$(gh api "repos/${{ github.repository }}/contents/.release-please-manifest.json?ref=${BOT_BRANCH}" --jq '.content' 2>/dev/null); then
+            BASE=$(printf '%s' "$CONTENT" | base64 -d \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s)["."]))')
+            echo "Pending stable version (from release PR): $BASE"
+          fi
+          # Fallback (no open release PR): patch-bump the current stable version.
+          if [ -z "$BASE" ]; then
+            CUR=$(node -e 'process.stdout.write(require("./.release-please-manifest.json")["."])')
+            BASE=$(printf '%s' "$CUR" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')
+            echo "No open release PR; patch-bumping current ($CUR) -> $BASE"
+          fi
+          # The pre-release identifier MUST be numeric-only (a single SemVer
+          # identifier, no "pre." word): the Windows MSI bundler maps it to the
+          # 4th version field and rejects non-numeric / >65535 values. So use
+          # "<base>-<run_number>", e.g. 0.4.0-185. Ordering still holds:
+          # 0.3.0 < 0.4.0-185 < 0.4.0-186 < 0.4.0. (run_number stays < 65535.)
+          PRE="${BASE}-${{ github.run_number }}"
+          echo "version=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Pre-release version: $PRE"
+
+      # Pre-create a DRAFT pre-release so all matrix build jobs upload to it by
+      # id (no create-by-tag race), and it stays hidden until artifacts +
+      # latest.json are complete. prerelease=true keeps it out of /releases/latest.
+      - name: Create draft pre-release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.compute.outputs.version }}"
+          TAG="v${VERSION}"
+          BASE="${VERSION%-*}"   # strip the -<run_number> pre-release identifier
+          BOT_BRANCH="release-please--branches--main--components--mcpmux"
+
+          # Build release notes that mirror the stable changelog: pull the
+          # pending version's section straight from release-please's CHANGELOG
+          # on its release-PR branch (grouped Features / Bug Fixes / etc.), so
+          # the pre-release previews exactly what stable v$BASE will ship.
+          # Assembled into a file with printf to keep markdown intact (no YAML
+          # block-scalar indentation leaking into the body).
+          NOTE="Automated pre-release of v${BASE}, built from main (${{ github.sha }}). Early build — may be unstable; switch to the Stable channel in Settings → Software Updates for published releases."
+          printf '%s\n' "$NOTE" > body.md
+          if CL=$(gh api "repos/${{ github.repository }}/contents/CHANGELOG.md?ref=${BOT_BRANCH}" --jq '.content' 2>/dev/null); then
+            # Extract the top (pending) version section: from the first "## "
+            # header up to, but not including, the next one.
+            SECTION=$(printf '%s' "$CL" | base64 -d | awk '/^## /{c++} c==2{exit} c>=1{print}')
+            if [ -n "$SECTION" ]; then
+              # The section carries release-please's own "## [version] (date)"
+              # header + grouped Features/Bug Fixes — same as the stable notes.
+              printf '\n%s\n' "$SECTION" >> body.md
+            fi
           fi
 
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+          RELEASE_ID=$(gh api --method POST "repos/${{ github.repository }}/releases" \
+            -f tag_name="$TAG" \
+            -f target_commitish="${{ github.sha }}" \
+            -f name="McpMux $TAG" \
+            -f body="$(cat body.md)" \
+            -F draft=true -F prerelease=true \
+            --jq '.id')
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          echo "Created draft pre-release $TAG (id=$RELEASE_ID)"
+
+  prerelease-build:
+    needs: prerelease-version
+    if: needs.prerelease-version.outputs.release_id != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      set_version: ${{ needs.prerelease-version.outputs.version }}
+      release_id: ${{ needs.prerelease-version.outputs.release_id }}
+      apple_full_signing: false
+
+  # Flip the pre-release draft → published once every platform is attached, so
+  # the Pre-release channel only ever sees a complete manifest.
+  prerelease-publish:
+    needs: [prerelease-version, prerelease-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "v${{ needs.prerelease-version.outputs.version }}" \
+            --draft=false \
+            --prerelease \
+            --repo "${{ github.repository }}"
+
+  # ─────────────────────────────────────────────────────────────
+  # Publish Release: Flip draft → published after all artifacts
+  # are attached, so /releases/latest always has all assets
+  # ─────────────────────────────────────────────────────────────
+  publish-release:
+    needs: [release-please, build-release]
+    # Run after a successful build OR when manually re-publishing an existing release
+    if: >-
+      always() &&
+      (
+        needs.build-release.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      # Normalize the tag: ensure it starts with "v" whether the user
+      # typed "0.1.1" or "v0.1.1" in the workflow_dispatch input.
+      - name: Resolve tag
+        id: resolve
+        run: |
+          RAW="${{ inputs.tag || needs.release-please.outputs.tag_name }}"
+          TAG="${RAW#v}"       # strip leading v if present
+          TAG="v${TAG}"        # re-add it consistently
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Validate existing release has assets
+        if: inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          ASSET_COUNT=$(gh release view "$TAG" \
+            --repo "${{ github.repository }}" \
+            --json assets --jq '.assets | length')
+          echo "Release $TAG has $ASSET_COUNT asset(s)"
+          if [ "$ASSET_COUNT" -eq 0 ]; then
+            echo "::error::Release $TAG has no assets to sign"
+            exit 1
+          fi
+
+      - name: Import GPG signing key
+        run: echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Sign release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          mkdir -p artifacts sigs
+
+          # Download all release assets (installers only, skip Tauri updater metadata)
+          gh release download "$TAG" --dir artifacts --repo "$REPO" \
+            --pattern "*.deb" --pattern "*.rpm" --pattern "*.AppImage" \
+            --pattern "*.dmg" --pattern "*.exe" --pattern "*.msi" \
+            --pattern "*.nsis.zip" || true
+
+          # Create detached signatures and upload
+          for file in artifacts/*; do
+            [ -f "$file" ] || continue
+            gpg --batch --yes --detach-sign --armor -o "sigs/$(basename "$file").sig" "$file"
+          done
+
+          # Upload all .sig files to the release
+          if ls sigs/*.sig &>/dev/null; then
+            gh release upload "$TAG" sigs/*.sig --repo "$REPO" --clobber
+          fi
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ steps.resolve.outputs.tag }}" \
+            --draft=false \
+            --repo "${{ github.repository }}"
+
+  # ─────────────────────────────────────────────────────────────
+  # Update Homebrew Tap: Push new version to homebrew-tap
+  # ─────────────────────────────────────────────────────────────
+  update-homebrew:
+    needs: [release-please, publish-release]
+    if: >-
+      always() &&
+      needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Compute SHA256 and update cask
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          TAG="${{ needs.publish-release.outputs.tag || needs.release-please.outputs.tag_name }}"
+          VERSION="${TAG#v}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}"
+
+          # Download DMGs and compute SHA256
+          echo "Downloading macOS DMGs..."
+          curl -fSL "${BASE_URL}/McpMux_${VERSION}_aarch64.dmg" -o arm64.dmg || { echo "ARM64 DMG not found — skipping Homebrew update"; exit 0; }
+          SHA_ARM64=$(shasum -a 256 arm64.dmg | cut -d' ' -f1)
+          echo "ARM64 SHA256: $SHA_ARM64"
+
+          # x64 DMG (built on macos-15-intel runner)
+          HAS_X64=false
+          if curl -fSL "${BASE_URL}/McpMux_${VERSION}_x64.dmg" -o x64.dmg 2>/dev/null; then
+            SHA_X64=$(shasum -a 256 x64.dmg | cut -d' ' -f1)
+            echo "x64   SHA256: $SHA_X64"
+            HAS_X64=true
+          else
+            echo "x64 DMG not found — generating ARM-only cask"
+          fi
+
+          # Clone the tap repo and update the cask
+          git clone https://x-access-token:${GH_TOKEN}@github.com/mcpmux/homebrew-tap.git tap
+
+          # Generate cask file
+          CASK_FILE="tap/Casks/mcpmux.rb"
+          {
+            echo 'cask "mcpmux" do'
+            if [ "$HAS_X64" = true ]; then
+              echo '  arch arm: "aarch64", intel: "x64"'
+            fi
+            echo ''
+            echo "  version \"${VERSION}\""
+            if [ "$HAS_X64" = true ]; then
+              echo "  sha256 arm:   \"${SHA_ARM64}\","
+              echo "         intel: \"${SHA_X64}\""
+            else
+              echo "  sha256 \"${SHA_ARM64}\""
+            fi
+            echo ''
+            if [ "$HAS_X64" = true ]; then
+              echo '  url "https://github.com/mcpmux/mcp-mux/releases/download/v#{version}/McpMux_#{version}_#{arch}.dmg",'
+            else
+              echo '  url "https://github.com/mcpmux/mcp-mux/releases/download/v#{version}/McpMux_#{version}_aarch64.dmg",'
+            fi
+            echo '      verified: "github.com/mcpmux/mcp-mux/"'
+            echo ''
+            echo '  name "McpMux"'
+            echo '  desc "Unified MCP gateway and manager for AI clients"'
+            echo '  homepage "https://mcpmux.com"'
+            echo ''
+            if [ "$HAS_X64" != true ]; then
+              echo '  depends_on arch: :arm64'
+            fi
+            echo ''
+            echo '  livecheck do'
+            echo '    url "https://github.com/mcpmux/mcp-mux/releases/latest"'
+            echo '    strategy :github_latest'
+            echo '  end'
+            echo ''
+            echo '  app "McpMux.app"'
+            echo ''
+            echo '  # Remove quarantine for ad-hoc signed app (no Apple Developer ID)'
+            echo '  postflight do'
+            echo '    system_command "/usr/bin/xattr",'
+            echo '                   args: ["-cr", "#{appdir}/McpMux.app"]'
+            echo '  end'
+            echo ''
+            echo '  zap trash: ['
+            echo '    "~/Library/Application Support/com.mcpmux.desktop",'
+            echo '    "~/Library/Preferences/com.mcpmux.desktop.plist",'
+            echo '    "~/Library/Caches/com.mcpmux.desktop",'
+            echo '    "~/Library/Saved Application State/com.mcpmux.desktop.savedState",'
+            echo '  ]'
+            echo 'end'
+          } > "$CASK_FILE"
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/mcpmux.rb
+          git commit -m "Update mcpmux to ${VERSION}"
+          git push
+
+  # ─────────────────────────────────────────────────────────────
+  # Update APT Repository: Add .deb to self-hosted APT repo on R2
+  # ─────────────────────────────────────────────────────────────
+  update-apt-repo:
+    needs: [release-please, publish-release]
+    if: >-
+      always() &&
+      needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y reprepro
+
+      - name: Configure AWS CLI for R2
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.R2_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.R2_SECRET_ACCESS_KEY }}"
+          aws configure set default.region auto
+        env:
+          AWS_DEFAULT_OUTPUT: json
+
+      - name: Import GPG signing key
+        run: echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Download .deb from GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-          # macOS signing
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # macOS notarization
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        with:
-          projectPath: apps/desktop
-          # Use tagName to find and upload to the existing release created by release-please
-          tagName: ${{ needs.release-please.outputs.tag_name }}
-          releaseName: 'McpMux v${{ needs.release-please.outputs.version }}'
-          releaseBody: ''  # Release notes already created by release-please
-          releaseDraft: false
-          prerelease: false
-          updaterJsonKeepUniversal: true
+        run: |
+          TAG="${{ needs.publish-release.outputs.tag || needs.release-please.outputs.tag_name }}"
+          mkdir -p artifacts
+          # Download all .deb files from the release
+          gh release download "$TAG" --pattern "*.deb" --dir artifacts
+
+      - name: Sync existing APT repo from R2
+        run: |
+          mkdir -p repo
+          aws s3 sync "s3://mcpmux-apt/" repo/ \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+            || echo "No existing repo (first run)"
+
+      - name: Update APT repo with new packages
+        run: |
+          # Copy reprepro config
+          cp -r scripts/apt-repo/conf repo/
+
+          # Add each .deb package (--section/--priority override in case
+          # the .deb control file is missing these fields)
+          for deb in artifacts/*.deb; do
+            echo "Adding: $deb"
+            reprepro -b repo --section utils --priority optional includedeb stable "$deb"
+          done
+
+          # Export public key
+          gpg --armor --export hello@mcpmux.com > repo/key.gpg
+
+      - name: Sync APT repo back to R2
+        run: |
+          aws s3 sync repo/ "s3://mcpmux-apt/" \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}" \
+            --delete

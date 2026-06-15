@@ -1,0 +1,61 @@
+name: Download Stats to PostHog
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  report-downloads:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send download counts to PostHog
+        env:
+          POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          POSTHOG_HOST="${POSTHOG_HOST:-https://us.i.posthog.com}"
+
+          # Fetch all releases
+          releases=$(gh api repos/${{ github.repository }}/releases --paginate)
+
+          # Parse and send per-release download counts
+          echo "$releases" | jq -c '.[]' | while read -r release; do
+            tag=$(echo "$release" | jq -r '.tag_name')
+            published=$(echo "$release" | jq -r '.published_at')
+
+            # Count real downloads (exclude .sig files and latest.json)
+            downloads=$(echo "$release" | jq '[.assets[] | select(.name | (endswith(".sig") or . == "latest.json") | not) | .download_count] | add // 0')
+
+            # Per-platform counts
+            windows=$(echo "$release" | jq '[.assets[] | select(.name | test("\\.(msi|exe)$")) | select(.name | endswith(".sig") | not) | .download_count] | add // 0')
+            macos=$(echo "$release" | jq '[.assets[] | select(.name | endswith(".dmg")) | .download_count] | add // 0')
+            linux=$(echo "$release" | jq '[.assets[] | select(.name | test("\\.(deb|rpm|AppImage)$")) | .download_count] | add // 0')
+
+            # latest.json hits (proxy for active installs checking for updates)
+            updater_checks=$(echo "$release" | jq '[.assets[] | select(.name == "latest.json") | .download_count] | add // 0')
+
+            echo "  $tag: $downloads downloads (win=$windows, mac=$macos, linux=$linux, updater=$updater_checks)"
+
+            # Send to PostHog
+            curl -s -o /dev/null "${POSTHOG_HOST}/capture/" \
+              -H 'Content-Type: application/json' \
+              -d "{
+                \"api_key\": \"${POSTHOG_KEY}\",
+                \"event\": \"release_downloads\",
+                \"distinct_id\": \"github-release-stats\",
+                \"properties\": {
+                  \"version\": \"${tag}\",
+                  \"published_at\": \"${published}\",
+                  \"total_downloads\": ${downloads},
+                  \"windows_downloads\": ${windows},
+                  \"macos_downloads\": ${macos},
+                  \"linux_downloads\": ${linux},
+                  \"updater_checks\": ${updater_checks}
+                }
+              }"
+          done
+
+          echo "Done reporting download stats to PostHog"

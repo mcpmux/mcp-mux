@@ -129,3 +129,56 @@ pub async fn get_server_feature(
 
     Ok(feature.map(Into::into))
 }
+
+/// Seed server features for E2E testing.
+///
+/// Accepts an array of feature definitions and upserts them into the database.
+/// This is intended for screenshot capture and E2E tests where servers aren't
+/// actually connected but we need realistic feature data in the UI.
+#[tauri::command]
+pub async fn seed_server_features(
+    features: Vec<SeedFeatureInput>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let storage_features: Vec<ServerFeature> = features
+        .into_iter()
+        .map(|f| {
+            let mut sf = match f.feature_type.as_str() {
+                "tool" => ServerFeature::new_tool(&f.space_id, &f.server_id, &f.feature_name),
+                "prompt" => ServerFeature::new_prompt(&f.space_id, &f.server_id, &f.feature_name),
+                "resource" => {
+                    ServerFeature::new_resource(&f.space_id, &f.server_id, &f.feature_name)
+                }
+                _ => ServerFeature::new_tool(&f.space_id, &f.server_id, &f.feature_name),
+            };
+            if let Some(dn) = f.display_name {
+                sf = sf.with_display_name(dn);
+            }
+            if let Some(desc) = f.description {
+                sf = sf.with_description(desc);
+            }
+            sf
+        })
+        .collect();
+
+    let ids: Vec<String> = storage_features.iter().map(|f| f.id.clone()).collect();
+
+    state
+        .server_feature_repository
+        .upsert_many(&storage_features)
+        .await
+        .map_err(|e| format!("Failed to seed features: {e}"))?;
+
+    Ok(ids)
+}
+
+/// Input for seeding a server feature (E2E testing).
+#[derive(Debug, serde::Deserialize)]
+pub struct SeedFeatureInput {
+    pub space_id: String,
+    pub server_id: String,
+    pub feature_type: String,
+    pub feature_name: String,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+}

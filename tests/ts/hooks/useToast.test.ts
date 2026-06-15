@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useToast } from '../../../packages/ui/src/hooks/useToast';
 
@@ -111,6 +111,16 @@ describe('useToast', () => {
     expect(result.current.toasts[0].duration).toBe(5000);
   });
 
+  it('should allow custom duration via options object', () => {
+    const { result } = renderHook(() => useToast());
+
+    act(() => {
+      result.current.success('Toast', undefined, { duration: 6000 });
+    });
+
+    expect(result.current.toasts[0].duration).toBe(6000);
+  });
+
   it('should use default duration when not specified', () => {
     const { result } = renderHook(() => useToast());
 
@@ -119,5 +129,35 @@ describe('useToast', () => {
     });
 
     expect(result.current.toasts[0].duration).toBe(3000);
+  });
+
+  it('should support action in success toast', () => {
+    const { result } = renderHook(() => useToast());
+    const onClick = vi.fn();
+
+    act(() => {
+      result.current.success('Installed', 'Server ready', {
+        action: { label: 'Go to My Servers', onClick },
+      });
+    });
+
+    expect(result.current.toasts).toHaveLength(1);
+    expect(result.current.toasts[0].action).toBeDefined();
+    expect(result.current.toasts[0].action?.label).toBe('Go to My Servers');
+  });
+
+  it('should support action with custom duration', () => {
+    const { result } = renderHook(() => useToast());
+    const onClick = vi.fn();
+
+    act(() => {
+      result.current.success('Installed', 'Done', {
+        duration: 6000,
+        action: { label: 'Enable', onClick },
+      });
+    });
+
+    expect(result.current.toasts[0].duration).toBe(6000);
+    expect(result.current.toasts[0].action?.label).toBe('Enable');
   });
 });

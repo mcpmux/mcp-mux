@@ -55,12 +55,19 @@ export async function listSpaces(): Promise<Space[]> {
   return invoke<Space[]>('list_spaces');
 }
 
-export async function getActiveSpace(): Promise<Space | null> {
-  return invoke<Space | null>('get_active_space');
+/** The system's `is_default` Space — the gateway's routing fallback. */
+export async function getDefaultSpace(): Promise<Space | null> {
+  const spaces = await listSpaces();
+  return spaces.find((s) => s.is_default) ?? null;
 }
 
-export async function setActiveSpace(id: string): Promise<void> {
-  return invoke<void>('set_active_space', { id });
+/**
+ * The Space tests operate against. In the e2e environment this is the default
+ * Space (the gateway's routing fallback), so it aliases {@link getDefaultSpace}.
+ * Kept as a distinct name because several specs read it as "the active Space".
+ */
+export async function getActiveSpace(): Promise<Space | null> {
+  return getDefaultSpace();
 }
 
 // ============================================================================
@@ -71,16 +78,12 @@ export interface Client {
   id: string;
   name: string;
   client_type: string;
-  connection_mode: 'locked' | 'follow_active' | 'ask_on_change';
-  locked_space_id: string | null;
-  grants: Record<string, string[]>;
+  last_seen: string | null;
 }
 
 export interface CreateClientInput {
   name: string;
   client_type: string;
-  connection_mode: string;
-  locked_space_id?: string;
 }
 
 export async function createClient(input: CreateClientInput): Promise<Client> {
@@ -95,14 +98,6 @@ export async function listClients(): Promise<Client[]> {
   return invoke<Client[]>('list_clients');
 }
 
-export async function grantFeatureSetToClient(
-  clientId: string,
-  spaceId: string,
-  featureSetId: string
-): Promise<void> {
-  return invoke<void>('grant_feature_set_to_client', { clientId, spaceId, featureSetId });
-}
-
 // ============================================================================
 // FeatureSet API
 // ============================================================================
@@ -110,7 +105,8 @@ export async function grantFeatureSetToClient(
 export interface FeatureSet {
   id: string;
   name: string;
-  feature_set_type: 'all' | 'default' | 'server-all' | 'custom';
+  // 'starter' is the current auto-seeded type; 'default' is the legacy alias.
+  feature_set_type: 'starter' | 'default' | 'custom';
   server_id: string | null;
   is_builtin: boolean;
 }
@@ -130,6 +126,23 @@ export async function createFeatureSet(input: {
 
 export async function deleteFeatureSet(id: string): Promise<void> {
   return invoke<void>('delete_feature_set', { id });
+}
+
+/** Add a feature (tool/prompt/resource) to a feature set. */
+export async function addFeatureToSet(
+  featureSetId: string,
+  featureId: string,
+  mode: 'include' | 'exclude' = 'include'
+): Promise<void> {
+  return invoke<void>('add_feature_to_set', { featureSetId, featureId, mode });
+}
+
+/** List all server features in a space. */
+export async function listServerFeatures(
+  spaceId: string,
+  includeUnavailable?: boolean
+): Promise<{ id: string; server_id: string; feature_type: string; feature_name: string }[]> {
+  return invoke('list_server_features', { spaceId, includeUnavailable });
 }
 
 // ============================================================================
@@ -191,6 +204,37 @@ export async function approveOAuthClient(clientId: string): Promise<void> {
   return invoke<void>('approve_oauth_client', { clientId });
 }
 
+/** Grant a feature set to an OAuth client in a space (rootless-client routing). */
+export async function grantOAuthClientFeatureSet(
+  clientId: string,
+  spaceId: string,
+  featureSetId: string
+): Promise<void> {
+  return invoke<void>('grant_oauth_client_feature_set', {
+    clientId,
+    spaceId,
+    featureSetId,
+  });
+}
+
+// ============================================================================
+// Server Feature Seeding API (for E2E / screenshots)
+// ============================================================================
+
+export interface SeedFeatureInput {
+  space_id: string;
+  server_id: string;
+  feature_type: 'tool' | 'prompt' | 'resource';
+  feature_name: string;
+  display_name?: string;
+  description?: string;
+}
+
+/** Seed server features into the database for screenshot/E2E purposes. */
+export async function seedServerFeatures(features: SeedFeatureInput[]): Promise<string[]> {
+  return invoke<string[]>('seed_server_features', { features });
+}
+
 // ============================================================================
 // Logs API
 // ============================================================================
@@ -231,4 +275,46 @@ export interface GatewayStatus {
 
 export async function getGatewayStatus(): Promise<GatewayStatus> {
   return invoke<GatewayStatus>('get_gateway_status');
+}
+
+// ============================================================================
+// Workspace Binding API (primary routing config)
+// ============================================================================
+
+export interface WorkspaceBinding {
+  id: string;
+  workspace_root: string;
+  space_id: string;
+  /** A binding maps to zero or more FeatureSets (order = render order). */
+  feature_set_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceBindingInput {
+  workspace_root: string;
+  space_id: string;
+  /** MAY be empty — an empty mapping means "no Space tools" for that root. */
+  feature_set_ids: string[];
+}
+
+export async function listWorkspaceBindings(): Promise<WorkspaceBinding[]> {
+  return invoke<WorkspaceBinding[]>('list_workspace_bindings');
+}
+
+export async function createWorkspaceBinding(
+  input: WorkspaceBindingInput
+): Promise<WorkspaceBinding> {
+  return invoke<WorkspaceBinding>('create_workspace_binding', { input });
+}
+
+export async function updateWorkspaceBinding(
+  id: string,
+  input: WorkspaceBindingInput
+): Promise<WorkspaceBinding> {
+  return invoke<WorkspaceBinding>('update_workspace_binding', { id, input });
+}
+
+export async function deleteWorkspaceBinding(id: string): Promise<void> {
+  return invoke<void>('delete_workspace_binding', { id });
 }

@@ -6,14 +6,14 @@ use serde::Serialize;
 use tauri::State;
 use tracing::{info, warn};
 
-/// Helper to get the default space ID
+/// Helper to get the system default space ID.
 async fn get_default_space_id(state: &AppState) -> Result<String, String> {
     let space = state
         .space_service
-        .get_active()
+        .get_default()
         .await
         .map_err(|e: anyhow::Error| e.to_string())?
-        .ok_or("No active space found")?;
+        .ok_or("No default space found")?;
     Ok(space.id.to_string())
 }
 

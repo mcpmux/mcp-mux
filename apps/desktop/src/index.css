@@ -4,7 +4,13 @@
 
 @layer base {
   :root {
-    /* Light theme — Neutral surfaces, terracotta accent */
+    /* Brand tokens — single source of truth */
+    --brand: #DA7756;
+    --brand-dark: #B8553A;
+    --brand-light: #E8956A;
+    --brand-medium: #C4704E;
+
+    /* Light theme — Neutral surfaces, terra accent */
     --background: 249 249 249;           /* Clean off-white */
     --foreground: 28 28 30;              /* Near black */
 
@@ -17,15 +23,15 @@
     --surface-elevated: 255 255 255;
     --surface-overlay: 255 255 255;
 
-    --border: 225 220 216;              /* Very slight warm tint */
-    --border-subtle: 238 234 230;       /* Subtle warm tint */
+    --border: 224 218 210;              /* Very slight warm tint */
+    --border-subtle: 236 230 222;       /* Subtle warm tint */
 
-    --muted: 118 110 105;              /* Slightly warm gray */
-    --muted-foreground: 152 144 138;
+    --muted: 118 110 100;              /* Warm gray */
+    --muted-foreground: 152 142 130;
 
     /* Primary — Terracotta */
     --primary: 218 119 86;              /* #DA7756 */
-    --primary-hover: 184 85 58;         /* #B8553A (sienna) */
+    --primary-hover: 184 85 58;         /* #B8553A (deep sienna) */
     --primary-foreground: 255 255 255;
 
     /* Semantic colors */
@@ -40,7 +46,7 @@
 
     /* Input */
     --input: 255 255 255;
-    --input-border: 215 210 206;
+    --input-border: 216 210 202;
 
     /* Shadows — neutral with subtle warmth */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
@@ -51,26 +57,26 @@
   }
 
   .dark {
-    /* Dark theme — Neutral dark with warm accent */
+    /* Dark theme — Neutral dark with terra accent */
     --background: 20 20 22;              /* Dark neutral */
-    --foreground: 245 244 243;           /* Slightly warm white */
+    --foreground: 247 244 240;           /* Slightly warm white */
 
-    --surface: 30 30 33;                 /* Card surface */
-    --surface-dim: 24 24 27;
-    --surface-hover: 44 42 46;
-    --surface-active: 56 54 58;
+    --surface: 30 30 28;                 /* Card surface */
+    --surface-dim: 24 24 22;
+    --surface-hover: 44 42 38;
+    --surface-active: 56 54 50;
 
     /* Elevated surfaces */
-    --surface-elevated: 38 37 41;
-    --surface-overlay: 46 44 48;
+    --surface-elevated: 38 37 34;
+    --surface-overlay: 46 44 40;
 
-    --border: 56 53 50;                  /* Slight warm tint */
-    --border-subtle: 44 42 40;
+    --border: 55 48 42;                  /* Slight warm tint */
+    --border-subtle: 44 38 32;
 
-    --muted: 160 155 150;               /* Warm gray */
-    --muted-foreground: 125 120 115;
+    --muted: 160 150 140;               /* Warm gray */
+    --muted-foreground: 125 118 108;
 
-    /* Primary — Warm Coral (brighter for dark mode readability) */
+    /* Primary — Warm coral (brighter for dark mode readability) */
     --primary: 232 149 106;             /* #E8956A */
     --primary-hover: 218 119 86;        /* #DA7756 */
     --primary-foreground: 20 20 22;
@@ -83,11 +89,11 @@
 
     /* Card */
     --card: 30 30 33;
-    --card-foreground: 245 244 243;
+    --card-foreground: 244 244 247;
 
     /* Input */
     --input: 38 37 41;
-    --input-border: 56 53 50;
+    --input-border: 56 50 44;
 
     /* Shadows */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);

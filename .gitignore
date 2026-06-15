@@ -17,6 +17,11 @@ out/
 *.pfx
 credentials.json
 secrets.json
+.mcpregistry_*
+
+# MCP Registry publisher
+mcp-publisher.exe
+mcp-publisher_*.tar.gz
 
 # IDE
 .idea/

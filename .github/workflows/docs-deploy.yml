@@ -1,0 +1,22 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/guide/**'
+
+# Restrict permissions to minimum needed
+permissions: {}
+
+jobs:
+  trigger-deploy:
+    runs-on: ubuntu-latest
+    # Only run for pushes by repo collaborators, not automated merges from unknown sources
+    if: github.repository == 'mcpmux/mcp-mux'
+    steps:
+      - name: Trigger mcpmux.com rebuild
+        run: |
+          curl -s -X POST "$CF_PAGES_DEPLOY_HOOK"
+        env:
+          CF_PAGES_DEPLOY_HOOK: ${{ secrets.CF_PAGES_DEPLOY_HOOK }}

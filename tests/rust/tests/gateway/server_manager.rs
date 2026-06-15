@@ -169,38 +169,10 @@ async fn test_disable_increments_flow_id() {
 // Event Emission
 // ============================================================================
 
-#[tokio::test]
-async fn test_enable_emits_server_status_changed() {
-    let mut harness = ServerManagerTestHarness::new().await;
-    let key = test_key("server-1");
-
-    harness.manager.enable_server(key.clone()).await.unwrap();
-
-    let events = harness.collect_events().await;
-
-    let status_changed = events.iter().find(|e| {
-        matches!(e, DomainEvent::ServerStatusChanged { server_id, .. } if server_id == "server-1")
-    });
-
-    assert!(
-        status_changed.is_some(),
-        "Should emit ServerStatusChanged event"
-    );
-}
-
-#[tokio::test]
-async fn test_disable_emits_disconnected_event() {
-    let mut harness = ServerManagerTestHarness::new().await;
-    let key = test_key("server-1");
-
-    harness.manager.enable_server(key.clone()).await.unwrap();
-    harness.collect_events().await;
-
-    harness.manager.disable_server(&key).await.unwrap();
-
-    let events = harness.collect_events().await;
-    assert_event_status(&events, "server-1", ConnectionStatus::Disconnected);
-}
+// Note: enable→Connecting and disable→Disconnected event emission are
+// covered by `test_enable_server_starts_connecting` and
+// `test_disable_server_transitions_to_disconnected` above (which assert the
+// specific status); only the space-id correctness case is unique here.
 
 #[tokio::test]
 async fn test_event_contains_correct_space_id() {

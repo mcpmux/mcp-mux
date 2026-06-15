@@ -137,8 +137,9 @@ pub async fn enable_server_v2(
         Some(app_state.data_dir()),
     );
 
-    // Attempt connection (manual connect from user clicking Connect button)
-    let ctx = ConnectionContext::new(space_uuid, server_id.clone(), transport);
+    // Attempt connection with auto_reconnect=true to avoid starting OAuth flow
+    // If OAuth is needed, we just set AuthRequired and let user click Connect
+    let ctx = ConnectionContext::auto(space_uuid, server_id.clone(), transport);
     let result = pool_service.connect_server(&ctx).await;
 
     match result {
@@ -148,13 +149,9 @@ pub async fn enable_server_v2(
             Ok(())
         }
         ConnectionResult::OAuthRequired { .. } => {
-            // OAuth is needed - set state to AuthRequired (NOT Authenticating)
-            // Don't open browser yet - wait for user to click Connect
-            // Cancel the OAuth flow that was started during connection probe
-            pool_service
-                .oauth_manager()
-                .cancel_flow_for_space(space_uuid, &server_id);
-
+            // OAuth is needed - set state to AuthRequired
+            // auto_reconnect=true prevented OAuth flow from starting, so no cancel needed
+            // User will click "Connect" to start the actual OAuth flow
             manager.set_auth_required(&key, None).await;
 
             // Mark features unavailable - not connected

@@ -321,6 +321,6 @@ mod tests {
         assert!(file_contents.len() > KEY_SIZE);
 
         // The raw key bytes should not appear in the file
-        assert!(!file_contents.windows(KEY_SIZE).any(|w| w == &*key));
+        assert!(!file_contents.windows(KEY_SIZE).any(|w| w == *key));
     }
 }

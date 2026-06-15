@@ -36,9 +36,9 @@ describe('Gateway Status - Dashboard', () => {
     const pageSource = await browser.getPageSource();
     
     // Gateway should be running by default
-    const isRunning = 
-      pageSource.includes('Gateway: Running') ||
-      pageSource.includes('border-green-500');
+    const isRunning =
+      pageSource.includes('Gateway running') ||
+      pageSource.includes('bg-green-500');
     
     console.log('[DEBUG] Gateway running:', isRunning);
     expect(isRunning).toBe(true);
@@ -49,9 +49,9 @@ describe('Gateway Status - Dashboard', () => {
     const pageSource = await browser.getPageSource();
     
     // Check for gateway status card
-    const hasGatewayCard = 
-      pageSource.includes('Gateway: Running') || 
-      pageSource.includes('Gateway: Stopped') ||
+    const hasGatewayCard =
+      pageSource.includes('Gateway running') ||
+      pageSource.includes('Gateway stopped') ||
       pageSource.includes('gateway-status-card');
     
     expect(hasGatewayCard).toBe(true);
@@ -76,12 +76,12 @@ describe('Gateway Status - Dashboard', () => {
     expect(hasGatewayUrl).toBe(true);
   });
 
-  it('TC-GW-007: Copy client config button exists', async () => {
-    const copyBtn = await byTestId('copy-config-btn');
-    const isDisplayed = await copyBtn.isDisplayed().catch(() => false);
-    
-    await browser.saveScreenshot('./tests/e2e/screenshots/gw-07-copy-config.png');
-    
+  it('TC-GW-007: Connect IDEs client grid exists', async () => {
+    const clientGrid = await byTestId('client-grid');
+    const isDisplayed = await clientGrid.isDisplayed().catch(() => false);
+
+    await browser.saveScreenshot('./tests/e2e/screenshots/gw-07-connect-ides.png');
+
     expect(isDisplayed).toBe(true);
   });
 
@@ -95,10 +95,10 @@ describe('Gateway Status - Dashboard', () => {
     // Verify individual stat cards
     const pageSource = await browser.getPageSource();
     
-    const hasServersCard = pageSource.includes('Servers');
+    const hasServersCard = pageSource.includes('Tools');
     const hasFeatureSetsCard = pageSource.includes('FeatureSets');
-    const hasClientsCard = pageSource.includes('Clients');
-    const hasActiveSpaceCard = pageSource.includes('Active Space');
+    const hasClientsCard = pageSource.includes('Apps');
+    const hasActiveSpaceCard = pageSource.includes('Space');
     
     console.log('[DEBUG] Stats - Servers:', hasServersCard);
     console.log('[DEBUG] Stats - FeatureSets:', hasFeatureSetsCard);

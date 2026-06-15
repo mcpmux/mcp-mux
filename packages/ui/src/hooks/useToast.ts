@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react';
-import { ToastProps, ToastType } from '../components/common/Toast';
+import { ToastProps, ToastType, ToastAction } from '../components/common/Toast';
 
 export interface ToastOptions {
   title: string;
   message?: string;
   type?: ToastType;
   duration?: number;
+  action?: ToastAction;
 }
 
 export function useToast() {
@@ -19,6 +20,7 @@ export function useToast() {
       title: options.title,
       message: options.message,
       duration: options.duration ?? 3000,
+      action: options.action,
       onClose: (toastId: string) => {
         setToasts((prev) => prev.filter((t) => t.id !== toastId));
       },
@@ -29,8 +31,9 @@ export function useToast() {
   }, []);
 
   const success = useCallback(
-    (title: string, message?: string, duration?: number) => {
-      return showToast({ title, message, type: 'success', duration });
+    (title: string, message?: string, options?: number | { duration?: number; action?: ToastAction }) => {
+      const opts = typeof options === 'number' ? { duration: options } : options;
+      return showToast({ title, message, type: 'success', duration: opts?.duration, action: opts?.action });
     },
     [showToast]
   );

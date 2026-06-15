@@ -25,14 +25,14 @@ Each Space is an independent environment containing:
 - **Installed servers** — which MCP servers are available in this Space
 - **Server configurations** — per-Space credentials, environment variables, and settings
 - **FeatureSets** — permission bundles scoped to this Space
-- **Client grants** — which FeatureSets each AI client gets in this Space
+- **Workspace bindings** — which project folders route to this Space and the FeatureSet they resolve to (see [Workspaces](/docs/workspaces/))
 
 ### Active Space
 
-Only one Space can be **active** at a time. The active Space determines:
+Only one Space can be **active** at a time. The active Space is the **fallback** for any session whose folder isn't mapped to a specific Space via a [Workspace](/docs/workspaces/) binding. It determines:
 
 - Which servers the gateway connects to
-- Which tools AI clients can see and use (for clients in "Follow Active" mode)
+- Which tools an unmapped session sees (its active-Space FeatureSet)
 - Which credentials are injected into server connections
 
 Switching the active Space immediately changes what servers and tools are available — no restart required.
@@ -82,7 +82,7 @@ Navigate to **Spaces** in McpMux and click **Create Space**. Give it a name and 
 
 ### Switching Active Space
 
-Click on any Space to set it as active. The dashboard and server list update immediately to reflect the new context. AI clients using "Follow Active" mode switch automatically.
+Click on any Space to set it as active. The dashboard and server list update immediately to reflect the new context. Any session whose folder isn't mapped to a specific Space follows the active Space automatically.
 
 ### Deleting a Space
 
@@ -91,5 +91,6 @@ Deleting a Space removes all its server configurations and stored credentials. T
 ## Next Steps
 
 - [Configure FeatureSets](/docs/feature-sets/) to control permissions within a Space
-- [Set up Clients](/docs/clients/) with connection modes that interact with Spaces
+- [Route folders with Workspaces](/docs/workspaces/) so each project resolves to the right Space
+- [Set up Clients](/docs/clients/) and approve the apps that connect
 - [Manage Servers](/docs/servers/) to install and configure per-Space server instances

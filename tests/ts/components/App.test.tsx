@@ -288,6 +288,10 @@ describe('App – dynamic gateway URL display', () => {
 
 describe('App – update banner', () => {
   beforeEach(() => {
+    // The startup auto-update check is gated behind `!import.meta.env.DEV`
+    // (it must never run under `pnpm dev`). Vitest runs in dev mode, so stub
+    // DEV=false here to exercise the production update flow.
+    vi.stubEnv('DEV', false);
     vi.useFakeTimers();
     gatewayEventCallbacks = [];
     setupInvoke({ get_version: '0.1.2' });
@@ -296,6 +300,7 @@ describe('App – update banner', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it('should show update banner when update is available', async () => {

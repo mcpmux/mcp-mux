@@ -113,6 +113,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "space_builtin_servers",
         sql: include_str!("migrations/016_space_builtin_servers.sql"),
     },
+    Migration {
+        version: 17,
+        name: "purge_orphaned_feature_set_members",
+        sql: include_str!("migrations/017_purge_orphaned_feature_set_members.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

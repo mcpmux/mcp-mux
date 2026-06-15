@@ -23,6 +23,10 @@ import {
   listInstalledServers,
   refreshRegistry,
   approveOAuthClient,
+  grantOAuthClientFeatureSet,
+  createFeatureSet,
+  addFeatureToSet,
+  seedServerFeatures,
 } from '../helpers/tauri-api';
 import {
   registerOAuthClient,
@@ -542,5 +546,124 @@ describe('Streamable HTTP: OAuth MCP Client Flow', function () {
     if (toolsBody.result?.tools && toolsBody.result.tools.length > 0) {
       console.log('[test] First tool:', toolsBody.result.tools[0].name);
     }
+  });
+
+  // --------------------------------------------------------------------------
+  // TC-SH-016: "if it lists, it calls" — a listed tool is never grant-blocked
+  //
+  // Regression for the reported bug: a tool (e.g. notion_notion-get-users)
+  // appeared in tools/list yet tools/call rejected it with "not allowed by the
+  // current grants". Root cause was list encoding names via qualified_name()
+  // while call decoded via a stale prefix-cache reverse lookup. Both paths now
+  // match qualified_name() against the SAME resolved feature set.
+  //
+  // Seed a feature with a dotted server_id + hyphenated name (mirrors the real
+  // com.notion-mcp-http_notion-get-users shape) so this holds even when the
+  // backend MCP handshake doesn't complete on CI.
+  // --------------------------------------------------------------------------
+  it('TC-SH-016: every listed tool is callable (no listed-but-blocked)', async () => {
+    // 1. Seed a backend tool feature directly into this space.
+    const seeded = await seedServerFeatures([
+      {
+        space_id: defaultSpaceId,
+        server_id: 'com.e2e-listcall-http',
+        feature_type: 'tool',
+        feature_name: 'list-and-call-me',
+        display_name: 'List And Call Me',
+        description: 'E2E tool proving list==call',
+      },
+    ]);
+    expect(seeded.length).toBe(1);
+    const featureId = seeded[0];
+
+    // 2. Compose a FeatureSet with exactly that tool, grant it to the client.
+    const fs = await createFeatureSet({
+      name: `e2e-listcall-${Date.now()}`,
+      space_id: defaultSpaceId,
+    });
+    await addFeatureToSet(fs.id, featureId, 'include');
+    await grantOAuthClientFeatureSet(clientId, defaultSpaceId, fs.id);
+
+    // 3. Fresh session so the new grant resolves.
+    const token = await obtainAccessToken(clientId, 'http://localhost:0/callback', gatewayPort);
+    const initRes = await fetch(`http://localhost:${gatewayPort}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'e2e-listcall', version: '1.0.0' },
+        },
+      }),
+    });
+    expect(initRes.status).toBeLessThan(400);
+    const sessionId = initRes.headers.get('mcp-session-id');
+    expect(sessionId).toBeTruthy();
+    await initRes.text();
+
+    await fetch(`http://localhost:${gatewayPort}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+        'Mcp-Session-Id': sessionId!,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    });
+
+    // 4. tools/list — the seeded tool MUST be listed under the grant.
+    const listRes = await fetch(`http://localhost:${gatewayPort}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+        'Mcp-Session-Id': sessionId!,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+    });
+    expect(listRes.ok).toBe(true);
+    const listBody = parseMcpResponse<{
+      result?: { tools: Array<{ name: string }> };
+    }>(listRes.headers.get('content-type'), await listRes.text());
+    const tools = listBody.result?.tools ?? [];
+    console.log('[test] TC-SH-016 listed tools:', tools.map((t) => t.name).join(', '));
+    const target = tools.find((t) => t.name.includes('list-and-call-me'));
+    expect(target).toBeTruthy();
+
+    // 5. tools/call the EXACT listed name. It may fail to execute (no live
+    //    backend behind the seeded feature), but it must NEVER be rejected by
+    //    grants — that is the invariant the fix guarantees.
+    const callRes = await fetch(`http://localhost:${gatewayPort}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        Authorization: `Bearer ${token}`,
+        'Mcp-Session-Id': sessionId!,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name: target!.name, arguments: {} },
+      }),
+    });
+    const callBody = parseMcpResponse<{
+      error?: { message?: string };
+      result?: unknown;
+    }>(callRes.headers.get('content-type'), await callRes.text());
+    const errMsg = callBody.error?.message ?? '';
+    console.log('[test] TC-SH-016 call error (if any):', errMsg);
+    expect(errMsg).not.toContain('not allowed by the current grants');
   });
 });

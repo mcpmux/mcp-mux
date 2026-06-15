@@ -189,66 +189,58 @@ impl RoutingService {
     ) -> Result<ToolCallResult> {
         let space_id_str = space_id.to_string();
 
-        // 1. Find the server that provides this tool
-        let (server_id, actual_tool_name) = self
-            .feature_service
-            .find_server_for_qualified_tool(&space_id_str, tool_name)
-            .await?
-            .ok_or_else(|| anyhow!("Tool '{}' not found", tool_name))?;
-
-        // 2. Check if the tool is allowed by grants
+        // Authorize AND route in one step by matching the requested qualified
+        // name against the resolved feature set — using the SAME encoding the
+        // list path uses (`ServerFeature::qualified_name`). This guarantees
+        // "if it lists, it calls": the (server_id, tool_name) we route to come
+        // straight from the matched feature, so there's no dependency on the
+        // prefix-cache reverse lookup, which could be stale and surface a
+        // listed tool as "not allowed by the current grants".
         let allowed_features = self
             .feature_service
             .resolve_feature_sets(&space_id_str, feature_set_ids)
             .await?;
 
-        info!(
-            "[RoutingService] Checking authorization for tool '{}' (server: {}, actual_name: {})",
-            tool_name, server_id, actual_tool_name
-        );
-        info!(
-            "[RoutingService] Feature sets to check: {:?}",
-            feature_set_ids
-        );
-        info!(
-            "[RoutingService] Total allowed features: {}",
-            allowed_features.len()
-        );
-
-        // Log all tool features for debugging
-        let tool_features: Vec<_> = allowed_features
-            .iter()
-            .filter(|f| f.feature_type == FeatureType::Tool)
-            .map(|f| format!("{}::{}", f.server_id, f.feature_name))
-            .collect();
-        info!("[RoutingService] Allowed tools: {:?}", tool_features);
-
-        let is_allowed = allowed_features.iter().any(|f| {
-            f.feature_type == FeatureType::Tool
-                && f.server_id == server_id
-                && f.feature_name == actual_tool_name
-                && f.is_available
+        let feature = allowed_features.iter().find(|f| {
+            f.feature_type == FeatureType::Tool && f.is_available && f.qualified_name() == tool_name
         });
 
-        if !is_allowed {
-            warn!(
-                "[RoutingService] Tool '{}' NOT allowed. Looking for server_id='{}', feature_name='{}', is_available=true",
-                tool_name, server_id, actual_tool_name
-            );
-            return Err(anyhow!(
-                "Tool '{}' is not allowed by the current grants",
-                tool_name
-            ));
-        }
+        let (server_id, actual_tool_name) = match feature {
+            Some(f) => (f.server_id.clone(), f.feature_name.clone()),
+            None => {
+                let available = allowed_features
+                    .iter()
+                    .filter(|f| f.feature_type == FeatureType::Tool && f.is_available)
+                    .count();
+                warn!(
+                    "[RoutingService] Tool '{}' not in the resolved feature set ({} tools available)",
+                    tool_name, available
+                );
+                return Err(anyhow!(
+                    "Tool '{}' is not allowed by the current grants",
+                    tool_name
+                ));
+            }
+        };
 
-        info!("[RoutingService] Tool '{}' is ALLOWED", tool_name);
+        info!(
+            "[RoutingService] Tool '{}' ALLOWED → server={}, tool={}",
+            tool_name, server_id, actual_tool_name
+        );
 
         info!(
             "[RoutingService] Calling tool {} on server {}",
             actual_tool_name, server_id
         );
 
-        // Log the tool call attempt
+        // Log the tool call attempt. Persist only the argument KEY names, not
+        // their values — tool arguments routinely carry secrets/PII, and this
+        // log is written to plaintext `current.log`. Keys alone are enough to
+        // debug routing without leaking payloads.
+        let arg_keys: Vec<&str> = arguments
+            .as_object()
+            .map(|o| o.keys().map(String::as_str).collect())
+            .unwrap_or_default();
         self.log(
             &space_id,
             &server_id,
@@ -256,7 +248,7 @@ impl RoutingService {
             format!("Calling tool: {}", actual_tool_name),
             Some(serde_json::json!({
                 "tool": actual_tool_name,
-                "arguments": arguments
+                "argument_keys": arg_keys
             })),
         )
         .await;
@@ -283,12 +275,8 @@ impl RoutingService {
 
             match client_handle {
                 Some(client) => {
-                    let params = CallToolRequestParams {
-                        name: tool_name.into(),
-                        arguments: args.as_object().cloned(),
-                        task: None,
-                        meta: None,
-                    };
+                    let mut params = CallToolRequestParams::new(tool_name.to_string());
+                    params.arguments = args.as_object().cloned();
 
                     // Wrap call_tool with timeout to prevent hanging
                     let res = tokio::time::timeout(TOOL_CALL_TIMEOUT, client.call_tool(params))

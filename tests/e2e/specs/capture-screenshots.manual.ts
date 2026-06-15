@@ -37,10 +37,9 @@ import fs from 'fs';
 import { byTestId, safeClick } from '../helpers/selectors';
 import {
   createSpace,
-  setActiveSpace,
   createFeatureSet,
   installServer,
-  getActiveSpace,
+  getDefaultSpace,
   refreshRegistry,
   enableServerV2,
   emitEvent,
@@ -50,7 +49,6 @@ import {
   listServerFeatures,
   listClients,
   addFeatureToSet,
-  grantFeatureSetToClient,
   grantOAuthClientFeatureSet,
 } from '../helpers/tauri-api';
 import { PRESEED } from '../mocks/screenshot-preseed';
@@ -285,8 +283,8 @@ describe('Screenshot Capture', function () {
     // ---- Seed data from preseed config ----
 
     // Get default space
-    const activeSpace = await getActiveSpace();
-    defaultSpaceId = activeSpace?.id || '';
+    const defaultSpace = await getDefaultSpace();
+    defaultSpaceId = defaultSpace?.id || '';
     console.log('[setup] Default space:', defaultSpaceId);
 
     // Create additional spaces
@@ -486,8 +484,7 @@ describe('Screenshot Capture', function () {
       console.warn('[setup] OAuth client feature set grant failed:', e);
     }
 
-    // Set active space back to default
-    await setActiveSpace(defaultSpaceId);
+    // (Active-space concept removed — routing is per workspace root.)
 
     // Reload the page so the frontend store picks up all seeded data
     // (spaces, feature sets, etc. created via Tauri invoke aren't in the Zustand store yet)
@@ -529,6 +526,74 @@ describe('Screenshot Capture', function () {
     await safeClick(nav);
     await browser.pause(2000);
     await saveScreenshot('featuresets');
+  });
+
+  it('captures Workspaces (per-folder routing)', async () => {
+    const nav = await byTestId('nav-workspaces');
+    await safeClick(nav);
+    await browser.pause(2000);
+    // Open the "map a folder" form so the binding UI (root + FeatureSet picker)
+    // is visible even without a live client reporting roots.
+    try {
+      const toggle = await byTestId('workspace-binding-create-toggle');
+      await safeClick(toggle);
+      await browser.pause(800);
+    } catch {
+      // form may already be open or the page empty — capture whatever renders
+    }
+    await saveScreenshot('workspaces');
+  });
+
+  it('captures Tool Optimization (built-in self-management)', async () => {
+    const nav = await byTestId('nav-builtin-servers');
+    await safeClick(nav);
+    await browser.pause(2000);
+    // Select the Tool Optimization capability to reveal its tool list + @mux tip.
+    try {
+      const card = await byTestId('builtin-server-tool-optimization');
+      await safeClick(card);
+      await browser.pause(800);
+    } catch {
+      // fall back to the shelf overview
+    }
+    await saveScreenshot('tool-optimization');
+  });
+
+  it('captures the meta-tool approval dialog (self-management authorization)', async () => {
+    const nav = await byTestId('nav-builtin-servers');
+    await safeClick(nav);
+    await browser.pause(1500);
+    // The approval dialog is a global listener — emit a synthetic write request
+    // (as if an MCP client asked to compose a FeatureSet) so it renders. Mirrors
+    // the real ApprovalRequest shape, including the target-Space name.
+    await browser.execute((data: unknown) => {
+      (window as unknown as { __TAURI_TEST_API__?: { emit: (e: string, d: unknown) => void } })
+        .__TAURI_TEST_API__?.emit('meta-tool-approval-request', data);
+    }, {
+      request_id: 'shot-approval',
+      client_id: '00000000-0000-0000-0000-0000000000aa',
+      payload: {
+        tool_name: 'mcpmux_manage_feature_set',
+        summary: "Create FeatureSet 'Frontend' in Space 'My Space' with 6 tool(s)",
+        space_name: 'My Space',
+        diff: {
+          added: [
+            'github_create_issue',
+            'github_search_code',
+            'filesystem_read_file',
+            'filesystem_write_file',
+            'notion_search_pages',
+            'slack_send_message',
+          ],
+        },
+        raw_args: { action: 'create', name: 'Frontend' },
+        affects_other_clients: false,
+      },
+      expires_at_unix_secs: 4102444800,
+    });
+    await browser.pause(900);
+    // Full window — the dialog is a fixed overlay over the whole app.
+    await saveFullScreenshot('meta-tool-approval');
   });
 
   it('captures Connected Clients with approval modal', async () => {

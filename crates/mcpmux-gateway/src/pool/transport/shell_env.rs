@@ -150,13 +150,12 @@ fn merge_paths(primary: &str, secondary: &str) -> String {
     merged.join(":")
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     // ── merge_paths tests ──────────────────────────────────────────
 
-    #[cfg(unix)]
     #[test]
     fn test_merge_paths_deduplicates() {
         let result = merge_paths("/usr/bin:/usr/local/bin", "/usr/bin:/opt/homebrew/bin");

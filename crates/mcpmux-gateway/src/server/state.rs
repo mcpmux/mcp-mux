@@ -126,6 +126,18 @@ impl GatewayState {
         self.client_metadata_service.as_ref().map(|s| s.as_ref())
     }
 
+    /// Clone the client metadata service handle out of the state.
+    ///
+    /// Use this (and drop the state guard) before calling
+    /// `resolve_client()`: CIMD client ids resolve via an outbound HTTP
+    /// fetch (10 s timeout), and `GatewayState`'s write-preferring RwLock
+    /// is taken by `oauth_middleware` on every MCP request — holding a
+    /// read guard across the fetch can stall all MCP traffic behind one
+    /// queued writer.
+    pub fn client_metadata_service_arc(&self) -> Option<Arc<ClientMetadataService>> {
+        self.client_metadata_service.clone()
+    }
+
     /// Check if database is connected
     pub fn has_database(&self) -> bool {
         self.db.is_some()

@@ -1,11 +1,11 @@
 ---
-title: Clients — AI Application Management
-description: Connect Cursor, Claude Desktop, VS Code, Windsurf, and other AI clients to McpMux. Configure connection modes and per-Space permissions for each client.
+title: Clients — Connected AI Apps
+description: Connect Cursor, Claude Desktop, VS Code, Windsurf, and other AI clients to McpMux. Approve them with one click, and let workspace-driven routing decide each app's tools by the folder it has open.
 ---
 
-Clients are the AI applications that connect to McpMux's gateway to access MCP tools, resources, and prompts. McpMux lets you manage each client independently with its own permissions and Space behavior.
+Clients are the AI applications that connect to McpMux's gateway to access MCP tools, resources, and prompts. McpMux registers each app with a one-click approval, then **routes its tools by the folder it has open** — not by the app itself.
 
-## Supported Clients
+## Supported clients
 
 McpMux works with any MCP-compatible client, including:
 
@@ -23,79 +23,50 @@ McpMux works with any MCP-compatible client, including:
 
 All clients connect to the same endpoint: `http://localhost:45818/mcp`
 
-![Authorization Request dialog — VS Code connecting to McpMux with connection mode selection](https://mcpmux.com/screenshots/clients.png)
+## Connecting and approval
 
-## Connection Modes
+When a new client connects to the gateway, McpMux prompts you to **approve it** with one click. Approving registers the app and completes an **OAuth 2.1 + PKCE** handshake; its access key is stored in your OS keychain. (VS Code and Cursor can be connected in one click from the Home dashboard; other clients paste the gateway URL — see [Getting Started](/docs/getting-started/).)
 
-Each client has a **connection mode** that determines how it interacts with Spaces:
+![Approve a new app connecting to the gateway](https://mcpmux.com/screenshots/clients.png)
 
-### Follow Active
+## How routing works — workspace-driven
 
-The client automatically uses whichever Space is currently active. When you switch the active Space, the client immediately sees the new Space's servers and tools.
+The tools an app sees are decided by the **folder it reports** (its MCP workspace root), resolved through a [Workspace](/docs/workspaces/) mapping — **not** configured per app. This means:
 
-**Best for:** Your primary development tools that should always match your current context.
+- Open your **backend repo** in any IDE and it sees your database and deploy tools; open a **docs folder** and it sees only search and filesystem.
+- Two different apps (say Cursor and VS Code) opening the **same folder** get the **same tools** — routing follows the folder, not the app's identity.
+- A session with **no reported folder** falls through to the **active Space's** FeatureSet.
 
-### Locked
+To control an app's tools, map its folder in the **Workspaces** tab (or let the AI do it with [Tool Optimization](/docs/tool-optimization/)) rather than configuring the app itself.
 
-The client always uses a specific Space, regardless of which Space is active. This is useful for:
+![A connected app — its toolset is decided by the Workspace binding for the folder it reports](https://mcpmux.com/screenshots/client-detail.png)
 
-- A monitoring tool that should always see production servers
-- A client dedicated to a specific project
-- Background automation that shouldn't change behavior
+Open any app to see how it's currently routed and exactly which tools, prompts, and resources resolve for it.
 
-### Ask on Change
+![Effective features resolved for a connected app](https://mcpmux.com/screenshots/client-permissions.png)
 
-When the active Space changes, McpMux prompts you to confirm whether this client should switch too. This provides a safety net for important clients.
-
-**Best for:** Clients with elevated permissions where an accidental Space switch could be problematic.
-
-## Per-Space Permissions
-
-Each client receives **FeatureSet grants** per Space. This means a single client can have different permissions in different Spaces:
-
-| Client | Work Space | Personal Space |
-|--------|-----------|---------------|
-| Cursor | All tools | Read Only |
-| Claude Desktop | Developer FeatureSet | All tools |
-| Monitoring Bot | Read Only | — (no access) |
-
-This is configured in the **Clients** page by selecting a client and managing its grants for each Space.
-
-![Client detail panel — Cursor with per-Space FeatureSet grants and permission management](https://mcpmux.com/screenshots/client-detail.png)
-
-## Access Keys
+## Access keys
 
 Each client authenticates with McpMux using an **access key**. Access keys are:
 
-- Generated automatically when a client registers
+- Issued automatically through the OAuth approval when a client registers
 - Stored encrypted in the OS keychain
 - Unique per client
 - Revocable at any time
 
-## Client Lifecycle
+## Managing connected apps
 
-### Registration
+The **Apps** page shows every app connected to your gateway in real time:
 
-Clients can be registered in two ways:
+- Each app's name, type, and live status
+- How it's routed (which folder → which Space + FeatureSet)
+- Last-seen timestamp
 
-1. **Automatic** — when a new client connects to the gateway via OAuth, McpMux prompts you to approve it
-2. **Manual** — add a client through the McpMux UI and copy the access key into your client's configuration
+From there you can **rename** an app, inspect its routing, or **revoke** it — revoking removes its access key so it can no longer make requests through the gateway.
 
-![Effective Features view showing 45 tools, 8 prompts, and 3 resources available to Cursor](https://mcpmux.com/screenshots/client-permissions.png)
+## Next steps
 
-### Monitoring
-
-The **Clients** page shows:
-- Each registered client's name and type
-- Connection mode (Follow Active / Locked / Ask on Change)
-- Last seen timestamp
-
-### Disconnecting
-
-You can disconnect or remove a client at any time from the Clients page. This revokes its access key and it will no longer be able to make MCP requests through the gateway.
-
-## Next Steps
-
-- [Configure FeatureSets](/docs/feature-sets/) to build permission bundles for your clients
-- [Learn about Spaces](/docs/spaces/) to understand how connection modes interact with workspaces
-- [Set up the Gateway](/docs/gateway/) to understand how client requests are routed
+- [Workspaces](/docs/workspaces/) — map each folder to the toolset it should get
+- [FeatureSets](/docs/feature-sets/) — build the tool bundles a folder resolves to
+- [Tool Optimization](/docs/tool-optimization/) — let an app curate its own toolset from chat
+- [Gateway](/docs/gateway/) — how client requests are authenticated and routed

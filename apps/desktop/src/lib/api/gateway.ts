@@ -23,10 +23,79 @@ export async function getGatewayStatus(spaceId?: string): Promise<GatewayStatus>
 }
 
 /**
- * Start the gateway server.
+ * Probe result for a proposed gateway start.
+ *
+ * `source` tells the UI which tier the preferred port came from so it can
+ * phrase the prompt correctly ("your configured port" vs "the default port").
  */
-export async function startGateway(port?: number): Promise<string> {
-  return invoke('start_gateway', { port });
+export interface GatewayStartProbe {
+  preferredPort: number;
+  preferredAvailable: boolean;
+  source: 'override' | 'configured' | 'default';
+}
+
+/**
+ * Ask the backend whether the gateway can start on its preferred port.
+ * Does not start anything — used by the UI to decide whether to prompt.
+ */
+export async function probeGatewayStart(port?: number): Promise<GatewayStartProbe> {
+  return invoke('probe_gateway_start', { port });
+}
+
+/**
+ * Auto-start port conflict raised during app launch. When non-null, the UI
+ * must prompt the user before the gateway will bind.
+ */
+export interface PendingPortConflict {
+  preferredPort: number;
+  source: 'configured' | 'default';
+}
+
+/**
+ * Atomically read AND clear the deferred auto-start port conflict.
+ *
+ * "Take" semantics — only the first caller gets the conflict; subsequent
+ * calls return null. Prevents duplicate prompts under React StrictMode's
+ * double-mount.
+ */
+export async function takePendingPortConflict(): Promise<PendingPortConflict | null> {
+  return invoke('take_pending_port_conflict');
+}
+
+/**
+ * Error marker the backend returns when the preferred port is busy and
+ * `allowDynamicFallback` is false. Shape: `PORT_IN_USE:<port>:<source>`.
+ */
+export interface PortInUseError {
+  kind: 'PortInUse';
+  port: number;
+  source: 'override' | 'configured' | 'default';
+}
+
+/** Parse the `PORT_IN_USE:<port>:<source>` sentinel the backend emits. */
+export function parsePortInUseError(err: unknown): PortInUseError | null {
+  const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  const match = /^PORT_IN_USE:(\d+):(override|configured|default)$/.exec(msg);
+  if (!match) return null;
+  return {
+    kind: 'PortInUse',
+    port: Number(match[1]),
+    source: match[2] as PortInUseError['source'],
+  };
+}
+
+/**
+ * Start the gateway server. Strict by default — pass `allowDynamicFallback`
+ * to let the gateway pick a dynamic port when the preferred one is taken.
+ */
+export async function startGateway(opts?: {
+  port?: number;
+  allowDynamicFallback?: boolean;
+}): Promise<string> {
+  return invoke('start_gateway', {
+    port: opts?.port,
+    allowDynamicFallback: opts?.allowDynamicFallback,
+  });
 }
 
 /**
@@ -37,10 +106,16 @@ export async function stopGateway(): Promise<void> {
 }
 
 /**
- * Restart the gateway server.
+ * Restart the gateway server. Same semantics as `startGateway`.
  */
-export async function restartGateway(): Promise<string> {
-  return invoke('restart_gateway');
+export async function restartGateway(opts?: {
+  port?: number;
+  allowDynamicFallback?: boolean;
+}): Promise<string> {
+  return invoke('restart_gateway', {
+    port: opts?.port,
+    allowDynamicFallback: opts?.allowDynamicFallback,
+  });
 }
 
 /**
@@ -125,21 +200,33 @@ export interface OAuthClient {
   metadata_url?: string | null;  // URL where metadata was fetched
   metadata_cached_at?: string | null;  // When we last fetched
   metadata_cache_ttl?: number | null;  // Cache duration in seconds
-  
-  // MCP client preferences
-  connection_mode: string;
-  locked_space_id: string | null;
+
   last_seen: string | null;
   created_at: string;
+
+  /**
+   * Sticky-positive bit: `true` once any session of this client declared
+   * the MCP `roots` capability. **Only meaningful when
+   * `roots_capability_known` is `true`** — for clients we haven't observed
+   * yet, this defaults to `false` and the UI must NOT render "Rootless"
+   * based on it alone.
+   */
+  reports_roots: boolean;
+
+  /**
+   * `true` once we've processed `notifications/initialized` for at least
+   * one session of this client. Until then the capability is **unknown**
+   * and the UI hides the badge entirely. Once known the badge resolves
+   * to either "Reports workspace" or "Rootless".
+   */
+  roots_capability_known: boolean;
 }
 
 /**
- * Update client settings request.
+ * Update client settings request. Only the display alias is editable.
  */
 export interface UpdateClientRequest {
   client_alias?: string;
-  connection_mode?: 'follow_active' | 'locked' | 'ask_on_change';
-  locked_space_id?: string | null;
 }
 
 /**
@@ -164,6 +251,63 @@ export async function updateOAuthClient(
  */
 export async function deleteOAuthClient(clientId: string): Promise<void> {
   return invoke('delete_oauth_client', { clientId });
+}
+
+// =============================================================================
+// Per-client FeatureSet grants (rootless fallback path)
+// =============================================================================
+//
+// These grants only apply to clients that did NOT declare the MCP `roots`
+// capability — Claude.ai web, ChatGPT, and similar rootless connectors.
+// Roots-capable desktop clients (Cursor, VS Code, Claude Desktop) route via
+// `WorkspaceBinding` and ignore these grants.
+//
+// Backed by the `client_grants` table (restored in migration 009). Writes
+// emit a `ClientGrantChanged` domain event so MCPNotifier pushes
+// `notifications/{tools,prompts,resources}/list_changed` to the client's
+// connected peers without requiring a reconnect.
+
+/**
+ * Read the FeatureSet ids granted to a (client, space) pair. Empty array
+ * means the rootless fallback would deny — consumer should render the
+ * "no defaults configured" empty state.
+ */
+export async function getOAuthClientGrants(
+  clientId: string,
+  spaceId: string
+): Promise<string[]> {
+  return invoke('get_oauth_client_grants', { clientId, spaceId });
+}
+
+/**
+ * Grant a FeatureSet to an OAuth client in a space. Idempotent at the DB
+ * layer; always emits the change event so peers re-fetch.
+ */
+export async function grantOAuthClientFeatureSet(
+  clientId: string,
+  spaceId: string,
+  featureSetId: string
+): Promise<void> {
+  return invoke('grant_oauth_client_feature_set', {
+    clientId,
+    spaceId,
+    featureSetId,
+  });
+}
+
+/**
+ * Revoke a FeatureSet from an OAuth client in a space.
+ */
+export async function revokeOAuthClientFeatureSet(
+  clientId: string,
+  spaceId: string,
+  featureSetId: string
+): Promise<void> {
+  return invoke('revoke_oauth_client_feature_set', {
+    clientId,
+    spaceId,
+    featureSetId,
+  });
 }
 
 /**

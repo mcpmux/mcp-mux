@@ -71,11 +71,23 @@ fn test_external_https_rejected() {
 }
 
 #[test]
-fn test_mixed_valid_invalid_rejected() {
-    // One invalid URI should fail the whole validation
+fn test_mixed_valid_invalid_passes() {
+    // Invalid URIs are skipped rather than failing the whole registration, as long as
+    // at least one valid URI remains. Clients like Cursor send a mix of valid (custom
+    // scheme + loopback) and invalid (non-loopback https) URIs in a single DCR request.
     let uris = vec![
         "http://127.0.0.1:8080/callback".to_string(),
-        "https://evil.com/steal".to_string(), // invalid
+        "https://evil.com/steal".to_string(), // invalid, skipped
+    ];
+    assert!(validate_redirect_uris(&uris).is_ok());
+}
+
+#[test]
+fn test_all_invalid_rejected() {
+    // When every URI is invalid, zero valid URIs remain and registration must fail.
+    let uris = vec![
+        "https://evil.com/steal".to_string(),
+        "http://example.com/callback".to_string(),
     ];
     assert!(validate_redirect_uris(&uris).is_err());
 }

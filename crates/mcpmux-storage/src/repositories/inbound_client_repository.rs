@@ -87,12 +87,26 @@ pub struct InboundClient {
     pub metadata_cached_at: Option<String>, // When we last fetched
     pub metadata_cache_ttl: Option<i64>, // Cache duration in seconds
 
-    // MCP client preferences
-    pub connection_mode: String, // 'follow_active', 'locked', 'ask_on_change'
-    pub locked_space_id: Option<String>,
     pub last_seen: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+
+    /// `true` once the gateway has observed this client declare the MCP
+    /// `roots` capability on `initialize`. Sticky-positive — a roots-capable
+    /// client that opens a one-off rootless session keeps the flag set so
+    /// the UI doesn't bounce. Reset by re-approving the client.
+    ///
+    /// Meaningful only when [`Self::roots_capability_known`] is `true`; for
+    /// `roots_capability_known = false` the value is undefined and the UI
+    /// treats it as "unknown".
+    pub reports_roots: bool,
+
+    /// `true` once we've processed `notifications/initialized` for *any*
+    /// session of this client and so know whether `reports_roots` reflects
+    /// a real declaration. Defaults to `false` for newly-approved clients
+    /// that haven't opened a session yet — the UI hides the capability
+    /// badge in that state instead of misleadingly showing "Rootless".
+    pub roots_capability_known: bool,
 }
 
 /// Authorization code (pending exchange)
@@ -161,20 +175,15 @@ impl InboundClientRepository {
     // Private Helper: Row Mapping (DRY)
     // =========================================================================
 
-    /// Map a SQL row to InboundClient
-    ///
-    /// Expects columns in this exact order (as returned by our queries):
-    /// 0: client_id, 1: registration_type, 2: client_name, 3: client_alias,
-    /// 4: logo_uri, 5: client_uri, 6: software_id, 7: software_version,
-    /// 8: redirect_uris, 9: grant_types, 10: response_types, 11: token_endpoint_auth_method, 12: scope,
-    /// 13: metadata_url, 14: metadata_cached_at, 15: metadata_cache_ttl,
-    /// 16: connection_mode, 17: locked_space_id, 18: last_seen, 19: created_at, 20: updated_at, 21: approved
+    /// Map a SQL row to InboundClient. Column order must match `CLIENT_COLUMNS`.
     fn map_row_to_client(row: &rusqlite::Row) -> rusqlite::Result<InboundClient> {
         let registration_type_str: String = row.get(1)?;
         let redirect_uris_json: Option<String> = row.get(8)?;
         let grant_types_json: Option<String> = row.get(9)?;
         let response_types_json: Option<String> = row.get(10)?;
-        let approved_int: i32 = row.get::<_, Option<i32>>(21)?.unwrap_or(0);
+        let approved_int: i32 = row.get::<_, Option<i32>>(19)?.unwrap_or(0);
+        let reports_roots_int: i32 = row.get::<_, Option<i32>>(20)?.unwrap_or(0);
+        let roots_capability_known_int: i32 = row.get::<_, Option<i32>>(21)?.unwrap_or(0);
 
         Ok(InboundClient {
             client_id: row.get(0)?,
@@ -202,23 +211,22 @@ impl InboundClientRepository {
             metadata_url: row.get(13)?,
             metadata_cached_at: row.get(14)?,
             metadata_cache_ttl: row.get(15)?,
-            connection_mode: row
-                .get::<_, Option<String>>(16)?
-                .unwrap_or_else(|| "follow_active".to_string()),
-            locked_space_id: row.get(17)?,
-            last_seen: row.get(18)?,
-            created_at: row.get(19)?,
-            updated_at: row.get(20)?,
+            last_seen: row.get(16)?,
+            created_at: row.get(17)?,
+            updated_at: row.get(18)?,
             approved: approved_int != 0,
+            reports_roots: reports_roots_int != 0,
+            roots_capability_known: roots_capability_known_int != 0,
         })
     }
 
-    /// Standard column selection for InboundClient queries
+    /// Standard column selection for InboundClient queries.
+    /// Order must match `map_row_to_client`.
     const CLIENT_COLUMNS: &'static str = "client_id, registration_type, client_name, client_alias,
          logo_uri, client_uri, software_id, software_version,
          redirect_uris, grant_types, response_types, token_endpoint_auth_method, scope,
          metadata_url, metadata_cached_at, metadata_cache_ttl,
-         connection_mode, locked_space_id, last_seen, created_at, updated_at, approved";
+         last_seen, created_at, updated_at, approved, reports_roots, roots_capability_known";
 
     // =========================================================================
     // Client Operations (unified inbound_clients table)
@@ -234,18 +242,16 @@ impl InboundClientRepository {
                 logo_uri, client_uri, software_id, software_version,
                 redirect_uris, grant_types, response_types, token_endpoint_auth_method, scope,
                 metadata_url, metadata_cached_at, metadata_cache_ttl,
-                connection_mode, locked_space_id,
                 last_seen, created_at, updated_at, approved
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
              ON CONFLICT(client_id) DO UPDATE SET
                 registration_type = ?2, client_name = ?3, client_alias = ?4,
                 logo_uri = ?5, client_uri = ?6, software_id = ?7, software_version = ?8,
                 redirect_uris = ?9, grant_types = ?10, response_types = ?11,
                 token_endpoint_auth_method = ?12, scope = ?13,
                 metadata_url = ?14, metadata_cached_at = ?15, metadata_cache_ttl = ?16,
-                connection_mode = ?17, locked_space_id = ?18,
-                last_seen = ?19, updated_at = ?21, approved = ?22",
+                last_seen = ?17, updated_at = ?19, approved = ?20",
             params![
                 client.client_id,
                 client.registration_type.as_str(),
@@ -263,8 +269,6 @@ impl InboundClientRepository {
                 client.metadata_url,
                 client.metadata_cached_at,
                 client.metadata_cache_ttl,
-                client.connection_mode,
-                client.locked_space_id,
                 client.last_seen,
                 client.created_at,
                 client.updated_at,
@@ -317,7 +321,10 @@ impl InboundClientRepository {
         }
     }
 
-    /// Validate redirect URI for a client
+    /// Strict byte-equal membership check of a redirect URI in the client's
+    /// registered list. This is a low-level DB lookup; for OAuth policy
+    /// decisions (including RFC 8252 §7.3 loopback-port flexibility) use
+    /// `mcpmux_gateway::oauth::is_redirect_uri_allowed` instead.
     pub async fn validate_redirect_uri(&self, client_id: &str, redirect_uri: &str) -> Result<bool> {
         if let Some(client) = self.get_client(client_id).await? {
             Ok(client.redirect_uris.iter().any(|uri| uri == redirect_uri))
@@ -420,59 +427,22 @@ impl InboundClientRepository {
         Ok(merged_uris)
     }
 
-    /// Update client configuration settings
-    pub async fn update_client_settings(
+    /// Update a client's human-facing alias.
+    pub async fn update_client_alias(
         &self,
         client_id: &str,
         client_alias: Option<String>,
-        connection_mode: Option<String>,
-        locked_space_id: Option<Option<String>>, // None = don't change, Some(None) = clear, Some(Some(x)) = set
     ) -> Result<Option<InboundClient>> {
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-        // Update timestamp
         {
             let db = self.db.lock().await;
             let conn = db.connection();
             conn.execute(
-                "UPDATE inbound_clients SET updated_at = ?1 WHERE client_id = ?2",
-                params![now, client_id],
+                "UPDATE inbound_clients SET client_alias = ?1, updated_at = ?2 WHERE client_id = ?3",
+                params![client_alias, now, client_id],
             )?;
         }
-
-        // Update alias if provided
-        if let Some(alias) = &client_alias {
-            let db = self.db.lock().await;
-            let conn = db.connection();
-            conn.execute(
-                "UPDATE inbound_clients SET client_alias = ?1 WHERE client_id = ?2",
-                params![alias, client_id],
-            )?;
-        }
-
-        // Update connection mode if provided
-        if let Some(mode) = &connection_mode {
-            let db = self.db.lock().await;
-            let conn = db.connection();
-            conn.execute(
-                "UPDATE inbound_clients SET connection_mode = ?1 WHERE client_id = ?2",
-                params![mode, client_id],
-            )?;
-        }
-
-        // Update locked_space_id if provided
-        if let Some(space_id) = &locked_space_id {
-            let db = self.db.lock().await;
-            let conn = db.connection();
-            conn.execute(
-                "UPDATE inbound_clients SET locked_space_id = ?1 WHERE client_id = ?2",
-                params![space_id, client_id],
-            )?;
-        }
-
-        debug!("[OAuth] Updated settings for client: {}", client_id);
-
-        // Return updated client
+        debug!("[OAuth] Updated alias for client: {}", client_id);
         self.get_client(client_id).await
     }
 
@@ -731,10 +701,15 @@ impl InboundClientRepository {
     }
 
     // =========================================================================
-    // Client Grants (Feature Set Permissions)
+    // Client Grants (Feature Set Permissions for rootless OAuth clients)
+    //
+    // Consulted by FeatureSetResolverService when a session belongs to a
+    // client that did not declare the MCP `roots` capability (or has no
+    // workspace context). Roots-capable clients route through
+    // WorkspaceBinding instead — these methods are the rootless fallback.
     // =========================================================================
 
-    /// Grant a feature set to a client in a specific space
+    /// Grant a feature set to a client in a specific space.
     pub async fn grant_feature_set(
         &self,
         client_id: &str,
@@ -753,7 +728,7 @@ impl InboundClientRepository {
         Ok(())
     }
 
-    /// Revoke a feature set from a client in a specific space
+    /// Revoke a feature set from a client in a specific space.
     pub async fn revoke_feature_set(
         &self,
         client_id: &str,
@@ -764,7 +739,7 @@ impl InboundClientRepository {
         let conn = db.connection();
 
         conn.execute(
-            "DELETE FROM client_grants 
+            "DELETE FROM client_grants
              WHERE client_id = ?1 AND space_id = ?2 AND feature_set_id = ?3",
             params![client_id, space_id, feature_set_id],
         )?;
@@ -772,7 +747,36 @@ impl InboundClientRepository {
         Ok(())
     }
 
-    /// Get all grants for a client in a specific space
+    /// Record the MCP `roots` capability state for a client.
+    ///
+    /// Called from the gateway's `on_initialized` for *every* session,
+    /// regardless of whether the client declared the capability. After the
+    /// first call:
+    ///   - `roots_capability_known` flips to 1 and stays there.
+    ///   - `reports_roots` is sticky-positive: it goes 0 → 1 the first
+    ///     session that declares roots, but a later session that doesn't
+    ///     declare can't flip it back to 0. This prevents the UI badge
+    ///     from bouncing on transient rootless reconnects from a normally
+    ///     roots-capable client.
+    ///
+    /// Reset by re-approving the client (delete + re-DCR).
+    pub async fn mark_roots_capability(&self, client_id: &str, declares: bool) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        // `MAX(reports_roots, ?2)` is the sticky-positive update — once 1,
+        // stays 1 even when `declares = false`.
+        conn.execute(
+            "UPDATE inbound_clients
+                SET roots_capability_known = 1,
+                    reports_roots = MAX(reports_roots, ?2)
+              WHERE client_id = ?1",
+            params![client_id, declares as i32],
+        )?;
+        Ok(())
+    }
+
+    /// Get all granted feature_set_ids for a (client, space) pair.
+    /// Empty Vec means "no grant" → resolver returns Deny.
     pub async fn get_grants_for_space(
         &self,
         client_id: &str,
@@ -782,7 +786,7 @@ impl InboundClientRepository {
         let conn = db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT feature_set_id FROM client_grants 
+            "SELECT feature_set_id FROM client_grants
              WHERE client_id = ?1 AND space_id = ?2",
         )?;
 
@@ -793,7 +797,8 @@ impl InboundClientRepository {
         Ok(grants)
     }
 
-    /// Get all grants for a client across all spaces
+    /// Get every grant for a client across all spaces, grouped by space_id.
+    /// Used by the Clients UI to render the full permission picture.
     pub async fn get_all_grants(
         &self,
         client_id: &str,
@@ -802,7 +807,7 @@ impl InboundClientRepository {
         let conn = db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT space_id, feature_set_id FROM client_grants 
+            "SELECT space_id, feature_set_id FROM client_grants
              WHERE client_id = ?1
              ORDER BY space_id",
         )?;
@@ -821,8 +826,6 @@ impl InboundClientRepository {
 
         Ok(grants)
     }
-
-    // =========================================================================
 }
 
 #[cfg(test)]

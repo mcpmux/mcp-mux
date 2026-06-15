@@ -128,28 +128,10 @@ pub async fn list_feature_sets_by_space(
         .await
         .map_err(|e: anyhow::Error| e.to_string())?;
 
-    let enabled_server_ids: std::collections::HashSet<String> = installed_servers
-        .into_iter()
-        .filter(|s| s.enabled)
-        .map(|s| s.server_id)
-        .collect();
-
-    // Filter out server-all feature sets for servers that are not enabled
-    let filtered = feature_sets
-        .into_iter()
-        .filter(|fs| {
-            if fs.feature_set_type == mcpmux_core::FeatureSetType::ServerAll {
-                // Only include if server is enabled
-                fs.server_id
-                    .as_ref()
-                    .is_some_and(|sid| enabled_server_ids.contains(sid))
-            } else {
-                true
-            }
-        })
-        .map(Into::into)
-        .collect();
-
+    // `server-all` feature sets no longer exist, so nothing to filter;
+    // installed_servers lookup kept for future per-server filtering hooks.
+    let _ = installed_servers;
+    let filtered = feature_sets.into_iter().map(Into::into).collect();
     Ok(filtered)
 }
 
@@ -266,38 +248,6 @@ pub async fn delete_feature_set(
     Ok(())
 }
 
-/// Get builtin feature sets for a space.
-#[tauri::command]
-pub async fn get_builtin_feature_sets(
-    space_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<FeatureSetResponse>, String> {
-    let feature_sets = state
-        .feature_set_repository
-        .list_builtin(&space_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(feature_sets.into_iter().map(Into::into).collect())
-}
-
-/// Ensure server-all featureset exists for a server in a space.
-#[tauri::command]
-pub async fn ensure_server_all_feature_set(
-    space_id: String,
-    server_id: String,
-    server_name: String,
-    state: State<'_, AppState>,
-) -> Result<FeatureSetResponse, String> {
-    let feature_set = state
-        .feature_set_repository
-        .ensure_server_all(&space_id, &server_id, &server_name)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(feature_set.into())
-}
-
 /// Update a feature set (name, description, icon).
 #[tauri::command]
 pub async fn update_feature_set(
@@ -364,9 +314,14 @@ pub async fn add_feature_set_member(
         .map_err(|e| e.to_string())?
         .ok_or("Feature set not found")?;
 
-    // Only "default" and "custom" types can have their members modified
+    // Both Starter (auto-seeded) and Custom FeatureSets are member-driven
+    // and editable. Reject anything else — there are no other configurable
+    // types today, but the guard stays for forward compatibility.
+    // `'default'` is accepted as a legacy alias because `parse('default')`
+    // resolves to `Starter` and `as_str()` always emits `'starter'` post-
+    // migration 013, but older in-memory data could still surface it.
     let fs_type = feature_set.feature_set_type.as_str();
-    if fs_type != "default" && fs_type != "custom" {
+    if fs_type != "starter" && fs_type != "default" && fs_type != "custom" {
         return Err(format!(
             "Cannot modify members of '{}' type feature set",
             fs_type
@@ -408,6 +363,25 @@ pub async fn add_feature_set_member(
                     target_type
                 ));
             }
+        }
+
+        // Prevent INDIRECT composition cycles (A⊇B then B⊇A, or longer
+        // chains). Direct self-reference is caught above; here we walk the
+        // candidate child's member graph and reject if it can transitively
+        // reach this feature set. Without this the resolver would loop on
+        // every list/call (it now breaks cycles defensively, but persisting
+        // one is still invalid state). Bounded by visited-set dedup.
+        if reaches_feature_set(
+            &state,
+            &input.member_id,
+            &feature_set_id,
+            &mut std::collections::HashSet::new(),
+        )
+        .await
+        {
+            return Err(
+                "Cannot add this feature set: it would create a composition cycle".to_string(),
+            );
         }
     }
 
@@ -503,12 +477,13 @@ pub async fn set_feature_set_members(
         .map_err(|e| e.to_string())?
         .ok_or("Feature set not found")?;
 
-    // Only "default" and "custom" types can have their members modified
-    // "all" grants everything automatically, "server-all" is also auto-computed
+    // Both Starter (auto-seeded) and Custom FeatureSets are member-driven
+    // and editable. `'default'` is accepted as a legacy alias for the same
+    // reason described in `add_feature_set_member` — see comment there.
     let fs_type = feature_set.feature_set_type.as_str();
-    if fs_type != "default" && fs_type != "custom" {
+    if fs_type != "starter" && fs_type != "default" && fs_type != "custom" {
         return Err(format!(
-            "Cannot modify members of '{}' type feature set. Only 'default' and 'custom' types are configurable.",
+            "Cannot modify members of '{}' type feature set. Only Starter and Custom FeatureSets are configurable.",
             fs_type
         ));
     }
@@ -566,4 +541,42 @@ pub async fn set_feature_set_members(
     }
 
     Ok(feature_set.into())
+}
+
+/// Does `start_fs_id` transitively compose `target_fs_id` (i.e. would adding
+/// `start_fs_id` as a member of `target_fs_id` close a cycle)?
+///
+/// Walks the composition graph via `FeatureSet` members of type
+/// `FeatureSet`, depth-first, deduping with `visited`. Repository read
+/// errors and missing sets are treated as "no path" — they can't form a
+/// cycle, and the resolver breaks any residual cycle defensively.
+fn reaches_feature_set<'a>(
+    state: &'a AppState,
+    start_fs_id: &'a str,
+    target_fs_id: &'a str,
+    visited: &'a mut std::collections::HashSet<String>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+    Box::pin(async move {
+        if start_fs_id == target_fs_id {
+            return true;
+        }
+        if !visited.insert(start_fs_id.to_string()) {
+            return false;
+        }
+        let Ok(Some(fs)) = state
+            .feature_set_repository
+            .get_with_members(start_fs_id)
+            .await
+        else {
+            return false;
+        };
+        for member in &fs.members {
+            if member.member_type == MemberType::FeatureSet
+                && reaches_feature_set(state, &member.member_id, target_fs_id, visited).await
+            {
+                return true;
+            }
+        }
+        false
+    })
 }

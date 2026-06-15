@@ -1,46 +1,58 @@
 import { useState, useRef, useEffect } from 'react';
-import {
-  ChevronDown,
-  Check,
-  Plus,
-  Loader2,
-} from 'lucide-react';
-import { Button, useToast, ToastContainer } from '@mcpmux/ui';
-import {
-  useAppStore,
-  useActiveSpace,
-  useViewSpace,
-  useSpaces,
-  useIsLoading,
-} from '@/stores';
-import { createSpace, setActiveSpace as setActiveSpaceAPI } from '@/lib/api/spaces';
+import { ChevronDown, Check, Plus, Loader2 } from 'lucide-react';
+import { useAppStore, useViewSpace, useSpaces, useIsLoading } from '@/stores';
+import { spaceAccentTint } from '@/lib/spaceAccent';
+import { CreateSpaceModal } from '@/features/spaces/CreateSpaceModal';
+
+/** Space icon inside a soft tile tinted with the Space's accent color. */
+function SpaceGlyph({
+  spaceId,
+  icon,
+  size = 'md',
+}: {
+  spaceId: string | undefined;
+  icon: string | undefined | null;
+  size?: 'md' | 'sm';
+}) {
+  return (
+    <span
+      className={`flex flex-shrink-0 items-center justify-center rounded-lg ${
+        size === 'md' ? 'h-8 w-8 text-lg' : 'h-7 w-7 text-base'
+      }`}
+      style={{
+        backgroundColor: spaceAccentTint(spaceId, 0.16),
+        boxShadow: `inset 0 0 0 1px ${spaceAccentTint(spaceId, 0.35)}`,
+      }}
+    >
+      {icon || '🌐'}
+    </span>
+  );
+}
 
 interface SpaceSwitcherProps {
   className?: string;
 }
 
+/**
+ * Sidebar dropdown for switching which Space the desktop UI is currently
+ * viewing. Pure UI navigation — does not affect gateway routing. The
+ * "Default" badge marks the system fallback Space (the one used when a
+ * session has no matching WorkspaceBinding).
+ */
 export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [showCreateInput, setShowCreateInput] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { toasts, success, error: showError, dismiss } = useToast();
 
   const spaces = useSpaces();
-  const activeSpace = useActiveSpace();
   const viewSpace = useViewSpace();
   const isLoadingSpaces = useIsLoading('spaces');
-  const setActiveSpaceInStore = useAppStore((state) => state.setActiveSpace);
   const setViewSpaceInStore = useAppStore((state) => state.setViewSpace);
-  const addSpace = useAppStore((state) => state.addSpace);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
-        setShowCreateInput(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -52,74 +64,49 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
     setIsOpen(false);
   };
 
-  const handleSetActiveSpace = async (spaceId: string) => {
-    try {
-      await setActiveSpaceAPI(spaceId);
-      setActiveSpaceInStore(spaceId);
-      setIsOpen(false);
-      const activatedSpace = spaces.find(s => s.id === spaceId);
-      success('Space activated', `Switched to "${activatedSpace?.name || 'Space'}"`);
-    } catch (e) {
-      showError('Failed to switch space', e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const handleCreateSpace = async () => {
-    if (!newName.trim()) return;
-    setIsCreating(true);
-    try {
-      const space = await createSpace(newName.trim(), '🌐');
-      addSpace(space);
-      await setActiveSpaceAPI(space.id);
-      setActiveSpaceInStore(space.id);
-      setViewSpaceInStore(space.id);
-      setNewName('');
-      setShowCreateInput(false);
-      setIsOpen(false);
-      success('Space created', `"${space.name}" has been created and activated`);
-    } catch (e) {
-      showError('Failed to create space', e instanceof Error ? e.message : String(e));
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
   return (
     <div ref={dropdownRef} className={`relative ${className}`}>
-      <ToastContainer toasts={toasts} onClose={dismiss} />
       {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))] hover:border-[rgb(var(--primary))/30] transition-all duration-150 group"
+        className="group flex w-full items-center justify-between gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2.5 transition-all duration-150 hover:border-[rgb(var(--primary))/30] hover:bg-[rgb(var(--surface-hover))]"
       >
-        <span className="flex items-center gap-3 min-w-0">
+        <span className="flex min-w-0 items-center gap-2.5">
           {isLoadingSpaces ? (
             <Loader2 className="h-5 w-5 animate-spin text-[rgb(var(--primary))]" />
           ) : (
-            <span className="text-xl">{viewSpace?.icon || '🌐'}</span>
+            <SpaceGlyph spaceId={viewSpace?.id} icon={viewSpace?.icon} />
           )}
-          <span className="font-medium text-sm truncate">
-            {isLoadingSpaces 
-              ? 'Loading...' 
-              : viewSpace?.name || (spaces.length > 0 ? 'Select Space' : 'No Spaces')
-            }
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium">
+              {isLoadingSpaces
+                ? 'Loading...'
+                : viewSpace?.name || (spaces.length > 0 ? 'Select Space' : 'No Spaces')}
+            </span>
+            {!isLoadingSpaces && viewSpace && (
+              <span className="block text-[10px] uppercase tracking-wider text-[rgb(var(--muted-foreground))]">
+                Space
+              </span>
+            )}
           </span>
         </span>
-        <ChevronDown className={`h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] group-hover:text-[rgb(var(--foreground))] transition-all duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] transition-all duration-200 group-hover:text-[rgb(var(--foreground))] ${isOpen ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="dropdown-menu absolute top-full left-0 mt-1.5 w-64 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+        <div className="dropdown-menu animate-in fade-in slide-in-from-top-1 absolute left-0 top-full z-50 mt-1.5 w-64 duration-150">
           {/* Spaces List */}
-          <div className="p-1.5 max-h-64 overflow-y-auto">
+          <div className="max-h-64 overflow-y-auto p-1.5">
             {isLoadingSpaces ? (
               <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-5 w-5 animate-spin text-primary-500" />
+                <Loader2 className="text-primary-500 h-5 w-5 animate-spin" />
                 <span className="ml-2 text-sm text-[rgb(var(--muted))]">Loading spaces...</span>
               </div>
             ) : spaces.length === 0 ? (
-              <div className="text-center py-4 text-sm text-[rgb(var(--muted))]">
+              <div className="py-4 text-center text-sm text-[rgb(var(--muted))]">
                 No spaces found. Create one below.
               </div>
             ) : (
@@ -127,41 +114,28 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
                 <button
                   key={space.id}
                   onClick={() => handleSelectSpace(space.id)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-all duration-150
-                    ${viewSpace?.id === space.id 
-                      ? 'bg-[rgb(var(--primary))/12] text-[rgb(var(--primary))]' 
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all duration-150 ${
+                    viewSpace?.id === space.id
+                      ? 'bg-[rgb(var(--primary))/12] text-[rgb(var(--primary))]'
                       : 'hover:bg-[rgb(var(--surface-hover))]'
-                    }`}
+                  }`}
+                  data-testid={`space-switcher-item-${space.id}`}
                 >
-                  <span className="flex items-center gap-3">
-                    <span className="text-xl">{space.icon || '🌐'}</span>
-                    <div>
-                      <div className="font-medium text-sm">{space.name}</div>
+                  <span className="flex min-w-0 items-center gap-3">
+                    <SpaceGlyph spaceId={space.id} icon={space.icon} size="sm" />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{space.name}</div>
                       {space.is_default && (
-                        <div className="text-xs text-[rgb(var(--muted))]">Default</div>
+                        <div
+                          className="text-xs text-[rgb(var(--muted))]"
+                          title="Routing fallback when no WorkspaceBinding matches"
+                        >
+                          Default
+                        </div>
                       )}
                     </div>
                   </span>
-                  <span className="flex items-center gap-2">
-                    {activeSpace?.id === space.id && (
-                      <span className="text-xs text-[rgb(var(--muted))]">Active</span>
-                    )}
-                    {viewSpace?.id === space.id && (
-                      <Check className="h-4 w-4" />
-                    )}
-                    {activeSpace?.id !== space.id && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSetActiveSpace(space.id);
-                        }}
-                      >
-                        Set Active
-                      </Button>
-                    )}
-                  </span>
+                  {viewSpace?.id === space.id && <Check className="h-4 w-4 flex-shrink-0" />}
                 </button>
               ))
             )}
@@ -170,46 +144,29 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
           {/* Divider */}
           <div className="mx-1.5 border-t border-[rgb(var(--border))]" />
 
-          {/* Create New */}
+          {/* Create New — opens the shared modal (name + icon picker) */}
           <div className="p-1.5">
-            {showCreateInput ? (
-              <div className="flex gap-2 p-1">
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Space name..."
-                  autoFocus
-                  className="input flex-1 py-1.5"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleCreateSpace();
-                    if (e.key === 'Escape') {
-                      setShowCreateInput(false);
-                      setNewName('');
-                    }
-                  }}
-                />
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={handleCreateSpace}
-                  disabled={isCreating || !newName.trim()}
-                >
-                  {isCreating ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Add'}
-                </Button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowCreateInput(true)}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))] transition-all duration-150"
-              >
-                <Plus className="h-4 w-4" />
-                Create new space
-              </button>
-            )}
+            <button
+              onClick={() => {
+                setShowCreateModal(true);
+                setIsOpen(false);
+              }}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-[rgb(var(--muted))] transition-all duration-150 hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))]"
+              data-testid="space-switcher-create"
+            >
+              <Plus className="h-4 w-4" />
+              Create new space
+            </button>
           </div>
         </div>
       )}
+
+      {/* New space: name + icon picker. On success, switch to the new Space. */}
+      <CreateSpaceModal
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onCreated={(space) => setViewSpaceInStore(space.id)}
+      />
     </div>
   );
 }

@@ -24,10 +24,7 @@ impl FeatureService {
         feature_set_repo: Arc<dyn FeatureSetRepository>,
         prefix_cache: Arc<PrefixCacheService>,
     ) -> Self {
-        let discovery = Arc::new(FeatureDiscoveryService::new(
-            feature_repo.clone(),
-            feature_set_repo.clone(),
-        ));
+        let discovery = Arc::new(FeatureDiscoveryService::new(feature_repo.clone()));
 
         let resolution = Arc::new(FeatureResolutionService::new(
             feature_repo.clone(),

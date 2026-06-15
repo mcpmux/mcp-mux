@@ -21,9 +21,13 @@
     },
     "updater": {
       "endpoints": [
+        "https://api.mcpmux.com/v1/update/latest.json",
         "https://github.com/mcpmux/mcp-mux/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCQUZGMEVCMEZBOTk5RTcKUldUbm1ha1A2L0N2ZTlOZjN5T3pGOHBHRUlibytMY2tPeWJkQ01heDJzdTJqK3B3a2lBdDZ1T1oK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdCQUZGMEVCMEZBOTk5RTcKUldUbm1ha1A2L0N2ZTlOZjN5T3pGOHBHRUlibytMY2tPeWJkQ01heDJzdTJqK3B3a2lBdDZ1T1oK",
+      "windows": {
+        "installMode": "passive"
+      }
     }
   },
   "app": {
@@ -46,7 +50,14 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": "all",
+    "targets": [
+      "app",
+      "dmg",
+      "deb",
+      "rpm",
+      "appimage",
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

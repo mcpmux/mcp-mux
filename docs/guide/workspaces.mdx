@@ -1,0 +1,60 @@
+---
+title: Workspaces — Folder-Based Routing
+description: Map a project folder to the exact toolset it should get. McpMux routes each workspace to its own Space and FeatureSet automatically, so every AI app sees the right tools for the folder it has open.
+---
+
+Workspaces map a **project folder** to the exact toolset it should get. When an AI app opens that folder, McpMux hands it the Space and FeatureSet you mapped — and nothing else.
+
+## Why Workspaces
+
+[Spaces](/docs/spaces/) isolate *contexts*; Workspaces decide which context a session actually gets — automatically, per folder.
+
+Your AI app (Cursor, VS Code, Windsurf, Claude Code) tells McpMux which folder it's working in — its MCP **root**. McpMux uses that to route each folder to its own toolset:
+
+- Open your **backend repo** and the AI sees your database, cloud, and deploy tools.
+- Open a **docs folder** and it sees only search and filesystem.
+- Open an **untrusted project** and it gets a read-only set — or nothing.
+
+Map a folder once and every future session from that exact path resolves automatically. Matching is **per-folder and exact**, so nothing leaks across projects.
+
+![Workspaces — map a project folder to the Space and FeatureSet it should get](https://mcpmux.com/screenshots/workspaces.png)
+
+## How a request resolves
+
+When an AI app makes a request, McpMux resolves the toolset in order:
+
+1. The app reports its **workspace root** (the folder it has open).
+2. McpMux looks for a **Workspace mapping** for that exact path.
+3. The mapping points at a **Space** (which servers + credentials) and a **FeatureSet** (which tools, prompts, and resources from those servers).
+4. The FeatureSet's included features **are** the effective toolset the session resolves to.
+
+Because routing is driven by the reported folder, it is decided **per session, not per app** — the same app gets different tools depending on which project it has open.
+
+## Creating a mapping
+
+Open the **Workspaces** tab and click **Add mapping**:
+
+- **Workspace folder** — browse for a folder or paste an absolute path. Accepts `/unix`, `C:\windows`, and `file://` forms.
+- **Space** — the profile whose servers and credentials this folder draws from.
+- **FeatureSet** — the curated bundle of tools this folder is allowed to use. Pick one, or combine several into a single effective set.
+
+Unmapped folders receive no tools until you map them — an explicit, fail-closed default so a new project never silently inherits another's access.
+
+The FeatureSet you pick is the exact toolset the folder resolves to — choose which tools, prompts, and resources from each server it's allowed to use:
+
+![The FeatureSet a folder resolves to — pick exactly which tools each server contributes](https://mcpmux.com/screenshots/featureset-detail.png)
+
+## Let the AI map it for you
+
+You don't have to open the Workspaces tab at all. With [Tool Optimization](/docs/tool-optimization/), an assistant can compose a FeatureSet and pin the current folder to it from chat:
+
+> *"@mux build a minimal toolset for this Next.js repo and pin it to this folder."*
+
+The pin is a Workspace mapping — it sticks for every future session from that path. Changes are gated behind a one-click approval that names the exact Space.
+
+## Next steps
+
+- [Spaces](/docs/spaces/) — the isolated contexts a Workspace routes to
+- [FeatureSets](/docs/feature-sets/) — the curated toolsets a Workspace grants
+- [Tool Optimization](/docs/tool-optimization/) — let the AI map folders for itself
+- [Clients](/docs/clients/) — how connected apps report the folder that drives routing

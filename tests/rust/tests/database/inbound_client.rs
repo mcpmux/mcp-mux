@@ -3,13 +3,12 @@
 //! Tests for DCR registration, OAuth authorization codes, tokens, and client grants.
 //! These test the INBOUND flow: AI clients (Cursor, Claude) connecting TO McpMux.
 
-use mcpmux_core::repository::SpaceRepository;
 use mcpmux_storage::{
-    AuthorizationCode, InboundClient, InboundClientRepository, RegistrationType,
-    SqliteSpaceRepository, TokenRecord, TokenType,
+    AuthorizationCode, InboundClient, InboundClientRepository, RegistrationType, TokenRecord,
+    TokenType,
 };
 use std::sync::Arc;
-use tests::{db::TestDatabase, fixtures};
+use tests::db::TestDatabase;
 use tokio::sync::Mutex;
 
 fn create_test_client(name: &str) -> InboundClient {
@@ -35,11 +34,11 @@ fn create_test_client(name: &str) -> InboundClient {
         metadata_url: None,
         metadata_cached_at: None,
         metadata_cache_ttl: None,
-        connection_mode: "follow_active".to_string(),
-        locked_space_id: None,
         last_seen: None,
         created_at: now.clone(),
         updated_at: now,
+        reports_roots: false,
+        roots_capability_known: false,
     }
 }
 
@@ -303,16 +302,8 @@ async fn test_authorization_code_not_found() {
 // Token Tests
 // =============================================================================
 
-#[tokio::test]
-async fn test_token_hash_consistency() {
-    let hash1 = InboundClientRepository::hash_token("my_secret_token");
-    let hash2 = InboundClientRepository::hash_token("my_secret_token");
-    let hash3 = InboundClientRepository::hash_token("different_token");
-
-    assert_eq!(hash1, hash2);
-    assert_ne!(hash1, hash3);
-    assert_eq!(hash1.len(), 64); // SHA-256 hex
-}
+// Note: `hash_token` determinism/length is unit-tested in the storage crate
+// (`inbound_client_repository.rs::test_hash_token`); not duplicated here.
 
 #[tokio::test]
 async fn test_save_and_find_token() {
@@ -545,273 +536,37 @@ async fn test_revoke_client_tokens() {
 }
 
 // =============================================================================
-// Client Grants Tests (Feature Set Permissions)
+// Client Grants Tests — REMOVED in migration 003.
+//
+// The `client_grants` table and the repository methods that backed it were
+// dropped once the FeatureSetResolver (pin > workspace binding > space-active)
+// became authoritative. The trait methods remain as no-op shims for API
+// compatibility with Tauri commands, but they no longer persist anything.
+//
+// For resolver decision-table tests see
+// `tests/integration/feature_set_resolver.rs`.
 // =============================================================================
-
-#[tokio::test]
-async fn test_grant_feature_set() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    // Create a space (auto-creates All and Default feature sets)
-    let space = fixtures::test_space("Test Space");
-    SpaceRepository::create(&space_repo, &space).await.unwrap();
-
-    let client = create_test_client("Grant Client");
-    repo.save_client(&client).await.unwrap();
-
-    // Grant the auto-created "All" feature set
-    let all_fs_id = format!("fs_all_{}", space.id);
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
-        .await
-        .expect("Failed to grant");
-
-    // Check grants
-    let grants = repo
-        .get_grants_for_space(&client.client_id, &space.id.to_string())
-        .await
-        .unwrap();
-    assert_eq!(grants.len(), 1);
-    assert!(grants.contains(&all_fs_id));
-}
-
-#[tokio::test]
-async fn test_grant_multiple_feature_sets() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    // Create two spaces
-    let space1 = fixtures::test_space("Space 1");
-    let space2 = fixtures::test_space("Space 2");
-    SpaceRepository::create(&space_repo, &space1).await.unwrap();
-    SpaceRepository::create(&space_repo, &space2).await.unwrap();
-
-    let client = create_test_client("Multi Grant");
-    repo.save_client(&client).await.unwrap();
-
-    // Use auto-created feature set IDs
-    let space1_all = format!("fs_all_{}", space1.id);
-    let space1_default = format!("fs_default_{}", space1.id);
-    let space2_all = format!("fs_all_{}", space2.id);
-
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_all)
-        .await
-        .unwrap();
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_default)
-        .await
-        .unwrap();
-    repo.grant_feature_set(&client.client_id, &space2.id.to_string(), &space2_all)
-        .await
-        .unwrap();
-
-    // Space 1 should have 2
-    let grants1 = repo
-        .get_grants_for_space(&client.client_id, &space1.id.to_string())
-        .await
-        .unwrap();
-    assert_eq!(grants1.len(), 2);
-
-    // Space 2 should have 1
-    let grants2 = repo
-        .get_grants_for_space(&client.client_id, &space2.id.to_string())
-        .await
-        .unwrap();
-    assert_eq!(grants2.len(), 1);
-}
-
-#[tokio::test]
-async fn test_grant_idempotent() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    let space = fixtures::test_space("Test Space");
-    SpaceRepository::create(&space_repo, &space).await.unwrap();
-
-    let client = create_test_client("Idempotent");
-    repo.save_client(&client).await.unwrap();
-
-    let all_fs_id = format!("fs_all_{}", space.id);
-
-    // Grant same thing twice
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
-        .await
-        .unwrap();
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
-        .await
-        .unwrap();
-
-    // Should still be 1
-    let grants = repo
-        .get_grants_for_space(&client.client_id, &space.id.to_string())
-        .await
-        .unwrap();
-    assert_eq!(grants.len(), 1);
-}
-
-#[tokio::test]
-async fn test_revoke_feature_set() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    let space = fixtures::test_space("Test Space");
-    SpaceRepository::create(&space_repo, &space).await.unwrap();
-
-    let client = create_test_client("Revoke Grant");
-    repo.save_client(&client).await.unwrap();
-
-    let all_fs_id = format!("fs_all_{}", space.id);
-    let default_fs_id = format!("fs_default_{}", space.id);
-
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
-        .await
-        .unwrap();
-    repo.grant_feature_set(&client.client_id, &space.id.to_string(), &default_fs_id)
-        .await
-        .unwrap();
-
-    // Revoke one
-    repo.revoke_feature_set(&client.client_id, &space.id.to_string(), &all_fs_id)
-        .await
-        .expect("Failed to revoke");
-
-    // Only default remains
-    let grants = repo
-        .get_grants_for_space(&client.client_id, &space.id.to_string())
-        .await
-        .unwrap();
-    assert_eq!(grants.len(), 1);
-    assert!(grants.contains(&default_fs_id));
-}
-
-#[tokio::test]
-async fn test_get_all_grants() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    let space1 = fixtures::test_space("Space 1");
-    let space2 = fixtures::test_space("Space 2");
-    SpaceRepository::create(&space_repo, &space1).await.unwrap();
-    SpaceRepository::create(&space_repo, &space2).await.unwrap();
-
-    let client = create_test_client("All Grants");
-    repo.save_client(&client).await.unwrap();
-
-    let space1_all = format!("fs_all_{}", space1.id);
-    let space1_default = format!("fs_default_{}", space1.id);
-    let space2_all = format!("fs_all_{}", space2.id);
-
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_all)
-        .await
-        .unwrap();
-    repo.grant_feature_set(&client.client_id, &space1.id.to_string(), &space1_default)
-        .await
-        .unwrap();
-    repo.grant_feature_set(&client.client_id, &space2.id.to_string(), &space2_all)
-        .await
-        .unwrap();
-
-    let all_grants = repo
-        .get_all_grants(&client.client_id)
-        .await
-        .expect("Failed to get all");
-    assert_eq!(all_grants.len(), 2); // 2 spaces
-
-    assert_eq!(all_grants.get(&space1.id.to_string()).unwrap().len(), 2);
-    assert_eq!(all_grants.get(&space2.id.to_string()).unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn test_grants_per_space_isolation() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    let work = fixtures::test_space("Work");
-    let personal = fixtures::test_space("Personal");
-    SpaceRepository::create(&space_repo, &work).await.unwrap();
-    SpaceRepository::create(&space_repo, &personal)
-        .await
-        .unwrap();
-
-    let client = create_test_client("Space Isolation");
-    repo.save_client(&client).await.unwrap();
-
-    let work_all = format!("fs_all_{}", work.id);
-    let personal_all = format!("fs_all_{}", personal.id);
-
-    // Grant "All" in different spaces
-    repo.grant_feature_set(&client.client_id, &work.id.to_string(), &work_all)
-        .await
-        .unwrap();
-    repo.grant_feature_set(&client.client_id, &personal.id.to_string(), &personal_all)
-        .await
-        .unwrap();
-
-    // Revoke from work only
-    repo.revoke_feature_set(&client.client_id, &work.id.to_string(), &work_all)
-        .await
-        .unwrap();
-
-    // Work should be empty
-    let work_grants = repo
-        .get_grants_for_space(&client.client_id, &work.id.to_string())
-        .await
-        .unwrap();
-    assert!(work_grants.is_empty());
-
-    // Personal still has grant
-    let personal_grants = repo
-        .get_grants_for_space(&client.client_id, &personal.id.to_string())
-        .await
-        .unwrap();
-    assert_eq!(personal_grants.len(), 1);
-}
 
 // =============================================================================
 // Client Settings Update Tests
 // =============================================================================
 
 #[tokio::test]
-async fn test_update_client_settings() {
+async fn test_update_client_alias() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let repo = InboundClientRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
+    let repo = InboundClientRepository::new(db);
 
-    // Create a space for locking
-    let space = fixtures::test_space("Locked Space");
-    SpaceRepository::create(&space_repo, &space).await.unwrap();
-
-    let client = create_test_client("Settings Test");
+    let client = create_test_client("Alias Test");
     repo.save_client(&client).await.unwrap();
 
-    // Update settings
     let updated = repo
-        .update_client_settings(
-            &client.client_id,
-            Some("My Cursor".to_string()),    // alias
-            Some("locked".to_string()),       // connection_mode
-            Some(Some(space.id.to_string())), // locked_space_id
-        )
+        .update_client_alias(&client.client_id, Some("My Cursor".to_string()))
         .await
-        .expect("Failed to update settings");
+        .expect("Failed to update alias");
 
-    assert!(updated.is_some());
-    let updated = updated.unwrap();
+    let updated = updated.expect("client should exist after alias update");
     assert_eq!(updated.client_alias, Some("My Cursor".to_string()));
-    assert_eq!(updated.connection_mode, "locked");
-    assert_eq!(updated.locked_space_id, Some(space.id.to_string()));
 }
 
 #[tokio::test]

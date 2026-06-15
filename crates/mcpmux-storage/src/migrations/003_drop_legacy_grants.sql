@@ -1,0 +1,21 @@
+-- Migration 003: Drop legacy per-client grants now that the FeatureSetResolver
+-- is authoritative (see migration 002 for the new schema).
+--
+-- The resolver (pin > workspace-binding > space-active) no longer consults
+-- `client_grants`. The column and table below are safe to remove once every
+-- deployed client has picked up the resolver v2 code path (shadow mode was
+-- run in the previous release so divergence would already have surfaced).
+--
+-- NOTE: Data loss is intentional. If you need to preserve the old grants for
+-- audit, export them to JSON before running this migration.
+
+-- Drop the client_grants table. The resolver no longer reads it, and the
+-- corresponding repository methods have been turned into no-ops so lingering
+-- Tauri commands (grant_feature_set_to_client, etc.) won't error at runtime.
+--
+-- We keep the `grants` JSON column on `inbound_clients` for now — it's
+-- already unused in reads/writes (SELECT uses the '{}' placeholder), and
+-- leaving it avoids a second schema migration on older SQLite builds that
+-- predate ALTER TABLE … DROP COLUMN. It will be removed in a future
+-- migration once the Tauri surface is cleaned up.
+DROP TABLE IF EXISTS client_grants;

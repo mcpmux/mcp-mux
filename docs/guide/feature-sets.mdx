@@ -98,11 +98,13 @@ FeatureSets can **contain other FeatureSets**. This lets you build hierarchical 
 4. Add members — select features or other FeatureSets
 5. Set each member to include or exclude mode
 
-### Assigning to Clients
+### Putting a FeatureSet to work
 
-FeatureSets are assigned to clients per Space. Go to the **Clients** page, select a client, and manage its FeatureSet grants for each Space.
+A FeatureSet becomes a session's toolset when a folder routes to it — map the folder in the [Workspaces](/docs/workspaces/) tab (or let the AI pin it with [Tool Optimization](/docs/tool-optimization/)). Sessions whose folder isn't mapped fall back to the active Space's FeatureSet.
 
-A client's effective permissions are the combination of all its granted FeatureSets, with exclude rules taking priority.
+The effective toolset is the combination of the resolved FeatureSet(s), with exclude rules taking priority. McpMux shows exactly what resolves:
+
+![Effective features resolved for a session — the tools, prompts, and resources it can actually use](https://mcpmux.com/screenshots/client-permissions.png)
 
 ## Next Steps
 

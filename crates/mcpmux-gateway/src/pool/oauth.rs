@@ -255,36 +255,6 @@ impl OutboundOAuthManager {
         scopes.iter().map(|s| s.as_str()).collect()
     }
 
-    /// Add RFC 8707 'resource' parameter to authorization URL.
-    ///
-    /// The resource parameter tells the Authorization Server which protected resource
-    /// (MCP server) the client is requesting access to. This enables the AS to:
-    /// - Issue tokens scoped to the specific resource
-    /// - Apply resource-specific policies
-    /// - Prevent token replay at other resources
-    ///
-    /// Some servers (like Miro) require this parameter.
-    fn add_resource_parameter(auth_url: &str, server_url: &str) -> String {
-        use url::Url;
-
-        match Url::parse(auth_url) {
-            Ok(mut url) => {
-                // Add the resource parameter with the MCP server URL
-                url.query_pairs_mut().append_pair("resource", server_url);
-                info!("[OAuth] Added RFC 8707 resource parameter: {}", server_url);
-                url.to_string()
-            }
-            Err(e) => {
-                warn!(
-                    "[OAuth] Failed to parse auth URL to add resource parameter: {}",
-                    e
-                );
-                // Return original URL if parsing fails
-                auth_url.to_string()
-            }
-        }
-    }
-
     /// Subscribe to OAuth completion events
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<OAuthCompleteEvent> {
         self.completion_tx.subscribe()
@@ -1049,12 +1019,11 @@ impl OutboundOAuthManager {
                 let scopes = Self::get_scopes_from_metadata(&discovered_metadata);
 
                 // Then configure client with the existing registration
-                let config = rmcp::transport::auth::OAuthClientConfig {
-                    client_id: reg.client_id.clone(),
-                    client_secret: None,
-                    scopes: scopes.clone(),
-                    redirect_uri: redirect_uri.clone(),
-                };
+                let mut config = rmcp::transport::auth::OAuthClientConfig::new(
+                    reg.client_id.clone(),
+                    redirect_uri.clone(),
+                );
+                config.scopes = scopes.clone();
 
                 if let Err(e) = manager.configure_client(config) {
                     self.log(
@@ -1084,17 +1053,23 @@ impl OutboundOAuthManager {
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to get auth URL: {}", e))?;
 
-                // Create session manually
-                oauth_state = OAuthState::Session(rmcp::transport::auth::AuthorizationSession {
-                    auth_manager: std::mem::replace(
-                        manager,
-                        rmcp::transport::auth::AuthorizationManager::new(server_url)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("Failed: {}", e))?,
+                // Create session manually (reusing the existing registration).
+                // We already called configure_client + get_authorization_url above,
+                // so we use `for_scope_upgrade` to wrap the pre-computed values without
+                // re-registering the client via DCR.
+                let taken_manager = std::mem::replace(
+                    manager,
+                    rmcp::transport::auth::AuthorizationManager::new(server_url)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed: {}", e))?,
+                );
+                oauth_state = OAuthState::Session(
+                    rmcp::transport::auth::AuthorizationSession::for_scope_upgrade(
+                        taken_manager,
+                        auth_url.clone(),
+                        &redirect_uri,
                     ),
-                    auth_url: auth_url.clone(),
-                    redirect_uri: redirect_uri.clone(),
-                });
+                );
             }
             (false, None) // Not a new registration, no metadata to save
         } else {
@@ -1246,11 +1221,6 @@ impl OutboundOAuthManager {
                 return Err(anyhow::anyhow!("Failed to get auth URL: {}", e));
             }
         };
-
-        // Add RFC 8707 'resource' parameter to the authorization URL.
-        // This tells the Authorization Server which protected resource (MCP server)
-        // the token is being requested for. Some servers (like Miro) require this.
-        let auth_url = Self::add_resource_parameter(&auth_url, server_url);
 
         // Extract state parameter from auth_url
         let state = match Self::extract_state_from_url(&auth_url) {
@@ -1682,5 +1652,59 @@ impl OutboundOAuthManager {
 impl Default for OutboundOAuthManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod resource_param_tests {
+    use rmcp::transport::auth::{AuthorizationManager, AuthorizationMetadata};
+
+    /// The gateway delegates authorize-URL construction entirely to rmcp's
+    /// `AuthorizationManager::get_authorization_url` (via `create_auth_manager` /
+    /// `start_oauth_flow`). rmcp appends the RFC 8707 `resource` parameter itself, so the
+    /// gateway must NOT add a second one. This guards against re-introducing the removed
+    /// `add_resource_parameter` wrapper, which produced `?resource=...&resource=...` —
+    /// rejected by strict authorization servers (e.g. Supabase) and broke OAuth login.
+    #[tokio::test]
+    async fn authorize_url_has_exactly_one_resource_param() {
+        let base_url = "https://mcp.example.test/";
+
+        let mut manager = AuthorizationManager::new(base_url)
+            .await
+            .expect("construct AuthorizationManager");
+
+        // `AuthorizationMetadata` is `#[non_exhaustive]` in rmcp 1.5, so it can't be
+        // built with a struct literal from outside the crate. Deserialize it instead.
+        let metadata: AuthorizationMetadata = serde_json::from_value(serde_json::json!({
+            "authorization_endpoint": "https://auth.example.test/authorize",
+            "token_endpoint": "https://auth.example.test/token",
+            "response_types_supported": ["code"],
+            "code_challenge_methods_supported": ["S256"],
+        }))
+        .expect("build AuthorizationMetadata");
+        manager.set_metadata(metadata);
+        manager
+            .configure_client_id("test-client")
+            .expect("configure client id");
+
+        let auth_url = manager
+            .get_authorization_url(&["openid"])
+            .await
+            .expect("generate authorization url");
+
+        let parsed = url::Url::parse(&auth_url).expect("authorize url should parse");
+        let resource_values: Vec<String> = parsed
+            .query_pairs()
+            .filter(|(k, _)| k == "resource")
+            .map(|(_, v)| v.into_owned())
+            .collect();
+
+        assert_eq!(
+            resource_values.len(),
+            1,
+            "authorize URL must carry exactly one RFC 8707 resource param, \
+             got {resource_values:?} in {auth_url}"
+        );
+        assert_eq!(resource_values[0], base_url);
     }
 }

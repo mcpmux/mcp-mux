@@ -400,28 +400,7 @@ impl FeatureSetRepository for MockFeatureSetRepository {
         Ok(())
     }
 
-    async fn list_builtin(&self, space_id: &str) -> RepoResult<Vec<FeatureSet>> {
-        Ok(self
-            .sets
-            .read()
-            .unwrap()
-            .values()
-            .filter(|s| {
-                s.space_id.as_deref() == Some(space_id)
-                    && matches!(
-                        s.feature_set_type,
-                        FeatureSetType::All | FeatureSetType::Default
-                    )
-            })
-            .cloned()
-            .collect())
-    }
-
-    async fn get_server_all(
-        &self,
-        space_id: &str,
-        server_id: &str,
-    ) -> RepoResult<Option<FeatureSet>> {
+    async fn get_starter_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>> {
         Ok(self
             .sets
             .read()
@@ -429,64 +408,14 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             .values()
             .find(|s| {
                 s.space_id.as_deref() == Some(space_id)
-                    && s.feature_set_type == FeatureSetType::ServerAll
-                    && s.server_id.as_deref() == Some(server_id)
-            })
-            .cloned())
-    }
-
-    async fn ensure_server_all(
-        &self,
-        space_id: &str,
-        server_id: &str,
-        server_name: &str,
-    ) -> RepoResult<FeatureSet> {
-        if let Some(existing) = self.get_server_all(space_id, server_id).await? {
-            return Ok(existing);
-        }
-        let set = FeatureSet::new_server_all(space_id, server_id, server_name);
-        self.create(&set).await?;
-        Ok(set)
-    }
-
-    async fn get_default_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>> {
-        Ok(self
-            .sets
-            .read()
-            .unwrap()
-            .values()
-            .find(|s| {
-                s.space_id.as_deref() == Some(space_id)
-                    && s.feature_set_type == FeatureSetType::Default
-            })
-            .cloned())
-    }
-
-    async fn get_all_for_space(&self, space_id: &str) -> RepoResult<Option<FeatureSet>> {
-        Ok(self
-            .sets
-            .read()
-            .unwrap()
-            .values()
-            .find(|s| {
-                s.space_id.as_deref() == Some(space_id) && s.feature_set_type == FeatureSetType::All
+                    && s.feature_set_type == FeatureSetType::Starter
             })
             .cloned())
     }
 
     async fn ensure_builtin_for_space(&self, space_id: &str) -> RepoResult<()> {
-        if self.get_all_for_space(space_id).await?.is_none() {
-            self.create(&FeatureSet::new_all(space_id)).await?;
-        }
-        if self.get_default_for_space(space_id).await?.is_none() {
-            self.create(&FeatureSet::new_default(space_id)).await?;
-        }
-        Ok(())
-    }
-
-    async fn delete_server_all(&self, space_id: &str, server_id: &str) -> RepoResult<()> {
-        if let Some(set) = self.get_server_all(space_id, server_id).await? {
-            self.delete(&set.id).await?;
+        if self.get_starter_for_space(space_id).await?.is_none() {
+            self.create(&FeatureSet::new_starter(space_id)).await?;
         }
         Ok(())
     }
@@ -543,7 +472,6 @@ impl FeatureSetRepository for MockFeatureSetRepository {
 #[derive(Default)]
 pub struct MockInboundMcpClientRepository {
     clients: RwLock<HashMap<Uuid, Client>>,
-    grants: RwLock<HashMap<(Uuid, String), Vec<String>>>, // (client_id, space_id) -> feature_set_ids
 }
 
 impl MockInboundMcpClientRepository {
@@ -596,86 +524,6 @@ impl InboundMcpClientRepository for MockInboundMcpClientRepository {
     async fn delete(&self, id: &Uuid) -> RepoResult<()> {
         self.clients.write().unwrap().remove(id);
         Ok(())
-    }
-
-    async fn grant_feature_set(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> RepoResult<()> {
-        self.grants
-            .write()
-            .unwrap()
-            .entry((*client_id, space_id.to_string()))
-            .or_default()
-            .push(feature_set_id.to_string());
-        Ok(())
-    }
-
-    async fn revoke_feature_set(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_id: &str,
-    ) -> RepoResult<()> {
-        if let Some(sets) = self
-            .grants
-            .write()
-            .unwrap()
-            .get_mut(&(*client_id, space_id.to_string()))
-        {
-            sets.retain(|s| s != feature_set_id);
-        }
-        Ok(())
-    }
-
-    async fn get_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-    ) -> RepoResult<Vec<String>> {
-        Ok(self
-            .grants
-            .read()
-            .unwrap()
-            .get(&(*client_id, space_id.to_string()))
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    async fn get_all_grants(&self, client_id: &Uuid) -> RepoResult<HashMap<String, Vec<String>>> {
-        let grants = self.grants.read().unwrap();
-        let mut result = HashMap::new();
-        for ((cid, space_id), sets) in grants.iter() {
-            if cid == client_id {
-                result.insert(space_id.clone(), sets.clone());
-            }
-        }
-        Ok(result)
-    }
-
-    async fn set_grants_for_space(
-        &self,
-        client_id: &Uuid,
-        space_id: &str,
-        feature_set_ids: &[String],
-    ) -> RepoResult<()> {
-        self.grants
-            .write()
-            .unwrap()
-            .insert((*client_id, space_id.to_string()), feature_set_ids.to_vec());
-        Ok(())
-    }
-
-    async fn has_grants_for_space(&self, client_id: &Uuid, space_id: &str) -> RepoResult<bool> {
-        Ok(self
-            .grants
-            .read()
-            .unwrap()
-            .get(&(*client_id, space_id.to_string()))
-            .map(|v| !v.is_empty())
-            .unwrap_or(false))
     }
 }
 

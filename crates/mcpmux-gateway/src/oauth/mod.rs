@@ -8,7 +8,10 @@ mod flow;
 mod pkce;
 mod token;
 
-pub use dcr::{process_dcr_request, validate_redirect_uris, DcrError, DcrRequest, DcrResponse};
+pub use dcr::{
+    is_redirect_uri_allowed, process_dcr_request, validate_redirect_uris, DcrError, DcrRequest,
+    DcrResponse,
+};
 pub use discovery::{OAuthDiscovery, OAuthMetadata};
 pub use flow::{AuthorizationCallback, AuthorizationRequest, OAuthFlow};
 pub use pkce::PkceChallenge;

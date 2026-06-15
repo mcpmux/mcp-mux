@@ -1,16 +1,20 @@
 /**
  * Approval dialog wiring:
- *  - renders the target-Space chip (so a cross-Space write is obvious), and
+ *  - renders the target-Space chip (so a cross-Space write is obvious),
  *  - survives a freeform `diff` shape (`{ added_tools }`) without crashing —
  *    a regression guard for the earlier "Cannot read properties of undefined
- *    (reading 'length')" bug.
+ *    (reading 'length')" bug, and
+ *  - the "Manage approval prompts" link denies the request (fail-closed) and
+ *    routes to the Built-in tab where prompts can be disabled.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
-const { handlers } = vi.hoisted(() => ({
+const { handlers, navigateToSpy } = vi.hoisted(() => ({
   handlers: new Map<string, (e: { payload: unknown }) => void>(),
+  navigateToSpy: vi.fn(),
 }));
 
 // Capture the dialog's `listen('meta-tool-approval-request', cb)` so the test
@@ -22,7 +26,9 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('@/stores', () => ({ useNavigateTo: () => navigateToSpy }));
 
+import { invoke } from '@tauri-apps/api/core';
 import { MetaToolApprovalDialog } from '@/features/metaTools/MetaToolApprovalDialog';
 
 async function emitRequest(payload: Record<string, unknown>) {
@@ -40,7 +46,11 @@ async function emitRequest(payload: Record<string, unknown>) {
 }
 
 describe('MetaToolApprovalDialog', () => {
-  beforeEach(() => handlers.clear());
+  beforeEach(() => {
+    handlers.clear();
+    navigateToSpy.mockClear();
+    vi.mocked(invoke).mockClear();
+  });
 
   it('names the target Space when present', async () => {
     render(<MetaToolApprovalDialog />);
@@ -81,5 +91,27 @@ describe('MetaToolApprovalDialog', () => {
     expect(screen.getByTestId('meta-tool-approval-dialog')).toBeInTheDocument();
     expect(screen.getByText(/github_create_issue/)).toBeInTheDocument();
     expect(screen.getByText(/slack_send/)).toBeInTheDocument();
+  });
+
+  it('"Manage approval prompts" denies the request and routes to the Built-in tab', async () => {
+    const user = userEvent.setup();
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_bind_current_workspace',
+      summary: 'Bind this folder',
+      diff: null,
+      raw_args: {},
+      affects_other_clients: false,
+    });
+
+    await user.click(await screen.findByTestId('meta-tool-approval-manage-link'));
+
+    // Fail-closed: the pending request is denied rather than left to time out.
+    expect(invoke).toHaveBeenCalledWith(
+      'respond_to_meta_tool_approval',
+      expect.objectContaining({ decision: 'deny' })
+    );
+    // ...and the user lands on the tab that hosts the approval toggle.
+    expect(navigateToSpy).toHaveBeenCalledWith('builtin-servers');
   });
 });

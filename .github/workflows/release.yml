@@ -95,7 +95,9 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   prerelease-version:
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'false' && github.event_name == 'push'
+    # release-please-action sets release_created to 'true' or leaves it empty
+    # (never the literal 'false'), so gate on != 'true', not == 'false'.
+    if: needs.release-please.outputs.release_created != 'true' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write

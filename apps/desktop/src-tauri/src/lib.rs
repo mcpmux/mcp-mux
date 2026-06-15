@@ -978,6 +978,8 @@ pub fn run() {
             commands::update_startup_settings,
             commands::get_auto_install_updates,
             commands::set_auto_install_updates,
+            commands::get_update_channel,
+            commands::set_update_channel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building McpMux application")

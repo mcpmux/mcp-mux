@@ -153,6 +153,56 @@ pub async fn set_auto_install_updates(
     Ok(enabled)
 }
 
+/// App-settings key for the update channel ("stable" | "prerelease").
+const UPDATE_CHANNEL_KEY: &str = "updates.channel";
+/// Default update channel when the setting is missing.
+const UPDATE_CHANNEL_STABLE: &str = "stable";
+const UPDATE_CHANNEL_PRERELEASE: &str = "prerelease";
+
+/// Normalize an arbitrary stored/incoming value to a known channel, defaulting
+/// to "stable". Keeps the gateway between the frontend and the updater header
+/// strict so a corrupt setting can never select an unknown channel.
+fn normalize_channel(raw: &str) -> &'static str {
+    if raw.eq_ignore_ascii_case(UPDATE_CHANNEL_PRERELEASE) {
+        UPDATE_CHANNEL_PRERELEASE
+    } else {
+        UPDATE_CHANNEL_STABLE
+    }
+}
+
+/// Which update channel the app follows. The frontend sends this as the
+/// `X-Mcpmux-Channel` header on update checks so the resolver returns the
+/// newest stable or pre-release manifest. Default **stable** — a missing
+/// setting means the stable channel.
+#[tauri::command]
+pub async fn get_update_channel(app_state: State<'_, AppState>) -> Result<String, String> {
+    let stored = app_state
+        .settings_repository
+        .get(UPDATE_CHANNEL_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(stored
+        .map(|v| normalize_channel(&v).to_string())
+        .unwrap_or_else(|| UPDATE_CHANNEL_STABLE.to_string()))
+}
+
+/// Set the update channel ("stable" | "prerelease"). Unknown values are
+/// coerced to "stable". Persisted; returns the normalized value actually saved.
+#[tauri::command]
+pub async fn set_update_channel(
+    channel: String,
+    app_state: State<'_, AppState>,
+) -> Result<String, String> {
+    let normalized = normalize_channel(&channel);
+    app_state
+        .settings_repository
+        .set(UPDATE_CHANNEL_KEY, normalized)
+        .await
+        .map_err(|e| e.to_string())?;
+    info!("[Settings] Update channel set to {}", normalized);
+    Ok(normalized.to_string())
+}
+
 /// Check if app should start hidden (for auto-launch with --hidden flag)
 pub fn should_start_hidden() -> bool {
     let args: Vec<String> = std::env::args().collect();
@@ -257,5 +307,29 @@ mod tests {
         assert!(!settings.auto_launch);
         assert!(!settings.start_minimized);
         assert!(!settings.close_to_tray);
+    }
+
+    #[test]
+    fn test_normalize_channel_prerelease_variants() {
+        assert_eq!(normalize_channel("prerelease"), UPDATE_CHANNEL_PRERELEASE);
+        assert_eq!(normalize_channel("Prerelease"), UPDATE_CHANNEL_PRERELEASE);
+        assert_eq!(normalize_channel("PRERELEASE"), UPDATE_CHANNEL_PRERELEASE);
+    }
+
+    #[test]
+    fn test_normalize_channel_defaults_to_stable() {
+        assert_eq!(normalize_channel("stable"), UPDATE_CHANNEL_STABLE);
+        assert_eq!(normalize_channel(""), UPDATE_CHANNEL_STABLE);
+        assert_eq!(normalize_channel("beta"), UPDATE_CHANNEL_STABLE);
+        assert_eq!(normalize_channel("garbage"), UPDATE_CHANNEL_STABLE);
+    }
+
+    #[test]
+    fn test_normalize_channel_returns_canonical_static() {
+        // Always returns one of the two canonical lowercase tokens.
+        for input in ["StAbLe", "pre", "prerelease", "x"] {
+            let out = normalize_channel(input);
+            assert!(out == UPDATE_CHANNEL_STABLE || out == UPDATE_CHANNEL_PRERELEASE);
+        }
     }
 }

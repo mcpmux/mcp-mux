@@ -69,122 +69,116 @@ jobs:
             });
 
   # ─────────────────────────────────────────────────────────────
-  # Build Release: Build Tauri app when release is created
+  # Build Release: Build Tauri app when a stable release is created.
+  # Uploads to the pre-created draft release with full Apple signing.
   # ─────────────────────────────────────────────────────────────
   build-release:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: linux
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: windows
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: macos-arm
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            artifact: macos-intel
-
-    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      release_id: ${{ needs.release-please.outputs.release_id }}
+      apple_full_signing: true
+
+  # ─────────────────────────────────────────────────────────────
+  # Pre-release: every non-release merge to main ships an automated
+  # pre-release so the Pre-release update channel always tracks main.
+  #
+  # The version is release-please's *pending* next stable version
+  # (X.Y.Z) plus a -pre.<run_number> suffix, so SemVer ordering holds:
+  #   0.3.0  <  0.4.0-pre.317  <  0.4.0-pre.318  <  0.4.0
+  # release-please runs in manifest mode, so these v*-pre.* tags are
+  # invisible to its version tracking and never interfere.
+  # ─────────────────────────────────────────────────────────────
+  prerelease-version:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'false' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      release_id: ${{ steps.draft.outputs.release_id }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Linux deps
-        if: matrix.os == 'ubuntu-latest'
-        uses: ./.github/actions/install-linux-deps
-        with:
-          verify_glib: 'false'
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Compute pre-release version
+        id: compute
         env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}-release
-        env:
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - run: pnpm install --frozen-lockfile
-
-      # Import Apple certificate ourselves, then DON'T pass APPLE_CERTIFICATE
-      # to tauri-action. Tauri's bundler uses var_os() which treats empty
-      # strings as present (Some("")), so we must completely omit the env var.
-      # Instead we import the cert here and only pass APPLE_SIGNING_IDENTITY.
-      - name: Import Apple certificate
-        if: runner.os == 'macOS'
-        id: apple-cert
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$KEYCHAIN_PASSWORD" ]; then
-            echo "No Apple certificate configured — using ad-hoc signing"
-            echo "identity=-" >> "$GITHUB_OUTPUT"
-            exit 0
+          set -euo pipefail
+          BOT_BRANCH="release-please--branches--main--components--mcpmux"
+          BASE=""
+          # Prefer release-please's pending next version (held in the manifest
+          # on its release-PR branch). This is exactly the X.Y.Z that merging
+          # the release PR will cut, so the pre-releases preview that version.
+          if CONTENT=$(gh api "repos/${{ github.repository }}/contents/.release-please-manifest.json?ref=${BOT_BRANCH}" --jq '.content' 2>/dev/null); then
+            BASE=$(printf '%s' "$CONTENT" | base64 -d \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s)["."]))')
+            echo "Pending stable version (from release PR): $BASE"
           fi
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          if [ ! -s certificate.p12 ]; then
-            echo "Certificate decode produced empty file — using ad-hoc signing"
-            rm -f certificate.p12
-            echo "identity=-" >> "$GITHUB_OUTPUT"
-            exit 0
+          # Fallback (no open release PR): patch-bump the current stable version.
+          if [ -z "$BASE" ]; then
+            CUR=$(node -e 'process.stdout.write(require("./.release-please-manifest.json")["."])')
+            BASE=$(printf '%s' "$CUR" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')
+            echo "No open release PR; patch-bumping current ($CUR) -> $BASE"
           fi
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          if ! security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign; then
-            echo "Certificate import failed — using ad-hoc signing"
-            rm -f certificate.p12
-            echo "identity=-" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          rm certificate.p12
-          echo "identity=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_OUTPUT"
-          echo "cert_ok=true" >> "$GITHUB_OUTPUT"
+          PRE="${BASE}-pre.${{ github.run_number }}"
+          echo "version=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Pre-release version: $PRE"
 
-      # IMPORTANT: Do NOT pass APPLE_CERTIFICATE, APPLE_ID, APPLE_PASSWORD,
-      # or APPLE_TEAM_ID to tauri-action. Tauri's bundler uses var_os() which
-      # treats empty strings as "present" and attempts certificate import /
-      # notarization even when values are empty, causing build failures.
-      # We handle cert import ourselves above and only pass APPLE_SIGNING_IDENTITY.
-      # When a valid Apple Developer certificate is configured, add notarization
-      # env vars back here (APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID).
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+      # Pre-create a DRAFT pre-release so all matrix build jobs upload to it by
+      # id (no create-by-tag race), and it stays hidden until artifacts +
+      # latest.json are complete. prerelease=true keeps it out of /releases/latest.
+      - name: Create draft pre-release
+        id: draft
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-          APPLE_SIGNING_IDENTITY: ${{ steps.apple-cert.outputs.identity }}
-          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
-          VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
-        with:
-          projectPath: apps/desktop
-          # Upload to the existing draft release
-          releaseId: ${{ needs.release-please.outputs.release_id }}
-          updaterJsonKeepUniversal: true
-          args: --target ${{ matrix.target }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.compute.outputs.version }}"
+          RELEASE_ID=$(gh api --method POST "repos/${{ github.repository }}/releases" \
+            -f tag_name="$TAG" \
+            -f target_commitish="${{ github.sha }}" \
+            -f name="McpMux $TAG" \
+            -f body="Automated pre-release built from main (${{ github.sha }}). Early build — may be unstable. Use the Stable channel in Settings → Software Updates for published releases." \
+            -F draft=true -F prerelease=true \
+            --jq '.id')
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          echo "Created draft pre-release $TAG (id=$RELEASE_ID)"
+
+  prerelease-build:
+    needs: prerelease-version
+    if: needs.prerelease-version.outputs.release_id != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      set_version: ${{ needs.prerelease-version.outputs.version }}
+      release_id: ${{ needs.prerelease-version.outputs.release_id }}
+      apple_full_signing: false
+
+  # Flip the pre-release draft → published once every platform is attached, so
+  # the Pre-release channel only ever sees a complete manifest.
+  prerelease-publish:
+    needs: [prerelease-version, prerelease-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "v${{ needs.prerelease-version.outputs.version }}" \
+            --draft=false \
+            --prerelease \
+            --repo "${{ github.repository }}"
 
   # ─────────────────────────────────────────────────────────────
   # Publish Release: Flip draft → published after all artifacts

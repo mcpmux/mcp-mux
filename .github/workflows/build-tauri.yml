@@ -1,0 +1,200 @@
+name: Build Tauri
+
+# Reusable build for the desktop app across all platforms. Shared by the
+# stable release flow, the per-merge pre-release flow, and the promote flow so
+# every channel is built with identical logic (no drift).
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build (empty = the caller ref)'
+        type: string
+        default: ''
+      set_version:
+        description: 'If set, stamp this version onto the working tree before building'
+        type: string
+        default: ''
+      release_id:
+        description: 'Upload artifacts to this existing release id (stable flow)'
+        type: string
+        default: ''
+      tag_name:
+        description: 'Create/append to a release with this tag (pre-release / promote flow)'
+        type: string
+        default: ''
+      release_name:
+        description: 'Release title when creating via tag_name'
+        type: string
+        default: ''
+      release_body:
+        description: 'Release body when creating via tag_name'
+        type: string
+        default: ''
+      prerelease:
+        description: 'Mark the created release as a pre-release'
+        type: boolean
+        default: false
+      draft:
+        description: 'Create the release as a draft'
+        type: boolean
+        default: false
+      apple_full_signing:
+        description: 'Import the Apple Developer cert (true) or ad-hoc sign (false)'
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-arm
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: macos-intel
+
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # Stamp a pre-release / promote version onto the working tree (transient,
+      # never committed) so the binary, bundle, and latest.json all agree.
+      - name: Set build version
+        if: inputs.set_version != ''
+        shell: bash
+        run: node scripts/set-version.mjs "${{ inputs.set_version }}"
+
+      - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/install-linux-deps
+        with:
+          verify_glib: 'false'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-release
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      # Import Apple certificate ourselves, then DON'T pass APPLE_CERTIFICATE
+      # to tauri-action. Tauri's bundler uses var_os() which treats empty
+      # strings as present (Some("")), so we must completely omit the env var.
+      # Instead we import the cert here and only pass APPLE_SIGNING_IDENTITY.
+      # When apple_full_signing is false (pre-releases), we ad-hoc sign ("-").
+      - name: Import Apple certificate
+        if: runner.os == 'macOS'
+        id: apple-cert
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ "${{ inputs.apple_full_signing }}" != "true" ]; then
+            echo "Ad-hoc signing requested (pre-release build)"
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$KEYCHAIN_PASSWORD" ]; then
+            echo "No Apple certificate configured — using ad-hoc signing"
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          if [ ! -s certificate.p12 ]; then
+            echo "Certificate decode produced empty file — using ad-hoc signing"
+            rm -f certificate.p12
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          if ! security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign; then
+            echo "Certificate import failed — using ad-hoc signing"
+            rm -f certificate.p12
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+          echo "identity=${{ secrets.APPLE_SIGNING_IDENTITY }}" >> "$GITHUB_OUTPUT"
+          echo "cert_ok=true" >> "$GITHUB_OUTPUT"
+
+      # IMPORTANT: Do NOT pass APPLE_CERTIFICATE, APPLE_ID, APPLE_PASSWORD,
+      # or APPLE_TEAM_ID to tauri-action. Tauri's bundler uses var_os() which
+      # treats empty strings as "present" and attempts certificate import /
+      # notarization even when values are empty, causing build failures.
+      # We handle cert import ourselves above and only pass APPLE_SIGNING_IDENTITY.
+      #
+      # Two variants so each path passes EXACTLY the inputs it needs:
+      #   • release_id set  → upload to the pre-created (draft) release by id.
+      #     Pass ONLY releaseId — never tagName/draft/prerelease, which could
+      #     flip the draft early or mismatch its state. (Stable + promote.)
+      #   • release_id empty → create/append to a tagged release. (Pre-release.)
+      - name: Build Tauri app (upload to existing release)
+        if: inputs.release_id != ''
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && steps.apple-cert.outputs.identity || '' }}
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+        with:
+          projectPath: apps/desktop
+          releaseId: ${{ inputs.release_id }}
+          updaterJsonKeepUniversal: true
+          args: --target ${{ matrix.target }}
+
+      - name: Build Tauri app (create tagged release)
+        if: inputs.release_id == ''
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && steps.apple-cert.outputs.identity || '' }}
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          VITE_POSTHOG_HOST: ${{ secrets.VITE_POSTHOG_HOST }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ inputs.tag_name }}
+          releaseName: ${{ inputs.release_name }}
+          releaseBody: ${{ inputs.release_body }}
+          releaseDraft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          updaterJsonKeepUniversal: true
+          args: --target ${{ matrix.target }}

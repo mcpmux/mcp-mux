@@ -106,8 +106,8 @@ function AppContent() {
   useEffect(() => {
     const checkForUpdates = async () => {
       try {
-        const { check } = await import('@tauri-apps/plugin-updater');
-        const update = await check();
+        const { checkForUpdate } = await import('@/lib/updates');
+        const update = await checkForUpdate();
         if (!update) return;
         console.log(`[Auto-Update] Update available: ${update.version}`);
 

@@ -368,7 +368,10 @@ impl ServerHandler for McpMuxGatewayHandler {
              list_feature_sets) are safe to call freely once the user has opted \
              in; writes (manage_feature_set, bind_current_workspace) prompt the \
              user for approval. Most operations accept an optional `space_id` \
-             (from mcpmux_list_spaces) to target a specific Space."
+             (from mcpmux_list_spaces) to target a specific Space. When \
+             optimizing, start minimal: search for the few tools the task needs, \
+             compose a small set, then expand it later as needs arise rather than \
+             dumping the whole catalog upfront."
                 .to_string(),
         );
         info

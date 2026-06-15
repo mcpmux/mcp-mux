@@ -116,8 +116,8 @@ impl MetaTool for ListAllToolsTool {
     fn description(&self) -> &'static str {
         "List every tool installed in a Space (default: the caller's resolved \
          Space; pass `space_id` to target another), without the current \
-         FeatureSet filter applied. Use this to see what could be exposed \
-         before composing a custom FeatureSet. Returns an array of \
+         FeatureSet filter applied. Prefer `mcpmux_search_tools` unless you need \
+         the full list — this dump is token-heavy. Returns an array of \
          {server_id, qualified_name, description, available}."
     }
 
@@ -716,7 +716,8 @@ impl MetaTool for ManageFeatureSetTool {
          (needs `feature_set_id`). Tool names are the qualified names from \
          `mcpmux_list_all_tools`/`mcpmux_search_tools`. Built-in sets can't be \
          modified. Requires user approval. Route a workspace through a FeatureSet \
-         with `mcpmux_bind_current_workspace`."
+         with `mcpmux_bind_current_workspace`. Prefer a small initial set you \
+         expand later over adding everything upfront."
     }
 
     fn input_schema(&self) -> Value {

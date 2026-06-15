@@ -12,6 +12,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Zap,
+  Sparkles,
 } from 'lucide-react';
 import {
   Card,
@@ -264,6 +265,32 @@ export function FeatureSetsPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="focus:ring-primary-500 focus:border-primary-500 w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3 pl-12 pr-4 text-base transition-all focus:outline-none focus:ring-2"
               />
+            </div>
+          </div>
+        </div>
+
+        {/* @mux self-optimization hint — let the assistant curate the toolset from chat */}
+        <div className="flex-shrink-0 px-8 pt-6">
+          <div
+            className="mx-auto flex max-w-[2000px] items-start gap-3 rounded-xl border border-violet-200/70 bg-gradient-to-r from-violet-50/60 to-transparent p-4 dark:border-violet-800/40 dark:from-violet-900/15"
+            data-testid="featuresets-mux-hint"
+          >
+            <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-[0_4px_10px_-2px_rgb(139_92_246/0.45)]">
+              <Sparkles className="h-4 w-4 fill-current" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-[rgb(var(--foreground))]">
+                Let your AI build these for you
+              </p>
+              <p className="mt-0.5 text-xs leading-relaxed text-[rgb(var(--muted))]">
+                In any connected client, just say{' '}
+                <code className="rounded bg-[rgb(var(--surface))] px-1.5 py-0.5 font-mono text-[11px] text-violet-600 dark:text-violet-300">
+                  @mux optimize
+                </code>{' '}
+                — your assistant can discover the available tools, compose a FeatureSet, and pin it
+                to the current folder. Every change is gated behind a one-click approval, so you
+                stay in control.
+              </p>
             </div>
           </div>
         </div>

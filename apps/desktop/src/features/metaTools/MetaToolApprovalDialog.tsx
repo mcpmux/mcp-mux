@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
+import { useNavigateTo } from '@/stores';
 
 /**
  * Incoming approval request emitted by the gateway's ApprovalBroker.
@@ -53,6 +54,7 @@ type Decision = 'allow_once' | 'always_for_this_session_and_client' | 'deny';
 export function MetaToolApprovalDialog() {
   const [queue, setQueue] = useState<ApprovalRequest[]>([]);
   const current = queue[0];
+  const navigateTo = useNavigateTo();
 
   useEffect(() => {
     const unlistenPromise = listen<ApprovalRequest>(
@@ -86,6 +88,16 @@ export function MetaToolApprovalDialog() {
     },
     [current]
   );
+
+  // "Prefer not to be asked?" escape hatch. Deny the current request first —
+  // fail-closed and immediate, so the calling client isn't left hanging for
+  // the full 60s broker timeout — then jump to the Built-in tab, where the
+  // "Require approval for tool changes" switch lets the user turn these
+  // prompts off entirely.
+  const manageApprovals = useCallback(() => {
+    void respond('deny');
+    navigateTo('builtin-servers');
+  }, [respond, navigateTo]);
 
   // Normalize the freeform diff defensively — a missing field must never
   // throw (this previously crashed on `mcpmux_create_feature_set`, whose diff
@@ -206,11 +218,22 @@ export function MetaToolApprovalDialog() {
             </Button>
           </div>
 
-          {queue.length > 1 && (
-            <p className="text-[11px] text-[rgb(var(--muted))] text-right pt-1">
-              {queue.length - 1} more pending…
-            </p>
-          )}
+          <div className="flex items-center justify-between gap-3 pt-1">
+            <button
+              type="button"
+              onClick={manageApprovals}
+              className="text-[11px] text-[rgb(var(--muted))] underline-offset-2 hover:text-[rgb(var(--foreground))] hover:underline"
+              title="Deny this request and open the Built-in tab, where you can turn off approval prompts for tool changes"
+              data-testid="meta-tool-approval-manage-link"
+            >
+              Prefer not to be asked? Manage approval prompts →
+            </button>
+            {queue.length > 1 && (
+              <span className="text-[11px] text-[rgb(var(--muted))]">
+                {queue.length - 1} more pending…
+              </span>
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>

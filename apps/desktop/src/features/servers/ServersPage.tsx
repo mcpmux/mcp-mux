@@ -1412,22 +1412,25 @@ export function ServersPage() {
           data-testid="config-modal-overlay"
         >
           <div
-            className="dropdown-menu animate-in fade-in scale-in max-h-[80vh] w-full max-w-md overflow-y-auto p-6 duration-150"
+            className="dropdown-menu animate-in fade-in scale-in flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden duration-150"
             data-testid="config-modal"
           >
-            <h3
-              className="mb-2 text-lg font-semibold text-[rgb(var(--foreground))]"
-              data-testid="config-modal-title"
-            >
-              Configure {configModal.server.name}
-            </h3>
-            <p className="mb-4 text-sm text-[rgb(var(--muted))]">
-              {(configModal.server.auth && 'instructions' in configModal.server.auth
-                ? configModal.server.auth.instructions
-                : null) || 'Enter the required configuration to enable this server.'}
-            </p>
+            <div className="px-6 pb-4 pt-6">
+              <h3
+                className="mb-2 text-lg font-semibold text-[rgb(var(--foreground))]"
+                data-testid="config-modal-title"
+              >
+                Configure {configModal.server.name}
+              </h3>
+              <p className="text-sm text-[rgb(var(--muted))]">
+                {(configModal.server.auth && 'instructions' in configModal.server.auth
+                  ? configModal.server.auth.instructions
+                  : null) || 'Enter the required configuration to enable this server.'}
+              </p>
+            </div>
 
-            <div className="space-y-4">
+            {/* Scrollable body — the footer below stays pinned (#163) */}
+            <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-4">
               {(configModal.server.transport.metadata?.inputs ?? []).map(
                 (input: InputDefinition) => {
                   const obtainUrl = input.obtain_url || input.obtain?.url;
@@ -1754,29 +1757,31 @@ export function ServersPage() {
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  onClick={handleCancelConfig}
-                  className="rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
-                  data-testid="config-cancel-btn"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveConfig}
-                  disabled={(configModal.server.transport.metadata?.inputs ?? []).some(
-                    (i: InputDefinition) => i.required && !configModal.inputValues[i.id]
-                  )}
-                  className="rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
-                  data-testid="config-save-btn"
-                >
-                  {configModal.enableOnSave && !configModal.server.enabled
-                    ? 'Save & Enable'
-                    : configModal.server.enabled
-                      ? 'Save & Reconnect'
-                      : 'Save'}
-                </button>
-              </div>
+            </div>
+
+            {/* Pinned footer — always visible regardless of form length (#163) */}
+            <div className="flex justify-end gap-2 border-t border-[rgb(var(--border))] px-6 py-4">
+              <button
+                onClick={handleCancelConfig}
+                className="rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
+                data-testid="config-cancel-btn"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveConfig}
+                disabled={(configModal.server.transport.metadata?.inputs ?? []).some(
+                  (i: InputDefinition) => i.required && !configModal.inputValues[i.id]
+                )}
+                className="rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+                data-testid="config-save-btn"
+              >
+                {configModal.enableOnSave && !configModal.server.enabled
+                  ? 'Save & Enable'
+                  : configModal.server.enabled
+                    ? 'Save & Reconnect'
+                    : 'Save'}
+              </button>
             </div>
           </div>
         </div>

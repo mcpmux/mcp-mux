@@ -129,7 +129,12 @@ jobs:
             BASE=$(printf '%s' "$CUR" | awk -F. '{printf "%d.%d.%d", $1, $2, $3 + 1}')
             echo "No open release PR; patch-bumping current ($CUR) -> $BASE"
           fi
-          PRE="${BASE}-pre.${{ github.run_number }}"
+          # The pre-release identifier MUST be numeric-only (a single SemVer
+          # identifier, no "pre." word): the Windows MSI bundler maps it to the
+          # 4th version field and rejects non-numeric / >65535 values. So use
+          # "<base>-<run_number>", e.g. 0.4.0-185. Ordering still holds:
+          # 0.3.0 < 0.4.0-185 < 0.4.0-186 < 0.4.0. (run_number stays < 65535.)
+          PRE="${BASE}-${{ github.run_number }}"
           echo "version=$PRE" >> "$GITHUB_OUTPUT"
           echo "Pre-release version: $PRE"
 

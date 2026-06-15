@@ -40,8 +40,9 @@ jobs:
           set -euo pipefail
           PRE_TAG="${{ inputs.prerelease_tag }}"
           PRE_TAG="v${PRE_TAG#v}"   # normalize leading v
-          # Strip the -pre.N (and any +build) suffix to get the stable version.
-          STABLE_VERSION=$(printf '%s' "${PRE_TAG#v}" | sed -E 's/-pre\..*$//; s/\+.*$//')
+          # Strip the pre-release (-<n>) and any +build suffix to get the
+          # stable version, e.g. 0.4.0-185 -> 0.4.0.
+          STABLE_VERSION=$(printf '%s' "${PRE_TAG#v}" | sed -E 's/-.*$//; s/\+.*$//')
           STABLE_TAG="v${STABLE_VERSION}"
 
           # The commit the pre-release was built from (deref annotated tags).

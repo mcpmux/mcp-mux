@@ -104,6 +104,12 @@ function AppContent() {
   // into the new version — so a restart picks up updates with no clicks.
   // Otherwise just surface the dismissible banner for a manual install.
   useEffect(() => {
+    // Never auto-update under `pnpm dev`. A dev build would otherwise detect a
+    // newer published release, install it over this build, and relaunch — so
+    // your local changes would vanish before you could see them. Production
+    // builds (import.meta.env.DEV === false) are unaffected.
+    if (import.meta.env.DEV) return;
+
     const checkForUpdates = async () => {
       try {
         const { checkForUpdate } = await import('@/lib/updates');

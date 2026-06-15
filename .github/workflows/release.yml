@@ -147,12 +147,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v${{ steps.compute.outputs.version }}"
+          VERSION="${{ steps.compute.outputs.version }}"
+          TAG="v${VERSION}"
+          BASE="${VERSION%-*}"   # strip the -<run_number> pre-release identifier
+          BOT_BRANCH="release-please--branches--main--components--mcpmux"
+
+          # Build release notes that mirror the stable changelog: pull the
+          # pending version's section straight from release-please's CHANGELOG
+          # on its release-PR branch (grouped Features / Bug Fixes / etc.), so
+          # the pre-release previews exactly what stable v$BASE will ship.
+          # Assembled into a file with printf to keep markdown intact (no YAML
+          # block-scalar indentation leaking into the body).
+          NOTE="Automated pre-release of v${BASE}, built from main (${{ github.sha }}). Early build — may be unstable; switch to the Stable channel in Settings → Software Updates for published releases."
+          printf '%s\n' "$NOTE" > body.md
+          if CL=$(gh api "repos/${{ github.repository }}/contents/CHANGELOG.md?ref=${BOT_BRANCH}" --jq '.content' 2>/dev/null); then
+            # Extract the top (pending) version section: from the first "## "
+            # header up to, but not including, the next one.
+            SECTION=$(printf '%s' "$CL" | base64 -d | awk '/^## /{c++} c==2{exit} c>=1{print}')
+            if [ -n "$SECTION" ]; then
+              # The section carries release-please's own "## [version] (date)"
+              # header + grouped Features/Bug Fixes — same as the stable notes.
+              printf '\n%s\n' "$SECTION" >> body.md
+            fi
+          fi
+
           RELEASE_ID=$(gh api --method POST "repos/${{ github.repository }}/releases" \
             -f tag_name="$TAG" \
             -f target_commitish="${{ github.sha }}" \
             -f name="McpMux $TAG" \
-            -f body="Automated pre-release built from main (${{ github.sha }}). Early build — may be unstable. Use the Stable channel in Settings → Software Updates for published releases." \
+            -f body="$(cat body.md)" \
             -F draft=true -F prerelease=true \
             --jq '.id')
           echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"

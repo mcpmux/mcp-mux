@@ -6,23 +6,16 @@ use tracing::{debug, info, warn};
 
 use super::{convert_to_feature, resource_to_feature, CachedFeatures};
 use crate::pool::instance::McpClient;
-use mcpmux_core::{FeatureSetRepository, ServerFeatureRepository};
+use mcpmux_core::ServerFeatureRepository;
 
 /// Handles feature discovery and caching from MCP clients
 pub struct FeatureDiscoveryService {
     feature_repo: Arc<dyn ServerFeatureRepository>,
-    feature_set_repo: Arc<dyn FeatureSetRepository>,
 }
 
 impl FeatureDiscoveryService {
-    pub fn new(
-        feature_repo: Arc<dyn ServerFeatureRepository>,
-        feature_set_repo: Arc<dyn FeatureSetRepository>,
-    ) -> Self {
-        Self {
-            feature_repo,
-            feature_set_repo,
-        }
+    pub fn new(feature_repo: Arc<dyn ServerFeatureRepository>) -> Self {
+        Self { feature_repo }
     }
 
     /// Discover features from a connected MCP client and cache them
@@ -97,18 +90,6 @@ impl FeatureDiscoveryService {
                     server_id
                 );
             }
-        }
-
-        // Ensure server-all featureset exists
-        if let Err(e) = self
-            .feature_set_repo
-            .ensure_server_all(space_id, server_id, server_id)
-            .await
-        {
-            warn!(
-                "[FeatureDiscovery] Failed to ensure server-all featureset: {}",
-                e
-            );
         }
 
         Ok(discovered)

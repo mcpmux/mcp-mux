@@ -224,9 +224,7 @@ function buildMockHandler() {
     window.__TAURI_INTERNALS__.invoke = async function(cmd, args) {
       switch (cmd) {
         case 'list_spaces': return SPACES;
-        case 'get_active_space': return SPACES[0];
         case 'get_space': return SPACES.find(s => s.id === args?.id) || SPACES[0];
-        case 'set_active_space': return null;
         case 'create_space': return { id: crypto.randomUUID(), name: args?.name, icon: args?.icon, description: null, is_default: false, sort_order: 3, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
         case 'get_gateway_status': return { running: true, url: 'http://localhost:9315', active_sessions: 2, connected_backends: 6 };
         case 'start_gateway': return null;

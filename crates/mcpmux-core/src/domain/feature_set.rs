@@ -1,28 +1,32 @@
 //! FeatureSet entity - permission bundles for tools/prompts/resources
 //!
-//! The new featureset model uses explicit feature selection instead of glob patterns.
-//! Each featureset is scoped to a space and can be one of:
-//! - All: All features from all connected servers in the space
-//! - Default: Features auto-granted to all clients in the space
-//! - ServerAll: All features from a specific server
-//! - Custom: User-defined composition of features and other featuresets
+//! Each FeatureSet is scoped to a space and is one of two types:
+//! - **Starter**: auto-created with the Space as a convenient starting
+//!   point. Has no special routing role under the resolver — bindings and
+//!   per-client grants pick FeatureSets explicitly. Pre-resolver-v3 this
+//!   was the "Default" type and acted as the implicit fallback; that
+//!   behaviour is gone, and the rename reflects the type's actual job
+//!   (a seed you can rename, edit, or delete freely).
+//! - **Custom**: any other operator-defined FeatureSet.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// The type of a FeatureSet
+/// The type of a FeatureSet.
+///
+/// `Starter` is auto-created once per Space; `Custom` covers everything
+/// else. Routing-wise the two are interchangeable — the type tag is
+/// purely a UI affordance ("this one came pre-seeded with the Space").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[derive(Default)]
 pub enum FeatureSetType {
-    /// All features from all connected servers in this space
-    All,
-    /// Features auto-granted to all clients in this space
-    Default,
-    /// All features from a specific server
-    ServerAll,
-    /// Custom user-defined featureset
+    /// Auto-created with the Space. Editable / deletable like any other
+    /// FS — no special routing semantics. Was historically called
+    /// `Default` (DB column value carried over via migration 013).
+    Starter,
+    /// Any operator-defined FeatureSet.
     #[default]
     Custom,
 }
@@ -30,18 +34,18 @@ pub enum FeatureSetType {
 impl FeatureSetType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::All => "all",
-            Self::Default => "default",
-            Self::ServerAll => "server-all",
+            Self::Starter => "starter",
             Self::Custom => "custom",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "all" => Some(Self::All),
-            "default" => Some(Self::Default),
-            "server-all" => Some(Self::ServerAll),
+            // "default" stays accepted by the parser so a downgrade-then-
+            // upgrade dance, or a stale read of an in-memory value during
+            // migration, doesn't surprise the user. Migration 013 rewrites
+            // the DB rows to "starter" on its first run.
+            "starter" | "default" => Some(Self::Starter),
             "custom" => Some(Self::Custom),
             _ => None,
         }
@@ -154,12 +158,9 @@ impl FeatureSetMember {
 
 /// FeatureSet defines a bundle of permissions using explicit feature selection.
 ///
-/// Each featureset is scoped to a space and can contain:
-/// - Other featuresets (composition)
-/// - Specific features (tools, prompts, resources)
-///
-/// For builtin types (All, Default, ServerAll), the effective features are
-/// computed dynamically based on connected servers and their discovered features.
+/// Scoped to a space. Can contain other featuresets (composition) or specific
+/// features (tools, prompts, resources). The `Default` type is auto-created per
+/// space; its effective members can be edited by the user just like a Custom set.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureSet {
     /// Unique identifier
@@ -222,41 +223,28 @@ impl FeatureSet {
         }
     }
 
-    /// Create the "All Features" featureset for a space
-    pub fn new_all(space_id: impl Into<String>) -> Self {
-        let space_id = space_id.into();
-        let now = Utc::now();
-        Self {
-            id: format!("fs_all_{}", space_id),
-            name: "All Features".to_string(),
-            description: Some(
-                "All features from all connected MCP servers in this space".to_string(),
-            ),
-            icon: Some("🌐".to_string()),
-            space_id: Some(space_id),
-            feature_set_type: FeatureSetType::All,
-            server_id: None,
-            is_builtin: true,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            members: vec![],
-        }
-    }
-
-    /// Create the "Default" featureset for a space
-    pub fn new_default(space_id: impl Into<String>) -> Self {
+    /// Create the auto-seeded "Starter" FeatureSet for a Space.
+    ///
+    /// Uses a deterministic id (`fs_default_<space_id>`) so repositories can
+    /// upsert this row without remembering a mapping. The id prefix is
+    /// kept for FK stability — only the *type* and display copy were
+    /// renamed from "Default" → "Starter" in migration 013. Any code that
+    /// relies on the prefix should treat it as opaque.
+    pub fn new_starter(space_id: impl Into<String>) -> Self {
         let space_id = space_id.into();
         let now = Utc::now();
         Self {
             id: format!("fs_default_{}", space_id),
-            name: "Default".to_string(),
+            name: "Starter".to_string(),
             description: Some(
-                "Features automatically granted to all connected clients in this space".to_string(),
+                "Auto-created with this Space. Edit, rename, or delete freely \
+                 — bindings and per-client grants pick FeatureSets explicitly, \
+                 so this one has no special routing role."
+                    .to_string(),
             ),
             icon: Some("⭐".to_string()),
             space_id: Some(space_id),
-            feature_set_type: FeatureSetType::Default,
+            feature_set_type: FeatureSetType::Starter,
             server_id: None,
             is_builtin: true,
             is_deleted: false,
@@ -266,30 +254,11 @@ impl FeatureSet {
         }
     }
 
-    /// Create a "Server-All" featureset for a specific server in a space
-    pub fn new_server_all(
-        space_id: impl Into<String>,
-        server_id: impl Into<String>,
-        server_name: impl Into<String>,
-    ) -> Self {
-        let space_id = space_id.into();
-        let server_id = server_id.into();
-        let server_name = server_name.into();
-        let now = Utc::now();
-        Self {
-            id: format!("fs_server_{}_{}", server_id, space_id),
-            name: format!("{} - All", server_name),
-            description: Some(format!("All features from the {} server", server_name)),
-            icon: Some("📦".to_string()),
-            space_id: Some(space_id),
-            feature_set_type: FeatureSetType::ServerAll,
-            server_id: Some(server_id),
-            is_builtin: true,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            members: vec![],
-        }
+    /// Backwards-compat shim for callers that still use `new_default`.
+    /// Delegates to [`Self::new_starter`].
+    #[deprecated(note = "Renamed to `new_starter`; the FS type is now `Starter`.")]
+    pub fn new_default(space_id: impl Into<String>) -> Self {
+        Self::new_starter(space_id)
     }
 
     /// Add description
@@ -304,19 +273,15 @@ impl FeatureSet {
         self
     }
 
-    /// Check if this featureset is the "All" type for a space
-    pub fn is_all_type(&self) -> bool {
-        self.feature_set_type == FeatureSetType::All
+    /// Check if this is the auto-seeded "Starter" FeatureSet for its Space.
+    pub fn is_starter(&self) -> bool {
+        self.feature_set_type == FeatureSetType::Starter
     }
 
-    /// Check if this featureset is the "Default" type for a space
+    /// Backwards-compat alias. Prefer [`Self::is_starter`].
+    #[deprecated(note = "Renamed to `is_starter`.")]
     pub fn is_default_type(&self) -> bool {
-        self.feature_set_type == FeatureSetType::Default
-    }
-
-    /// Check if this featureset is the "ServerAll" type
-    pub fn is_server_all_type(&self) -> bool {
-        self.feature_set_type == FeatureSetType::ServerAll
+        self.is_starter()
     }
 }
 
@@ -325,31 +290,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_all_featureset() {
-        let fs = FeatureSet::new_all("space_123");
-        assert_eq!(fs.id, "fs_all_space_123");
-        assert_eq!(fs.feature_set_type, FeatureSetType::All);
-        assert!(fs.is_builtin);
-        assert!(fs.is_all_type());
-    }
-
-    #[test]
-    fn test_new_default_featureset() {
-        let fs = FeatureSet::new_default("space_123");
+    fn test_new_starter_featureset() {
+        let fs = FeatureSet::new_starter("space_123");
+        // Stable id prefix preserved for FK compatibility; only the
+        // type / display copy were renamed.
         assert_eq!(fs.id, "fs_default_space_123");
-        assert_eq!(fs.feature_set_type, FeatureSetType::Default);
+        assert_eq!(fs.feature_set_type, FeatureSetType::Starter);
         assert!(fs.is_builtin);
-        assert!(fs.is_default_type());
-    }
-
-    #[test]
-    fn test_new_server_all_featureset() {
-        let fs = FeatureSet::new_server_all("space_123", "github-mcp", "GitHub");
-        assert_eq!(fs.id, "fs_server_github-mcp_space_123");
-        assert_eq!(fs.feature_set_type, FeatureSetType::ServerAll);
-        assert_eq!(fs.server_id, Some("github-mcp".to_string()));
-        assert!(fs.is_builtin);
-        assert!(fs.is_server_all_type());
+        assert!(fs.is_starter());
     }
 
     #[test]
@@ -369,14 +317,15 @@ mod tests {
     // FeatureSetType parse tests
     #[test]
     fn test_feature_set_type_parse() {
-        assert_eq!(FeatureSetType::parse("all"), Some(FeatureSetType::All));
+        assert_eq!(
+            FeatureSetType::parse("starter"),
+            Some(FeatureSetType::Starter)
+        );
+        // Legacy alias retained so old in-memory values from a stale
+        // read still parse cleanly. Migration 013 rewrites stored rows.
         assert_eq!(
             FeatureSetType::parse("default"),
-            Some(FeatureSetType::Default)
-        );
-        assert_eq!(
-            FeatureSetType::parse("server-all"),
-            Some(FeatureSetType::ServerAll)
+            Some(FeatureSetType::Starter)
         );
         assert_eq!(
             FeatureSetType::parse("custom"),
@@ -384,24 +333,20 @@ mod tests {
         );
         assert_eq!(FeatureSetType::parse("invalid"), None);
         assert_eq!(FeatureSetType::parse(""), None);
+        // Legacy variants no longer exist
+        assert_eq!(FeatureSetType::parse("all"), None);
+        assert_eq!(FeatureSetType::parse("server-all"), None);
     }
 
     #[test]
     fn test_feature_set_type_as_str() {
-        assert_eq!(FeatureSetType::All.as_str(), "all");
-        assert_eq!(FeatureSetType::Default.as_str(), "default");
-        assert_eq!(FeatureSetType::ServerAll.as_str(), "server-all");
+        assert_eq!(FeatureSetType::Starter.as_str(), "starter");
         assert_eq!(FeatureSetType::Custom.as_str(), "custom");
     }
 
     #[test]
     fn test_feature_set_type_roundtrip() {
-        for fs_type in [
-            FeatureSetType::All,
-            FeatureSetType::Default,
-            FeatureSetType::ServerAll,
-            FeatureSetType::Custom,
-        ] {
+        for fs_type in [FeatureSetType::Starter, FeatureSetType::Custom] {
             let s = fs_type.as_str();
             let parsed = FeatureSetType::parse(s).expect("should parse");
             assert_eq!(parsed, fs_type);

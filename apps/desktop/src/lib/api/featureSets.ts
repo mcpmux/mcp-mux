@@ -1,9 +1,30 @@
 import { invoke } from '@tauri-apps/api/core';
 
 /**
- * FeatureSet type determines how features are resolved.
+ * FeatureSet type.
+ *
+ * - `default`: auto-created per Space. Fallback when no WorkspaceBinding matches.
+ * - `custom`: user-defined.
  */
-export type FeatureSetType = 'all' | 'default' | 'server-all' | 'custom';
+/**
+ * `starter` is the auto-seeded FS that comes with each Space. It has no
+ * special routing role under resolver v3 — bindings and per-client grants
+ * pick FeatureSets explicitly. The legacy `'default'` value is accepted on
+ * read because migration 013 rewrites stored rows lazily and a stale fetch
+ * could still surface it; new writes use `'starter'`.
+ */
+export type FeatureSetType = 'starter' | 'default' | 'custom';
+
+/**
+ * Is this FeatureSet the auto-seeded "Starter" for its Space? Returns
+ * `true` for both the new `'starter'` value and the legacy `'default'`
+ * — migration 013 rewrites rows in-place but a stale read could still
+ * surface the old value. Use this everywhere instead of comparing the
+ * type literal directly so the transition window is invisible to UI.
+ */
+export function isStarterFeatureSet(fs: { feature_set_type: FeatureSetType }): boolean {
+  return fs.feature_set_type === 'starter' || fs.feature_set_type === 'default';
+}
 
 /**
  * Member type in a feature set.
@@ -103,24 +124,6 @@ export async function createFeatureSet(input: CreateFeatureSetInput): Promise<Fe
  */
 export async function deleteFeatureSet(id: string): Promise<void> {
   return invoke('delete_feature_set', { id });
-}
-
-/**
- * Get builtin feature sets for a space.
- */
-export async function getBuiltinFeatureSets(spaceId: string): Promise<FeatureSet[]> {
-  return invoke('get_builtin_feature_sets', { spaceId });
-}
-
-/**
- * Ensure a server-all featureset exists for a server in a space.
- */
-export async function ensureServerAllFeatureSet(
-  spaceId: string,
-  serverId: string,
-  serverName: string
-): Promise<FeatureSet> {
-  return invoke('ensure_server_all_feature_set', { spaceId, serverId, serverName });
 }
 
 /**

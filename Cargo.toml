@@ -58,7 +58,7 @@ os_pipe = "1"
 
 # MCP Protocol
 # NOTE: Never use local path dependency - E:\one-mcp\rust-sdk is for source lookup only
-rmcp = { version = "0.17.0", features = [
+rmcp = { version = "1.5", features = [
     "client",
     "server",
     "transport-io",

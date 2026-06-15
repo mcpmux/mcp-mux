@@ -43,13 +43,21 @@ McpMux sits between your AI clients and your MCP servers. It handles:
 
 Isolated workspaces with separate server configurations and credentials. Keep your work GitHub token completely separate from your personal one.
 
+### [Workspaces](/docs/workspaces/)
+
+Folder-based routing. Map a project folder to a Space + FeatureSet so each session resolves to exactly the tools that folder should get — automatically, per folder.
+
 ### [FeatureSets](/docs/feature-sets/)
 
-Permission bundles that control which MCP tools, resources, and prompts each AI client can access. Create read-only views, role-based access, or domain-specific bundles.
+Permission bundles that control which MCP tools, resources, and prompts a session can access. Create read-only views, role-based access, or domain-specific bundles.
+
+### [Tool Optimization](/docs/tool-optimization/)
+
+Built-in `@mux` meta-tools that let the AI curate its own toolset from chat — discover, compose, and pin a focused set, with writes gated by a one-click approval.
 
 ### [Clients](/docs/clients/)
 
-AI applications connected to McpMux. Configure connection modes (follow active Space, lock to a Space, or ask on change) and assign permissions per Space.
+AI applications connected to McpMux. Approve each with one click; their tools are decided by the folder they open via workspace-driven routing, not configured per app.
 
 ### [Servers](/docs/servers/)
 

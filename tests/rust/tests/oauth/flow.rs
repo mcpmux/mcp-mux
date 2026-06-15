@@ -1,5 +1,9 @@
 //! OAuth Flow integration tests with mock HTTP server
 
+// Pre-existing test code uses `&mock_server.uri()` where clippy 1.93+ prefers
+// passing the String directly. Silenced at file scope to keep the diff small.
+#![allow(clippy::needless_borrows_for_generic_args)]
+
 use mcpmux_gateway::oauth::{
     AuthorizationCallback, OAuthConfig, OAuthFlow, OAuthManager, OAuthMetadata,
 };

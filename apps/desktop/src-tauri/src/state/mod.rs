@@ -4,16 +4,17 @@
 //! between Tauri commands.
 
 use mcpmux_core::{
-    AppSettingsRepository, AppSettingsService, ClientService, CredentialRepository,
-    FeatureSetRepository, GatewayPortService, InboundMcpClientRepository,
-    InstalledServerRepository, LogConfig, OutboundOAuthRepository, ServerDiscoveryService,
-    ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager, SpaceRepository,
-    SpaceService,
+    AppSettingsRepository, AppSettingsService, CredentialRepository, FeatureSetRepository,
+    GatewayPortService, InboundMcpClientRepository, InstalledServerRepository, LogConfig,
+    OutboundOAuthRepository, ServerDiscoveryService,
+    ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager,
+    SpaceBuiltinConfigRepository, SpaceRepository, SpaceService, WorkspaceBindingRepository,
 };
 use mcpmux_storage::{
     Database, FieldEncryptor, SqliteAppSettingsRepository, SqliteCredentialRepository,
     SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
-    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository, SqliteSpaceRepository,
+    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository,
+    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,8 +33,6 @@ pub struct AppState {
     pub gateway_port_service: Arc<GatewayPortService>,
     /// Service for managing spaces
     pub space_service: SpaceService,
-    /// Service for managing clients (auto-grants, etc.)
-    pub client_service: ClientService,
     /// Server discovery service for loading servers from API/bundled/user spaces
     pub server_discovery: Arc<ServerDiscoveryService>,
     /// Server log manager for file-based logging
@@ -48,6 +47,10 @@ pub struct AppState {
     pub feature_set_repository: Arc<dyn FeatureSetRepository>,
     /// Client repository for AI clients
     pub client_repository: Arc<dyn InboundMcpClientRepository>,
+    /// Workspace-root -> FeatureSet bindings (resolver v2)
+    pub workspace_binding_repository: Arc<dyn WorkspaceBindingRepository>,
+    /// Per-Space built-in server config (Tool Optimization enablement + tool toggles)
+    pub space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository>,
     /// Server feature repository for discovered MCP features (implements core trait)
     pub server_feature_repository: Arc<SqliteServerFeatureRepository>,
     /// Server feature repository cast to core trait (for gateway services)
@@ -103,6 +106,12 @@ impl AppState {
         let client_repository: Arc<dyn InboundMcpClientRepository> =
             Arc::new(SqliteInboundMcpClientRepository::new(db.clone()));
 
+        let workspace_binding_repository: Arc<dyn WorkspaceBindingRepository> =
+            Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
+
+        let space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository> =
+            Arc::new(SqliteSpaceBuiltinConfigRepository::new(db.clone()));
+
         let server_feature_repository = Arc::new(SqliteServerFeatureRepository::new(db.clone()));
         let server_feature_repository_core: Arc<dyn CoreServerFeatureRepository> =
             server_feature_repository.clone();
@@ -118,8 +127,6 @@ impl AppState {
             space_repository,
             feature_set_repository.clone(),
         );
-        let client_service =
-            ClientService::new(client_repository.clone(), feature_set_repository.clone());
 
         // Create server discovery service
         // Spaces directory is relative to app data_dir (single source of truth)
@@ -154,7 +161,6 @@ impl AppState {
             settings_repository,
             gateway_port_service,
             space_service,
-            client_service,
             server_discovery,
             server_log_manager,
             installed_server_repository,
@@ -162,6 +168,8 @@ impl AppState {
             backend_oauth_repository,
             feature_set_repository,
             client_repository,
+            workspace_binding_repository,
+            space_builtin_config_repository,
             server_feature_repository,
             server_feature_repository_core,
             encryptor,
@@ -185,8 +193,12 @@ impl AppState {
         &self.spaces_dir
     }
 
-    /// Get the path to a specific space's config file
-    pub fn space_config_path(&self, space_id: &str) -> PathBuf {
+    /// Get the path to a specific space's config file.
+    ///
+    /// Fails when `space_id` is not a valid UUID — the id arrives over IPC,
+    /// so this is the path-traversal guard for every space-config command.
+    pub fn space_config_path(&self, space_id: &str) -> Result<PathBuf, String> {
         mcpmux_core::get_space_config_path(&self.spaces_dir, space_id)
+            .map_err(|e| format!("Invalid space id '{space_id}': {e}"))
     }
 }

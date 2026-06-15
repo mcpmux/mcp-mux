@@ -2,7 +2,11 @@
 //!
 //! Tests the complete MCP request handling flow using FeatureService:
 //! - tools/list, tools/call with authorization
-//! - resources/list, resources/read with authorization  
+//! - resources/list, resources/read with authorization
+
+// clippy 1.93+ prefers `std::slice::from_ref(&id)` over `&[id.clone()]`.
+// Kept as-is for test readability.
+#![allow(clippy::cloned_ref_to_slice_refs)]
 //! - prompts/list, prompts/get with authorization
 //! - Space isolation
 
@@ -81,6 +85,53 @@ impl TestContext {
         self.feature_set_repo.create(&fs).await.unwrap();
         id
     }
+
+    /// Build a FeatureSet that grants every feature currently known to the
+    /// mock feature repository. Replaces the legacy `FeatureSet::new_all`
+    /// escape hatch — with the new model, "grant all" is expressed as a
+    /// Custom set whose members enumerate every ServerFeature id.
+    async fn new_grant_everything_set(&self) -> FeatureSet {
+        let mut fs = FeatureSet::new_custom("All (test fixture)", &self.space_id);
+        for feature in self
+            .feature_repo
+            .list_for_space(&self.space_id)
+            .await
+            .unwrap()
+        {
+            fs.members.push(FeatureSetMember {
+                id: Uuid::new_v4().to_string(),
+                feature_set_id: fs.id.clone(),
+                member_type: MemberType::Feature,
+                member_id: feature.id.to_string(),
+                mode: MemberMode::Include,
+            });
+        }
+        fs
+    }
+
+    /// Build a FeatureSet whose members are every feature belonging to a
+    /// specific server — replaces `FeatureSet::new_server_all`.
+    async fn new_grant_server_all_set(&self, server_id: &str) -> FeatureSet {
+        let mut fs = FeatureSet::new_custom(
+            format!("{} - All (test fixture)", server_id),
+            &self.space_id,
+        );
+        for feature in self
+            .feature_repo
+            .list_for_server(&self.space_id, server_id)
+            .await
+            .unwrap()
+        {
+            fs.members.push(FeatureSetMember {
+                id: Uuid::new_v4().to_string(),
+                feature_set_id: fs.id.clone(),
+                member_type: MemberType::Feature,
+                member_id: feature.id.to_string(),
+                mode: MemberMode::Include,
+            });
+        }
+        fs
+    }
 }
 
 // ============================================================================
@@ -99,7 +150,7 @@ async fn test_list_tools_with_all_grant() {
         .await;
 
     // Create "All" grant
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     // Simulate tools/list with grant
@@ -191,6 +242,61 @@ async fn test_call_tool_unauthorized() {
     assert_eq!(tools.len(), 0, "No tools should be authorized");
 }
 
+/// Regression: every tool that LISTS must be callable. call_tool now authorizes
+/// + routes by matching `qualified_name()` against the SAME resolved feature
+/// set the list path uses, so a listed tool always maps back to exactly one
+/// callable feature — no prefix-cache reverse-lookup that could reject it.
+/// Covers hyphenated tool names under an alias prefix (e.g.
+/// `notion_notion-get-users`), the exact shape that surfaced the bug.
+#[tokio::test]
+async fn listed_tool_is_resolvable_by_qualified_name() {
+    let ctx = TestContext::new();
+    ctx.register_server("notion-mcp-http", Some("notion")).await;
+    ctx.add_feature("notion-mcp-http", "notion-get-users", FeatureType::Tool)
+        .await;
+    ctx.add_feature("notion-mcp-http", "notion-search", FeatureType::Tool)
+        .await;
+    // A second server with a hyphenated alias, to exercise alias≠server_id too.
+    ctx.register_server("idsearch", Some("instant-domain-search"))
+        .await;
+    ctx.add_feature("idsearch", "check_domain_availability", FeatureType::Tool)
+        .await;
+
+    let all = ctx.new_grant_everything_set().await;
+    let all_id = ctx.add_feature_set(all).await;
+
+    let listed = ctx
+        .service
+        .get_tools_for_grants(&ctx.space_id, &[all_id.clone()])
+        .await
+        .unwrap();
+    let resolved = ctx
+        .service
+        .resolve_feature_sets(&ctx.space_id, &[all_id])
+        .await
+        .unwrap();
+
+    // The hyphen-under-alias tool lists with the exact qualified name.
+    assert!(listed
+        .iter()
+        .any(|t| t.qualified_name() == "notion_notion-get-users"));
+
+    // Every listed tool maps back to EXACTLY ONE callable feature by qualified
+    // name — the invariant call_tool relies on for authorization + routing.
+    for t in &listed {
+        let qn = t.qualified_name();
+        let matches: Vec<_> = resolved
+            .iter()
+            .filter(|f| {
+                f.feature_type == FeatureType::Tool && f.is_available && f.qualified_name() == qn
+            })
+            .collect();
+        assert_eq!(matches.len(), 1, "listed tool {qn} must map to one feature");
+        assert_eq!(matches[0].feature_name, t.feature_name);
+        assert_eq!(matches[0].server_id, t.server_id);
+    }
+}
+
 // ============================================================================
 // RESOURCES FLOW TESTS
 // ============================================================================
@@ -205,7 +311,7 @@ async fn test_list_resources_with_grant() {
     ctx.add_feature("files", "file:///docs/config.json", FeatureType::Resource)
         .await;
 
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     let resources = ctx
@@ -248,7 +354,7 @@ async fn test_resource_custom_uri_scheme() {
     )
     .await;
 
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     let resources = ctx
@@ -278,7 +384,7 @@ async fn test_list_prompts_with_grant() {
     ctx.add_feature("prompts-server", "explain_code", FeatureType::Prompt)
         .await;
 
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     let prompts = ctx
@@ -330,7 +436,7 @@ async fn test_server_provides_multiple_feature_types() {
     ctx.add_feature("full-server", "my://resource", FeatureType::Resource)
         .await;
 
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     // List all
@@ -385,7 +491,7 @@ async fn test_aggregate_tools_from_multiple_servers() {
         .await;
 
     // Grant access to all
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     let tools = ctx
@@ -415,7 +521,7 @@ async fn test_partial_server_grant() {
         .await;
 
     // Create ServerAll grant for server-a only
-    let server_all_a = FeatureSet::new_server_all(&ctx.space_id, "server-a", "Server A");
+    let server_all_a = ctx.new_grant_server_all_set("server-a").await;
     let server_all_a_id = ctx.add_feature_set(server_all_a).await;
 
     let tools = ctx
@@ -452,8 +558,15 @@ async fn test_features_dont_leak_between_spaces() {
     feature_repo.upsert(&work_tool).await.unwrap();
     feature_repo.upsert(&personal_tool).await.unwrap();
 
-    // Create All grant for work space
-    let work_all = FeatureSet::new_all(&space_work);
+    // Create "grant-everything-in-work" FS manually (no new_all helper any more).
+    let mut work_all = FeatureSet::new_custom("All (test fixture)", &space_work);
+    work_all.members.push(FeatureSetMember {
+        id: Uuid::new_v4().to_string(),
+        feature_set_id: work_all.id.clone(),
+        member_type: MemberType::Feature,
+        member_id: work_tool.id.to_string(),
+        mode: MemberMode::Include,
+    });
     let work_all_id = work_all.id.clone();
     feature_set_repo.create(&work_all).await.unwrap();
 
@@ -545,7 +658,7 @@ async fn test_unavailable_features_filtered_out() {
     unavailable.is_available = false;
     ctx.feature_repo.upsert(&unavailable).await.unwrap();
 
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     let tools = ctx
@@ -566,7 +679,7 @@ async fn test_server_disconnect_marks_features_unavailable() {
     ctx.add_feature("server", "tool_1", FeatureType::Tool).await;
     ctx.add_feature("server", "tool_2", FeatureType::Tool).await;
 
-    let all_fs = FeatureSet::new_all(&ctx.space_id);
+    let all_fs = ctx.new_grant_everything_set().await;
     let all_fs_id = ctx.add_feature_set(all_fs).await;
 
     // Initially available

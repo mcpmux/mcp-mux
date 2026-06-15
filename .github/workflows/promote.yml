@@ -1,0 +1,130 @@
+name: Promote Pre-release to Stable
+
+# Escape hatch: ship the *exact tested code* of a pre-release as a clean stable
+# release. Rebuilds the pre-release's commit at the stable version (X.Y.Z),
+# fully signed, then publishes — so /releases/latest and the Stable update
+# channel pick it up. The normal path remains merging the release-please PR.
+#
+# Note: Homebrew/APT are refreshed by the normal release-please flow, not here.
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease_tag:
+        description: 'Pre-release tag to promote (e.g. v0.4.0-pre.318)'
+        required: true
+        type: string
+
+concurrency:
+  group: promote-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      stable_version: ${{ steps.resolve.outputs.stable_version }}
+      stable_tag: ${{ steps.resolve.outputs.stable_tag }}
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - name: Resolve commit + stable version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PRE_TAG="${{ inputs.prerelease_tag }}"
+          PRE_TAG="v${PRE_TAG#v}"   # normalize leading v
+          # Strip the pre-release (-<n>) and any +build suffix to get the
+          # stable version, e.g. 0.4.0-185 -> 0.4.0.
+          STABLE_VERSION=$(printf '%s' "${PRE_TAG#v}" | sed -E 's/-.*$//; s/\+.*$//')
+          STABLE_TAG="v${STABLE_VERSION}"
+
+          # The commit the pre-release was built from (deref annotated tags).
+          REF=$(gh api "repos/${{ github.repository }}/git/ref/tags/${PRE_TAG}")
+          SHA=$(printf '%s' "$REF" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).object.sha))')
+          TYPE=$(printf '%s' "$REF" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).object.type))')
+          if [ "$TYPE" = "tag" ]; then
+            SHA=$(gh api "repos/${{ github.repository }}/git/tags/${SHA}" --jq '.object.sha')
+          fi
+
+          # Refuse to clobber an existing stable release.
+          if gh release view "$STABLE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::Stable release $STABLE_TAG already exists — nothing to promote"
+            exit 1
+          fi
+
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "stable_version=$STABLE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Promoting $PRE_TAG ($SHA) -> $STABLE_TAG"
+
+      - name: Create draft stable release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_ID=$(gh api --method POST "repos/${{ github.repository }}/releases" \
+            -f tag_name="${{ steps.resolve.outputs.stable_tag }}" \
+            -f target_commitish="${{ steps.resolve.outputs.sha }}" \
+            -f name="${{ steps.resolve.outputs.stable_tag }}" \
+            -f body="Promoted from ${{ inputs.prerelease_tag }}." \
+            -F draft=true -F prerelease=false \
+            --jq '.id')
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          echo "Created draft release id=$RELEASE_ID"
+
+  build:
+    needs: prepare
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      set_version: ${{ needs.prepare.outputs.stable_version }}
+      release_id: ${{ needs.prepare.outputs.release_id }}
+      apple_full_signing: true
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Import GPG signing key
+        run: echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | gpg --batch --import
+
+      - name: Sign release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.stable_tag }}"
+          REPO="${{ github.repository }}"
+          mkdir -p artifacts sigs
+          gh release download "$TAG" --dir artifacts --repo "$REPO" \
+            --pattern "*.deb" --pattern "*.rpm" --pattern "*.AppImage" \
+            --pattern "*.dmg" --pattern "*.exe" --pattern "*.msi" \
+            --pattern "*.nsis.zip" || true
+          for file in artifacts/*; do
+            [ -f "$file" ] || continue
+            gpg --batch --yes --detach-sign --armor -o "sigs/$(basename "$file").sig" "$file"
+          done
+          if ls sigs/*.sig >/dev/null 2>&1; then
+            gh release upload "$TAG" sigs/*.sig --repo "$REPO" --clobber
+          fi
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ needs.prepare.outputs.stable_tag }}" \
+            --draft=false \
+            --repo "${{ github.repository }}"

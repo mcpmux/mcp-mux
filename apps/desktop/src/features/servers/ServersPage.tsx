@@ -1,6 +1,6 @@
 /**
  * Servers page for managing installed MCP servers and their connections.
- * 
+ *
  * Uses event-driven ServerManager for:
  * - Real-time status updates via Tauri events
  * - Connect/Reconnect/Cancel button logic
@@ -19,15 +19,24 @@ import {
   Clock,
   FileJson,
   FolderOpen,
+  Compass,
+  ArrowRight,
 } from 'lucide-react';
+import { PageHeader } from '@mcpmux/ui';
 import { ServerActionMenu } from './ServerActionMenu';
-import type { ServerViewModel, ServerDefinition, InstalledServerState, InputDefinition } from '../../types/registry';
+import type {
+  ServerViewModel,
+  ServerDefinition,
+  InstalledServerState,
+  InputDefinition,
+} from '../../types/registry';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
 import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverManager';
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
 import { useViewSpace, useNavigateTo } from '@/stores';
 import { useServerManager } from '@/hooks/useServerManager';
+import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { useGatewayEvents, useDomainEvents } from '@/hooks/useDomainEvents';
 import type { GatewayChangedPayload, ServerChangedPayload } from '@/hooks/useDomainEvents';
 import type { FeaturesUpdatedEvent } from '@/lib/api/serverManager';
@@ -41,23 +50,23 @@ function mergeDefinitionsWithStates(
   definitions: ServerDefinition[],
   states: InstalledServerState[]
 ): ServerViewModel[] {
-  const stateMap = new Map(states.map(s => [s.server_id, s]));
-  
-  return definitions.map(def => {
+  const stateMap = new Map(states.map((s) => [s.server_id, s]));
+
+  return definitions.map((def) => {
     const state = stateMap.get(def.id);
-    
+
     // Check if any required inputs are missing
     const inputs = def.transport.metadata?.inputs ?? [];
     const inputValues = state?.input_values ?? {};
-    const missing_required_inputs = inputs.some((input: InputDefinition) =>
-      input.required && !inputValues[input.id]
+    const missing_required_inputs = inputs.some(
+      (input: InputDefinition) => input.required && !inputValues[input.id]
     );
-    
+
     // Calculate initial connection_status based on enabled state
     // Calculate initial connection_status based on enabled state
     // Actual runtime status comes from ServerManager events via useServerManager hook
     const connection_status = state?.enabled ? 'connecting' : 'disconnected';
-    
+
     return {
       ...def,
       is_installed: !!state,
@@ -85,11 +94,11 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
       const definition: ServerDefinition = JSON.parse(state.cached_definition);
       const inputValues = state.input_values;
       const requiredInputs = definition.transport.metadata?.inputs?.filter((i) => i.required) || [];
-      const missing_required_inputs = requiredInputs.some(
-        (input) => !inputValues[input.id]
-      );
+      const missing_required_inputs = requiredInputs.some((input) => !inputValues[input.id]);
       const connection_status = state.enabled
-        ? (missing_required_inputs ? 'error' : 'connecting')
+        ? missing_required_inputs
+          ? 'error'
+          : 'connecting'
         : 'disconnected';
 
       return {
@@ -145,7 +154,6 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
   } as ServerViewModel;
 }
 
-
 interface ConfigModalState {
   open: boolean;
   server: ServerViewModel | null;
@@ -166,8 +174,12 @@ export function ServersPage() {
   const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const gatewayControl = useGatewayControl();
   // Bottom toast notifications
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'success' | 'error' | 'info';
+  } | null>(null);
   const [configModal, setConfigModal] = useState<ConfigModalState>({
     open: false,
     server: null,
@@ -181,16 +193,18 @@ export function ServersPage() {
   const [serverFeatures, setServerFeatures] = useState<Record<string, ServerFeature[]>>({});
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [loadingFeatures, setLoadingFeatures] = useState<Set<string>>(new Set());
-  
+
   // Log viewer state
   const [logViewerServer, setLogViewerServer] = useState<{ id: string; name: string } | null>(null);
 
   // Definition viewer state
-  const [definitionServer, setDefinitionServer] = useState<{ id: string; name: string } | null>(null);
-  
+  const [definitionServer, setDefinitionServer] = useState<{ id: string; name: string } | null>(
+    null
+  );
+
   // Config editor state
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
-  
+
   const viewSpace = useViewSpace();
   const navigateTo = useNavigateTo();
 
@@ -208,39 +222,48 @@ export function ServersPage() {
     onFeaturesChange: (event: FeaturesUpdatedEvent) => {
       // Update features when they change
       console.log('[ServersPage] Features updated:', event);
-      
+
       // Flatten features from the event (tools, prompts, resources)
       const allFeatures = [
         ...event.features.tools,
         ...event.features.prompts,
         ...event.features.resources,
       ];
-      
+
       // Update server features state directly from event
-      setServerFeatures(prev => ({
+      setServerFeatures((prev) => ({
         ...prev,
         [event.server_id]: allFeatures,
       }));
-      
+
       // Automatically expand server to show features
-      setExpandedServers(prev => new Set(prev).add(event.server_id));
+      setExpandedServers((prev) => new Set(prev).add(event.server_id));
     },
   });
-  
+
   // Helper to get runtime status for a server (from ServerManager events)
-  const getRuntimeStatus = useCallback((serverId: string): ConnectionStatus | undefined => {
-    return serverStatuses[serverId]?.status;
-  }, [serverStatuses]);
-  
+  const getRuntimeStatus = useCallback(
+    (serverId: string): ConnectionStatus | undefined => {
+      return serverStatuses[serverId]?.status;
+    },
+    [serverStatuses]
+  );
+
   // Helper to check if server has connected before
-  const hasConnectedBefore = useCallback((serverId: string): boolean => {
-    return serverStatuses[serverId]?.has_connected_before ?? false;
-  }, [serverStatuses]);
-  
+  const hasConnectedBefore = useCallback(
+    (serverId: string): boolean => {
+      return serverStatuses[serverId]?.has_connected_before ?? false;
+    },
+    [serverStatuses]
+  );
+
   // Helper to get auth progress for a server
-  const getAuthRemainingSeconds = useCallback((serverId: string): number | undefined => {
-    return authProgress[serverId];
-  }, [authProgress]);
+  const getAuthRemainingSeconds = useCallback(
+    (serverId: string): number | undefined => {
+      return authProgress[serverId];
+    },
+    [authProgress]
+  );
 
   // Show toast notification
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -279,7 +302,7 @@ export function ServersPage() {
       if (!viewSpace || payload.space_id !== viewSpace.id) {
         return;
       }
-      
+
       // Reload server list when a server is installed or uninstalled
       if (payload.action === 'installed' || payload.action === 'uninstalled') {
         console.log('[ServersPage] Server lifecycle event:', payload.action, payload.server_id);
@@ -295,56 +318,58 @@ export function ServersPage() {
   const loadData = async () => {
     try {
       setIsLoading(true);
-      
+
       // Use allSettled so we can show installed servers even if registry is offline
-      const [installedResult, gatewayResult, definitionsResult, statusesResult] = await Promise.allSettled([
-        import('@/lib/api/registry').then((m) => m.listInstalledServers(viewSpace?.id)),
-        import('@/lib/api/gateway').then((m) => m.getGatewayStatus(viewSpace?.id)),
-        import('@/lib/api/registry').then((m) => m.discoverServers()),
-        viewSpace?.id ? fetchServerStatuses(viewSpace.id) : Promise.resolve({} as Record<string, ServerStatusResponse>),
-      ]);
+      const [installedResult, gatewayResult, definitionsResult, statusesResult] =
+        await Promise.allSettled([
+          import('@/lib/api/registry').then((m) => m.listInstalledServers(viewSpace?.id)),
+          import('@/lib/api/gateway').then((m) => m.getGatewayStatus(viewSpace?.id)),
+          import('@/lib/api/registry').then((m) => m.discoverServers()),
+          viewSpace?.id
+            ? fetchServerStatuses(viewSpace.id)
+            : Promise.resolve({} as Record<string, ServerStatusResponse>),
+        ]);
 
       // Extract values, using fallbacks for failures
       const installed = installedResult.status === 'fulfilled' ? installedResult.value : [];
-      const gateway = gatewayResult.status === 'fulfilled'
-        ? gatewayResult.value
-        : { running: false, url: null };
-      const definitions = definitionsResult.status === 'fulfilled'
-        ? definitionsResult.value
-        : [];
-      const runtimeStatuses: Record<string, ServerStatusResponse> = statusesResult.status === 'fulfilled'
-        ? statusesResult.value
-        : {};
+      const gateway =
+        gatewayResult.status === 'fulfilled' ? gatewayResult.value : { running: false, url: null };
+      const definitions = definitionsResult.status === 'fulfilled' ? definitionsResult.value : [];
+      const runtimeStatuses: Record<string, ServerStatusResponse> =
+        statusesResult.status === 'fulfilled' ? statusesResult.value : {};
 
-      
       // Log if registry is offline but we have installed servers
       if (definitionsResult.status === 'rejected' && installed.length > 0) {
-        console.warn('[ServersPage] Registry offline, showing installed servers with cached/minimal info');
+        console.warn(
+          '[ServersPage] Registry offline, showing installed servers with cached/minimal info'
+        );
         showToast('Registry offline - showing cached server info', 'info');
       }
-      
+
       // Merge definitions with installed states
       // If definitions are missing, create minimal ServerViewModels from installed states
       let mergedServers: ServerViewModel[];
-      
+
       if (definitions.length > 0) {
         // Normal case: merge definitions with states
         const allMerged = mergeDefinitionsWithStates(definitions, installed);
-        mergedServers = allMerged.filter(s => s.is_installed);
+        mergedServers = allMerged.filter((s) => s.is_installed);
 
         // Handle installed servers not present in registry definitions
         // (e.g., registry changed, using different registry, or servers installed from user config)
-        const matchedServerIds = new Set(mergedServers.map(s => s.id));
-        const unmatchedInstalled = installed.filter(s => !matchedServerIds.has(s.server_id));
+        const matchedServerIds = new Set(mergedServers.map((s) => s.id));
+        const unmatchedInstalled = installed.filter((s) => !matchedServerIds.has(s.server_id));
         if (unmatchedInstalled.length > 0) {
-          const offlineViewModels = unmatchedInstalled.map(state => createOfflineServerViewModel(state));
+          const offlineViewModels = unmatchedInstalled.map((state) =>
+            createOfflineServerViewModel(state)
+          );
           mergedServers = [...mergedServers, ...offlineViewModels];
         }
       } else {
         // Offline case: create minimal view models from installed states only
-        mergedServers = installed.map(state => createOfflineServerViewModel(state));
+        mergedServers = installed.map((state) => createOfflineServerViewModel(state));
       }
-      
+
       // Apply runtime statuses from ServerManager to fix initial connection_status
       // (mergeDefinitionsWithStates hardcodes 'connecting' for enabled servers)
       const mapStatus = (s: ConnectionStatus): ServerViewModel['connection_status'] => {
@@ -379,18 +404,18 @@ export function ServersPage() {
   // Load features for a specific server
   const loadFeaturesForServer = async (serverId: string) => {
     if (!viewSpace) return;
-    
-    setLoadingFeatures(prev => new Set(prev).add(serverId));
+
+    setLoadingFeatures((prev) => new Set(prev).add(serverId));
     try {
       const features = await listServerFeaturesByServer(viewSpace.id, serverId);
-      setServerFeatures(prev => ({
+      setServerFeatures((prev) => ({
         ...prev,
         [serverId]: features,
       }));
     } catch (e) {
       console.warn(`Failed to load features for ${serverId}:`, e);
     } finally {
-      setLoadingFeatures(prev => {
+      setLoadingFeatures((prev) => {
         const next = new Set(prev);
         next.delete(serverId);
         return next;
@@ -400,7 +425,7 @@ export function ServersPage() {
 
   // Toggle server expansion
   const toggleExpanded = (serverId: string) => {
-    setExpandedServers(prev => {
+    setExpandedServers((prev) => {
       const next = new Set(prev);
       if (next.has(serverId)) {
         next.delete(serverId);
@@ -426,19 +451,29 @@ export function ServersPage() {
    * - 'error': Server has an error
    * - 'connected_auto': Non-OAuth server that's connected (no action buttons needed)
    */
-  const getServerAction = (server: ServerViewModel): 'enable' | 'configure' | 'connecting' | 'authenticating' | 'auth_required' | 'running' | 'error' | 'connected_auto' => {
+  const getServerAction = (
+    server: ServerViewModel
+  ):
+    | 'enable'
+    | 'configure'
+    | 'connecting'
+    | 'authenticating'
+    | 'auth_required'
+    | 'running'
+    | 'error'
+    | 'connected_auto' => {
     if (!server.enabled) {
       return 'enable';
     }
-    
+
     // Check if missing required inputs
     if (server.missing_required_inputs) {
       return 'configure';
     }
-    
+
     // Get runtime status from ServerManager (event-driven)
     const runtimeStatus = getRuntimeStatus(server.id);
-    
+
     // Use runtime status if available (more accurate, event-driven)
     if (runtimeStatus) {
       switch (runtimeStatus) {
@@ -458,7 +493,7 @@ export function ServersPage() {
           return server.auth?.type === 'oauth' ? 'auth_required' : 'connected_auto';
       }
     }
-    
+
     // Use connection_status from backend as fallback
     if (server.connection_status === 'connected') {
       return server.auth?.type === 'oauth' ? 'running' : 'connected_auto';
@@ -472,7 +507,7 @@ export function ServersPage() {
     if (server.connection_status === 'oauth_required') {
       return 'auth_required';
     }
-    
+
     // For OAuth servers: show Connect button
     // Check both static definition and runtime oauth_connected flag
     // (some servers like Sentry declare api_key but actually use OAuth at runtime)
@@ -488,23 +523,29 @@ export function ServersPage() {
   const getDisplayStatus = (server: ServerViewModel): string => {
     const action = getServerAction(server);
     const remainingSeconds = getAuthRemainingSeconds(server.id);
-    
+
     switch (action) {
-      case 'enable': return 'Disabled';
-      case 'configure': return 'Needs Configuration';
-      case 'connecting': return 'Connecting...';
-      case 'authenticating': 
+      case 'enable':
+        return 'Disabled';
+      case 'configure':
+        return 'Needs Configuration';
+      case 'connecting':
+        return 'Connecting...';
+      case 'authenticating':
         if (remainingSeconds !== undefined) {
           const minutes = Math.floor(remainingSeconds / 60);
           const seconds = remainingSeconds % 60;
           return `Authenticating... (${minutes}m ${seconds}s)`;
         }
         return 'Authenticating...';
-      case 'auth_required': 
+      case 'auth_required':
         return hasConnectedBefore(server.id) ? 'Reconnect Required' : 'Connect Required';
-      case 'running': return 'Connected';
-      case 'connected_auto': return 'Connected';
-      case 'error': return 'Error';
+      case 'running':
+        return 'Connected';
+      case 'connected_auto':
+        return 'Connected';
+      case 'error':
+        return 'Error';
     }
   };
 
@@ -512,9 +553,9 @@ export function ServersPage() {
   const getFeatureCounts = (serverId: string) => {
     const features = serverFeatures[serverId] || [];
     return {
-      tools: features.filter(f => f.feature_type === 'tool').length,
-      prompts: features.filter(f => f.feature_type === 'prompt').length,
-      resources: features.filter(f => f.feature_type === 'resource').length,
+      tools: features.filter((f) => f.feature_type === 'tool').length,
+      prompts: features.filter((f) => f.feature_type === 'prompt').length,
+      resources: features.filter((f) => f.feature_type === 'resource').length,
       total: features.length,
     };
   };
@@ -544,16 +585,16 @@ export function ServersPage() {
     setActionLoading(`enable-${server.id}`);
     // Optimistically mark as enabled so runtime status events (Connecting/Error)
     // are reflected in the UI immediately instead of showing stale "Enable" button
-    setInstalledServers(prev => prev.map(s =>
-      s.id === server.id ? { ...s, enabled: true } : s
-    ));
+    setInstalledServers((prev) =>
+      prev.map((s) => (s.id === server.id ? { ...s, enabled: true } : s))
+    );
     try {
       // Use new ServerManager v2 - handles connection + OAuth in backend
       await enableServerV2(server.id);
 
       // Expand server to show features after connection
       setTimeout(() => {
-        setExpandedServers(prev => new Set(prev).add(server.id));
+        setExpandedServers((prev) => new Set(prev).add(server.id));
         loadFeaturesForServer(server.id);
       }, 1000);
     } catch (e) {
@@ -572,19 +613,19 @@ export function ServersPage() {
     try {
       // Use new ServerManager v2 - handles disconnect + disable in backend
       await disableServerV2(server.id);
-      
+
       // Collapse and clear features
-      setExpandedServers(prev => {
+      setExpandedServers((prev) => {
         const next = new Set(prev);
         next.delete(server.id);
         return next;
       });
-      setServerFeatures(prev => {
+      setServerFeatures((prev) => {
         const next = { ...prev };
         delete next[server.id];
         return next;
       });
-      
+
       await loadData();
     } catch (e) {
       showToast(String(e), 'error');
@@ -613,11 +654,11 @@ export function ServersPage() {
 
   const handleSaveConfig = async () => {
     if (!configModal.server) return;
-    
+
     const server = configModal.server;
     const serverId = server.id;
     const shouldEnable = configModal.enableOnSave ?? false;
-    
+
     setActionLoading(`config-${serverId}`);
     try {
       const { saveServerInputs } = await import('@/lib/api/registry');
@@ -632,22 +673,31 @@ export function ServersPage() {
         viewSpace?.id ?? '',
         configModal.envOverrides,
         configModal.argsAppend,
-        configModal.extraHeaders,
+        configModal.extraHeaders
       );
 
-      setConfigModal({ open: false, server: null, inputValues: {}, envOverrides: {}, argsAppend: [], extraHeaders: {} });
-      
+      setConfigModal({
+        open: false,
+        server: null,
+        inputValues: {},
+        envOverrides: {},
+        argsAppend: [],
+        extraHeaders: {},
+      });
+
       // Only enable if requested (from Enable flow)
       if (shouldEnable && !server.enabled) {
         // Optimistically mark as enabled so runtime status events are reflected
-        setInstalledServers(prev => prev.map(s =>
-          s.id === serverId ? { ...s, enabled: true, missing_required_inputs: false } : s
-        ));
+        setInstalledServers((prev) =>
+          prev.map((s) =>
+            s.id === serverId ? { ...s, enabled: true, missing_required_inputs: false } : s
+          )
+        );
         // Use new ServerManager v2 to enable and connect
         await enableServerV2(serverId);
 
         setTimeout(() => {
-          setExpandedServers(prev => new Set(prev).add(serverId));
+          setExpandedServers((prev) => new Set(prev).add(serverId));
           loadFeaturesForServer(serverId);
         }, 1000);
       } else if (server.enabled) {
@@ -665,7 +715,7 @@ export function ServersPage() {
       setActionLoading(null);
     }
   };
-  
+
   // Handle cancel on config modal - if from Enable flow, mark as pending_config
   const handleCancelConfig = async () => {
     if (configModal.enableOnSave && configModal.server && !configModal.server.enabled) {
@@ -673,7 +723,14 @@ export function ServersPage() {
       // Set the server to pending_config state by enabling but not connecting
       // Actually, we just close the modal - the UI already shows Configure button for missing inputs
     }
-    setConfigModal({ open: false, server: null, inputValues: {}, envOverrides: {}, argsAppend: [], extraHeaders: {} });
+    setConfigModal({
+      open: false,
+      server: null,
+      inputValues: {},
+      envOverrides: {},
+      argsAppend: [],
+      extraHeaders: {},
+    });
   };
 
   // Cancel OAuth flow - uses new ServerManager v2
@@ -684,7 +741,7 @@ export function ServersPage() {
       console.warn('[ServersPage] Cancel OAuth failed:', e);
     }
   };
-  
+
   // Start OAuth flow (Connect button) - uses new ServerManager v2
   const handleConnect = async (server: ServerViewModel) => {
     setActionLoading(`connect-${server.id}`);
@@ -696,7 +753,7 @@ export function ServersPage() {
       setActionLoading(null);
     }
   };
-  
+
   // Retry connection - uses new ServerManager v2
   const handleRetry = async (server: ServerViewModel) => {
     setActionLoading(`retry-${server.id}`);
@@ -717,7 +774,7 @@ export function ServersPage() {
     try {
       const { uninstallServer } = await import('@/lib/api/registry');
       const { disconnectServer } = await import('@/lib/api/gateway');
-      
+
       if (gatewayRunning && server.enabled && viewSpace) {
         try {
           await disconnectServer(server.id, viewSpace.id);
@@ -725,7 +782,7 @@ export function ServersPage() {
           console.warn(`[ServersPage] Failed to disconnect server from gateway:`, e);
         }
       }
-      
+
       // ServerAppService handles source-aware cleanup automatically:
       // - UserConfig: removes from JSON file + DB
       // - Registry/ManualEntry: just removes from DB
@@ -741,18 +798,25 @@ export function ServersPage() {
 
   const handleStartGateway = async () => {
     try {
-      const { startGateway, connectAllEnabledServers } = await import('@/lib/api/gateway');
-      const url = await startGateway();
+      const outcome = await gatewayControl.start();
+      if (outcome.status === 'cancelled') return;
       setGatewayRunning(true);
-      setGatewayUrl(url);
-      
+      setGatewayUrl(outcome.url);
+      if (outcome.fellBackToDynamic) {
+        showToast(
+          `Preferred port was in use — gateway is now on :${outcome.port}. Update IDE configs.`,
+          'info'
+        );
+      }
+
       // Auto-connect all enabled servers
       try {
+        const { connectAllEnabledServers } = await import('@/lib/api/gateway');
         await connectAllEnabledServers();
       } catch (e) {
         console.warn('[ServersPage] Failed to auto-connect servers:', e);
       }
-      
+
       await loadData();
     } catch (e) {
       showToast(String(e), 'error');
@@ -762,14 +826,14 @@ export function ServersPage() {
   // Disconnect a server (with optional logout) - old gateway method
   const handleDisconnect = async (server: ServerViewModel, logout: boolean = false) => {
     if (!viewSpace) return;
-    
+
     setActionLoading(`disconnect-${server.id}`);
     try {
       const { disconnectServer } = await import('@/lib/api/gateway');
       await disconnectServer(server.id, viewSpace.id, logout);
       await loadData();
       // Clear features when disconnecting
-      setServerFeatures(prev => {
+      setServerFeatures((prev) => {
         const next = { ...prev };
         delete next[server.id];
         return next;
@@ -783,7 +847,6 @@ export function ServersPage() {
       setActionLoading(null);
     }
   };
-
 
   // Refresh server - Quick reconnect with EXISTING credentials
   // If succeeds → connected, if fails → shows Connect button
@@ -806,7 +869,7 @@ export function ServersPage() {
     try {
       // OAuth is detected at runtime - check if server has oauth_connected or auth type
       const isOAuthServer = server.auth?.type === 'oauth' || server.oauth_connected;
-      
+
       if (isOAuthServer) {
         // Clear tokens first
         const { logoutServer } = await import('@/lib/api/serverManager');
@@ -828,76 +891,89 @@ export function ServersPage() {
 
   if (isLoading && installedServers.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-[rgb(var(--primary))] border-t-transparent" />
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6" data-testid="servers-page">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold" data-testid="servers-title">My Servers</h1>
-          <p className="text-sm text-[rgb(var(--muted))]">
-            Manage your installed MCP servers
-          </p>
+      {gatewayControl.ConfirmDialogElement}
+      <PageHeader
+        title="Tools"
+        titleTestId="servers-title"
+        subtitle="MCP servers installed in this Space — each one provides tools your AI apps can use through the gateway."
+        actions={
+          viewSpace && (
+            <button
+              onClick={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
+              className="flex items-center gap-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] px-4 py-2.5 text-sm font-medium shadow-sm transition-all hover:border-[rgb(var(--border-subtle))] hover:bg-[rgb(var(--surface-hover))] hover:shadow"
+            >
+              <FileJson className="h-4 w-4 text-[rgb(var(--primary))]" />
+              Add Custom Server
+            </button>
+          )
+        }
+      />
+
+      {/* Gateway status — compact strip; the full surface lives on Home. */}
+      <div
+        className={`relative flex flex-wrap items-center justify-between gap-2 overflow-hidden rounded-lg border px-3 py-2 ${
+          gatewayRunning
+            ? 'border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]'
+            : 'border-[rgb(var(--warning))]/30 bg-[rgb(var(--warning))]/10'
+        }`}
+      >
+        <span
+          aria-hidden
+          className={`absolute inset-y-0 left-0 w-1 ${
+            gatewayRunning ? 'bg-emerald-500' : 'bg-amber-500'
+          }`}
+        />
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5 pl-2 text-sm">
+          <span
+            className={`h-2 w-2 flex-shrink-0 rounded-full ${
+              gatewayRunning ? 'animate-pulse bg-[rgb(var(--success))]' : 'bg-[rgb(var(--warning))]'
+            }`}
+          />
+          <span className="font-medium">
+            {gatewayRunning ? 'Gateway running' : 'Gateway stopped'}
+          </span>
+          {gatewayRunning && (
+            <code className="truncate rounded bg-[rgb(var(--surface-dim))] px-2 py-0.5 text-xs text-[rgb(var(--primary))]">
+              {gatewayUrl}
+            </code>
+          )}
         </div>
-        {viewSpace && (
+        {!gatewayRunning && (
           <button
-            onClick={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border))] hover:bg-[rgb(var(--surface-hover))] hover:border-[rgb(var(--border-subtle))] shadow-sm hover:shadow transition-all"
+            onClick={handleStartGateway}
+            className="rounded-lg bg-[rgb(var(--primary))] px-3 py-1.5 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))]"
           >
-            <FileJson className="h-4 w-4 text-[rgb(var(--primary))]" />
-            Add Custom Server
+            Start Gateway
           </button>
         )}
       </div>
 
-      {/* Gateway Status */}
-      <div
-        className={`p-4 rounded-xl border ${
-          gatewayRunning
-            ? 'bg-[rgb(var(--success))]/10 border-[rgb(var(--success))]/30'
-            : 'bg-[rgb(var(--warning))]/10 border-[rgb(var(--warning))]/30'
-        }`}
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className={`h-3 w-3 rounded-full ${gatewayRunning ? 'bg-[rgb(var(--success))] animate-pulse' : 'bg-[rgb(var(--warning))]'}`} />
-            <span className="font-medium">
-              {gatewayRunning ? 'Gateway Running' : 'Gateway Stopped'}
-            </span>
-            {gatewayRunning && (
-              <code className="text-xs bg-[rgb(var(--surface-elevated))] px-2 py-1 rounded text-[rgb(var(--primary))]">
-                {gatewayUrl}
-              </code>
-            )}
-          </div>
-          {!gatewayRunning && (
-            <button
-              onClick={handleStartGateway}
-              className="px-4 py-2 text-sm bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] rounded-lg hover:bg-[rgb(var(--primary-hover))] transition-colors"
-            >
-              Start Gateway
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* Server List */}
       {installedServers.length === 0 ? (
-        <div className="text-center py-12 text-[rgb(var(--muted))]">
-          <div className="text-5xl mb-4">📦</div>
-          <p className="text-lg mb-2">No servers installed</p>
+        <div className="flex flex-col items-center rounded-xl border border-dashed border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-6 py-12 text-center">
+          <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))]">
+            <Compass className="h-6 w-6" />
+          </span>
+          <p className="mt-4 text-base font-semibold">No tools in this Space yet</p>
+          <p className="mt-1 max-w-sm text-sm text-[rgb(var(--muted))]">
+            Install an MCP server from the registry and its tools become available to every
+            connected AI app.
+          </p>
           <button
             onClick={() => navigateTo('registry')}
-            className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] shadow-sm hover:shadow transition-all"
+            className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-5 py-2.5 text-sm font-medium text-[rgb(var(--primary-foreground))] shadow-sm transition-all hover:bg-[rgb(var(--primary-hover))] hover:shadow"
             data-testid="discover-servers-btn"
           >
-            Discover MCP Servers
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            Browse Discover
+            <ArrowRight className="h-4 w-4" />
           </button>
         </div>
       ) : (
@@ -921,18 +997,20 @@ export function ServersPage() {
             return (
               <div
                 key={server.id}
-                className="bg-[rgb(var(--card))] border border-[rgb(var(--border-subtle))] rounded-xl shadow-sm transition-all"
+                className="rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] shadow-sm transition-all"
                 data-testid={`installed-server-${server.id}`}
               >
                 {/* Server Header */}
                 <div className="p-4">
                   <div className="flex items-center justify-between">
-                    <div className={`flex items-center gap-4 ${!server.enabled ? 'opacity-60' : ''}`}>
+                    <div
+                      className={`flex items-center gap-4 ${!server.enabled ? 'opacity-60' : ''}`}
+                    >
                       {/* Expand/Collapse button for connected servers */}
                       {isConnected && (
                         <button
                           onClick={() => toggleExpanded(server.id)}
-                          className="p-1 rounded hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                          className="rounded p-1 transition-colors hover:bg-[rgb(var(--surface-hover))]"
                           data-testid={`expand-server-${server.id}`}
                         >
                           {isExpanded ? (
@@ -942,103 +1020,125 @@ export function ServersPage() {
                           )}
                         </button>
                       )}
-                      
-                      <div className="text-3xl flex items-center justify-center">
+
+                      <div className="flex items-center justify-center text-3xl">
                         {server.icon?.startsWith('http') ? (
-                          <img src={server.icon} alt="" className="w-8 h-8 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.append(document.createTextNode('📦')); }} />
+                          <img
+                            src={server.icon}
+                            alt=""
+                            className="h-8 w-8 object-contain"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              e.currentTarget.parentElement!.append(document.createTextNode('📦'));
+                            }}
+                          />
                         ) : (
                           server.icon || '📦'
                         )}
                       </div>
                       <div>
                         <div className="font-medium">{server.name}</div>
-                        <div className="text-sm text-[rgb(var(--muted))] max-w-md truncate">
+                        <div className="max-w-md truncate text-sm text-[rgb(var(--muted))]">
                           {server.description}
                         </div>
-                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
                           {/* State Badge */}
-                          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${
-                            serverAction === 'running' || serverAction === 'connected_auto' 
-                              ? 'bg-[rgb(var(--success))]/15 text-[rgb(var(--success))]' :
-                            serverAction === 'error' 
-                              ? 'bg-[rgb(var(--error))]/15 text-[rgb(var(--error))]' :
-                            serverAction === 'configure' || serverAction === 'auth_required'
-                              ? 'bg-[rgb(var(--warning))]/15 text-[rgb(var(--warning))]' :
-                            serverAction === 'connecting' || serverAction === 'authenticating'
-                              ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' :
-                            'bg-[rgb(var(--muted))]/10 text-[rgb(var(--muted))]'
-                          }`}>
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ${
+                              serverAction === 'running' || serverAction === 'connected_auto'
+                                ? 'bg-[rgb(var(--success))]/15 text-[rgb(var(--success))]'
+                                : serverAction === 'error'
+                                  ? 'bg-[rgb(var(--error))]/15 text-[rgb(var(--error))]'
+                                  : serverAction === 'configure' || serverAction === 'auth_required'
+                                    ? 'bg-[rgb(var(--warning))]/15 text-[rgb(var(--warning))]'
+                                    : serverAction === 'connecting' ||
+                                        serverAction === 'authenticating'
+                                      ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+                                      : 'bg-[rgb(var(--muted))]/10 text-[rgb(var(--muted))]'
+                            }`}
+                          >
                             {serverAction === 'connecting' || serverAction === 'authenticating' ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
-                              <span className={`h-1.5 w-1.5 rounded-full ${
-                                serverAction === 'running' || serverAction === 'connected_auto' ? 'bg-[rgb(var(--success))]' :
-                                serverAction === 'error' ? 'bg-[rgb(var(--error))]' :
-                                serverAction === 'configure' || serverAction === 'auth_required' ? 'bg-[rgb(var(--warning))]' :
-                                'bg-[rgb(var(--muted))]'
-                              }`} />
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                  serverAction === 'running' || serverAction === 'connected_auto'
+                                    ? 'bg-[rgb(var(--success))]'
+                                    : serverAction === 'error'
+                                      ? 'bg-[rgb(var(--error))]'
+                                      : serverAction === 'configure' ||
+                                          serverAction === 'auth_required'
+                                        ? 'bg-[rgb(var(--warning))]'
+                                        : 'bg-[rgb(var(--muted))]'
+                                }`}
+                              />
                             )}
                             {displayStatus}
                           </span>
-                          
+
                           {/* Feature counts for connected servers */}
                           {isConnected && counts.total > 0 && (
                             <>
                               {counts.tools > 0 && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-purple-500/15 text-purple-600 dark:text-purple-400">
+                                <span className="inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-0.5 text-xs text-purple-600 dark:text-purple-400">
                                   <Wrench className="h-3 w-3" />
                                   {counts.tools} tools
                                 </span>
                               )}
                               {counts.prompts > 0 && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                                <span className="inline-flex items-center gap-1 rounded-md bg-blue-500/15 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400">
                                   <MessageSquare className="h-3 w-3" />
                                   {counts.prompts} prompts
                                 </span>
                               )}
                               {counts.resources > 0 && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs bg-green-500/15 text-green-600 dark:text-green-400">
+                                <span className="inline-flex items-center gap-1 rounded-md bg-green-500/15 px-2 py-0.5 text-xs text-green-600 dark:text-green-400">
                                   <FileText className="h-3 w-3" />
                                   {counts.resources} resources
                                 </span>
                               )}
                             </>
                           )}
-                          
+
                           {/* Auth Type Badge */}
                           {server.auth && server.auth.type !== 'none' && (
-                            <span className="text-xs text-[rgb(var(--muted))] px-2 py-0.5 bg-[rgb(var(--surface-hover))] rounded-md">
-                              {server.auth.type === 'oauth' ? '🔐 OAuth' : 
-                               server.auth.type === 'api_key' ? '🔑 API Key' :
-                               server.auth.type === 'optional_api_key' ? '🔑 API Key (Optional)' :
-                               'Auth Required'}
+                            <span className="rounded-md bg-[rgb(var(--surface-hover))] px-2 py-0.5 text-xs text-[rgb(var(--muted))]">
+                              {server.auth.type === 'oauth'
+                                ? '🔐 OAuth'
+                                : server.auth.type === 'api_key'
+                                  ? '🔑 API Key'
+                                  : server.auth.type === 'optional_api_key'
+                                    ? '🔑 API Key (Optional)'
+                                    : 'Auth Required'}
                             </span>
                           )}
-                          
-                          <span className="text-xs text-[rgb(var(--muted))]">{server.transport.type}</span>
-                          
+
+                          <span className="text-xs text-[rgb(var(--muted))]">
+                            {server.transport.type}
+                          </span>
+
                           {/* Installation Source Badge */}
                           <SourceBadge source={server.installation_source} />
                         </div>
-                        
+
                         {/* Show runtime message inline (from ServerManager events) */}
                         {isAuthenticating && (
-                          <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                          <div className="mt-2 flex items-center gap-2 rounded-lg bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-400">
                             <Clock className="h-3 w-3" />
-                            <span>
-                              {runtimeMessage || 'Waiting for browser authorization...'}
-                            </span>
+                            <span>{runtimeMessage || 'Waiting for browser authorization...'}</span>
                           </div>
                         )}
-                        
+
                         {/* Show error indicator if in error state */}
                         {serverAction === 'error' && (
-                          <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg text-xs bg-[rgb(var(--error))]/10 text-[rgb(var(--error))]">
+                          <div className="mt-2 flex items-center gap-2 rounded-lg bg-[rgb(var(--error))]/10 px-3 py-2 text-xs text-[rgb(var(--error))]">
                             <span className="font-medium">Connection error</span>
                             <span className="text-[rgb(var(--muted))]">·</span>
                             <button
-                              onClick={() => setLogViewerServer({ id: server.id, name: server.name })}
-                              className="text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] underline cursor-pointer transition-colors"
+                              onClick={() =>
+                                setLogViewerServer({ id: server.id, name: server.name })
+                              }
+                              className="cursor-pointer text-[rgb(var(--muted))] underline transition-colors hover:text-[rgb(var(--foreground))]"
                             >
                               View logs for details
                             </button>
@@ -1054,7 +1154,7 @@ export function ServersPage() {
                         <button
                           onClick={() => handleEnableClick(server)}
                           disabled={enableLoading}
-                          className="px-4 py-2 text-sm font-medium rounded-lg bg-[rgb(var(--success))] text-white hover:bg-[rgb(var(--success))]/80 shadow-sm transition-colors disabled:opacity-50"
+                          className="rounded-lg bg-[rgb(var(--success))] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[rgb(var(--success))]/80 disabled:opacity-50"
                           data-testid={`enable-server-${server.id}`}
                         >
                           {enableLoading ? 'Enabling...' : 'Enable'}
@@ -1065,7 +1165,7 @@ export function ServersPage() {
                         <button
                           onClick={() => handleConfigureClick(server)}
                           disabled={configLoading}
-                          className="px-4 py-2 text-sm font-medium rounded-lg bg-[rgb(var(--warning))] text-white hover:bg-[rgb(var(--warning))]/80 shadow-sm transition-colors disabled:opacity-50"
+                          className="rounded-lg bg-[rgb(var(--warning))] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[rgb(var(--warning))]/80 disabled:opacity-50"
                         >
                           {configLoading ? 'Saving...' : 'Configure'}
                         </button>
@@ -1075,40 +1175,44 @@ export function ServersPage() {
                       {serverAction === 'connecting' && (
                         <button
                           disabled
-                          className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--surface-elevated))] text-[rgb(var(--muted))] cursor-not-allowed flex items-center gap-2"
+                          className="flex cursor-not-allowed items-center gap-2 rounded-lg bg-[rgb(var(--surface-elevated))] px-4 py-2 text-sm text-[rgb(var(--muted))]"
                         >
                           <Loader2 className="h-4 w-4 animate-spin" />
                           Connecting...
                         </button>
                       )}
-                      
+
                       {/* Authenticating state - show cancel button */}
                       {serverAction === 'authenticating' && (
                         <>
                           <button
                             disabled
-                            className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--warning))] text-white cursor-not-allowed flex items-center gap-2"
+                            className="flex cursor-not-allowed items-center gap-2 rounded-lg bg-[rgb(var(--warning))] px-4 py-2 text-sm text-white"
                           >
                             <Loader2 className="h-4 w-4 animate-spin" />
                             Authenticating...
                           </button>
                           <button
                             onClick={() => handleCancelOAuth(server.id)}
-                            className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                            className="rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
                           >
                             Cancel
                           </button>
                         </>
                       )}
-                      
+
                       {/* Auth Required state - show Connect/Reconnect button */}
                       {serverAction === 'auth_required' && gatewayRunning && (
                         <button
                           onClick={() => handleConnect(server)}
                           disabled={connectLoading}
-                          className="px-4 py-2 text-sm font-medium rounded-lg bg-[rgb(var(--success))] text-white hover:bg-[rgb(var(--success))]/80 shadow-sm transition-colors disabled:opacity-50"
+                          className="rounded-lg bg-[rgb(var(--success))] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[rgb(var(--success))]/80 disabled:opacity-50"
                         >
-                          {connectLoading ? 'Connecting...' : hasConnectedBefore(server.id) ? 'Reconnect' : 'Connect'}
+                          {connectLoading
+                            ? 'Connecting...'
+                            : hasConnectedBefore(server.id)
+                              ? 'Reconnect'
+                              : 'Connect'}
                         </button>
                       )}
 
@@ -1117,7 +1221,7 @@ export function ServersPage() {
                         <button
                           onClick={() => handleDisconnect(server, false)}
                           disabled={actionLoading === `disconnect-${server.id}`}
-                          className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-50"
+                          className="rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] disabled:opacity-50"
                           title="Disconnect (keep credentials)"
                         >
                           {actionLoading === `disconnect-${server.id}` ? '...' : 'Disconnect'}
@@ -1128,23 +1232,28 @@ export function ServersPage() {
                         <button
                           onClick={() => handleRetry(server)}
                           disabled={retryLoading}
-                          className="px-4 py-2 text-sm font-medium rounded-lg bg-[rgb(var(--error))] text-white hover:bg-[rgb(var(--error))]/80 shadow-sm transition-colors disabled:opacity-50"
+                          className="rounded-lg bg-[rgb(var(--error))] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[rgb(var(--error))]/80 disabled:opacity-50"
                         >
-                          {retryLoading ? 'Retrying...' : hasConnectedBefore(server.id) ? 'Reconnect' : 'Retry'}
+                          {retryLoading
+                            ? 'Retrying...'
+                            : hasConnectedBefore(server.id)
+                              ? 'Reconnect'
+                              : 'Retry'}
                         </button>
                       )}
 
                       {/* Disable button - shown when enabled and connected/running */}
-                      {server.enabled && (serverAction === 'running' || serverAction === 'connected_auto') && (
-                        <button
-                          onClick={() => handleDisableClick(server)}
-                          disabled={disableLoading}
-                          className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-50"
-                          data-testid={`disable-server-${server.id}`}
-                        >
-                          {disableLoading ? '...' : 'Disable'}
-                        </button>
-                      )}
+                      {server.enabled &&
+                        (serverAction === 'running' || serverAction === 'connected_auto') && (
+                          <button
+                            onClick={() => handleDisableClick(server)}
+                            disabled={disableLoading}
+                            className="rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] disabled:opacity-50"
+                            data-testid={`disable-server-${server.id}`}
+                          >
+                            {disableLoading ? '...' : 'Disable'}
+                          </button>
+                        )}
 
                       {/* Overflow menu with secondary actions */}
                       <ServerActionMenu
@@ -1153,17 +1262,21 @@ export function ServersPage() {
                         hasInputs={(server.transport.metadata?.inputs ?? []).length > 0}
                         isOAuth={
                           // OAuth is detected at runtime, not always in definition
-                          server.auth?.type === 'oauth' || 
-                          server.oauth_connected || 
+                          server.auth?.type === 'oauth' ||
+                          server.oauth_connected ||
                           serverAction === 'auth_required'
                         }
                         isEnabled={server.enabled}
-                        isConnected={serverAction === 'running' || serverAction === 'connected_auto'}
+                        isConnected={
+                          serverAction === 'running' || serverAction === 'connected_auto'
+                        }
                         onConfigure={() => handleConfigureClick(server)}
                         onRefresh={() => handleRefresh(server)}
                         onReconnect={() => handleReconnect(server)}
                         onViewLogs={() => setLogViewerServer({ id: server.id, name: server.name })}
-                        onViewDefinition={() => setDefinitionServer({ id: server.id, name: server.name })}
+                        onViewDefinition={() =>
+                          setDefinitionServer({ id: server.id, name: server.name })
+                        }
                         onUninstall={() => handleUninstall(server)}
                       />
                     </div>
@@ -1176,98 +1289,109 @@ export function ServersPage() {
                     {isLoadingServerFeatures ? (
                       <div className="flex items-center justify-center py-8">
                         <Loader2 className="h-6 w-6 animate-spin text-[rgb(var(--primary))]" />
-                        <span className="ml-2 text-sm text-[rgb(var(--muted))]">Loading features...</span>
+                        <span className="ml-2 text-sm text-[rgb(var(--muted))]">
+                          Loading features...
+                        </span>
                       </div>
                     ) : features.length === 0 ? (
-                      <div className="text-center py-8 text-[rgb(var(--muted))]">
+                      <div className="py-8 text-center text-[rgb(var(--muted))]">
                         <p className="text-sm">No features discovered yet</p>
-                        <p className="text-xs mt-1">Features will appear after the server initializes</p>
+                        <p className="mt-1 text-xs">
+                          Features will appear after the server initializes
+                        </p>
                         <button
                           onClick={() => loadFeaturesForServer(server.id)}
-                          className="mt-3 px-3 py-1 text-xs rounded bg-[rgb(var(--surface-hover))] hover:bg-[rgb(var(--surface-active))] transition-colors"
+                          className="mt-3 rounded bg-[rgb(var(--surface-hover))] px-3 py-1 text-xs transition-colors hover:bg-[rgb(var(--surface-active))]"
                         >
                           Refresh
                         </button>
                       </div>
                     ) : (
-                      <div className="p-4 space-y-4">
+                      <div className="space-y-4 p-4">
                         {/* Tools */}
-                        {features.filter(f => f.feature_type === 'tool').length > 0 && (
+                        {features.filter((f) => f.feature_type === 'tool').length > 0 && (
                           <div>
-                            <h4 className="text-sm font-medium flex items-center gap-2 mb-2">
+                            <h4 className="mb-2 flex items-center gap-2 text-sm font-medium">
                               <Wrench className="h-4 w-4 text-purple-500" />
-                              Tools ({features.filter(f => f.feature_type === 'tool').length})
+                              Tools ({features.filter((f) => f.feature_type === 'tool').length})
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                              {features.filter(f => f.feature_type === 'tool').map(feature => (
-                                <div
-                                  key={feature.id}
-                                  className="p-3 bg-[rgb(var(--card))] rounded-lg border border-[rgb(var(--border-subtle))]"
-                                >
-                                  <div className="font-medium text-sm">
-                                    {feature.display_name || feature.feature_name}
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+                              {features
+                                .filter((f) => f.feature_type === 'tool')
+                                .map((feature) => (
+                                  <div
+                                    key={feature.id}
+                                    className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] p-3"
+                                  >
+                                    <div className="text-sm font-medium">
+                                      {feature.display_name || feature.feature_name}
+                                    </div>
+                                    {feature.description && (
+                                      <p className="mt-1 line-clamp-2 text-xs text-[rgb(var(--muted))]">
+                                        {feature.description}
+                                      </p>
+                                    )}
                                   </div>
-                                  {feature.description && (
-                                    <p className="text-xs text-[rgb(var(--muted))] mt-1 line-clamp-2">
-                                      {feature.description}
-                                    </p>
-                                  )}
-                                </div>
-                              ))}
+                                ))}
                             </div>
                           </div>
                         )}
 
                         {/* Prompts */}
-                        {features.filter(f => f.feature_type === 'prompt').length > 0 && (
+                        {features.filter((f) => f.feature_type === 'prompt').length > 0 && (
                           <div>
-                            <h4 className="text-sm font-medium flex items-center gap-2 mb-2">
+                            <h4 className="mb-2 flex items-center gap-2 text-sm font-medium">
                               <MessageSquare className="h-4 w-4 text-blue-500" />
-                              Prompts ({features.filter(f => f.feature_type === 'prompt').length})
+                              Prompts ({features.filter((f) => f.feature_type === 'prompt').length})
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                              {features.filter(f => f.feature_type === 'prompt').map(feature => (
-                                <div
-                                  key={feature.id}
-                                  className="p-3 bg-[rgb(var(--card))] rounded-lg border border-[rgb(var(--border-subtle))]"
-                                >
-                                  <div className="font-medium text-sm">
-                                    {feature.display_name || feature.feature_name}
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+                              {features
+                                .filter((f) => f.feature_type === 'prompt')
+                                .map((feature) => (
+                                  <div
+                                    key={feature.id}
+                                    className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] p-3"
+                                  >
+                                    <div className="text-sm font-medium">
+                                      {feature.display_name || feature.feature_name}
+                                    </div>
+                                    {feature.description && (
+                                      <p className="mt-1 line-clamp-2 text-xs text-[rgb(var(--muted))]">
+                                        {feature.description}
+                                      </p>
+                                    )}
                                   </div>
-                                  {feature.description && (
-                                    <p className="text-xs text-[rgb(var(--muted))] mt-1 line-clamp-2">
-                                      {feature.description}
-                                    </p>
-                                  )}
-                                </div>
-                              ))}
+                                ))}
                             </div>
                           </div>
                         )}
 
                         {/* Resources */}
-                        {features.filter(f => f.feature_type === 'resource').length > 0 && (
+                        {features.filter((f) => f.feature_type === 'resource').length > 0 && (
                           <div>
-                            <h4 className="text-sm font-medium flex items-center gap-2 mb-2">
+                            <h4 className="mb-2 flex items-center gap-2 text-sm font-medium">
                               <FileText className="h-4 w-4 text-green-500" />
-                              Resources ({features.filter(f => f.feature_type === 'resource').length})
+                              Resources (
+                              {features.filter((f) => f.feature_type === 'resource').length})
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                              {features.filter(f => f.feature_type === 'resource').map(feature => (
-                                <div
-                                  key={feature.id}
-                                  className="p-3 bg-[rgb(var(--card))] rounded-lg border border-[rgb(var(--border-subtle))]"
-                                >
-                                  <div className="font-medium text-sm">
-                                    {feature.display_name || feature.feature_name}
+                            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+                              {features
+                                .filter((f) => f.feature_type === 'resource')
+                                .map((feature) => (
+                                  <div
+                                    key={feature.id}
+                                    className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] p-3"
+                                  >
+                                    <div className="text-sm font-medium">
+                                      {feature.display_name || feature.feature_name}
+                                    </div>
+                                    {feature.description && (
+                                      <p className="mt-1 line-clamp-2 text-xs text-[rgb(var(--muted))]">
+                                        {feature.description}
+                                      </p>
+                                    )}
                                   </div>
-                                  {feature.description && (
-                                    <p className="text-xs text-[rgb(var(--muted))] mt-1 line-clamp-2">
-                                      {feature.description}
-                                    </p>
-                                  )}
-                                </div>
-                              ))}
+                                ))}
                             </div>
                           </div>
                         )}
@@ -1283,173 +1407,194 @@ export function ServersPage() {
 
       {/* Configuration Modal */}
       {configModal.open && configModal.server && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" data-testid="config-modal-overlay">
-          <div className="dropdown-menu w-full max-w-md p-6 animate-in fade-in scale-in duration-150 max-h-[80vh] overflow-y-auto" data-testid="config-modal">
-            <h3 className="text-lg font-semibold text-[rgb(var(--foreground))] mb-2" data-testid="config-modal-title">
-              Configure {configModal.server.name}
-            </h3>
-            <p className="text-sm text-[rgb(var(--muted))] mb-4">
-              {(configModal.server.auth && 'instructions' in configModal.server.auth ? configModal.server.auth.instructions : null) || 'Enter the required configuration to enable this server.'}
-            </p>
-            
-            <div className="space-y-4">
-              {(configModal.server.transport.metadata?.inputs ?? []).map((input: InputDefinition) => {
-                const obtainUrl = input.obtain_url || input.obtain?.url;
-                const obtainInstructions = input.obtain_instructions || input.obtain?.instructions;
-                const inputType = input.type || 'text';
-                const currentValue = configModal.inputValues[input.id] ?? '';
-                
-                const handleChange = (value: string) => {
-                  setConfigModal({
-                    ...configModal,
-                    inputValues: { ...configModal.inputValues, [input.id]: value }
-                  });
-                };
-                
-                const renderInput = () => {
-                  switch (inputType) {
-                    case 'boolean':
-                      return (
-                        <label className="flex items-center gap-2 cursor-pointer">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          data-testid="config-modal-overlay"
+        >
+          <div
+            className="dropdown-menu animate-in fade-in scale-in flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden duration-150"
+            data-testid="config-modal"
+          >
+            <div className="px-6 pb-4 pt-6">
+              <h3
+                className="mb-2 text-lg font-semibold text-[rgb(var(--foreground))]"
+                data-testid="config-modal-title"
+              >
+                Configure {configModal.server.name}
+              </h3>
+              <p className="text-sm text-[rgb(var(--muted))]">
+                {(configModal.server.auth && 'instructions' in configModal.server.auth
+                  ? configModal.server.auth.instructions
+                  : null) || 'Enter the required configuration to enable this server.'}
+              </p>
+            </div>
+
+            {/* Scrollable body — the footer below stays pinned (#163) */}
+            <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-4">
+              {(configModal.server.transport.metadata?.inputs ?? []).map(
+                (input: InputDefinition) => {
+                  const obtainUrl = input.obtain_url || input.obtain?.url;
+                  const obtainInstructions =
+                    input.obtain_instructions || input.obtain?.instructions;
+                  const inputType = input.type || 'text';
+                  const currentValue = configModal.inputValues[input.id] ?? '';
+
+                  const handleChange = (value: string) => {
+                    setConfigModal({
+                      ...configModal,
+                      inputValues: { ...configModal.inputValues, [input.id]: value },
+                    });
+                  };
+
+                  const renderInput = () => {
+                    switch (inputType) {
+                      case 'boolean':
+                        return (
+                          <label className="flex cursor-pointer items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={currentValue === 'true'}
+                              onChange={(e) => handleChange(e.target.checked ? 'true' : 'false')}
+                              className="h-4 w-4 rounded border-[rgb(var(--border))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))]"
+                            />
+                            <span className="text-sm text-[rgb(var(--muted))]">
+                              {input.placeholder || 'Enable'}
+                            </span>
+                          </label>
+                        );
+                      case 'number':
+                        return (
                           <input
-                            type="checkbox"
-                            checked={currentValue === 'true'}
-                            onChange={(e) => handleChange(e.target.checked ? 'true' : 'false')}
-                            className="w-4 h-4 rounded border-[rgb(var(--border))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))]"
+                            type="number"
+                            value={currentValue}
+                            onChange={(e) => handleChange(e.target.value)}
+                            placeholder={input.placeholder || '0'}
+                            className="input w-full"
                           />
-                          <span className="text-sm text-[rgb(var(--muted))]">
-                            {input.placeholder || 'Enable'}
-                          </span>
-                        </label>
-                      );
-                    case 'number':
-                      return (
-                        <input
-                          type="number"
-                          value={currentValue}
-                          onChange={(e) => handleChange(e.target.value)}
-                          placeholder={input.placeholder || '0'}
-                          className="input w-full"
-                        />
-                      );
-                    case 'url':
-                      return (
-                        <input
-                          type="url"
-                          value={currentValue}
-                          onChange={(e) => handleChange(e.target.value)}
-                          placeholder={input.placeholder || 'https://...'}
-                          className="input w-full"
-                        />
-                      );
-                    case 'select':
-                      return (
-                        <select
-                          value={currentValue}
-                          onChange={(e) => handleChange(e.target.value)}
-                          className="input w-full"
-                          data-testid={`config-input-${input.id}`}
-                        >
-                          <option value="">{input.placeholder || `Select ${input.label.toLowerCase()}...`}</option>
-                          {(input.options ?? []).map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
+                        );
+                      case 'url':
+                        return (
+                          <input
+                            type="url"
+                            value={currentValue}
+                            onChange={(e) => handleChange(e.target.value)}
+                            placeholder={input.placeholder || 'https://...'}
+                            className="input w-full"
+                          />
+                        );
+                      case 'select':
+                        return (
+                          <select
+                            value={currentValue}
+                            onChange={(e) => handleChange(e.target.value)}
+                            className="input w-full"
+                            data-testid={`config-input-${input.id}`}
+                          >
+                            <option value="">
+                              {input.placeholder || `Select ${input.label.toLowerCase()}...`}
                             </option>
-                          ))}
-                        </select>
-                      );
-                    case 'file_path':
-                      return (
-                        <div className="flex gap-2">
+                            {(input.options ?? []).map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      case 'file_path':
+                        return (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={currentValue}
+                              onChange={(e) => handleChange(e.target.value)}
+                              placeholder={input.placeholder || 'Select a file...'}
+                              className="input w-full"
+                              data-testid={`config-input-${input.id}`}
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-secondary shrink-0 px-2"
+                              onClick={async () => {
+                                const selected = await open({ multiple: false });
+                                if (selected) handleChange(selected);
+                              }}
+                            >
+                              <FolderOpen className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      case 'directory_path':
+                        return (
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={currentValue}
+                              onChange={(e) => handleChange(e.target.value)}
+                              placeholder={input.placeholder || 'Select a directory...'}
+                              className="input w-full"
+                              data-testid={`config-input-${input.id}`}
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-secondary shrink-0 px-2"
+                              onClick={async () => {
+                                const selected = await open({ directory: true });
+                                if (selected) handleChange(selected);
+                              }}
+                            >
+                              <FolderOpen className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      case 'text':
+                      default:
+                        return (
                           <input
-                            type="text"
+                            type={input.secret ? 'password' : 'text'}
                             value={currentValue}
                             onChange={(e) => handleChange(e.target.value)}
-                            placeholder={input.placeholder || 'Select a file...'}
+                            placeholder={
+                              input.placeholder || `Enter ${input.label.toLowerCase()}...`
+                            }
                             className="input w-full"
                             data-testid={`config-input-${input.id}`}
                           />
-                          <button
-                            type="button"
-                            className="btn btn-secondary shrink-0 px-2"
-                            onClick={async () => {
-                              const selected = await open({ multiple: false });
-                              if (selected) handleChange(selected);
-                            }}
-                          >
-                            <FolderOpen className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    case 'directory_path':
-                      return (
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={currentValue}
-                            onChange={(e) => handleChange(e.target.value)}
-                            placeholder={input.placeholder || 'Select a directory...'}
-                            className="input w-full"
-                            data-testid={`config-input-${input.id}`}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-secondary shrink-0 px-2"
-                            onClick={async () => {
-                              const selected = await open({ directory: true });
-                              if (selected) handleChange(selected);
-                            }}
-                          >
-                            <FolderOpen className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    case 'text':
-                    default:
-                      return (
-                        <input
-                          type={input.secret ? 'password' : 'text'}
-                          value={currentValue}
-                          onChange={(e) => handleChange(e.target.value)}
-                          placeholder={input.placeholder || `Enter ${input.label.toLowerCase()}...`}
-                          className="input w-full"
-                          data-testid={`config-input-${input.id}`}
-                        />
-                      );
-                  }
-                };
-                
-                return (
-                  <div key={input.id}>
-                    <label className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
-                      {input.label}
-                      {input.required && <span className="text-[rgb(var(--error))] ml-1">*</span>}
-                    </label>
-                    {input.description && (
-                      <p className="text-xs text-[rgb(var(--muted))] mb-2">{input.description}</p>
-                    )}
-                    {renderInput()}
-                    {obtainUrl && (
-                      <a
-                        href={obtainUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-[rgb(var(--primary))] hover:underline mt-1 inline-block"
-                      >
-                        {obtainInstructions || 'Get your key here →'}
-                      </a>
-                    )}
-                  </div>
-                );
-              })}
+                        );
+                    }
+                  };
+
+                  return (
+                    <div key={input.id}>
+                      <label className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]">
+                        {input.label}
+                        {input.required && <span className="ml-1 text-[rgb(var(--error))]">*</span>}
+                      </label>
+                      {input.description && (
+                        <p className="mb-2 text-xs text-[rgb(var(--muted))]">{input.description}</p>
+                      )}
+                      {renderInput()}
+                      {obtainUrl && (
+                        <a
+                          href={obtainUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 inline-block text-xs text-[rgb(var(--primary))] hover:underline"
+                        >
+                          {obtainInstructions || 'Get your key here →'}
+                        </a>
+                      )}
+                    </div>
+                  );
+                }
+              )}
 
               {/* Additional Arguments (stdio only) */}
               {configModal.server.transport.type === 'stdio' && (
                 <div>
-                  <label className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+                  <label className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]">
                     Additional Arguments
                   </label>
-                  <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                  <p className="mb-2 text-xs text-[rgb(var(--muted))]">
                     Extra command-line arguments (one per line)
                   </p>
                   <textarea
@@ -1458,7 +1603,9 @@ export function ServersPage() {
                       const lines = e.target.value.split('\n');
                       setConfigModal({
                         ...configModal,
-                        argsAppend: lines.filter((l) => l.length > 0 || e.target.value.endsWith('\n')),
+                        argsAppend: lines.filter(
+                          (l) => l.length > 0 || e.target.value.endsWith('\n')
+                        ),
                       });
                     }}
                     onBlur={(e) => {
@@ -1470,7 +1617,7 @@ export function ServersPage() {
                     }}
                     placeholder="--flag&#10;value"
                     rows={3}
-                    className="input w-full font-mono text-sm resize-y"
+                    className="input w-full resize-y font-mono text-sm"
                     data-testid="config-args-append"
                   />
                 </div>
@@ -1478,10 +1625,10 @@ export function ServersPage() {
 
               {/* Environment Variable Overrides */}
               <div>
-                <label className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+                <label className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]">
                   Environment Variables
                 </label>
-                <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                <p className="mb-2 text-xs text-[rgb(var(--muted))]">
                   {configModal.server.transport.type === 'stdio'
                     ? 'Additional environment variables for the server process'
                     : 'Additional environment variables'}
@@ -1521,7 +1668,7 @@ export function ServersPage() {
                           const { [key]: _, ...rest } = configModal.envOverrides;
                           setConfigModal({ ...configModal, envOverrides: rest });
                         }}
-                        className="px-2 py-1 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--error))] transition-colors"
+                        className="px-2 py-1 text-sm text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--error))]"
                         title="Remove"
                       >
                         ✕
@@ -1546,10 +1693,10 @@ export function ServersPage() {
               {/* Extra HTTP Headers (http only) */}
               {configModal.server.transport.type === 'http' && (
                 <div>
-                  <label className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+                  <label className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]">
                     HTTP Headers
                   </label>
-                  <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                  <p className="mb-2 text-xs text-[rgb(var(--muted))]">
                     Custom HTTP headers sent with each request
                   </p>
                   <div className="space-y-2">
@@ -1587,7 +1734,7 @@ export function ServersPage() {
                             const { [key]: _, ...rest } = configModal.extraHeaders;
                             setConfigModal({ ...configModal, extraHeaders: rest });
                           }}
-                          className="px-2 py-1 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--error))] transition-colors"
+                          className="px-2 py-1 text-sm text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--error))]"
                           title="Remove"
                         >
                           ✕
@@ -1610,31 +1757,31 @@ export function ServersPage() {
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  onClick={handleCancelConfig}
-                  className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
-                  data-testid="config-cancel-btn"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveConfig}
-                  disabled={
-                    (configModal.server.transport.metadata?.inputs ?? [])
-                      .some((i: InputDefinition) => i.required && !configModal.inputValues[i.id])
-                  }
-                  className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50 transition-colors"
-                  data-testid="config-save-btn"
-                >
-                  {configModal.enableOnSave && !configModal.server.enabled 
-                    ? 'Save & Enable' 
-                    : configModal.server.enabled 
-                      ? 'Save & Reconnect'
-                      : 'Save'
-                  }
-                </button>
-              </div>
+            </div>
+
+            {/* Pinned footer — always visible regardless of form length (#163) */}
+            <div className="flex justify-end gap-2 border-t border-[rgb(var(--border))] px-6 py-4">
+              <button
+                onClick={handleCancelConfig}
+                className="rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
+                data-testid="config-cancel-btn"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveConfig}
+                disabled={(configModal.server.transport.metadata?.inputs ?? []).some(
+                  (i: InputDefinition) => i.required && !configModal.inputValues[i.id]
+                )}
+                className="rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+                data-testid="config-save-btn"
+              >
+                {configModal.enableOnSave && !configModal.server.enabled
+                  ? 'Save & Enable'
+                  : configModal.server.enabled
+                    ? 'Save & Reconnect'
+                    : 'Save'}
+              </button>
             </div>
           </div>
         </div>
@@ -1642,28 +1789,30 @@ export function ServersPage() {
 
       {/* Bottom Toast Notification */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-2 duration-200">
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg border backdrop-blur-sm ${
-            toast.type === 'success' 
-              ? 'bg-[rgb(var(--success))]/90 border-[rgb(var(--success))] text-white'
-              : toast.type === 'error'
-              ? 'bg-[rgb(var(--error))]/90 border-[rgb(var(--error))] text-white'
-              : 'bg-[rgb(var(--primary))]/90 border-[rgb(var(--primary))] text-white'
-          }`}>
+        <div className="animate-in slide-in-from-bottom-2 fixed bottom-6 left-1/2 z-50 -translate-x-1/2 duration-200">
+          <div
+            className={`flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg backdrop-blur-sm ${
+              toast.type === 'success'
+                ? 'border-[rgb(var(--success))] bg-[rgb(var(--success))]/90 text-white'
+                : toast.type === 'error'
+                  ? 'border-[rgb(var(--error))] bg-[rgb(var(--error))]/90 text-white'
+                  : 'border-[rgb(var(--primary))] bg-[rgb(var(--primary))]/90 text-white'
+            }`}
+          >
             {toast.type === 'success' && <span className="text-lg">✓</span>}
             {toast.type === 'error' && <span className="text-lg">✕</span>}
             {toast.type === 'info' && <span className="text-lg">ℹ</span>}
             <span className="text-sm font-medium">{toast.message}</span>
-            <button 
+            <button
               onClick={() => setToast(null)}
-              className="ml-2 hover:opacity-70 transition-opacity"
+              className="ml-2 transition-opacity hover:opacity-70"
             >
               ✕
             </button>
           </div>
         </div>
       )}
-      
+
       {/* Log Viewer Modal */}
       {logViewerServer && (
         <ServerLogViewer
@@ -1672,17 +1821,15 @@ export function ServersPage() {
           onClose={() => setLogViewerServer(null)}
         />
       )}
-      
+
       {/* Definition Viewer Modal */}
-      {definitionServer && (() => {
-        const server = installedServers.find(s => s.id === definitionServer.id);
-        return server ? (
-          <ServerDefinitionModal
-            server={server}
-            onClose={() => setDefinitionServer(null)}
-          />
-        ) : null;
-      })()}
+      {definitionServer &&
+        (() => {
+          const server = installedServers.find((s) => s.id === definitionServer.id);
+          return server ? (
+            <ServerDefinitionModal server={server} onClose={() => setDefinitionServer(null)} />
+          ) : null;
+        })()}
 
       {/* Config Editor Modal */}
       {editConfigSpace && (

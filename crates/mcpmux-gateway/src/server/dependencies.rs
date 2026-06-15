@@ -9,8 +9,9 @@ use std::sync::Arc;
 use crate::services::ClientMetadataService;
 use mcpmux_core::{
     AppSettingsRepository, CimdMetadataFetcher, CredentialRepository, FeatureSetRepository,
-    InstalledServerRepository, OutboundOAuthRepository, ServerDiscoveryService,
-    ServerFeatureRepository, ServerLogManager, SpaceRepository,
+    InboundMcpClientRepository, InstalledServerRepository, OutboundOAuthRepository,
+    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager,
+    SpaceBuiltinConfigRepository, SpaceRepository, WorkspaceBindingRepository,
 };
 use mcpmux_storage::{Database, InboundClientRepository};
 use tokio::sync::Mutex;
@@ -29,6 +30,16 @@ pub struct GatewayDependencies {
     pub feature_set_repo: Arc<dyn FeatureSetRepository>,
     pub space_repo: Arc<dyn SpaceRepository>,
     pub inbound_client_repo: Arc<InboundClientRepository>,
+    /// Trait-based MCP client repository (for Client entity CRUD + pin setters).
+    ///
+    /// Used by the FeatureSet resolver v2 — separate from `inbound_client_repo`
+    /// (which is the concrete OAuth-flow-focused repo).
+    pub inbound_mcp_client_repo: Arc<dyn InboundMcpClientRepository>,
+    /// Workspace -> FeatureSet bindings for resolver v2.
+    pub workspace_binding_repo: Arc<dyn WorkspaceBindingRepository>,
+    /// Per-Space built-in server config (Tool Optimization enablement + tool
+    /// toggles), consulted when advertising the `mcpmux_*` tools per Space.
+    pub builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository>,
 
     // Services (Business Layer)
     pub server_discovery: Arc<ServerDiscoveryService>,
@@ -66,6 +77,18 @@ impl GatewayDependencies {
         jwt_secret: Option<zeroize::Zeroizing<[u8; mcpmux_storage::JWT_SECRET_SIZE]>>,
         state_dir: Option<PathBuf>,
     ) -> Self {
+        // Resolver v2 repositories — always SQLite-backed; no-op at runtime
+        // until the resolver flag flips out of shadow mode.
+        let inbound_mcp_client_repo: Arc<dyn InboundMcpClientRepository> = Arc::new(
+            mcpmux_storage::SqliteInboundMcpClientRepository::new(database.clone()),
+        );
+        let workspace_binding_repo: Arc<dyn WorkspaceBindingRepository> = Arc::new(
+            mcpmux_storage::SqliteWorkspaceBindingRepository::new(database.clone()),
+        );
+        let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> = Arc::new(
+            mcpmux_storage::SqliteSpaceBuiltinConfigRepository::new(database.clone()),
+        );
+
         Self {
             installed_server_repo,
             credential_repo,
@@ -74,6 +97,9 @@ impl GatewayDependencies {
             feature_set_repo,
             space_repo,
             inbound_client_repo,
+            inbound_mcp_client_repo,
+            workspace_binding_repo,
+            builtin_config_repo,
             server_discovery,
             log_manager,
             cimd_fetcher,
@@ -214,6 +240,17 @@ impl DependenciesBuilder {
             ))
         });
 
+        // Resolver v2 repositories — always SQLite-backed for now.
+        let inbound_mcp_client_repo: Arc<dyn InboundMcpClientRepository> = Arc::new(
+            mcpmux_storage::SqliteInboundMcpClientRepository::new(database.clone()),
+        );
+        let workspace_binding_repo: Arc<dyn WorkspaceBindingRepository> = Arc::new(
+            mcpmux_storage::SqliteWorkspaceBindingRepository::new(database.clone()),
+        );
+        let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> = Arc::new(
+            mcpmux_storage::SqliteSpaceBuiltinConfigRepository::new(database.clone()),
+        );
+
         Ok(GatewayDependencies {
             installed_server_repo: self
                 .installed_server_repo
@@ -228,6 +265,9 @@ impl DependenciesBuilder {
                 .ok_or("feature_set_repo is required")?,
             space_repo,
             inbound_client_repo,
+            inbound_mcp_client_repo,
+            workspace_binding_repo,
+            builtin_config_repo,
             server_discovery: self
                 .server_discovery
                 .ok_or("server_discovery is required")?,

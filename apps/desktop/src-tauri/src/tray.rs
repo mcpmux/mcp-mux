@@ -76,12 +76,12 @@ pub fn setup_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
 /// Build the tray menu
 fn build_tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    // Space submenu (will be populated dynamically)
-    let space_submenu = SubmenuBuilder::new(app, "Active Space")
+    // Space submenu — pure navigation. Clicking a space opens the main
+    // window and asks the frontend to switch to that space's view.
+    let space_submenu = SubmenuBuilder::new(app, "Switch Space")
         .text("space_default", "🌐 Default")
         .build()?;
 
-    // Build simplified main menu
     let menu = MenuBuilder::new(app)
         .item(&space_submenu)
         .separator()
@@ -137,28 +137,27 @@ pub async fn update_tray_spaces<R: Runtime>(
     state: &AppState,
 ) -> tauri::Result<()> {
     let spaces = state.space_service.list().await.unwrap_or_default();
-    let active_space = state.space_service.get_active().await.ok().flatten();
+    let default_space = state.space_service.get_default().await.ok().flatten();
 
-    // Get tray handle
     if let Some(tray) = app.tray_by_id("mcpmux-tray") {
-        // Rebuild space submenu
-        let mut space_menu = SubmenuBuilder::new(app, "Active Space");
+        let mut space_menu = SubmenuBuilder::new(app, "Switch Space");
 
         for space in spaces {
             let icon = space.icon.clone().unwrap_or_else(|| "🌐".to_string());
-            let is_active = active_space
+            // Tag the system default Space so the user can tell which one
+            // catches sessions whose reported root has no binding.
+            let is_default = default_space
                 .as_ref()
-                .map(|a| a.id == space.id)
+                .map(|d| d.id == space.id)
                 .unwrap_or(false);
-            let check = if is_active { "✓ " } else { "  " };
-            let label = format!("{}{} {}", check, icon, space.name);
+            let suffix = if is_default { " · default" } else { "" };
+            let label = format!("{} {}{}", icon, space.name, suffix);
             let id = format!("space_{}", space.id);
             space_menu = space_menu.text(id, label);
         }
 
         let space_submenu = space_menu.build()?;
 
-        // Rebuild simplified menu
         let menu = MenuBuilder::new(app)
             .item(&space_submenu)
             .separator()

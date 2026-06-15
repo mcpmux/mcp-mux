@@ -50,20 +50,11 @@ impl McpClientHandler {
         event_tx: Option<tokio::sync::broadcast::Sender<DomainEvent>>,
         log_manager: Option<Arc<ServerLogManager>>,
     ) -> Self {
+        let mut client_info =
+            Implementation::new(format!("mcpmux-{}", server_id), env!("CARGO_PKG_VERSION"));
+        client_info.title = Some("McpMux Gateway".to_string());
         Self {
-            info: ClientInfo {
-                protocol_version: Default::default(),
-                capabilities: ClientCapabilities::default(),
-                client_info: Implementation {
-                    name: format!("mcpmux-{}", server_id),
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    title: Some("McpMux Gateway".to_string()),
-                    icons: None,
-                    website_url: None,
-                    ..Default::default()
-                },
-                meta: None,
-            },
+            info: ClientInfo::new(ClientCapabilities::default(), client_info),
             server_id: server_id.to_string(),
             space_id,
             event_tx,

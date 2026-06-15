@@ -19,11 +19,10 @@ ChatGPT ─────────┘                     ├──→ PostgreS
 The gateway receives MCP JSON-RPC requests from clients and:
 
 1. **Authenticates** the client using its access key
-2. **Resolves** which Space the client should use (based on connection mode)
-3. **Collects** the client's FeatureSet grants for that Space
-4. **Filters** the available tools, resources, and prompts based on permissions
-5. **Routes** each request to the correct backend MCP server
-6. **Returns** the response to the client
+2. **Resolves** the session's folder (its workspace root) to a Space + FeatureSet via the matching [Workspace](/docs/workspaces/) binding — falling back to the active Space when no folder is reported
+3. **Filters** the available tools, resources, and prompts to that resolved FeatureSet
+4. **Routes** each request to the correct backend MCP server
+5. **Returns** the response to the client
 
 ## Request Routing
 

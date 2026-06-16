@@ -5,6 +5,7 @@
 
 use std::net::TcpListener;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
 
 use super::app_settings_service::keys;
@@ -77,6 +78,58 @@ pub fn is_port_available(port: u16) -> bool {
     TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
+/// How long auto-start waits for a busy preferred port to free up before
+/// treating it as a real conflict and deferring to the user.
+///
+/// Sized to ride out the brief window after an in-place self-update relaunches
+/// the app while the *prior* process is still tearing down its gateway
+/// listener (its graceful shutdown alone can take ~2.5s, and the OS may hold
+/// the socket a moment longer). A genuine conflict — another app permanently
+/// owning the port — stays busy for the whole window and still surfaces the
+/// prompt afterward.
+pub const AUTOSTART_PORT_WAIT: Duration = Duration::from_secs(6);
+
+/// How often [`wait_for_port_available`] re-probes while waiting.
+const PORT_WAIT_PROBE_INTERVAL: Duration = Duration::from_millis(400);
+
+/// Wait up to `timeout` for `port` to become bind-available, re-probing every
+/// [`PORT_WAIT_PROBE_INTERVAL`]. Returns `true` as soon as the port is free, or
+/// `false` if it never frees within the window.
+///
+/// The common case (port already free) returns immediately with a single
+/// synchronous probe and never sleeps. Only a busy port pays the wait — this
+/// exists for the self-update restart race, where a single probe would see the
+/// port momentarily busy and spuriously raise a conflict even though it frees a
+/// moment later.
+pub async fn wait_for_port_available(port: u16, timeout: Duration) -> bool {
+    if is_port_available(port) {
+        return true;
+    }
+
+    info!(
+        "[PortService] Port {} busy — waiting up to {:?} for it to free up \
+         (likely a self-update restart racing the prior process's shutdown)",
+        port, timeout
+    );
+
+    // Track elapsed time by counting fixed-interval sleeps rather than reading
+    // a clock — keeps the loop deterministic and trivial to test.
+    let mut waited = Duration::ZERO;
+    while waited < timeout {
+        tokio::time::sleep(PORT_WAIT_PROBE_INTERVAL).await;
+        waited = waited.saturating_add(PORT_WAIT_PROBE_INTERVAL);
+        if is_port_available(port) {
+            info!(
+                "[PortService] Port {} became available after ~{:?}",
+                port, waited
+            );
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Allocate a dynamic port by letting the OS assign one.
 pub fn allocate_dynamic_port() -> Result<u16, PortAllocationError> {
     let listener = TcpListener::bind(("127.0.0.1", 0))
@@ -117,6 +170,18 @@ impl GatewayPortService {
     pub async fn save_port(&self, port: u16) -> Result<(), PortAllocationError> {
         self.settings
             .set(keys::gateway::PORT, &port.to_string())
+            .await
+            .map_err(|e| PortAllocationError::PersistFailed(e.to_string()))
+    }
+
+    /// Clear the persisted gateway port.
+    ///
+    /// After clearing, [`resolve`] falls back to [`DEFAULT_GATEWAY_PORT`] (or
+    /// a dynamic port if the default is in use). Use this to reset the user's
+    /// override and return to default behavior.
+    pub async fn clear_persisted_port(&self) -> Result<(), PortAllocationError> {
+        self.settings
+            .delete(keys::gateway::PORT)
             .await
             .map_err(|e| PortAllocationError::PersistFailed(e.to_string()))
     }
@@ -301,6 +366,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_wait_for_port_available_returns_immediately_when_free() {
+        let port = allocate_dynamic_port().unwrap();
+        // Already free — should resolve true without paying the timeout.
+        assert!(wait_for_port_available(port, Duration::from_secs(5)).await);
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_port_available_gives_up_when_held() {
+        // Hold the port for the whole call so it never frees.
+        let held = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = held.local_addr().unwrap().port();
+        assert!(!is_port_available(port));
+        // Short timeout keeps the test fast; must report the port as unavailable.
+        assert!(!wait_for_port_available(port, Duration::from_millis(300)).await);
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_port_available_succeeds_once_freed() {
+        // Hold the port, then release it shortly after — mirrors the prior
+        // process releasing its listener during a self-update restart.
+        let held = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = held.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(held);
+        });
+        assert!(wait_for_port_available(port, Duration::from_secs(3)).await);
+    }
+
+    #[tokio::test]
     async fn test_service_persistence() {
         let settings = Arc::new(InMemorySettings::new());
         let service = GatewayPortService::new(settings);
@@ -311,6 +406,21 @@ mod tests {
         // Save and load
         service.save_port(12345).await.unwrap();
         assert_eq!(service.load_persisted_port().await, Some(12345));
+    }
+
+    #[tokio::test]
+    async fn test_clear_persisted_port() {
+        let settings = Arc::new(InMemorySettings::new());
+        let service = GatewayPortService::new(settings);
+
+        service.save_port(54321).await.unwrap();
+        assert_eq!(service.load_persisted_port().await, Some(54321));
+
+        service.clear_persisted_port().await.unwrap();
+        assert!(service.load_persisted_port().await.is_none());
+
+        // Clearing again is a no-op
+        service.clear_persisted_port().await.unwrap();
     }
 
     #[tokio::test]

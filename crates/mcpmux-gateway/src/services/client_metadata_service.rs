@@ -134,11 +134,14 @@ impl ClientMetadataService {
             metadata_url: Some(metadata.client_id),
             metadata_cached_at: Some(now.clone()),
             metadata_cache_ttl: Some(3600), // 1 hour default
-            connection_mode: "follow_active".to_string(),
-            locked_space_id: None,
             last_seen: Some(now.clone()),
             created_at: now.clone(),
             updated_at: now,
+            // Capability bits default off / unknown; the gateway flips
+            // them on the first `initialize` for any session of this
+            // client.
+            reports_roots: false,
+            roots_capability_known: false,
         }
     }
 }

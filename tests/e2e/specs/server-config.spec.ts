@@ -13,8 +13,8 @@ test.describe('Server Configuration Modal - Custom Inputs', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     // Navigate to My Servers page
-    await page.locator('nav button:has-text("My Servers")').click();
-    await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
+    await page.locator('nav button:has-text("Tools")').click();
+    await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
   });
 
   test('should show Add Custom Server button when a space is active', async ({ page }) => {
@@ -27,7 +27,7 @@ test.describe('Server Configuration Modal - Custom Inputs', () => {
       await expect(addButton).toBeVisible();
     } else {
       // Verify the page loaded correctly even without the button
-      await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
     }
   });
 
@@ -99,7 +99,7 @@ test.describe('Server Config Modal - Additional Arguments Field', () => {
   test('args field should only appear for stdio servers', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("My Servers")').click();
+    await page.locator('nav button:has-text("Tools")').click();
 
     // Check if there are any server cards with config modals
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');
@@ -135,7 +135,7 @@ test.describe('Server Config Modal - Additional Arguments Field', () => {
   test('args textarea should accept multi-line input', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("My Servers")').click();
+    await page.locator('nav button:has-text("Tools")').click();
 
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');
     const cardCount = await serverCards.count();
@@ -174,7 +174,7 @@ test.describe('Server Config Modal - Environment Variables', () => {
   test('env variables section should be visible in config modal', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("My Servers")').click();
+    await page.locator('nav button:has-text("Tools")').click();
 
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');
     const cardCount = await serverCards.count();
@@ -209,7 +209,7 @@ test.describe('Server Config Modal - Environment Variables', () => {
   test('should add and remove environment variables', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("My Servers")').click();
+    await page.locator('nav button:has-text("Tools")').click();
 
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');
     const cardCount = await serverCards.count();
@@ -268,7 +268,7 @@ test.describe('Server Config Modal - HTTP Headers', () => {
   test('headers section should only appear for http servers', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("My Servers")').click();
+    await page.locator('nav button:has-text("Tools")').click();
 
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');
     const cardCount = await serverCards.count();
@@ -306,7 +306,7 @@ test.describe('Server Config Modal - HTTP Headers', () => {
   test('should add and remove HTTP headers', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("My Servers")').click();
+    await page.locator('nav button:has-text("Tools")').click();
 
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');
     const cardCount = await serverCards.count();
@@ -361,7 +361,7 @@ test.describe('Server Config Modal - Combined Fields Visibility', () => {
   test('should show correct fields based on transport type', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("My Servers")').click();
+    await page.locator('nav button:has-text("Tools")').click();
 
     // This test verifies transport-type-aware field visibility
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');

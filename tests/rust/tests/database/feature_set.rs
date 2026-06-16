@@ -68,17 +68,17 @@ async fn test_list_by_space() {
         .await
         .unwrap();
 
-    // List for space1: 2 custom + 2 builtin (All, Default) = 4
+    // List for space1: 2 custom + 1 builtin (Default only) = 3.
     let space1_sets = FeatureSetRepository::list_by_space(&feature_repo, &space1.id.to_string())
         .await
         .expect("Failed to list");
-    assert_eq!(space1_sets.len(), 4);
+    assert_eq!(space1_sets.len(), 3);
 
-    // List for space2: 1 custom + 2 builtin = 3
+    // List for space2: 1 custom + 1 builtin = 2.
     let space2_sets = FeatureSetRepository::list_by_space(&feature_repo, &space2.id.to_string())
         .await
         .expect("Failed to list");
-    assert_eq!(space2_sets.len(), 3);
+    assert_eq!(space2_sets.len(), 2);
 }
 
 #[tokio::test]
@@ -153,27 +153,20 @@ async fn test_ensure_builtin_for_space() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    // Ensure builtin (All + Default)
+    // Ensure builtin (only the auto-Starter; All/ServerAll were removed)
     FeatureSetRepository::ensure_builtin_for_space(&feature_repo, &space.id.to_string())
         .await
         .expect("Failed to ensure builtin");
 
-    // Get All feature set
-    let all_set = FeatureSetRepository::get_all_for_space(&feature_repo, &space.id.to_string())
-        .await
-        .expect("Failed to get All");
-    assert!(all_set.is_some());
-    assert_eq!(all_set.unwrap().feature_set_type, FeatureSetType::All);
-
-    // Get Default feature set
-    let default_set =
-        FeatureSetRepository::get_default_for_space(&feature_repo, &space.id.to_string())
+    // Get Starter feature set
+    let starter_set =
+        FeatureSetRepository::get_starter_for_space(&feature_repo, &space.id.to_string())
             .await
-            .expect("Failed to get Default");
-    assert!(default_set.is_some());
+            .expect("Failed to get Starter");
+    assert!(starter_set.is_some());
     assert_eq!(
-        default_set.unwrap().feature_set_type,
-        FeatureSetType::Default
+        starter_set.unwrap().feature_set_type,
+        FeatureSetType::Starter
     );
 }
 
@@ -187,7 +180,7 @@ async fn test_ensure_builtin_idempotent() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    // Call twice
+    // Call twice — must stay idempotent.
     FeatureSetRepository::ensure_builtin_for_space(&feature_repo, &space.id.to_string())
         .await
         .unwrap();
@@ -195,69 +188,14 @@ async fn test_ensure_builtin_idempotent() {
         .await
         .unwrap();
 
-    // Should still have exactly 2 builtin sets
-    let builtin = FeatureSetRepository::list_builtin(&feature_repo, &space.id.to_string())
+    let by_space = FeatureSetRepository::list_by_space(&feature_repo, &space.id.to_string())
         .await
-        .expect("Failed to list builtin");
-    assert_eq!(builtin.len(), 2);
-}
-
-#[tokio::test]
-async fn test_server_all_feature_set() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let feature_repo = SqliteFeatureSetRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    let space = fixtures::test_space("Test Space");
-    SpaceRepository::create(&space_repo, &space).await.unwrap();
-
-    // Create server-all feature set
-    let server_all = FeatureSetRepository::ensure_server_all(
-        &feature_repo,
-        &space.id.to_string(),
-        "my-server",
-        "My Server",
-    )
-    .await
-    .expect("Failed to ensure server-all");
-
-    assert_eq!(server_all.feature_set_type, FeatureSetType::ServerAll);
-    assert_eq!(server_all.server_id, Some("my-server".to_string()));
-
-    // Get by server_id
-    let found =
-        FeatureSetRepository::get_server_all(&feature_repo, &space.id.to_string(), "my-server")
-            .await
-            .expect("Failed to get server-all");
-    assert!(found.is_some());
-    assert_eq!(found.unwrap().id, server_all.id);
-}
-
-#[tokio::test]
-async fn test_delete_server_all() {
-    let test_db = TestDatabase::new();
-    let db = Arc::new(Mutex::new(test_db.db));
-    let feature_repo = SqliteFeatureSetRepository::new(Arc::clone(&db));
-    let space_repo = SqliteSpaceRepository::new(db);
-
-    let space = fixtures::test_space("Test Space");
-    SpaceRepository::create(&space_repo, &space).await.unwrap();
-
-    // Create then delete
-    FeatureSetRepository::ensure_server_all(&feature_repo, &space.id.to_string(), "srv", "Srv")
-        .await
-        .unwrap();
-
-    FeatureSetRepository::delete_server_all(&feature_repo, &space.id.to_string(), "srv")
-        .await
-        .expect("Failed to delete server-all");
-
-    // Should be gone
-    let found = FeatureSetRepository::get_server_all(&feature_repo, &space.id.to_string(), "srv")
-        .await
-        .unwrap();
-    assert!(found.is_none());
+        .expect("Failed to list by space");
+    let starter_count = by_space
+        .iter()
+        .filter(|fs| matches!(fs.feature_set_type, FeatureSetType::Starter))
+        .count();
+    assert_eq!(starter_count, 1, "exactly one Starter FS per space");
 }
 
 // =============================================================================
@@ -430,48 +368,28 @@ async fn test_feature_set_types() {
     let space = fixtures::test_space("Test Space");
     SpaceRepository::create(&space_repo, &space).await.unwrap();
 
-    // Note: SpaceRepository::create auto-creates All and Default feature sets
-    // So we only need to create Custom and ServerAll here
+    // Space creation auto-seeds the Starter FS; add a Custom one by hand.
     let custom = fixtures::test_feature_set("Custom", &space.id.to_string());
-    let server_all = fixtures::server_all_feature_set(&space.id.to_string(), "srv", "Server");
 
     FeatureSetRepository::create(&feature_repo, &custom)
         .await
         .unwrap();
-    FeatureSetRepository::create(&feature_repo, &server_all)
-        .await
-        .unwrap();
 
-    // Verify types - use the auto-created IDs for All and Default
-    let all_id = format!("fs_all_{}", space.id);
-    let default_id = format!("fs_default_{}", space.id);
+    // Stable id prefix kept for FK compatibility — `fs_default_<space>`
+    // remains the row id even after the type rename.
+    let starter_id = format!("fs_default_{}", space.id);
 
-    let all_loaded = FeatureSetRepository::get(&feature_repo, &all_id)
+    let starter_loaded = FeatureSetRepository::get(&feature_repo, &starter_id)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(all_loaded.feature_set_type, FeatureSetType::All);
-
-    let default_loaded = FeatureSetRepository::get(&feature_repo, &default_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(default_loaded.feature_set_type, FeatureSetType::Default);
+    assert_eq!(starter_loaded.feature_set_type, FeatureSetType::Starter);
 
     let custom_loaded = FeatureSetRepository::get(&feature_repo, &custom.id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(custom_loaded.feature_set_type, FeatureSetType::Custom);
-
-    let server_all_loaded = FeatureSetRepository::get(&feature_repo, &server_all.id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        server_all_loaded.feature_set_type,
-        FeatureSetType::ServerAll
-    );
 }
 
 // =============================================================================
@@ -503,8 +421,8 @@ async fn test_feature_set_space_isolation() {
         .await
         .unwrap();
 
-    // They should be independent
-    // Each space has 2 builtin (All, Default) + 1 custom = 3
+    // They should be independent. Each space auto-seeds the Default FS
+    // plus the custom one we just added = 2.
     let work_sets = FeatureSetRepository::list_by_space(&feature_repo, &work.id.to_string())
         .await
         .unwrap();
@@ -513,8 +431,8 @@ async fn test_feature_set_space_isolation() {
             .await
             .unwrap();
 
-    assert_eq!(work_sets.len(), 3);
-    assert_eq!(personal_sets.len(), 3);
+    assert_eq!(work_sets.len(), 2);
+    assert_eq!(personal_sets.len(), 2);
 
     // Verify the custom sets are different
     let work_custom: Vec<_> = work_sets

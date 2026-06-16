@@ -11,13 +11,13 @@ export function Sidebar({ children, header, footer }: SidebarProps) {
   return (
     <nav className="flex h-full flex-col bg-[rgb(var(--surface))]" data-testid="sidebar">
       {header && (
-        <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border-subtle))]">
+        <div className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-4">
           {header}
         </div>
       )}
-      <div className="flex-1 overflow-y-auto p-3">{children}</div>
+      <div className="flex-1 overflow-y-auto px-3 py-3">{children}</div>
       {footer && (
-        <div className="flex-shrink-0 p-4 border-t border-[rgb(var(--border-subtle))]">
+        <div className="flex-shrink-0 border-t border-[rgb(var(--border-subtle))] px-3 py-3">
           {footer}
         </div>
       )}
@@ -30,29 +30,53 @@ interface SidebarItemProps {
   label: string;
   active?: boolean;
   onClick?: () => void;
+  /** One-line tooltip explaining the destination. */
+  hint?: string;
   'data-testid'?: string;
 }
 
-export function SidebarItem({ icon, label, active, onClick, 'data-testid': testId }: SidebarItemProps) {
+export function SidebarItem({
+  icon,
+  label,
+  active,
+  onClick,
+  hint,
+  'data-testid': testId,
+}: SidebarItemProps) {
   return (
     <button
       onClick={onClick}
       data-testid={testId}
+      title={hint}
       className={cn(
-        'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150',
-        'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))]',
-        active && 'bg-[rgb(var(--primary))/10] text-[rgb(var(--primary))] hover:bg-[rgb(var(--primary))/15]'
+        'group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium',
+        'transition-all duration-150',
+        'text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))]',
+        active &&
+          'bg-[rgb(var(--primary))/10] text-[rgb(var(--primary))] hover:bg-[rgb(var(--primary))/15] hover:text-[rgb(var(--primary))]'
       )}
     >
+      {/* Accent strip — the app-wide "selected" language (solid bar on the left). */}
+      <span
+        aria-hidden
+        className={cn(
+          'absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-[rgb(var(--primary))]',
+          'transition-all duration-200',
+          active ? 'scale-y-100 opacity-100' : 'scale-y-50 opacity-0'
+        )}
+      />
       {icon && (
-        <span className={cn(
-          'h-5 w-5 flex items-center justify-center transition-colors',
-          active && 'text-[rgb(var(--primary))]'
-        )}>
+        <span
+          className={cn(
+            'flex h-5 w-5 items-center justify-center transition-transform duration-150',
+            'group-hover:scale-105',
+            active && 'text-[rgb(var(--primary))]'
+          )}
+        >
           {icon}
         </span>
       )}
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -64,9 +88,9 @@ interface SidebarSectionProps {
 
 export function SidebarSection({ title, children }: SidebarSectionProps) {
   return (
-    <div className="mb-6">
+    <div className="mb-5 last:mb-0">
       {title && (
-        <h3 className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-[rgb(var(--muted-foreground))]">
+        <h3 className="mb-1.5 select-none px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[rgb(var(--muted-foreground))]">
           {title}
         </h3>
       )}
@@ -74,4 +98,3 @@ export function SidebarSection({ title, children }: SidebarSectionProps) {
     </div>
   );
 }
-

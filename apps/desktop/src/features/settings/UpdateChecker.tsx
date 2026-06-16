@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
-import { check, Update } from '@tauri-apps/plugin-updater';
+import { Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import {
+  checkForUpdate,
+  getUpdateChannel,
+  setUpdateChannel,
+  type UpdateChannel,
+} from '@/lib/updates';
 import {
   Button,
   Card,
@@ -8,6 +14,7 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
+  Switch,
 } from '@mcpmux/ui';
 import { Download, Loader2, CheckCircle, AlertCircle, RefreshCw, RotateCcw } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
@@ -23,11 +30,17 @@ interface DownloadEvent {
 export function UpdateChecker() {
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  // True once the download finishes and the installer takes over. On Windows
+  // the app is killed during this phase, so we surface a clear "restarting"
+  // notice first — otherwise the window vanishing reads as a crash.
+  const [installing, setInstalling] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<Update | null>(null);
   const [downloadProgress, setDownloadProgress] = useState({ downloaded: 0, total: 0 });
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [currentVersion, setCurrentVersion] = useState<string>('');
   const [bundleVersionMismatch, setBundleVersionMismatch] = useState<string | null>(null);
+  const [autoInstall, setAutoInstall] = useState<boolean | null>(null);
+  const [channel, setChannel] = useState<UpdateChannel | null>(null);
 
   // Load current version on mount
   useState(() => {
@@ -35,6 +48,46 @@ export function UpdateChecker() {
       .then(setCurrentVersion)
       .catch((err) => console.error('Failed to get version:', err));
   });
+
+  // Load the auto-install preference (default on).
+  useEffect(() => {
+    invoke<boolean>('get_auto_install_updates')
+      .then(setAutoInstall)
+      .catch(() => setAutoInstall(true));
+  }, []);
+
+  const handleToggleAutoInstall = async (next: boolean) => {
+    const prev = autoInstall;
+    setAutoInstall(next);
+    try {
+      await invoke('set_auto_install_updates', { enabled: next });
+    } catch (err) {
+      setAutoInstall(prev);
+      setMessage({ type: 'error', text: `Failed to save setting: ${err}` });
+    }
+  };
+
+  // Load the current update channel (default stable).
+  useEffect(() => {
+    getUpdateChannel()
+      .then(setChannel)
+      .catch(() => setChannel('stable'));
+  }, []);
+
+  const handleSelectChannel = async (next: UpdateChannel) => {
+    if (next === channel) return;
+    const prev = channel;
+    setChannel(next);
+    // A channel switch invalidates any update found on the previous channel.
+    setUpdateInfo(null);
+    setMessage(null);
+    try {
+      await setUpdateChannel(next);
+    } catch (err) {
+      setChannel(prev);
+      setMessage({ type: 'error', text: `Failed to switch channel: ${err}` });
+    }
+  };
 
   // Check if the on-disk bundle version differs from the running version (Homebrew Cask upgrades)
   useEffect(() => {
@@ -59,8 +112,8 @@ export function UpdateChecker() {
     setUpdateInfo(null);
 
     try {
-      console.log('[Updater] Checking for updates...');
-      const update = await check();
+      console.log(`[Updater] Checking for updates (channel: ${channel ?? 'stable'})...`);
+      const update = await checkForUpdate();
 
       if (update) {
         console.log(
@@ -93,6 +146,7 @@ export function UpdateChecker() {
     if (!updateInfo) return;
 
     setDownloading(true);
+    setInstalling(false);
     setDownloadProgress({ downloaded: 0, total: 0 });
     setMessage(null);
 
@@ -116,6 +170,10 @@ export function UpdateChecker() {
             break;
           case 'Finished':
             console.log('[Updater] Download finished, installing...');
+            // Hand-off to the installer. On Windows the app is killed here,
+            // so flip to the restart notice now (before the window closes)
+            // so the disappearance is expected, not a surprise.
+            setInstalling(true);
             break;
         }
       });
@@ -130,6 +188,7 @@ export function UpdateChecker() {
         text: `Failed to install update: ${error}`,
       });
       setDownloading(false);
+      setInstalling(false);
     }
   };
 
@@ -165,6 +224,59 @@ export function UpdateChecker() {
             <p className="text-sm text-[rgb(var(--muted))] mt-1" data-testid="current-version">
               v{currentVersion || '0.0.5'}
             </p>
+          </div>
+
+          {/* Update channel */}
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Update channel</p>
+              <p className="text-xs text-[rgb(var(--muted))]">
+                {channel === 'prerelease'
+                  ? 'Pre-release: early builds from every change merged to main. Newer, but may be unstable.'
+                  : 'Stable: published releases only. Recommended for most users.'}
+              </p>
+            </div>
+            <div
+              className="inline-flex flex-shrink-0 rounded-md border p-0.5"
+              role="group"
+              aria-label="Update channel"
+              data-testid="update-channel-selector"
+            >
+              {(['stable', 'prerelease'] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={channel === null}
+                  aria-pressed={channel === value}
+                  onClick={() => handleSelectChannel(value)}
+                  data-testid={`update-channel-${value}`}
+                  className={`rounded px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                    channel === value
+                      ? 'bg-primary-500 text-white'
+                      : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+                  }`}
+                >
+                  {value === 'stable' ? 'Stable' : 'Pre-release'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Auto-install preference */}
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Install updates automatically</p>
+              <p className="text-xs text-[rgb(var(--muted))]">
+                Download and apply new versions on launch, then restart into the update. Turn off to
+                review each update before installing.
+              </p>
+            </div>
+            <Switch
+              checked={autoInstall ?? true}
+              disabled={autoInstall === null}
+              onCheckedChange={handleToggleAutoInstall}
+              data-testid="auto-install-updates-toggle"
+            />
           </div>
 
           {/* Bundle version mismatch (e.g., after brew upgrade) */}
@@ -285,7 +397,11 @@ export function UpdateChecker() {
                   {downloading ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      {downloadProgress.total > 0 ? 'Downloading...' : 'Installing...'}
+                      {installing
+                        ? 'Restarting…'
+                        : downloadProgress.total > 0
+                          ? 'Downloading...'
+                          : 'Installing...'}
                     </>
                   ) : (
                     <>
@@ -308,11 +424,24 @@ export function UpdateChecker() {
                 )}
               </div>
 
-              {downloading && (
-                <p className="text-xs text-[rgb(var(--muted))]">
-                  <strong>Note:</strong> On Windows, the app will close automatically to install the update.
-                </p>
-              )}
+              {downloading &&
+                (installing ? (
+                  <div
+                    className="flex items-start gap-2 rounded-lg bg-blue-500/10 p-3 text-sm text-blue-600 dark:text-blue-400"
+                    data-testid="update-restarting"
+                  >
+                    <RotateCcw className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin" />
+                    <span>
+                      Installing v{updateInfo.version} — McpMux will close and reopen automatically.
+                      This is expected; the app isn't crashing.
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[rgb(var(--muted))]">
+                    <strong>Note:</strong> When the download finishes, McpMux closes briefly to
+                    install the update, then reopens on its own.
+                  </p>
+                ))}
             </div>
           )}
 

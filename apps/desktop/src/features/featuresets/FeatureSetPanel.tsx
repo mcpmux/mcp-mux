@@ -15,14 +15,13 @@ import {
   Settings,
   Trash2,
   Check,
-  Globe,
   Star,
   Shield,
   Save,
 } from 'lucide-react';
 import { Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
-import { setFeatureSetMembers } from '@/lib/api/featureSets';
+import { isStarterFeatureSet, setFeatureSetMembers } from '@/lib/api/featureSets';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeatures } from '@/lib/api/serverFeatures';
 
@@ -57,40 +56,17 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
     features: true,
   });
 
-  // Determine if this is a configurable feature set
-  const isConfigurable = featureSet.feature_set_type === 'default' || featureSet.feature_set_type === 'custom';
-  const isDefault = featureSet.feature_set_type === 'default';
+  // Both FS types are member-driven now.
+  const isConfigurable = true;
+  // The auto-seeded "Starter" FS is treated identically to a Custom one
+  // — the type tag is a UI hint, not a routing flag.
+  const isStarter = isStarterFeatureSet(featureSet);
   const isCustom = featureSet.feature_set_type === 'custom';
-  const isAll = featureSet.feature_set_type === 'all';
-  const isServerAll = featureSet.feature_set_type === 'server-all';
-  
-  // For special feature sets, compute actual member count
-  const getActualMemberCount = () => {
-    if (isAll) {
-      // "All Features" includes everything
-      return allFeatures.length;
-    }
-    if (isServerAll && featureSet.server_id) {
-      // "Server All" - use server_id from feature set
-      return allFeatures.filter(f => f.server_id === featureSet.server_id).length;
-    }
-    // For configurable sets, use selectedFeatureIds
-    return selectedFeatureIds.size;
-  };
-  
-  // Check if a feature should be shown as selected
-  const isFeatureSelected = (featureId: string, feature: ServerFeature) => {
-    if (isAll) {
-      // All features are selected
-      return true;
-    }
-    if (isServerAll && featureSet.server_id) {
-      // Only features from the target server
-      return feature.server_id === featureSet.server_id;
-    }
-    // For configurable sets, check selectedFeatureIds
-    return selectedFeatureIds.has(featureId);
-  };
+
+  const getActualMemberCount = () => selectedFeatureIds.size;
+
+  const isFeatureSelected = (featureId: string, _feature: ServerFeature) =>
+    selectedFeatureIds.has(featureId);
 
   useEffect(() => {
     const loadFeatures = async () => {
@@ -99,29 +75,14 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         const features = await listServerFeatures(spaceId);
         setAllFeatures(features);
         
-        // Initialize selected features from current members
+        // Seed from the set's include-mode feature members.
         const currentIds = new Set<string>();
-        
-        // For special feature sets, compute selection dynamically
-        if (featureSet.feature_set_type === 'all') {
-          // All features are selected
-          features.forEach(f => currentIds.add(f.id));
-        } else if (featureSet.feature_set_type === 'server-all' && featureSet.server_id) {
-          // All features from this server are selected
-          features.forEach(f => {
-            if (f.server_id === featureSet.server_id) {
-              currentIds.add(f.id);
-            }
-          });
-        } else {
-          // For configurable sets (default/custom), use members array
-          featureSet.members?.forEach((m) => {
-            if (m.member_type === 'feature' && m.mode === 'include') {
-              currentIds.add(m.member_id);
-            }
-          });
-        }
-        
+        featureSet.members?.forEach((m) => {
+          if (m.member_type === 'feature' && m.mode === 'include') {
+            currentIds.add(m.member_id);
+          }
+        });
+
         setSelectedFeatureIds(currentIds);
         
         // Start with all servers collapsed
@@ -259,10 +220,10 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const getFeatureSetIcon = () => {
     if (featureSet.icon) return <span className="text-xl">{featureSet.icon}</span>;
     switch (featureSet.feature_set_type) {
-      case 'all': return <Globe className="h-6 w-6 text-green-500" />;
       case 'default': return <Star className="h-6 w-6 text-yellow-500" />;
-      case 'server-all': return <Server className="h-6 w-6 text-blue-500" />;
-      case 'custom': default: return <Package className="h-6 w-6 text-purple-500" />;
+      case 'custom':
+      default:
+        return <Package className="h-6 w-6 text-purple-500" />;
     }
   };
 
@@ -293,14 +254,21 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                 {featureSet.name}
               </h2>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${
-                  isDefault 
-                    ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800'
-                    : isCustom
-                      ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
-                      : 'bg-gray-50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400 border-gray-200 dark:border-gray-800'
-                }`}>
-                  {featureSet.feature_set_type.toUpperCase()}
+                <span
+                  title={
+                    isStarter
+                      ? 'Auto-created with this Space. Edit, rename, or delete freely — no special routing role.'
+                      : undefined
+                  }
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${
+                    isStarter
+                      ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800'
+                      : isCustom
+                        ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
+                        : 'bg-gray-50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400 border-gray-200 dark:border-gray-800'
+                  }`}
+                >
+                  {isStarter ? 'STARTER' : featureSet.feature_set_type.toUpperCase()}
                 </span>
                 <span className="text-xs text-[rgb(var(--muted))] truncate">
                   ID: {featureSet.id}
@@ -366,12 +334,12 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                   </p>
                 </div>
                 
-                {isDefault && (
+                {isStarter && (
                   <div className="p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded-lg">
                     <div className="flex gap-2">
                       <Star className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
                       <div className="text-xs text-yellow-800 dark:text-yellow-200">
-                        <strong>Default Feature Set:</strong> Features selected here are automatically granted to all clients in this workspace.
+                        <strong>Starter FeatureSet:</strong> auto-created with this Space. It&apos;s an ordinary FeatureSet — edit, rename, or delete it freely. <em>No special routing role:</em> Workspace bindings and per-client grants pick FeatureSets explicitly.
                       </div>
                     </div>
                   </div>

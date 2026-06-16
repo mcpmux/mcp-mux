@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { listSpaces, getActiveSpace } from '@/lib/api/spaces';
+import { listSpaces } from '@/lib/api/spaces';
 import { refreshOAuthTokensOnStartup } from '@/lib/api/gateway';
 
 /**
@@ -10,7 +10,6 @@ import { refreshOAuthTokensOnStartup } from '@/lib/api/gateway';
 export function useDataSync() {
   const setSpaces = useAppStore((state) => state.setSpaces);
   const setLoading = useAppStore((state) => state.setLoading);
-  const setActiveSpaceInStore = useAppStore((state) => state.setActiveSpace);
 
   useEffect(() => {
     async function syncData() {
@@ -26,27 +25,13 @@ export function useDataSync() {
           console.error('[useDataSync] OAuth token refresh failed (non-fatal):', error);
         }
 
-        // Fetch spaces and active space from backend
         console.log('[useDataSync] Calling listSpaces...');
         const spaces = await listSpaces();
-        console.log('[useDataSync] listSpaces returned:', spaces.length, 'spaces', spaces);
+        console.log('[useDataSync] listSpaces returned:', spaces.length, 'spaces');
 
-        console.log('[useDataSync] Calling getActiveSpace...');
-        const activeSpace = await getActiveSpace();
-        console.log('[useDataSync] getActiveSpace returned:', activeSpace);
-        
-        console.log('[useDataSync] Setting spaces in store...');
+        // setSpaces handles validating viewSpaceId and falling back to the
+        // is_default space when the persisted view space doesn't exist.
         setSpaces(spaces);
-
-        // Set active space from backend
-        if (activeSpace) {
-          console.log('[useDataSync] Setting active space:', activeSpace.id);
-          setActiveSpaceInStore(activeSpace.id);
-        } else if (spaces.length > 0) {
-          // If no active space but we have spaces, set the first one
-          console.log('[useDataSync] No active space, using first space:', spaces[0].id);
-          setActiveSpaceInStore(spaces[0].id);
-        }
       } catch (error) {
         console.error('[useDataSync] Failed to sync:', error);
       } finally {
@@ -56,5 +41,5 @@ export function useDataSync() {
     }
 
     syncData();
-  }, [setSpaces, setLoading, setActiveSpaceInStore]);
+  }, [setSpaces, setLoading]);
 }

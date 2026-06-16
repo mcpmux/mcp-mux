@@ -45,15 +45,16 @@ fn get_format(client_type: &str) -> Result<ConfigFormat, String> {
     }
 }
 
-/// Get the space ID (resolves "default" to active space)
+/// Resolve a `space_id` argument from the UI: the literal "default" or an
+/// empty string fall back to the system's `is_default` Space.
 async fn get_space_id(state: &AppState, space_id: &str) -> Result<String, String> {
     if space_id == "default" || space_id.is_empty() {
         let space = state
             .space_service
-            .get_active()
+            .get_default()
             .await
             .map_err(|e: anyhow::Error| e.to_string())?
-            .ok_or("No active space found")?;
+            .ok_or("No default space found")?;
         Ok(space.id.to_string())
     } else {
         Ok(space_id.to_string())

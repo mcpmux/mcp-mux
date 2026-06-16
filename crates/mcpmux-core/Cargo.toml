@@ -17,7 +17,7 @@ async-trait.workspace = true
 tracing.workspace = true
 glob.workspace = true
 dirs.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
+tokio = { workspace = true, features = ["fs", "io-util", "sync", "time"] }
 flate2 = "1.0"
 reqwest = { workspace = true, features = ["json"] }
 regex = "1.11"

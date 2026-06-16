@@ -14,7 +14,7 @@ test.describe('Spaces Page', () => {
     await goToSpaces(page);
     
     // Check main page heading (h1 specifically)
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
   });
 
   test('should show space management UI', async ({ page }) => {
@@ -22,7 +22,7 @@ test.describe('Spaces Page', () => {
     await dashboard.navigate();
     
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
     
     // Page should have some content
     const content = page.locator('[class*="rounded"]');
@@ -72,7 +72,7 @@ test.describe('Space Management', () => {
     await goToSpaces(page);
     
     // Verify page loaded correctly with Workspaces h1 heading
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
   });
 
   test('should show workspaces page content', async ({ page }) => {
@@ -80,7 +80,7 @@ test.describe('Space Management', () => {
     await dashboard.navigate();
     
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
     
     // Page should have content elements
     const content = page.locator('[class*="rounded"]');
@@ -96,7 +96,7 @@ test.describe('Space Toast Notifications', () => {
     await dashboard.navigate();
     
     await goToSpaces(page);
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    await expect(page.locator('h1:has-text("Spaces")')).toBeVisible();
     
     await expect(spacesPage.toastContainer).toBeAttached();
   });
@@ -163,24 +163,8 @@ test.describe('Space Toast Notifications', () => {
     expect(toastText).toContain('Space created');
   });
 
-  // Skip in web mode - requires Tauri API
-  test.skip('should show success toast on set active space', async ({ page }) => {
-    const dashboard = new DashboardPage(page);
-    const spacesPage = new SpacesPage(page);
-    await dashboard.navigate();
-    
-    await goToSpaces(page);
-    
-    // Find a non-active space and click "Set Active"
-    const setActiveBtn = page.locator('[data-testid^="set-active-space-"]').first();
-    if (await setActiveBtn.isVisible()) {
-      await setActiveBtn.click();
-      
-      await spacesPage.waitForToast('success');
-      const toastText = await spacesPage.getToastText();
-      expect(toastText).toContain('Active space changed');
-    }
-  });
+  // Removed: "Set Active" toast test — gateway routing is workspace-root-driven,
+  // there is no per-Space active toggle anymore.
 
   // Skip in web mode - requires Tauri API
   test.skip('should show success toast on space deletion', async ({ page }) => {

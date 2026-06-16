@@ -156,7 +156,7 @@ describe('Server Installation - GitHub Server (No Inputs)', () => {
     } else {
       // Server card may not be present (install may have failed)
       const pageSource = await browser.getPageSource();
-      expect(pageSource.includes('GitHub') || pageSource.includes('My Servers')).toBe(true);
+      expect(pageSource.includes('GitHub') || pageSource.includes('Tools')).toBe(true);
     }
   });
 

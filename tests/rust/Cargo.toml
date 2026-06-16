@@ -50,7 +50,7 @@ url = "2.5"
 parking_lot = "0.12"
 
 # RMCP for streamable HTTP transport tests
-rmcp = { version = "0.17.0", features = [
+rmcp = { version = "1.5", features = [
     "client",
     "server",
     "transport-streamable-http-server",
@@ -61,6 +61,9 @@ axum = "0.8"
 
 # Pipe creation for stderr capture tests
 os_pipe = { workspace = true }
+
+# Error types for mocks
+anyhow = "1"
 
 [lib]
 path = "src/lib.rs"

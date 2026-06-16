@@ -91,13 +91,9 @@ impl SpaceService {
         self.repository.delete(id).await
     }
 
-    /// Get the active (default) space
-    pub async fn get_active(&self) -> anyhow::Result<Option<Space>> {
+    /// Get the system's default Space (the gateway's routing fallback when
+    /// no `WorkspaceBinding` matches a session's reported workspace root).
+    pub async fn get_default(&self) -> anyhow::Result<Option<Space>> {
         self.repository.get_default().await
-    }
-
-    /// Set the active space
-    pub async fn set_active(&self, id: &Uuid) -> anyhow::Result<()> {
-        self.repository.set_default(id).await
     }
 }

@@ -1,6 +1,6 @@
 /**
  * Registry page for browsing and installing MCP servers.
- * 
+ *
  * Uses API-driven filters and client-side sorting (see ADR-001).
  */
 
@@ -12,6 +12,7 @@ import { ServerCard } from './ServerCard';
 import { ServerDetailModal } from './ServerDetailModal';
 import { useViewSpace, useNavigateTo } from '@/stores';
 import { capture } from '@/lib/analytics';
+import { RequestServerCTA, ContributeMenu } from '@/components/Contribute';
 
 export function RegistryPage() {
   const {
@@ -49,7 +50,7 @@ export function RegistryPage() {
     filters: activeFilters,
     sort: activeSort,
     search: searchQuery,
-    length: displayServers.length
+    length: displayServers.length,
   });
 
   // Local page state that resets when key changes
@@ -92,24 +93,37 @@ export function RegistryPage() {
     return () => clearTimeout(timer);
   }, [localSearch, searchQuery, search]);
 
-  // Track search analytics with longer debounce to capture final query only
+  // Track search analytics: one event per *settled* query, never per keystroke.
+  // The 1.2s debounce sits well past the 300ms search debounce, so by the time
+  // it fires the synchronous client-side filter has already produced results for
+  // this exact query — letting us log results_count. Zero-result searches are
+  // the clearest signal for which servers users want that the registry lacks.
   useEffect(() => {
-    if (!localSearch.trim()) return;
+    const query = localSearch.trim();
+    if (!query) return;
     const timer = setTimeout(() => {
-      capture('registry_search', { query: localSearch.trim() });
-    }, 1500);
+      // Guard: only log once the executed search reflects what the user typed,
+      // so results_count corresponds to `query` (not an in-flight edit).
+      if (searchQuery.trim() !== query) return;
+      capture('registry_search', {
+        query,
+        query_length: query.length,
+        results_count: displayServers.length,
+        has_results: displayServers.length > 0,
+      });
+    }, 1200);
     return () => clearTimeout(timer);
-  }, [localSearch]);
+  }, [localSearch, searchQuery, displayServers.length]);
 
   const handleInstall = async (id: string) => {
-    const server = servers.find(s => s.id === id);
+    const server = servers.find((s) => s.id === id);
     const serverName = server?.name || 'Server';
     try {
       await installServer(id, viewSpace?.id);
       success('Server installed', `"${serverName}" has been installed`, {
         duration: 6000,
         action: {
-          label: 'Go to My Servers to enable →',
+          label: 'Go to Tools to enable →',
           onClick: () => navigateTo('servers'),
         },
       });
@@ -119,7 +133,7 @@ export function RegistryPage() {
   };
 
   const handleUninstall = async (id: string) => {
-    const server = servers.find(s => s.id === id);
+    const server = servers.find((s) => s.id === id);
     const serverName = server?.name || 'Server';
     try {
       await uninstallServer(id);
@@ -133,35 +147,41 @@ export function RegistryPage() {
   };
 
   // Check if any filters are active
-  const hasActiveFilters = Object.values(activeFilters).some(v => v && v !== 'all');
+  const hasActiveFilters = Object.values(activeFilters).some((v) => v && v !== 'all');
 
   return (
-    <div className="h-full flex flex-col" data-testid="registry-page">
+    <div className="flex h-full flex-col" data-testid="registry-page">
       <ToastContainer toasts={toasts} onClose={dismiss} />
       {/* Header */}
-      <div className="p-6 border-b border-[rgb(var(--border-subtle))]">
-        <div className="flex items-center gap-3 mb-1">
-          <h1 className="text-2xl font-bold" data-testid="registry-title">Discover Servers</h1>
-          {isOffline && (
-            <span className="px-2 py-0.5 text-xs font-medium bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-full">
-              Offline
-            </span>
-          )}
+      <div className="border-b border-[rgb(var(--border-subtle))] p-6">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="registry-title">
+              Discover
+            </h1>
+            {isOffline && (
+              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                Offline
+              </span>
+            )}
+          </div>
+          {/* Always-reachable contribute menu — users don't have to trigger
+              an empty search to find the request / bug / feature links. */}
+          <ContributeMenu variant="ghost" size="sm" />
         </div>
         <p className="text-sm text-[rgb(var(--muted))]">
-          {isOffline 
+          {isOffline
             ? 'Showing cached servers (no internet connection)'
-            : 'Browse and install MCP servers from the registry'
-          }
+            : 'Browse the registry and add new tools to this Space in one click'}
         </p>
       </div>
 
       {/* Search and Filters */}
-      <div className="p-4 border-b border-[rgb(var(--border-subtle))] space-y-4">
+      <div className="space-y-4 border-b border-[rgb(var(--border-subtle))] p-4">
         {/* Search */}
         <div className="relative">
           <svg
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[rgb(var(--muted))]"
+            className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[rgb(var(--muted))]"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -202,7 +222,7 @@ export function RegistryPage() {
               <select
                 value={activeSort}
                 onChange={(e) => setSort(e.target.value)}
-                className="bg-[rgb(var(--surface-hover))] border border-[rgb(var(--border-subtle))] rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[rgb(var(--primary))]/50"
+                className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-hover))] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[rgb(var(--primary))]/50"
               >
                 {uiConfig.sort_options.map((opt) => (
                   <option key={opt.id} value={opt.id}>
@@ -227,7 +247,7 @@ export function RegistryPage() {
 
       {/* Error */}
       {error && (
-        <div className="mx-4 mt-4 p-4 bg-[rgb(var(--error))]/10 border border-[rgb(var(--error))]/30 rounded-lg text-[rgb(var(--error))] text-sm flex items-center justify-between">
+        <div className="mx-4 mt-4 flex items-center justify-between rounded-lg border border-[rgb(var(--error))]/30 bg-[rgb(var(--error))]/10 p-4 text-sm text-[rgb(var(--error))]">
           <span>{error}</span>
           <button onClick={clearError} className="hover:opacity-70">
             ✕
@@ -236,14 +256,14 @@ export function RegistryPage() {
       )}
 
       {/* Server Grid */}
-      <div className="flex-1 overflow-y-auto p-4 registry-grid-container">
+      <div className="registry-grid-container flex-1 overflow-y-auto p-4">
         {isLoading && displayServers.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="animate-spin rounded-full h-8 w-8 border-2 border-[rgb(var(--primary))] border-t-transparent" />
+          <div className="flex h-full items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
           </div>
         ) : displayServers.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-[rgb(var(--muted))]">
-            <svg className="w-16 h-16 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="flex h-full flex-col items-center justify-center px-8 text-[rgb(var(--muted))]">
+            <svg className="mb-4 h-16 w-16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -252,10 +272,15 @@ export function RegistryPage() {
               />
             </svg>
             <p className="text-lg">No servers found</p>
-            <p className="text-sm">Try adjusting your search or filters</p>
+            <p className="mb-6 text-sm">Try adjusting your search or filters</p>
+            {/* Empty-search CTA — push the user toward requesting or
+                contributing the missing server rather than just giving up. */}
+            <div className="w-full max-w-xl">
+              <RequestServerCTA searchTerm={searchQuery || undefined} />
+            </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {paginatedServers.map((server) => (
               <ServerCard
                 key={server.id}
@@ -271,7 +296,7 @@ export function RegistryPage() {
       </div>
 
       {/* Footer: Stats & Pagination */}
-      <div className="p-4 border-t border-[rgb(var(--border-subtle))] flex items-center justify-between bg-[rgb(var(--surface))]">
+      <div className="flex items-center justify-between border-t border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-4">
         <div className="text-sm text-[rgb(var(--muted))]" data-testid="server-count">
           {displayServers.length} server{displayServers.length !== 1 ? 's' : ''} found
           {servers.filter((s) => s.is_installed).length > 0 && (
@@ -286,21 +311,39 @@ export function RegistryPage() {
             <button
               onClick={() => handlePageChange(activePage - 1)}
               disabled={activePage === 1}
-              className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+              className="rounded-lg p-1.5 transition-colors hover:bg-[rgb(var(--surface-hover))] disabled:opacity-30 disabled:hover:bg-transparent"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M15 18l-6-6 6-6" />
               </svg>
             </button>
-            <span className="text-sm font-medium min-w-[3rem] text-center">
+            <span className="min-w-[3rem] text-center text-sm font-medium">
               {activePage} / {totalPages}
             </span>
             <button
               onClick={() => handlePageChange(activePage + 1)}
               disabled={activePage === totalPages}
-              className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+              className="rounded-lg p-1.5 transition-colors hover:bg-[rgb(var(--surface-hover))] disabled:opacity-30 disabled:hover:bg-transparent"
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M9 18l6-6-6-6" />
               </svg>
             </button>
@@ -342,7 +385,7 @@ function FilterDropdown({ filter, value, onChange }: FilterDropdownProps) {
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`appearance-none bg-[rgb(var(--surface-hover))] border rounded-lg pl-3 pr-8 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[rgb(var(--primary))]/50 cursor-pointer ${
+        className={`cursor-pointer appearance-none rounded-lg border bg-[rgb(var(--surface-hover))] py-1.5 pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-[rgb(var(--primary))]/50 ${
           isActive
             ? 'border-[rgb(var(--primary))] text-[rgb(var(--foreground))]'
             : 'border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))]'
@@ -354,7 +397,7 @@ function FilterDropdown({ filter, value, onChange }: FilterDropdownProps) {
           </option>
         ))}
       </select>
-      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none text-[rgb(var(--muted))]" />
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
     </div>
   );
 }

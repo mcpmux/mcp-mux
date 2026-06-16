@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, SlidersHorizontal, XCircle } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
 import { useNavigateTo } from '@/stores';
 
@@ -218,15 +218,16 @@ export function MetaToolApprovalDialog() {
             </Button>
           </div>
 
-          <div className="flex items-center justify-between gap-3 pt-1">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[rgb(var(--border-subtle))] pt-3">
             <button
               type="button"
               onClick={manageApprovals}
-              className="text-[11px] text-[rgb(var(--muted))] underline-offset-2 hover:text-[rgb(var(--foreground))] hover:underline"
+              className="inline-flex items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2.5 py-1.5 text-xs font-medium text-[rgb(var(--foreground))] transition-colors hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 dark:hover:bg-primary-900/20 dark:hover:text-primary-300"
               title="Deny this request and open the Built-in tab, where you can turn off approval prompts for tool changes"
               data-testid="meta-tool-approval-manage-link"
             >
-              Prefer not to be asked? Manage approval prompts →
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Don&apos;t ask again — manage approval prompts
             </button>
             {queue.length > 1 && (
               <span className="text-[11px] text-[rgb(var(--muted))]">

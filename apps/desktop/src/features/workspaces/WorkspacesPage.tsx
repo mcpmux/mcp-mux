@@ -32,6 +32,7 @@ import {
   useConfirm,
 } from '@mcpmux/ui';
 import {
+  clearUnmappedReportedRoots,
   createWorkspaceBinding,
   deleteWorkspaceBinding,
   getWorkspaceEffectiveFeatures,
@@ -272,6 +273,36 @@ export function WorkspacesPage() {
     }
   };
 
+  // Bulk "clear" for the unmapped (amber) folders. These are live-reported
+  // roots with no binding — clearing drops them from the gateway's in-memory
+  // session-roots registry so this list empties in one action, and the
+  // "map this folder?" prompt is offered again next time those apps report a
+  // folder. Mapped folders are untouched.
+  const handleClearUnmapped = async () => {
+    const n = counts.unmapped;
+    const ok = await confirm({
+      title: 'Clear unmapped folders',
+      message: `Remove ${n} unmapped folder${n === 1 ? '' : 's'} from this list. McpMux will offer to map ${n === 1 ? 'it' : 'them'} again the next time those apps report the folder.`,
+      confirmLabel: 'Clear all',
+    });
+    if (!ok) return;
+    try {
+      const cleared = await clearUnmappedReportedRoots();
+      await loadData();
+      success(
+        cleared > 0
+          ? `Cleared ${cleared} unmapped folder${cleared === 1 ? '' : 's'}`
+          : 'Nothing to clear',
+        cleared > 0 ? "You'll be asked to map them again next time." : undefined
+      );
+    } catch (e) {
+      showError(
+        'Could not clear unmapped folders',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+  };
+
   return (
     <div className="h-full flex flex-col relative" data-testid="workspaces-page">
       <header className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">
@@ -334,6 +365,19 @@ export function WorkspacesPage() {
                 { value: 'unmapped', label: 'Unmapped', count: counts.unmapped },
               ]}
             />
+            {counts.unmapped > 0 && (
+              <Button
+                variant="ghost"
+                size="md"
+                onClick={handleClearUnmapped}
+                title="Forget all unmapped folders. McpMux will offer to map them again next time those apps report a folder."
+                className="whitespace-nowrap text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20"
+                data-testid="workspaces-clear-unmapped"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Clear unmapped
+              </Button>
+            )}
           </div>
         </div>
       </header>

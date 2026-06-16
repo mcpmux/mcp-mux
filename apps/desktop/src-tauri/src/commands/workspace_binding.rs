@@ -123,6 +123,57 @@ pub async fn list_reported_workspace_roots(
         .unwrap_or_default())
 }
 
+/// Forget every reported workspace root that has no binding ("unmapped").
+///
+/// The Workspaces tab surfaces folders connected clients reported but that
+/// aren't mapped to a FeatureSet yet. This drops them from the in-memory
+/// session-roots registry so the "Unmapped" list clears in one action; the
+/// next time those sessions report a root (or reconnect) the resolver lands
+/// on `Deny` again and re-fires the "map this folder?" prompt. Mapped roots
+/// are left untouched.
+///
+/// Returns the number of distinct roots cleared. A not-running gateway has
+/// nothing reported, so it returns `0` rather than erroring.
+#[tauri::command]
+pub async fn clear_unmapped_reported_roots(
+    state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<usize, String> {
+    // Snapshot the bound roots (case-folded) so we can tell a mapped folder
+    // from an unmapped one — the same exact-match rule the Workspaces tab
+    // uses to label a card "Unmapped".
+    let bound: HashSet<String> = state
+        .workspace_binding_repository
+        .list()
+        .await
+        .map_err(|e| {
+            error!("[workspace_binding::clear_unmapped] {e}");
+            e.to_string()
+        })?
+        .into_iter()
+        .map(|b| b.workspace_root.to_lowercase())
+        .collect();
+
+    let guard = gateway_state.read().await;
+    let Some(reg) = guard.session_roots.as_ref() else {
+        // Gateway not running — nothing has been reported.
+        return Ok(0);
+    };
+    let dropped = reg.forget_unmapped_roots(|root| bound.contains(&root.to_lowercase()));
+    let count = dropped.len();
+
+    if count > 0 {
+        info!(count, roots = ?dropped, "[workspace_binding] cleared unmapped reported roots");
+        // Nudge the Workspaces tab to re-read `list_reported_workspace_roots`.
+        if let Some(ref gw) = guard.gateway_state {
+            gw.read()
+                .await
+                .emit_domain_event(DomainEvent::SessionRootsChanged);
+        }
+    }
+    Ok(count)
+}
+
 /// List every binding (sorted by workspace_root).
 #[tauri::command]
 pub async fn list_workspace_bindings(

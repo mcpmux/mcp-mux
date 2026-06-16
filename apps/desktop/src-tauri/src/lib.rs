@@ -375,9 +375,20 @@ pub fn run() {
                     None => (mcpmux_core::DEFAULT_GATEWAY_PORT, "default"),
                 };
 
-                if !mcpmux_core::service::is_port_available(preferred_port) {
+                // A busy port is usually transient on launch: when the app
+                // updates in place, the OS relaunches the new build before the
+                // prior process has finished releasing its gateway listener.
+                // Probe with backoff before treating the port as a real
+                // conflict — a genuine conflict (another app owns the port)
+                // stays busy for the whole window and still surfaces the prompt.
+                if !mcpmux_core::service::wait_for_port_available(
+                    preferred_port,
+                    mcpmux_core::service::AUTOSTART_PORT_WAIT,
+                )
+                .await
+                {
                     warn!(
-                        "[Gateway] Auto-start preferred port {} ({}) unavailable — deferring to user",
+                        "[Gateway] Auto-start preferred port {} ({}) still unavailable after waiting — deferring to user",
                         preferred_port, source
                     );
                     {

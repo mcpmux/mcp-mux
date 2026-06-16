@@ -30,6 +30,10 @@ interface DownloadEvent {
 export function UpdateChecker() {
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  // True once the download finishes and the installer takes over. On Windows
+  // the app is killed during this phase, so we surface a clear "restarting"
+  // notice first — otherwise the window vanishing reads as a crash.
+  const [installing, setInstalling] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<Update | null>(null);
   const [downloadProgress, setDownloadProgress] = useState({ downloaded: 0, total: 0 });
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -142,6 +146,7 @@ export function UpdateChecker() {
     if (!updateInfo) return;
 
     setDownloading(true);
+    setInstalling(false);
     setDownloadProgress({ downloaded: 0, total: 0 });
     setMessage(null);
 
@@ -165,6 +170,10 @@ export function UpdateChecker() {
             break;
           case 'Finished':
             console.log('[Updater] Download finished, installing...');
+            // Hand-off to the installer. On Windows the app is killed here,
+            // so flip to the restart notice now (before the window closes)
+            // so the disappearance is expected, not a surprise.
+            setInstalling(true);
             break;
         }
       });
@@ -179,6 +188,7 @@ export function UpdateChecker() {
         text: `Failed to install update: ${error}`,
       });
       setDownloading(false);
+      setInstalling(false);
     }
   };
 
@@ -387,7 +397,11 @@ export function UpdateChecker() {
                   {downloading ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      {downloadProgress.total > 0 ? 'Downloading...' : 'Installing...'}
+                      {installing
+                        ? 'Restarting…'
+                        : downloadProgress.total > 0
+                          ? 'Downloading...'
+                          : 'Installing...'}
                     </>
                   ) : (
                     <>
@@ -410,11 +424,24 @@ export function UpdateChecker() {
                 )}
               </div>
 
-              {downloading && (
-                <p className="text-xs text-[rgb(var(--muted))]">
-                  <strong>Note:</strong> On Windows, the app will close automatically to install the update.
-                </p>
-              )}
+              {downloading &&
+                (installing ? (
+                  <div
+                    className="flex items-start gap-2 rounded-lg bg-blue-500/10 p-3 text-sm text-blue-600 dark:text-blue-400"
+                    data-testid="update-restarting"
+                  >
+                    <RotateCcw className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin" />
+                    <span>
+                      Installing v{updateInfo.version} — McpMux will close and reopen automatically.
+                      This is expected; the app isn't crashing.
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-[rgb(var(--muted))]">
+                    <strong>Note:</strong> When the download finishes, McpMux closes briefly to
+                    install the update, then reopens on its own.
+                  </p>
+                ))}
             </div>
           )}
 

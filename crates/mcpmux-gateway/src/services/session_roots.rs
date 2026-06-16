@@ -183,6 +183,58 @@ impl SessionRootsRegistry {
         out
     }
 
+    /// Forget every reported root that is **not** currently mapped, so the
+    /// Workspaces tab's "Unmapped" list clears and the gateway re-offers the
+    /// "map this folder?" prompt the next time those sessions report a root.
+    ///
+    /// `is_mapped(root)` returns `true` for roots that have a binding — those
+    /// are kept. For each tracked session the unmapped roots are dropped; a
+    /// session left with no roots is removed from the registry entirely (along
+    /// with its last-resolution snapshot and probe throttle) so its next
+    /// `tools/list` re-probes the peer and the resolver fires
+    /// `WorkspaceNeedsBinding` again. Sessions that still hold a mapped root
+    /// keep their entry untouched (they route via their binding and never
+    /// prompt). Returns the dropped roots (sorted, deduped) for logging.
+    pub fn forget_unmapped_roots<F>(&self, is_mapped: F) -> Vec<String>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let mut dropped: Vec<String> = Vec::new();
+        let mut emptied: Vec<String> = Vec::new();
+
+        for mut entry in self.map.iter_mut() {
+            let mut removed_any = false;
+            entry.value_mut().retain(|root| {
+                if is_mapped(root) {
+                    true
+                } else {
+                    dropped.push(root.clone());
+                    removed_any = true;
+                    false
+                }
+            });
+            if removed_any && entry.value().is_empty() {
+                emptied.push(entry.key().clone());
+            }
+        }
+
+        // Remove emptied sessions AFTER the iterator above is released — a
+        // `map.remove()` while iterating would request a write lock on a shard
+        // the iterator still read-locks (self-deadlock). Dropping the roots
+        // entry (rather than leaving an empty Vec) is what makes the next
+        // request re-probe: `ensure_roots_probed` early-returns while
+        // `get(sid)` is `Some(_)`, even for an empty Vec.
+        for sid in emptied {
+            self.map.remove(&sid);
+            self.last_resolution.remove(&sid);
+            self.last_probe.remove(&sid);
+        }
+
+        dropped.sort();
+        dropped.dedup();
+        dropped
+    }
+
     /// Current number of tracked sessions. Test helper; cheap to call but
     /// not useful in hot paths.
     #[cfg(test)]
@@ -245,6 +297,53 @@ mod tests {
         // None ↔ Some both count.
         assert!(reg.record_resolution("sess-1", None));
         assert!(!reg.record_resolution("sess-1", None));
+    }
+
+    #[test]
+    fn test_forget_unmapped_roots_clears_unmapped_sessions() {
+        let reg = SessionRootsRegistry::default();
+        #[cfg(windows)]
+        let (mapped_in, unmapped_in) = ("file:///D:/mapped/", "file:///D:/unmapped/");
+        #[cfg(not(windows))]
+        let (mapped_in, unmapped_in) = ("file:///home/u/mapped/", "file:///home/u/unmapped/");
+
+        reg.set("sess-mapped", [mapped_in]);
+        reg.set("sess-unmapped", [unmapped_in]);
+        reg.record_resolution("sess-unmapped", Some("fs-x"));
+
+        // Treat only the first session's (normalized) root as mapped.
+        let mapped_norm = reg.get("sess-mapped").unwrap()[0].clone();
+        let dropped = reg.forget_unmapped_roots(|root| root == mapped_norm);
+
+        // Exactly the unmapped root was dropped.
+        assert_eq!(dropped.len(), 1);
+        assert_ne!(dropped[0], mapped_norm);
+        // The mapped session is untouched.
+        assert_eq!(reg.get("sess-mapped"), Some(vec![mapped_norm]));
+        // The unmapped session is removed entirely so the next request
+        // re-probes the peer and the binding prompt fires again.
+        assert!(reg.get("sess-unmapped").is_none());
+        // ...and its resolution snapshot was cleared (fresh = counts as change).
+        assert!(reg.record_resolution("sess-unmapped", Some("fs-x")));
+    }
+
+    #[test]
+    fn test_forget_unmapped_roots_keeps_mixed_session() {
+        let reg = SessionRootsRegistry::default();
+        #[cfg(windows)]
+        let (mapped_in, unmapped_in) = ("file:///D:/keep/", "file:///D:/drop/");
+        #[cfg(not(windows))]
+        let (mapped_in, unmapped_in) = ("file:///home/u/keep/", "file:///home/u/drop/");
+
+        reg.set("sess-mixed", [mapped_in, unmapped_in]);
+        let roots = reg.get("sess-mixed").unwrap();
+        let keep = roots[0].clone();
+
+        let dropped = reg.forget_unmapped_roots(|root| root == keep);
+
+        // The unmapped root went; the session survives with its mapped root.
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(reg.get("sess-mixed"), Some(vec![keep]));
     }
 
     #[test]

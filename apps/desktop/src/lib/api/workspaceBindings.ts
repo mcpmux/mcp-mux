@@ -44,6 +44,17 @@ export async function listReportedWorkspaceRoots(): Promise<string[]> {
 }
 
 /**
+ * Forget every reported workspace root that has no binding ("unmapped").
+ * Clears them from the Workspaces tab in one action; the gateway then offers
+ * the "map this folder?" prompt again the next time those apps report a
+ * folder (or reconnect). Mapped folders are left untouched. Resolves with
+ * the number of roots cleared.
+ */
+export async function clearUnmappedReportedRoots(): Promise<number> {
+  return invoke('clear_unmapped_reported_roots');
+}
+
+/**
  * Live path validation for the manual-add form. Runs the SAME rules the
  * create/update commands apply so "validates in UI → saves OK" is a
  * guarantee, not a hope.

@@ -17,8 +17,8 @@ pub use cimd_fetcher::*;
 pub use client_install::{cursor_deep_link, vscode_deep_link};
 pub use config_export::*;
 pub use gateway_port_service::{
-    allocate_dynamic_port, is_port_available, GatewayPortService, PortAllocationError,
-    PortResolution, DEFAULT_GATEWAY_PORT,
+    allocate_dynamic_port, is_port_available, wait_for_port_available, GatewayPortService,
+    PortAllocationError, PortResolution, AUTOSTART_PORT_WAIT, DEFAULT_GATEWAY_PORT,
 };
 pub use registry_api_client::*;
 pub use server_discovery::*;

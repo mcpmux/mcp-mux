@@ -69,5 +69,11 @@
     "node": ">=20.0.0",
     "pnpm": ">=8.0.0"
   },
-  "packageManager": "pnpm@9.15.1"
+  "packageManager": "pnpm@9.15.1",
+  "pnpm": {
+    "overrides": {
+      "dompurify@<3.4.9": "^3.4.10",
+      "form-data@<4.0.6": "^4.0.6"
+    }
+  }
 }

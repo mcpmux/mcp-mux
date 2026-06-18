@@ -36,6 +36,9 @@ interface WorkspaceNeedsBindingPayload {
   session_id: string;
   space_id: string;
   workspace_root: string;
+  /** The folder is scoped to `space_id` by a Space base directory — lock the
+   * Space field to it (the user only picks the feature set). */
+  space_locked?: boolean;
 }
 
 /**
@@ -250,14 +253,16 @@ export function WorkspaceBindingSheet() {
               Space
             </div>
             <p className="mb-3 text-xs text-[rgb(var(--muted))]">
-              A profile that groups MCP servers — pick the one this folder draws
-              its tools from.
+              {payload.space_locked
+                ? 'This folder is under a base directory of this space, so it stays in this space — just pick the feature set below.'
+                : 'A profile that groups MCP servers — pick the one this folder draws its tools from.'}
             </p>
             <div className="relative">
               <select
                 value={selectedSpaceId}
                 onChange={(e) => setSelectedSpaceId(e.target.value)}
-                className="w-full appearance-none rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-4 py-3 pr-10 text-sm font-medium text-[rgb(var(--foreground))] hover:border-[rgb(var(--border-hover,var(--accent)))] focus:border-[rgb(var(--accent))] focus:outline-none transition-colors"
+                disabled={payload.space_locked}
+                className="w-full appearance-none rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-4 py-3 pr-10 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:border-[rgb(var(--border-hover,var(--accent)))] focus:border-[rgb(var(--accent))] focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 data-testid="workspace-binding-space-picker"
               >
                 {spaces.map((s) => (

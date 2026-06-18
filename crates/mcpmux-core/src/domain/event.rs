@@ -365,6 +365,11 @@ pub enum DomainEvent {
         session_id: String,
         space_id: Uuid,
         workspace_root: String,
+        /// The folder is scoped to `space_id` by a Space base directory, so the
+        /// mapping popup locks its Space field to it (the user only picks the
+        /// FeatureSet). `false` for an ordinary unmapped folder, where the user
+        /// may bind it to any Space.
+        space_locked: bool,
     },
 
     /// The live set of reported session roots changed (a client connected
@@ -719,6 +724,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             space_id: Uuid::new_v4(),
             workspace_root: "/proj/foo".to_string(),
+            space_locked: false,
         };
         assert!(!e.affects_mcp_capabilities());
         assert!(e.is_ui_only());
@@ -744,6 +750,7 @@ mod tests {
             session_id: "s".into(),
             space_id: Uuid::nil(),
             workspace_root: "/r".into(),
+            space_locked: true,
         };
         let json = serde_json::to_string(&needs).unwrap();
         assert!(json.contains("\"type\":\"workspace_needs_binding\""));

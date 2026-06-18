@@ -35,12 +35,18 @@ import { WorkspaceBindingSheet } from '@/features/workspaces/WorkspaceBindingShe
 const TITLE = /This folder is using your Starter set/i;
 
 /** Invoke the captured `workspace-needs-binding` listener with a payload. */
-function fireNeedsBinding() {
+function fireNeedsBinding(overrides: Record<string, unknown> = {}) {
   const call = vi.mocked(listen).mock.calls.find((c) => c[0] === 'workspace-needs-binding');
   if (!call) throw new Error('workspace-needs-binding listener was not registered');
   const cb = call[1] as (e: { payload: unknown }) => unknown | Promise<unknown>;
   return cb({
-    payload: { client_id: 'c', session_id: 's', space_id: 's1', workspace_root: '/home/u/proj' },
+    payload: {
+      client_id: 'c',
+      session_id: 's',
+      space_id: 's1',
+      workspace_root: '/home/u/proj',
+      ...overrides,
+    },
   });
 }
 
@@ -85,5 +91,25 @@ describe('WorkspaceBindingSheet – mapping prompt toggle', () => {
       })
     );
     await waitFor(() => expect(screen.queryByText(TITLE)).toBeNull());
+  });
+
+  it('locks the Space picker when the folder is base-dir scoped', async () => {
+    mockPromptEnabled(true);
+    render(<WorkspaceBindingSheet />);
+    await fireNeedsBinding({ space_locked: true });
+    await screen.findByText(TITLE);
+
+    const picker = screen.getByTestId('workspace-binding-space-picker') as HTMLSelectElement;
+    expect(picker.disabled).toBe(true);
+  });
+
+  it('leaves the Space picker editable for an ordinary unmapped folder', async () => {
+    mockPromptEnabled(true);
+    render(<WorkspaceBindingSheet />);
+    await fireNeedsBinding({ space_locked: false });
+    await screen.findByText(TITLE);
+
+    const picker = screen.getByTestId('workspace-binding-space-picker') as HTMLSelectElement;
+    expect(picker.disabled).toBe(false);
   });
 });

@@ -150,12 +150,21 @@ impl McpMuxGatewayHandler {
                     resolved.space_id,
                     root_for_prompt,
                 ) {
+                    // Lock the popup's Space field when the folder is scoped to
+                    // a Space by base directory — the user shouldn't be able to
+                    // bind it elsewhere.
+                    let space_locked = resolver
+                        .scoped_space_for_session(Some(sid))
+                        .await
+                        .unwrap_or(None)
+                        .is_some();
                     services.gateway_state.read().await.emit_domain_event(
                         mcpmux_core::DomainEvent::WorkspaceNeedsBinding {
                             client_id: client_id.to_string(),
                             session_id: sid.to_string(),
                             space_id,
                             workspace_root: root.to_string(),
+                            space_locked,
                         },
                     );
                 }

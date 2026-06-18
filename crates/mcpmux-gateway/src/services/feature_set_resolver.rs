@@ -210,6 +210,20 @@ impl FeatureSetResolverService {
         Ok(None)
     }
 
+    /// The Space a session is scoped to by base directory — its reported root
+    /// sits under that Space's base dir — or `None` when it isn't base-dir
+    /// scoped (no session, no roots, or no matching base dir). The meta-tools
+    /// use this to hard-restrict self-optimization to the matched Space.
+    pub async fn scoped_space_for_session(&self, session_id: Option<&str>) -> Result<Option<Uuid>> {
+        let Some(sid) = session_id else {
+            return Ok(None);
+        };
+        let Some(roots) = self.session_roots.get(sid) else {
+            return Ok(None);
+        };
+        self.space_for_roots(&roots).await
+    }
+
     /// Override the pending-roots grace window. `Duration::ZERO` makes the
     /// resolver skip the wait entirely and fall back to the Space default on
     /// the first pending resolution — used by tests to exercise the

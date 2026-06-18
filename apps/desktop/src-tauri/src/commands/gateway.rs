@@ -696,6 +696,7 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
             session_id,
             space_id,
             workspace_root,
+            space_locked,
         } => (
             "workspace-needs-binding",
             serde_json::json!({
@@ -703,6 +704,7 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
                 "session_id": session_id,
                 "space_id": space_id,
                 "workspace_root": workspace_root,
+                "space_locked": space_locked,
             }),
         ),
 

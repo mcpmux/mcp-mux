@@ -209,6 +209,7 @@ fn event_json_payloads_are_stable() {
         session_id: "s-9".to_string(),
         space_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
         workspace_root: "/abs/path".to_string(),
+        space_locked: false,
     };
     let v: serde_json::Value = serde_json::to_value(&needs).unwrap();
     assert_eq!(v["type"], "workspace_needs_binding");

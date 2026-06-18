@@ -70,6 +70,30 @@ async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
 /// `mcpmux_list_spaces` — writes stay gated by the approval dialog, which names
 /// the target Space so cross-Space changes are a conscious user choice.
 async fn target_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError> {
+    // When the caller's workspace is scoped to a Space by base directory, that
+    // Space is authoritative: the meta-tools see ONLY it (no cross-Space
+    // targeting). An explicit `space_id` that names a different Space is
+    // rejected; omitting it (or naming the scoped Space) resolves to it.
+    if let Some(scoped) = call
+        .ctx
+        .resolver
+        .scoped_space_for_session(call.session_id)
+        .await?
+    {
+        if let Some(s) = opt_str_arg(&call.args, "space_id") {
+            let id = Uuid::parse_str(&s).map_err(|_| {
+                MetaToolError::InvalidArgument(format!("`space_id` is not a UUID: {s}"))
+            })?;
+            if id != scoped {
+                return Err(MetaToolError::InvalidArgument(format!(
+                    "This workspace is scoped to space '{scoped}' by its base directory; \
+                     it can't target another space ('{id}')."
+                )));
+            }
+        }
+        return Ok(scoped);
+    }
+
     match opt_str_arg(&call.args, "space_id") {
         Some(s) => {
             let id = Uuid::parse_str(&s).map_err(|_| {
@@ -290,7 +314,18 @@ impl MetaTool for ListSpacesTool {
     }
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
-        let spaces = call.ctx.space_repo.list().await?;
+        let mut spaces = call.ctx.space_repo.list().await?;
+        // When the caller's workspace is scoped to a Space by base directory,
+        // expose ONLY that Space — self-optimization must not reach across into
+        // other Spaces' tools.
+        if let Some(scoped) = call
+            .ctx
+            .resolver
+            .scoped_space_for_session(call.session_id)
+            .await?
+        {
+            spaces.retain(|s| s.id == scoped);
+        }
         let spaces: Vec<_> = spaces
             .iter()
             .map(|s| {

@@ -417,6 +417,44 @@ async fn exact_binding_overrides_base_dir_scope() {
     assert_eq!(r.feature_set_ids, vec![f.fs_a_id.clone()]);
 }
 
+#[tokio::test]
+async fn scoped_space_for_session_reports_base_dir_match() {
+    let f = Fixture::new().await;
+    let (base, root, outside) = if cfg!(windows) {
+        ("d:\\work", "d:\\work\\proj", "d:\\elsewhere")
+    } else {
+        ("/work", "/work/proj", "/elsewhere")
+    };
+    let (work_space, _) = f.make_space_with_base_dir("Work", base).await;
+
+    // A session whose root is under a base dir IS scoped (the meta-tools use
+    // this to restrict to that one Space).
+    f.session_roots.set("s", [root]);
+    assert_eq!(
+        f.resolver
+            .scoped_space_for_session(Some("s"))
+            .await
+            .unwrap(),
+        Some(work_space)
+    );
+
+    // A root outside every base dir is NOT scoped.
+    f.session_roots.set("s2", [outside]);
+    assert_eq!(
+        f.resolver
+            .scoped_space_for_session(Some("s2"))
+            .await
+            .unwrap(),
+        None
+    );
+
+    // No session / no roots → not scoped.
+    assert_eq!(
+        f.resolver.scoped_space_for_session(None).await.unwrap(),
+        None
+    );
+}
+
 // ---------------------------------------------------------------------------
 // ClientGrant tier — rootless fallback
 // ---------------------------------------------------------------------------

@@ -445,11 +445,11 @@ pub struct WorkspaceEffectiveFeaturesDto {
     /// trailing slash, etc.).
     pub workspace_root: String,
     /// `binding` when a `WorkspaceBinding` matched the longest prefix of
-    /// the root; `unbound` when no binding matched. With the new resolver,
-    /// `unbound` means a live roots-capable session for this folder would
-    /// be **denied** — the `feature_sets` field below shows the default
-    /// Space's Default FS purely as a *preview* of what binding the folder
-    /// to that FS would expose, not as the active routing target.
+    /// the root; `unbound` when no binding matched. An `unbound` folder is
+    /// **not** denied — it falls back to the default Space's Starter FS, so
+    /// the `feature_sets` field below is exactly what a live session for this
+    /// folder sees right now (the active routing target), until the user
+    /// attaches an explicit binding to override it.
     pub source: String,
     /// `Some(id)` only when `source == "binding"`.
     pub binding_id: Option<String>,
@@ -588,11 +588,11 @@ pub async fn get_workspace_effective_features(
             b.feature_set_ids,
         ),
         None => {
-            // Source = `unbound` mirrors the new resolver: a live session
-            // here would be denied. We still surface the default Space's
-            // Default FS as a *preview* so the UI can render "if you bound
-            // this folder to <FS>, here's what it would see" — it's
-            // informational, not the active routing target.
+            // Source = `unbound` mirrors the resolver: an unmapped folder
+            // falls back to the default Space's Starter FS. This is the
+            // active routing target a live session here resolves to, not a
+            // hypothetical preview — the user can attach a binding to give
+            // the folder something other than the default.
             let starter_fs = state
                 .feature_set_repository
                 .get_starter_for_space(&default_space.id.to_string())

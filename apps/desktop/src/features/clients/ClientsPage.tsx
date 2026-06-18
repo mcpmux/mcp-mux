@@ -873,9 +873,9 @@ function RootlessGrantsSection({
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-2.5">
           <ShieldOff className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
           <p className="text-[11px] text-[rgb(var(--muted))]">
-            No defaults set — rootless sessions from this client are denied. That&apos;s the safe
-            default. Pick a FeatureSet above only if you trust this client to operate without a
-            workspace folder.
+            No per-client defaults set — rootless sessions from this client fall back to your
+            default Starter set. Pick a FeatureSet above to grant this client a specific set
+            instead.
           </p>
         </div>
       )}

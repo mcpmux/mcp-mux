@@ -197,9 +197,9 @@ export function WorkspaceBindingSheet() {
             Which tools should this folder get?
           </h2>
           <p className="mt-2 text-sm text-[rgb(var(--muted))]">
-            You just opened this folder in a connected app. Choose a Space and a
-            feature set, and every app you open here will get exactly those
-            tools.
+            You just opened this folder in a connected app. It&apos;s already
+            using your default Starter tools — pick a Space and feature set to
+            give it a specific set instead, or keep the default.
           </p>
 
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-4 py-3">

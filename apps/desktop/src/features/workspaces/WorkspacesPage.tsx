@@ -92,7 +92,7 @@ export function WorkspacesPage() {
 
   const [selected, setSelected] = useState<Selected | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'live' | 'unmapped'>('all');
+  const [filter, setFilter] = useState<'all' | 'live' | 'mapped' | 'unmapped'>('all');
 
   const loadData = useCallback(async () => {
     setError(null);
@@ -205,6 +205,7 @@ export function WorkspacesPage() {
     const q = searchQuery.trim().toLowerCase();
     return entries.filter((e) => {
       if (filter === 'live' && !e.isLive) return false;
+      if (filter === 'mapped' && !e.binding) return false;
       if (filter === 'unmapped' && e.kind !== 'unmapped-live') return false;
       if (!q) return true;
       const spaceName = e.binding ? spaceById.get(e.binding.space_id)?.name ?? '' : '';
@@ -223,12 +224,14 @@ export function WorkspacesPage() {
 
   const counts = useMemo(() => {
     let live = 0;
+    let mapped = 0;
     let unmapped = 0;
     for (const e of entries) {
       if (e.isLive) live++;
+      if (e.binding) mapped++;
       if (e.kind === 'unmapped-live') unmapped++;
     }
-    return { all: entries.length, live, unmapped };
+    return { all: entries.length, live, mapped, unmapped };
   }, [entries]);
 
   const selectedEntry: Entry | null =
@@ -316,8 +319,9 @@ export function WorkspacesPage() {
                 Map a folder to the tools it should get. When you open that
                 folder in a connected app — Cursor, VS Code, Claude — McpMux
                 serves exactly the tools you chose for it. Folders you
-                haven&apos;t mapped don&apos;t receive your tools until you map
-                them.
+                haven&apos;t mapped fall back to your default Starter set, so
+                they work out of the box — map one only when it should see
+                something different.
               </p>
             </div>
             <div className="flex-shrink-0 flex items-center gap-2">
@@ -362,6 +366,7 @@ export function WorkspacesPage() {
               options={[
                 { value: 'all', label: 'All', count: counts.all },
                 { value: 'live', label: 'Live', count: counts.live },
+                { value: 'mapped', label: 'Mapped', count: counts.mapped },
                 { value: 'unmapped', label: 'Unmapped', count: counts.unmapped },
               ]}
             />
@@ -408,9 +413,8 @@ export function WorkspacesPage() {
                 const isSelected =
                   selected?.mode === 'entry' && selected.id === entry.id;
                 // Mapped entries show their bound Space + FeatureSet names.
-                // Unmapped entries deliberately show no preview — the card
-                // reads "Not mapped" because the folder genuinely gets no
-                // tools until the user maps it.
+                // Unmapped entries read "Not mapped" — they fall back to the
+                // default Starter set rather than to an explicit binding.
                 const resolvedSpaceName = entry.binding
                   ? spaceById.get(entry.binding.space_id)?.name
                   : undefined;
@@ -522,6 +526,8 @@ function SegmentedFilter<T extends string>({
             key={o.value}
             type="button"
             onClick={() => onChange(o.value)}
+            data-testid={`workspace-filter-${o.value}`}
+            aria-pressed={active}
             className={[
               'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all',
               active
@@ -692,7 +698,7 @@ function EntryCard({
           ) : (
             <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
               <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-              Not mapped — no tools until you map it
+              Not mapped — using your default Starter tools
             </span>
           )}
         </div>
@@ -980,7 +986,7 @@ function InspectorPanel({
             mode === 'create'
               ? 'Choose the folder and the tools it should get.'
               : mode === 'create-from-live'
-                ? 'This folder is open in an app but has no tools yet — map it.'
+                ? 'This folder is open in an app and using your default Starter tools — map it to give it a specific set instead.'
                 : isMapped && entry?.binding
                   ? `Gives ${
                       formatFsList(
@@ -1280,7 +1286,7 @@ function EffectiveFeaturesContent({
             title={
               data.source === 'binding'
                 ? 'A workspace binding matched this folder — live sessions reporting it route here.'
-                : 'No binding matches this folder. A live roots-capable session would be denied; the FeatureSet shown is a preview of what binding here would expose.'
+                : 'No binding matches this folder, so it falls back to the default Starter set shown here. Map it to give this folder a different set.'
             }
             className={[
               'ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border',

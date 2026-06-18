@@ -107,6 +107,7 @@ impl Fixture {
             binding_repo.clone(),
             session_roots.clone(),
             inbound_client_repo.clone(),
+            feature_set_repo.clone(),
         ));
 
         let prefix_cache = Arc::new(PrefixCacheService::new());
@@ -1056,6 +1057,7 @@ async fn bare_registry(
         binding_repo.clone(),
         SessionRootsRegistry::new(),
         inbound_client_repo.clone(),
+        feature_set_repo.clone(),
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());
     let feature_service = Arc::new(FeatureService::new(
@@ -1166,6 +1168,7 @@ async fn per_space_config_controls_registry_visibility() {
         binding_repo.clone(),
         SessionRootsRegistry::new(),
         inbound_client_repo.clone(),
+        feature_set_repo.clone(),
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());
     let feature_service = Arc::new(FeatureService::new(

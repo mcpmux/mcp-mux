@@ -109,11 +109,12 @@ impl SpaceRepository for SqliteSpaceRepository {
         // Auto-seed the builtin "Starter" FeatureSet for this Space — a
         // ready-to-use starting point. The id prefix `fs_default_<space>`
         // is preserved for FK-stability across the rename (migration 013).
-        // No special routing role under resolver v3 — bindings and per-
-        // client grants pick FeatureSets explicitly.
+        // The Starter is the default fallback for folders that aren't
+        // explicitly mapped (and rootless/unknown sessions), so it's
+        // load-bearing and builtin (can't be deleted).
         conn.execute(
             "INSERT OR IGNORE INTO feature_sets (id, name, description, icon, space_id, feature_set_type, is_builtin, created_at, updated_at)
-             VALUES (?1, 'Starter', 'Auto-created with this Space. Edit, rename, or delete freely — bindings and per-client grants pick FeatureSets explicitly, so this one has no special routing role.', '⭐', ?2, 'starter', 1, ?3, ?3)",
+             VALUES (?1, 'Starter', 'Auto-created with this Space. Unmapped folders fall back to this set — it''s the default toolset for anything you haven''t explicitly mapped. Edit or rename it to change what they get; it can''t be deleted.', '⭐', ?2, 'starter', 1, ?3, ?3)",
             params![
                 format!("fs_default_{}", space_id),
                 space_id,

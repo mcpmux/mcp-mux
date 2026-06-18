@@ -95,3 +95,59 @@ fn test_017_purges_orphaned_feature_set_members() {
         "only the still-resolvable feature member should survive the purge"
     );
 }
+
+/// Migration 018 rewrites the auto-seeded Starter FS's now-stale "no special
+/// routing role; delete freely" description (the Starter is the default
+/// fallback again and can't be deleted), but only on rows that STILL match the
+/// exact 014/015 seed text — a Starter an operator re-described keeps its copy.
+#[test]
+fn test_018_rewrites_stale_starter_description_only() {
+    const STALE: &str = "Auto-created with this Space. Edit, rename, or delete freely — bindings and per-client grants pick FeatureSets explicitly, so this one has no special routing role.";
+    const FRESH: &str = "Auto-created with this Space. Unmapped folders fall back to this set — it's the default toolset for anything you haven't explicitly mapped. Edit or rename it to change what they get; it can't be deleted.";
+
+    let test_db = TestDatabase::new();
+    let conn = test_db.db.connection();
+
+    // Two builtin Starter rows: one still carrying the stale 014/015 copy
+    // (should be rewritten), one an operator customized (must be left alone).
+    conn.execute_batch(
+        "INSERT INTO spaces (id,name,icon,description,is_default,sort_order,created_at,updated_at)
+           VALUES ('s-stale','Stale','x','',0,0,datetime('now'),datetime('now')),
+                  ('s-cust','Custom','x','',0,0,datetime('now'),datetime('now'));
+         INSERT INTO feature_sets
+           (id,name,description,icon,space_id,feature_set_type,server_id,is_builtin,is_deleted,created_at,updated_at)
+           VALUES
+           ('fs_default_s-stale','Starter',
+            'Auto-created with this Space. Edit, rename, or delete freely — bindings and per-client grants pick FeatureSets explicitly, so this one has no special routing role.',
+            '⭐','s-stale','starter',NULL,1,0,datetime('now'),datetime('now')),
+           ('fs_default_s-cust','Starter','My own words','⭐','s-cust','starter',NULL,1,0,datetime('now'),datetime('now'));",
+    )
+    .expect("seed failed");
+
+    // Re-apply migration 018 (idempotent) to exercise the rewrite.
+    conn.execute_batch(include_str!(
+        "../../../../crates/mcpmux-storage/src/migrations/018_starter_is_default_fallback_copy.sql"
+    ))
+    .expect("migration 018 failed");
+
+    let desc = |id: &str| -> String {
+        conn.query_row(
+            "SELECT description FROM feature_sets WHERE id = ?",
+            [id],
+            |r| r.get::<_, String>(0),
+        )
+        .unwrap()
+    };
+
+    assert_eq!(
+        desc("fs_default_s-stale"),
+        FRESH,
+        "stale copy should be rewritten"
+    );
+    assert_ne!(STALE, FRESH); // guard against the strings drifting equal
+    assert_eq!(
+        desc("fs_default_s-cust"),
+        "My own words",
+        "operator-customized copy must be preserved"
+    );
+}

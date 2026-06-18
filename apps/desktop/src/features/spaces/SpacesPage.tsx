@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Plus, Trash2, Loader2, Search, Layout, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Loader2, Search, Layout, AlertCircle, FolderTree } from 'lucide-react';
 import { Card, CardContent, Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import { useAppStore, useSpaces, useIsLoading } from '@/stores';
-import { deleteSpace } from '@/lib/api/spaces';
+import { deleteSpace, type Space } from '@/lib/api/spaces';
 import { CreateSpaceModal } from './CreateSpaceModal';
+import { SpaceBaseDirsModal } from './SpaceBaseDirsModal';
 
 export function SpacesPage() {
   const spaces = useSpaces();
@@ -21,6 +22,8 @@ export function SpacesPage() {
 
   // Create Modal State (creation logic lives in the shared CreateSpaceModal)
   const [showCreateModal, setShowCreateModal] = useState(false);
+  // The space whose base directories are being managed (null = closed).
+  const [baseDirsSpace, setBaseDirsSpace] = useState<Space | null>(null);
 
   const handleDelete = async (id: string) => {
     const spaceName = spaces.find((s) => s.id === id)?.name || 'this space';
@@ -160,7 +163,15 @@ export function SpacesPage() {
                               {space.description || 'No description'}
                             </p>
                           </div>
-                          <div className="flex flex-shrink-0 gap-1">
+                          <div className="flex flex-shrink-0 items-center gap-1">
+                            <button
+                              onClick={() => setBaseDirsSpace(space)}
+                              className="rounded-lg p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))]"
+                              title="Base directories — scope folders to this space"
+                              data-testid={`space-base-dirs-${space.id}`}
+                            >
+                              <FolderTree className="h-4 w-4" />
+                            </button>
                             {space.is_default && (
                               <span
                                 className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
@@ -192,6 +203,7 @@ export function SpacesPage() {
         </div>
 
         <CreateSpaceModal open={showCreateModal} onClose={() => setShowCreateModal(false)} />
+        <SpaceBaseDirsModal space={baseDirsSpace} onClose={() => setBaseDirsSpace(null)} />
       </div>
     </>
   );

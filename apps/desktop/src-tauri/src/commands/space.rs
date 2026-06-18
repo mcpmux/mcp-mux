@@ -6,7 +6,7 @@
 //! built-in fallback. The desktop UI tracks which space the user is
 //! viewing in its own Zustand store (frontend-only state).
 
-use mcpmux_core::Space;
+use mcpmux_core::{validate_workspace_root, Space, SpaceBaseDir, WorkspaceRootValidation};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
@@ -248,4 +248,63 @@ pub async fn refresh_tray_menu(app: AppHandle, state: State<'_, AppState>) -> Re
     tray::update_tray_spaces(&app, &state)
         .await
         .map_err(|e| format!("Failed to update tray menu: {}", e))
+}
+
+// ---------------------------------------------------------------------------
+// Space base directories — scope a workspace root to a Space by folder prefix.
+// A reported root at or under a base dir falls back to that Space's Starter
+// (and scopes the meta-tools / mapping popup to it). Takes effect on a
+// connected client's next request.
+// ---------------------------------------------------------------------------
+
+/// List a Space's configured base directories.
+#[tauri::command]
+pub async fn list_space_base_dirs(
+    space_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpaceBaseDir>, String> {
+    let uuid = Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
+    state
+        .space_base_dir_repository
+        .list_by_space(&uuid)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Add a base directory to a Space. The path is validated (must be an absolute
+/// folder) and normalized before storing; an error is returned if it's already
+/// claimed by another Space.
+#[tauri::command]
+pub async fn add_space_base_dir(
+    space_id: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<SpaceBaseDir, String> {
+    let uuid = Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
+
+    let normalized = match validate_workspace_root(&path) {
+        WorkspaceRootValidation::Ok { normalized } => normalized,
+        WorkspaceRootValidation::Empty => return Err("Pick a folder first.".to_string()),
+        WorkspaceRootValidation::Invalid { reason } => return Err(reason),
+    };
+
+    info!(
+        "[add_space_base_dir] space={} path={} (normalized {})",
+        space_id, path, normalized
+    );
+    state
+        .space_base_dir_repository
+        .add(&uuid, &normalized)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Remove a base directory (by its row id).
+#[tauri::command]
+pub async fn remove_space_base_dir(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .space_base_dir_repository
+        .remove(&id)
+        .await
+        .map_err(|e| e.to_string())
 }

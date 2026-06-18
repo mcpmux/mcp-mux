@@ -53,3 +53,35 @@ export async function removeServerFromConfig(spaceId: string, serverId: string):
 export async function openSpaceConfigFile(spaceId: string): Promise<void> {
   return invoke('open_space_config_file', { spaceId });
 }
+
+/**
+ * A base directory claimed by a Space. Any workspace root a connected client
+ * opens at or under `path` is scoped to that Space (longest-prefix wins): an
+ * unmapped folder there falls back to the Space's Starter set, and the
+ * meta-tools / mapping popup restrict to that Space. `path` is normalized and
+ * globally unique (one owner per folder).
+ */
+export interface SpaceBaseDir {
+  id: string;
+  space_id: string;
+  path: string;
+  created_at: string;
+}
+
+/** List a Space's base directories. */
+export async function listSpaceBaseDirs(spaceId: string): Promise<SpaceBaseDir[]> {
+  return invoke('list_space_base_dirs', { spaceId });
+}
+
+/**
+ * Add a base directory to a Space. `path` is validated (absolute folder) and
+ * normalized backend-side; rejects a folder already claimed by another Space.
+ */
+export async function addSpaceBaseDir(spaceId: string, path: string): Promise<SpaceBaseDir> {
+  return invoke('add_space_base_dir', { spaceId, path });
+}
+
+/** Remove a base directory by its row id. */
+export async function removeSpaceBaseDir(id: string): Promise<void> {
+  return invoke('remove_space_base_dir', { id });
+}

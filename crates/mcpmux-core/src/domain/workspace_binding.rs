@@ -292,6 +292,52 @@ pub enum WorkspaceRootValidation {
     Invalid { reason: String },
 }
 
+/// True when `root` is the same folder as `base`, or nested inside it —
+/// matching on path-segment boundaries so `/work` contains `/work/proj` but
+/// NOT `/workspace`. Both arguments must already be normalized via
+/// [`normalize_workspace_root`] (same casing + separator conventions) for the
+/// comparison to be meaningful.
+///
+/// Used to scope a workspace root to a Space by its configured base
+/// directories: a reported root at or under a base dir belongs to that Space.
+pub fn path_is_within(root: &str, base: &str) -> bool {
+    if base.is_empty() || root.is_empty() {
+        return false;
+    }
+    if root == base {
+        return true;
+    }
+    // Separator comes from the (normalized) base: Windows drive/UNC paths use
+    // `\`, POSIX uses `/`.
+    let sep = if base.contains('\\') { '\\' } else { '/' };
+    if base.ends_with(sep) {
+        // `base` is already a filesystem/drive root (`c:\`, `\\`, `/`) — its
+        // trailing separator IS the boundary, so a plain prefix check is right.
+        root.starts_with(base)
+    } else {
+        // Otherwise require the next char to be the separator so we only match
+        // whole segments (`/work` ⊄ `/workspace`).
+        let mut prefix = String::with_capacity(base.len() + 1);
+        prefix.push_str(base);
+        prefix.push(sep);
+        root.starts_with(&prefix)
+    }
+}
+
+/// Of all `bases`, return the **longest** one that contains `root` (most
+/// specific wins when base dirs nest — `/work/client` beats `/work`), or
+/// `None` when none contain it. Inputs must be normalized. Equal-length bases
+/// can't both contain the same root, so length ties never occur in practice.
+pub fn longest_matching_base<'a>(
+    root: &str,
+    bases: impl IntoIterator<Item = &'a str>,
+) -> Option<&'a str> {
+    bases
+        .into_iter()
+        .filter(|b| path_is_within(root, b))
+        .max_by_key(|b| b.len())
+}
+
 /// Validate a user-entered workspace root.
 ///
 /// Applied on manual add/edit ONLY — roots reported by connected MCP
@@ -387,6 +433,55 @@ fn check_windows_reserved_chars(path: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- path_is_within / longest_matching_base --------------------------
+
+    #[test]
+    fn within_posix_segment_boundaries() {
+        assert!(path_is_within("/work", "/work")); // same folder
+        assert!(path_is_within("/work/proj", "/work")); // nested
+        assert!(path_is_within("/work/proj/deep", "/work")); // deeper
+        assert!(!path_is_within("/workspace", "/work")); // NOT a segment boundary
+        assert!(!path_is_within("/other", "/work"));
+        assert!(!path_is_within("/work", "/work/proj")); // parent is not within child
+    }
+
+    #[test]
+    fn within_windows_is_case_and_sep_consistent() {
+        // Inputs are already-normalized Windows form (lower-case, `\`).
+        assert!(path_is_within("c:\\work\\proj", "c:\\work"));
+        assert!(path_is_within("c:\\work", "c:\\work"));
+        assert!(!path_is_within("c:\\workspace", "c:\\work"));
+        // Drive root keeps its trailing separator and contains everything on it.
+        assert!(path_is_within("c:\\proj", "c:\\"));
+    }
+
+    #[test]
+    fn within_filesystem_roots() {
+        assert!(path_is_within("/work", "/")); // POSIX root contains all
+        assert!(path_is_within("/", "/"));
+        assert!(!path_is_within("/x", "")); // empty base never matches
+        assert!(!path_is_within("", "/x")); // empty root never matches
+    }
+
+    #[test]
+    fn longest_base_wins_when_nested() {
+        let bases = ["/work", "/work/client", "/other"];
+        assert_eq!(
+            longest_matching_base("/work/client/app", bases.iter().copied()),
+            Some("/work/client"),
+        );
+        // A root under only the broad base falls to that one.
+        assert_eq!(
+            longest_matching_base("/work/solo", bases.iter().copied()),
+            Some("/work"),
+        );
+        // No base contains it.
+        assert_eq!(
+            longest_matching_base("/elsewhere", bases.iter().copied()),
+            None,
+        );
+    }
 
     // ---- normalize -------------------------------------------------------
 

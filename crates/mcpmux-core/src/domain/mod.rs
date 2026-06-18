@@ -38,5 +38,6 @@ pub use server_feature::*;
 pub use server_log::*;
 pub use space::*;
 pub use workspace_binding::{
-    normalize_workspace_root, validate_workspace_root, WorkspaceBinding, WorkspaceRootValidation,
+    longest_matching_base, normalize_workspace_root, path_is_within, validate_workspace_root,
+    WorkspaceBinding, WorkspaceRootValidation,
 };

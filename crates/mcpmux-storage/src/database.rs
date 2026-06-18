@@ -123,6 +123,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "starter_is_default_fallback_copy",
         sql: include_str!("migrations/018_starter_is_default_fallback_copy.sql"),
     },
+    Migration {
+        version: 19,
+        name: "space_base_dirs",
+        sql: include_str!("migrations/019_space_base_dirs.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

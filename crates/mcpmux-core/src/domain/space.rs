@@ -75,6 +75,24 @@ impl Default for Space {
     }
 }
 
+/// A base directory claimed by a Space.
+///
+/// Any reported workspace root at or under `path` is scoped to `space_id`
+/// (see [`crate::domain::path_is_within`]). `path` is stored already-normalized
+/// via [`crate::domain::normalize_workspace_root`], and is globally unique —
+/// the same folder can't be a base dir of two Spaces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceBaseDir {
+    /// Unique identifier for this base-dir row.
+    pub id: String,
+    /// The Space that owns this base directory.
+    pub space_id: String,
+    /// Normalized absolute path.
+    pub path: String,
+    /// Creation timestamp.
+    pub created_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     Client, Credential, CredentialType, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
-    OutboundOAuthRegistration, ServerFeature, Space, WorkspaceBinding,
+    OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir, WorkspaceBinding,
 };
 
 /// Result type for repository operations
@@ -37,6 +37,32 @@ pub trait SpaceRepository: Send + Sync {
 
     /// Set a space as default
     async fn set_default(&self, id: &Uuid) -> RepoResult<()>;
+}
+
+/// Per-Space base-directory repository.
+///
+/// Manages the folders a Space claims. A reported workspace root at or under a
+/// base dir is scoped to that Space (longest-prefix wins when base dirs nest).
+#[async_trait]
+pub trait SpaceBaseDirRepository: Send + Sync {
+    /// Every base dir across all Spaces.
+    async fn list_all(&self) -> RepoResult<Vec<SpaceBaseDir>>;
+
+    /// Base dirs for one Space.
+    async fn list_by_space(&self, space_id: &Uuid) -> RepoResult<Vec<SpaceBaseDir>>;
+
+    /// Add a base dir to a Space. `path` MUST already be normalized via
+    /// [`crate::domain::normalize_workspace_root`]. Returns an error if the
+    /// path is already claimed by any Space (one owner per path).
+    async fn add(&self, space_id: &Uuid, path: &str) -> RepoResult<SpaceBaseDir>;
+
+    /// Remove a base dir by its row id.
+    async fn remove(&self, id: &str) -> RepoResult<()>;
+
+    /// The Space whose base dir is the longest prefix of `root` (already
+    /// normalized), or `None` when no base dir contains it. Most-specific
+    /// (longest) base dir wins when several nest.
+    async fn find_space_for_root(&self, root: &str) -> RepoResult<Option<Uuid>>;
 }
 
 /// InstalledServer repository trait

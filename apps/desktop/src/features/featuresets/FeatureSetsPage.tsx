@@ -375,7 +375,7 @@ export function FeatureSetsPage() {
                       {isStarter && (
                         <div
                           className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-emerald-500 to-green-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white shadow-[0_4px_12px_-2px_rgb(16_185_129/0.5)]"
-                          title="Auto-seeded with this Space. The default set for folders you haven't mapped — edit or rename it to change what they get. It can't be deleted."
+                          title="Auto-seeded with this Space. The default set for folders you haven't mapped — edit which tools it includes to change what they get. Its name is fixed and it can't be deleted."
                           data-testid={`featureset-starter-badge-${fs.id}`}
                         >
                           <CheckCircle2 className="h-3 w-3" />

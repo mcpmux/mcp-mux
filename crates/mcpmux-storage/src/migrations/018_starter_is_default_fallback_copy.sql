@@ -12,7 +12,7 @@
 -- an operator who customized the copy keeps their change.
 
 UPDATE feature_sets
-   SET description = 'Auto-created with this Space. Unmapped folders fall back to this set — it''s the default toolset for anything you haven''t explicitly mapped. Edit or rename it to change what they get; it can''t be deleted.'
+   SET description = 'Auto-created with this Space — the default set for folders you haven''t explicitly mapped. Edit which tools it includes to change what they get. Its name is fixed and it can''t be deleted.'
  WHERE is_builtin = 1
    AND feature_set_type IN ('starter', 'default')
    AND description = 'Auto-created with this Space. Edit, rename, or delete freely — bindings and per-client grants pick FeatureSets explicitly, so this one has no special routing role.';

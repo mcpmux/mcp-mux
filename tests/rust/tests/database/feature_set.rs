@@ -3,7 +3,7 @@
 //! Tests for feature set CRUD, builtin types (All, Default, ServerAll),
 //! and feature member composition.
 
-use mcpmux_core::domain::{FeatureSetType, MemberMode};
+use mcpmux_core::domain::{FeatureSetMember, FeatureSetType, MemberMode};
 use mcpmux_core::repository::{FeatureSetRepository, SpaceRepository};
 use mcpmux_storage::{SqliteFeatureSetRepository, SqliteSpaceRepository};
 use std::sync::Arc;
@@ -110,6 +110,55 @@ async fn test_update_feature_set() {
         .unwrap();
     assert_eq!(loaded.name, "Updated Name");
     assert_eq!(loaded.description, Some("New description".to_string()));
+}
+
+/// The builtin Starter's identity is locked: `update()` must ignore name /
+/// description / icon changes on a builtin row (it's the default fallback, not
+/// renamable) while still applying MEMBER changes — that's how the member
+/// editor (which routes through `update()`) keeps working for the Starter.
+#[tokio::test]
+async fn test_update_locks_builtin_identity_but_allows_member_edits() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let feature_repo = SqliteFeatureSetRepository::new(Arc::clone(&db));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    // Auto-seed the builtin Starter for this Space.
+    FeatureSetRepository::ensure_builtin_for_space(&feature_repo, &space.id.to_string())
+        .await
+        .unwrap();
+    let mut starter =
+        FeatureSetRepository::get_starter_for_space(&feature_repo, &space.id.to_string())
+            .await
+            .unwrap()
+            .expect("starter seeded");
+    let original_name = starter.name.clone();
+    let original_desc = starter.description.clone();
+
+    // Attempt to rename + re-describe the builtin AND add a member at once.
+    starter.name = "Hacked Name".to_string();
+    starter.description = Some("hacked description".to_string());
+    starter.members = vec![FeatureSetMember::include_feature(&starter.id, "feat-x")];
+    FeatureSetRepository::update(&feature_repo, &starter)
+        .await
+        .expect("update should succeed");
+
+    let loaded = FeatureSetRepository::get_with_members(&feature_repo, &starter.id)
+        .await
+        .unwrap()
+        .unwrap();
+    // Identity preserved...
+    assert_eq!(loaded.name, original_name, "builtin name must not change");
+    assert_eq!(
+        loaded.description, original_desc,
+        "builtin description must not change"
+    );
+    // ...but the member edit went through.
+    assert_eq!(loaded.members.len(), 1, "members must stay editable");
+    assert_eq!(loaded.members[0].member_id, "feat-x");
 }
 
 #[tokio::test]

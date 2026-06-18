@@ -3,11 +3,13 @@
 //! Each FeatureSet is scoped to a space and is one of two types:
 //! - **Starter**: auto-created with the Space. It's the **default fallback**
 //!   for folders that aren't explicitly mapped (and for rootless/unknown
-//!   sessions) — the resolver routes them here instead of denying. Editable
-//!   and renamable (empty it to grant nothing by default), but **builtin and
-//!   not deletable** since the fallback always needs a target. (Pre-resolver-v3
-//!   it was the "Default" type and also acted as the implicit fallback; that
-//!   role is back after a stint where it was a no-op seed.)
+//!   sessions) — the resolver routes them here instead of denying. Its
+//!   membership is editable (change which tools it includes, or empty it to
+//!   grant nothing by default), but its **identity is locked**: builtin, so
+//!   not renamable and not deletable since the fallback always needs a stable
+//!   target. (Pre-resolver-v3 it was the "Default" type and also acted as the
+//!   implicit fallback; that role is back after a stint where it was a no-op
+//!   seed.)
 //! - **Custom**: any other operator-defined FeatureSet.
 
 use chrono::{DateTime, Utc};
@@ -25,9 +27,10 @@ use uuid::Uuid;
 #[derive(Default)]
 pub enum FeatureSetType {
     /// Auto-created with the Space and used as the **default fallback** for
-    /// unmapped folders / rootless sessions. Editable and renamable, but
-    /// builtin — not deletable. Was historically called `Default` (DB column
-    /// value carried over via migration 013).
+    /// unmapped folders / rootless sessions. Its members are editable, but its
+    /// identity is locked: builtin — not renamable and not deletable. Was
+    /// historically called `Default` (DB column value carried over via
+    /// migration 013).
     Starter,
     /// Any operator-defined FeatureSet.
     #[default]
@@ -240,10 +243,10 @@ impl FeatureSet {
             id: format!("fs_default_{}", space_id),
             name: "Starter".to_string(),
             description: Some(
-                "Auto-created with this Space. Unmapped folders fall back to \
-                 this set — it's the default toolset for anything you haven't \
-                 explicitly mapped. Edit or rename it to change what they get; \
-                 it can't be deleted."
+                "Auto-created with this Space — the default set for folders \
+                 you haven't explicitly mapped. Edit which tools it includes \
+                 to change what they get. Its name is fixed and it can't be \
+                 deleted."
                     .to_string(),
             ),
             icon: Some("⭐".to_string()),

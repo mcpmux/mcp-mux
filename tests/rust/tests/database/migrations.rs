@@ -103,7 +103,7 @@ fn test_017_purges_orphaned_feature_set_members() {
 #[test]
 fn test_018_rewrites_stale_starter_description_only() {
     const STALE: &str = "Auto-created with this Space. Edit, rename, or delete freely — bindings and per-client grants pick FeatureSets explicitly, so this one has no special routing role.";
-    const FRESH: &str = "Auto-created with this Space. Unmapped folders fall back to this set — it's the default toolset for anything you haven't explicitly mapped. Edit or rename it to change what they get; it can't be deleted.";
+    const FRESH: &str = "Auto-created with this Space — the default set for folders you haven't explicitly mapped. Edit which tools it includes to change what they get. Its name is fixed and it can't be deleted.";
 
     let test_db = TestDatabase::new();
     let conn = test_db.db.connection();

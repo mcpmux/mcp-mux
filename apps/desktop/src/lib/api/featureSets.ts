@@ -9,10 +9,11 @@ import { invoke } from '@tauri-apps/api/core';
 /**
  * `starter` is the auto-seeded FS that comes with each Space. It's the
  * default fallback the resolver routes unmapped folders / rootless sessions
- * to, so it's builtin and can't be deleted (it can be edited, renamed, or
- * emptied). The legacy `'default'` value is accepted on read because
- * migration 013 rewrites stored rows lazily and a stale fetch could still
- * surface it; new writes use `'starter'`.
+ * to, so it's builtin: its members are editable (change which tools it
+ * includes, or empty it), but it can't be renamed or deleted. The legacy
+ * `'default'` value is accepted on read because migration 013 rewrites stored
+ * rows lazily and a stale fetch could still surface it; new writes use
+ * `'starter'`.
  */
 export type FeatureSetType = 'starter' | 'default' | 'custom';
 

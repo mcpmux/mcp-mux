@@ -111,10 +111,11 @@ impl SpaceRepository for SqliteSpaceRepository {
         // is preserved for FK-stability across the rename (migration 013).
         // The Starter is the default fallback for folders that aren't
         // explicitly mapped (and rootless/unknown sessions), so it's
-        // load-bearing and builtin (can't be deleted).
+        // load-bearing and builtin: members are editable, but it can't be
+        // renamed or deleted.
         conn.execute(
             "INSERT OR IGNORE INTO feature_sets (id, name, description, icon, space_id, feature_set_type, is_builtin, created_at, updated_at)
-             VALUES (?1, 'Starter', 'Auto-created with this Space. Unmapped folders fall back to this set — it''s the default toolset for anything you haven''t explicitly mapped. Edit or rename it to change what they get; it can''t be deleted.', '⭐', ?2, 'starter', 1, ?3, ?3)",
+             VALUES (?1, 'Starter', 'Auto-created with this Space — the default set for folders you haven''t explicitly mapped. Edit which tools it includes to change what they get. Its name is fixed and it can''t be deleted.', '⭐', ?2, 'starter', 1, ?3, ?3)",
             params![
                 format!("fs_default_{}", space_id),
                 space_id,

@@ -992,6 +992,8 @@ pub fn run() {
             commands::set_auto_install_updates,
             commands::get_update_channel,
             commands::set_update_channel,
+            commands::get_workspace_mapping_prompt_enabled,
+            commands::set_workspace_mapping_prompt_enabled,
         ])
         .build(tauri::generate_context!())
         .expect("error while building McpMux application")

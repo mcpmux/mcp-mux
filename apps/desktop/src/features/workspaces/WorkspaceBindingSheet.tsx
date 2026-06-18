@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
@@ -73,11 +74,23 @@ export function WorkspaceBindingSheet() {
   useEffect(() => {
     const un = listen<WorkspaceNeedsBindingPayload>(
       'workspace-needs-binding',
-      (event) => {
+      async (event) => {
         // Swallow only while a sheet is already showing — the user is
         // mid-decision, a second emit would stack a new sheet on top. Once
         // the current sheet closes (Modify or Close), the next emit from
         // any fresh session on an unbound root opens the sheet again.
+        if (currentSessionRef.current !== null) return;
+        // Respect the "ask to map new folders" setting (on by default). Read
+        // it fresh each time so toggling it — from Settings or the in-sheet
+        // "stop asking" link — takes effect immediately, with no re-subscribe.
+        try {
+          const enabled = await invoke<boolean>('get_workspace_mapping_prompt_enabled');
+          if (!enabled) return;
+        } catch {
+          // If the setting can't be read, fall back to showing (default on).
+        }
+        // Re-check after the await: another emit may have opened a sheet while
+        // we were reading the setting.
         if (currentSessionRef.current !== null) return;
         const p = event.payload;
         setPayload(p);
@@ -168,6 +181,19 @@ export function WorkspaceBindingSheet() {
 
   const handleDismiss = () => {
     if (!payload || saving) return;
+    markSeenAndClose(payload);
+  };
+
+  // "Stop asking" escape hatch — turns the prompt off globally (it's on by
+  // default) and closes. Best-effort: if the write fails we still close so the
+  // click isn't a dead end. Re-enable lives in Settings → Workspaces.
+  const handleDisablePrompt = async () => {
+    if (!payload || saving) return;
+    try {
+      await invoke('set_workspace_mapping_prompt_enabled', { enabled: false });
+    } catch {
+      /* best-effort — close regardless */
+    }
     markSeenAndClose(payload);
   };
 
@@ -315,6 +341,18 @@ export function WorkspaceBindingSheet() {
           <p className="mt-3 text-center text-[11px] text-[rgb(var(--muted))]">
             You can change this anytime in Workspaces.
           </p>
+          <div className="mt-1.5 text-center">
+            <button
+              type="button"
+              onClick={handleDisablePrompt}
+              disabled={saving}
+              title="Turn off the new-folder prompt. Re-enable it anytime in Settings → Workspaces."
+              className="text-[11px] text-[rgb(var(--muted))] underline-offset-2 transition-colors hover:text-[rgb(var(--foreground))] hover:underline disabled:opacity-50"
+              data-testid="workspace-binding-disable-prompt"
+            >
+              Asked too often? Stop asking about new folders
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -203,6 +203,48 @@ pub async fn set_update_channel(
     Ok(normalized.to_string())
 }
 
+/// App-settings key for the "ask to map new folders" prompt switch.
+const WORKSPACE_MAPPING_PROMPT_KEY: &str = "workspaces.mapping_prompt_enabled";
+
+/// Interpret a stored value for the workspace mapping-prompt toggle. Missing or
+/// any non-`"false"` value means **enabled** — the prompt is on by default, so
+/// only an explicit opt-out turns it off.
+fn mapping_prompt_enabled_from(stored: Option<&str>) -> bool {
+    stored.map(|v| v != "false").unwrap_or(true)
+}
+
+/// Whether McpMux pops the "map this folder?" sheet when a connected client
+/// opens a folder that has no explicit binding (it's on the default Starter
+/// set). Default **true**. Users who find the prompt noisy can turn it off
+/// here or via the link in the sheet itself.
+#[tauri::command]
+pub async fn get_workspace_mapping_prompt_enabled(
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let stored = app_state
+        .settings_repository
+        .get(WORKSPACE_MAPPING_PROMPT_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(mapping_prompt_enabled_from(stored.as_deref()))
+}
+
+/// Enable/disable the "map this folder?" prompt. Persisted; returns the value
+/// actually saved.
+#[tauri::command]
+pub async fn set_workspace_mapping_prompt_enabled(
+    enabled: bool,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    app_state
+        .settings_repository
+        .set(WORKSPACE_MAPPING_PROMPT_KEY, &enabled.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+    info!("[Settings] Workspace mapping prompt set to {}", enabled);
+    Ok(enabled)
+}
+
 /// Check if app should start hidden (for auto-launch with --hidden flag)
 pub fn should_start_hidden() -> bool {
     let args: Vec<String> = std::env::args().collect();
@@ -331,5 +373,17 @@ mod tests {
             let out = normalize_channel(input);
             assert!(out == UPDATE_CHANNEL_STABLE || out == UPDATE_CHANNEL_PRERELEASE);
         }
+    }
+
+    #[test]
+    fn test_mapping_prompt_enabled_defaults_on() {
+        // Missing setting → on by default.
+        assert!(mapping_prompt_enabled_from(None));
+        // Only an explicit "false" disables it.
+        assert!(!mapping_prompt_enabled_from(Some("false")));
+        assert!(mapping_prompt_enabled_from(Some("true")));
+        // Any unexpected value is treated as enabled (fail-open to the default).
+        assert!(mapping_prompt_enabled_from(Some("")));
+        assert!(mapping_prompt_enabled_from(Some("garbage")));
     }
 }

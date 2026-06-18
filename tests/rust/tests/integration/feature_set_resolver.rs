@@ -21,13 +21,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mcpmux_core::{
-    normalize_workspace_root, FeatureSet, FeatureSetRepository, SpaceRepository, WorkspaceBinding,
-    WorkspaceBindingRepository,
+    normalize_workspace_root, FeatureSet, FeatureSetRepository, Space, SpaceBaseDirRepository,
+    SpaceRepository, WorkspaceBinding, WorkspaceBindingRepository,
 };
 use mcpmux_gateway::services::{FeatureSetResolverService, ResolutionSource, SessionRootsRegistry};
 use mcpmux_storage::{
     Database, InboundClient, InboundClientRepository, RegistrationType, SqliteFeatureSetRepository,
-    SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
+    SqliteSpaceBaseDirRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -39,6 +39,7 @@ struct Fixture {
     binding_repo: Arc<dyn WorkspaceBindingRepository>,
     fs_repo: Arc<dyn FeatureSetRepository>,
     client_repo: Arc<InboundClientRepository>,
+    base_dir_repo: Arc<dyn SpaceBaseDirRepository>,
     space_id: Uuid,
     /// The default Space's auto-seeded Starter FS — the target of every
     /// `SpaceDefault` fallback.
@@ -56,6 +57,8 @@ impl Fixture {
         let binding_repo: Arc<dyn WorkspaceBindingRepository> =
             Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
         let client_repo = Arc::new(InboundClientRepository::new(db.clone()));
+        let base_dir_repo: Arc<dyn SpaceBaseDirRepository> =
+            Arc::new(SqliteSpaceBaseDirRepository::new(db.clone()));
 
         let default_space = space_repo.get_default().await.unwrap().unwrap();
         let space_id = default_space.id;
@@ -87,6 +90,7 @@ impl Fixture {
             session_roots.clone(),
             client_repo.clone(),
             fs_repo.clone(),
+            base_dir_repo.clone(),
         );
 
         Self {
@@ -96,6 +100,7 @@ impl Fixture {
             binding_repo,
             fs_repo,
             client_repo,
+            base_dir_repo,
             space_id,
             starter_fs_id,
             fs_a_id,
@@ -113,8 +118,29 @@ impl Fixture {
             self.session_roots.clone(),
             self.client_repo.clone(),
             self.fs_repo.clone(),
+            self.base_dir_repo.clone(),
         )
         .with_pending_grace(grace)
+    }
+
+    /// Create a second Space with its own Starter and a base directory, so
+    /// base-dir scoping can be exercised. Returns `(space_id, starter_fs_id)`.
+    async fn make_space_with_base_dir(&self, name: &str, base_dir: &str) -> (Uuid, String) {
+        let space = Space::new(name);
+        let space_id = space.id;
+        self.space_repo.create(&space).await.unwrap();
+        let starter_id = self
+            .fs_repo
+            .get_starter_for_space(&space_id.to_string())
+            .await
+            .unwrap()
+            .expect("new space is seeded with a Starter")
+            .id;
+        self.base_dir_repo
+            .add(&space_id, &normalize_workspace_root(base_dir))
+            .await
+            .unwrap();
+        (space_id, starter_id)
     }
 
     /// Insert an inbound client row so we can attach grants to it (the
@@ -290,6 +316,105 @@ async fn no_inheritance_child_of_bound_parent_falls_back_to_default() {
     let rp = f.resolver.resolve(Some("parent"), None).await.unwrap();
     assert_eq!(rp.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(rp.feature_set_ids, vec![f.fs_a_id]);
+}
+
+// ---------------------------------------------------------------------------
+// SpaceDefault tier — base-directory scoping
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn unmapped_root_under_base_dir_scopes_to_that_space() {
+    let f = Fixture::new().await;
+    let (base, root) = if cfg!(windows) {
+        ("d:\\work", "d:\\work\\proj")
+    } else {
+        ("/work", "/work/proj")
+    };
+    let (work_space, work_starter) = f.make_space_with_base_dir("Work", base).await;
+
+    // Session reports a folder UNDER Work's base dir, with no explicit binding.
+    f.session_roots.set("s", [root]);
+    f.session_roots.set_roots_capable("s", true);
+
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::SpaceDefault);
+    // Scoped to the Work space's Starter — NOT the global default space's.
+    assert_eq!(r.space_id, Some(work_space));
+    assert_eq!(r.feature_set_ids, vec![work_starter]);
+    assert_ne!(r.space_id, Some(f.space_id));
+}
+
+#[tokio::test]
+async fn unmapped_root_outside_base_dirs_uses_default_space() {
+    let f = Fixture::new().await;
+    let base = if cfg!(windows) { "d:\\work" } else { "/work" };
+    f.make_space_with_base_dir("Work", base).await;
+
+    let other = if cfg!(windows) {
+        "d:\\elsewhere"
+    } else {
+        "/elsewhere"
+    };
+    f.session_roots.set("s", [other]);
+    f.session_roots.set_roots_capable("s", true);
+
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::SpaceDefault);
+    // No base dir claims it → global default space's Starter.
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+}
+
+#[tokio::test]
+async fn nested_base_dir_most_specific_space_wins() {
+    let f = Fixture::new().await;
+    let (work_base, client_base, root) = if cfg!(windows) {
+        ("d:\\work", "d:\\work\\client", "d:\\work\\client\\app")
+    } else {
+        ("/work", "/work/client", "/work/client/app")
+    };
+    f.make_space_with_base_dir("Work", work_base).await;
+    let (client_space, client_starter) = f.make_space_with_base_dir("Client", client_base).await;
+
+    f.session_roots.set("s", [root]);
+    f.session_roots.set_roots_capable("s", true);
+
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(
+        r.space_id,
+        Some(client_space),
+        "the most-specific (longest) base dir wins"
+    );
+    assert_eq!(r.feature_set_ids, vec![client_starter]);
+}
+
+#[tokio::test]
+async fn exact_binding_overrides_base_dir_scope() {
+    // A WorkspaceBinding is more specific than a base-dir scope: even though
+    // the root is under Work's base dir, an explicit binding wins.
+    let f = Fixture::new().await;
+    let (base, root) = if cfg!(windows) {
+        ("d:\\work", "d:\\work\\proj")
+    } else {
+        ("/work", "/work/proj")
+    };
+    f.make_space_with_base_dir("Work", base).await;
+
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(root),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+    f.session_roots.set("s", [root]);
+    f.session_roots.set_roots_capable("s", true);
+
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id.clone()]);
 }
 
 // ---------------------------------------------------------------------------

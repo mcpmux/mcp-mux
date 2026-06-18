@@ -22,8 +22,8 @@ use mcpmux_core::{
 };
 use mcpmux_gateway::services::{FeatureSetResolverService, ResolutionSource, SessionRootsRegistry};
 use mcpmux_storage::{
-    Database, InboundClientRepository, SqliteFeatureSetRepository, SqliteSpaceRepository,
-    SqliteWorkspaceBindingRepository,
+    Database, InboundClientRepository, SqliteFeatureSetRepository, SqliteSpaceBaseDirRepository,
+    SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -59,6 +59,7 @@ impl Ctx {
             session_roots.clone(),
             inbound_client_repo.clone(),
             fs_repo.clone(),
+            Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
         );
 
         Self {
@@ -159,6 +160,7 @@ async fn binding_to_non_default_space_reroutes_session() {
         session_roots.clone(),
         inbound_client_repo.clone(),
         fs_repo.clone(),
+        Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
     );
 
     let raw = if cfg!(windows) {

@@ -109,6 +109,7 @@ impl ServiceContainer {
             session_roots.clone(),
             deps.inbound_client_repo.clone(),
             deps.feature_set_repo.clone(),
+            deps.space_base_dir_repo.clone(),
         ));
 
         // Authorization service is now a thin adapter over the resolver.

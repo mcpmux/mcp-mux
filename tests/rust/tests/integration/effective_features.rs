@@ -27,7 +27,7 @@ use mcpmux_gateway::services::{FeatureSetResolverService, ResolutionSource, Sess
 use mcpmux_gateway::{FeatureService, PrefixCacheService};
 use mcpmux_storage::{
     Database, InboundClientRepository, SqliteFeatureSetRepository, SqliteServerFeatureRepository,
-    SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
+    SqliteSpaceBaseDirRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -114,6 +114,7 @@ impl Ctx {
             session_roots.clone(),
             client_repo.clone(),
             fs_repo.clone(),
+            Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
         );
         let feature_service =
             FeatureService::new(feature_repo.clone(), fs_repo.clone(), prefix_cache);

@@ -23,7 +23,7 @@ use mcpmux_gateway::services::{
 };
 use mcpmux_storage::{
     Database, InboundClientRepository, SqliteFeatureSetRepository,
-    SqliteInboundMcpClientRepository, SqliteServerFeatureRepository,
+    SqliteInboundMcpClientRepository, SqliteServerFeatureRepository, SqliteSpaceBaseDirRepository,
     SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use serde_json::{json, Value};
@@ -108,6 +108,7 @@ impl Fixture {
             session_roots.clone(),
             inbound_client_repo.clone(),
             feature_set_repo.clone(),
+            Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
         ));
 
         let prefix_cache = Arc::new(PrefixCacheService::new());
@@ -1058,6 +1059,7 @@ async fn bare_registry(
         SessionRootsRegistry::new(),
         inbound_client_repo.clone(),
         feature_set_repo.clone(),
+        Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());
     let feature_service = Arc::new(FeatureService::new(
@@ -1169,6 +1171,7 @@ async fn per_space_config_controls_registry_visibility() {
         SessionRootsRegistry::new(),
         inbound_client_repo.clone(),
         feature_set_repo.clone(),
+        Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());
     let feature_service = Arc::new(FeatureService::new(

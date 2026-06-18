@@ -81,7 +81,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use mcpmux_core::{FeatureSetRepository, SpaceRepository, WorkspaceBindingRepository};
+use mcpmux_core::{
+    FeatureSetRepository, SpaceBaseDirRepository, SpaceRepository, WorkspaceBindingRepository,
+};
 use mcpmux_storage::InboundClientRepository;
 use serde::Serialize;
 use tracing::{debug, warn};
@@ -165,6 +167,10 @@ pub struct FeatureSetResolverService {
     /// Looks up each Space's Starter FeatureSet for the default fallback
     /// (Tier 1b / Tier 1c-after-grace / Tier 3).
     feature_set_repo: Arc<dyn FeatureSetRepository>,
+    /// Scopes an unmapped reported root to a Space by base directory — an
+    /// unmapped folder under a Space's base dir falls back to that Space's
+    /// Starter instead of the global default Space.
+    space_base_dir_repo: Arc<dyn SpaceBaseDirRepository>,
     /// Grace window for the `PendingRoots` tier — see
     /// [`DEFAULT_PENDING_ROOTS_GRACE`]. Configurable so tests can force the
     /// post-grace path deterministically without sleeping.
@@ -178,6 +184,7 @@ impl FeatureSetResolverService {
         session_roots: Arc<SessionRootsRegistry>,
         client_repo: Arc<InboundClientRepository>,
         feature_set_repo: Arc<dyn FeatureSetRepository>,
+        space_base_dir_repo: Arc<dyn SpaceBaseDirRepository>,
     ) -> Self {
         Self {
             space_repo,
@@ -185,8 +192,22 @@ impl FeatureSetResolverService {
             session_roots,
             client_repo,
             feature_set_repo,
+            space_base_dir_repo,
             pending_grace: DEFAULT_PENDING_ROOTS_GRACE,
         }
+    }
+
+    /// The Space that claims one of `roots` by base directory, or `None`. Each
+    /// root's longest-prefix match is taken (via the repo); the first reported
+    /// root that lands in a Space wins. Used to scope an unmapped folder to its
+    /// Space rather than always falling back to the global default.
+    async fn space_for_roots(&self, roots: &[String]) -> Result<Option<Uuid>> {
+        for r in roots {
+            if let Some(space_id) = self.space_base_dir_repo.find_space_for_root(r).await? {
+                return Ok(Some(space_id));
+            }
+        }
+        Ok(None)
     }
 
     /// Override the pending-roots grace window. `Duration::ZERO` makes the
@@ -198,36 +219,37 @@ impl FeatureSetResolverService {
         self
     }
 
-    /// Fall back to the default Space's Starter FeatureSet. Returns
+    /// Fall back to `space_id`'s Starter FeatureSet. `space_id` is the global
+    /// default Space for rootless sessions, or a base-dir-scoped Space for an
+    /// unmapped folder under that Space's base directory. Returns
     /// [`ResolutionSource::SpaceDefault`] when a Starter exists (the normal
     /// path — it's builtin and seeded per Space), or, defensively,
-    /// [`ResolutionSource::Deny`] in the degenerate case where the default
-    /// Space has no Starter. `space_id` is always the default Space here —
-    /// unmapped/rootless sessions have no other Space to route to.
-    async fn default_fallback(&self, default_space_id: Uuid) -> Result<ResolvedFeatureSet> {
+    /// [`ResolutionSource::Deny`] in the degenerate case where the Space has no
+    /// Starter.
+    async fn default_fallback(&self, space_id: Uuid) -> Result<ResolvedFeatureSet> {
         if let Some(fs) = self
             .feature_set_repo
-            .get_starter_for_space(&default_space_id.to_string())
+            .get_starter_for_space(&space_id.to_string())
             .await?
         {
             debug!(
-                space_id = %default_space_id,
+                %space_id,
                 feature_set_id = %fs.id,
                 "[FeatureSetResolver] resolved via SpaceDefault (Starter fallback)",
             );
             return Ok(ResolvedFeatureSet {
                 feature_set_ids: vec![fs.id],
-                space_id: Some(default_space_id),
+                space_id: Some(space_id),
                 source: ResolutionSource::SpaceDefault,
             });
         }
         debug!(
-            space_id = %default_space_id,
-            "[FeatureSetResolver] no Starter FeatureSet in default Space — deny",
+            %space_id,
+            "[FeatureSetResolver] no Starter FeatureSet in Space — deny",
         );
         Ok(ResolvedFeatureSet {
             feature_set_ids: vec![],
-            space_id: Some(default_space_id),
+            space_id: Some(space_id),
             source: ResolutionSource::Deny,
         })
     }
@@ -295,9 +317,10 @@ impl FeatureSetResolverService {
             // Tier 1: session reported roots — try an EXACT binding match
             // (no ancestor inheritance).
             if has_roots {
+                let reported_roots = roots.expect("has_roots implies Some");
                 if let Some(binding) = self
                     .binding_repo
-                    .find_exact_for_roots(&roots.unwrap())
+                    .find_exact_for_roots(&reported_roots)
                     .await?
                 {
                     debug!(
@@ -313,13 +336,23 @@ impl FeatureSetResolverService {
                     });
                 }
                 // Tier 1b: had roots, no binding. The folder is unmapped, so
-                // fall back to the default Space's Starter FS — the folder
-                // works immediately instead of getting nothing. Upstream
-                // still emits WorkspaceNeedsBinding (it prompts on
-                // SpaceDefault too) so the user can attach an explicit
-                // mapping whenever they want something other than the default.
-                debug!("[FeatureSetResolver] roots reported but no binding matched — SpaceDefault",);
-                return self.default_fallback(default_space_id).await;
+                // fall back to a Starter FS — the folder works immediately
+                // instead of getting nothing. Scope it to the Space whose base
+                // directory claims the root (longest-prefix), if any; otherwise
+                // the global default Space. Upstream still emits
+                // WorkspaceNeedsBinding (it prompts on SpaceDefault too) so the
+                // user can attach an explicit mapping for something other than
+                // the default.
+                let target_space = self
+                    .space_for_roots(&reported_roots)
+                    .await?
+                    .unwrap_or(default_space_id);
+                debug!(
+                    %target_space,
+                    scoped_by_base_dir = target_space != default_space_id,
+                    "[FeatureSetResolver] roots reported but no binding matched — SpaceDefault",
+                );
+                return self.default_fallback(target_space).await;
             }
 
             // Tier 1c: client declared `roots` but none have ARRIVED yet

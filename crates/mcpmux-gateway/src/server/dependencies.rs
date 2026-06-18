@@ -10,7 +10,7 @@ use crate::services::ClientMetadataService;
 use mcpmux_core::{
     AppSettingsRepository, CimdMetadataFetcher, CredentialRepository, FeatureSetRepository,
     InboundMcpClientRepository, InstalledServerRepository, OutboundOAuthRepository,
-    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager,
+    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager, SpaceBaseDirRepository,
     SpaceBuiltinConfigRepository, SpaceRepository, WorkspaceBindingRepository,
 };
 use mcpmux_storage::{Database, InboundClientRepository};
@@ -37,6 +37,9 @@ pub struct GatewayDependencies {
     pub inbound_mcp_client_repo: Arc<dyn InboundMcpClientRepository>,
     /// Workspace -> FeatureSet bindings for resolver v2.
     pub workspace_binding_repo: Arc<dyn WorkspaceBindingRepository>,
+    /// Per-Space base directories — scope a reported workspace root to a Space
+    /// by folder prefix (longest match wins).
+    pub space_base_dir_repo: Arc<dyn SpaceBaseDirRepository>,
     /// Per-Space built-in server config (Tool Optimization enablement + tool
     /// toggles), consulted when advertising the `mcpmux_*` tools per Space.
     pub builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository>,
@@ -85,6 +88,9 @@ impl GatewayDependencies {
         let workspace_binding_repo: Arc<dyn WorkspaceBindingRepository> = Arc::new(
             mcpmux_storage::SqliteWorkspaceBindingRepository::new(database.clone()),
         );
+        let space_base_dir_repo: Arc<dyn SpaceBaseDirRepository> = Arc::new(
+            mcpmux_storage::SqliteSpaceBaseDirRepository::new(database.clone()),
+        );
         let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> = Arc::new(
             mcpmux_storage::SqliteSpaceBuiltinConfigRepository::new(database.clone()),
         );
@@ -99,6 +105,7 @@ impl GatewayDependencies {
             inbound_client_repo,
             inbound_mcp_client_repo,
             workspace_binding_repo,
+            space_base_dir_repo,
             builtin_config_repo,
             server_discovery,
             log_manager,
@@ -247,6 +254,9 @@ impl DependenciesBuilder {
         let workspace_binding_repo: Arc<dyn WorkspaceBindingRepository> = Arc::new(
             mcpmux_storage::SqliteWorkspaceBindingRepository::new(database.clone()),
         );
+        let space_base_dir_repo: Arc<dyn SpaceBaseDirRepository> = Arc::new(
+            mcpmux_storage::SqliteSpaceBaseDirRepository::new(database.clone()),
+        );
         let builtin_config_repo: Arc<dyn SpaceBuiltinConfigRepository> = Arc::new(
             mcpmux_storage::SqliteSpaceBuiltinConfigRepository::new(database.clone()),
         );
@@ -267,6 +277,7 @@ impl DependenciesBuilder {
             inbound_client_repo,
             inbound_mcp_client_repo,
             workspace_binding_repo,
+            space_base_dir_repo,
             builtin_config_repo,
             server_discovery: self
                 .server_discovery

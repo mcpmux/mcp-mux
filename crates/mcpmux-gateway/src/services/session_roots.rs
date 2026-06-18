@@ -59,6 +59,13 @@ pub struct SessionRootsRegistry {
     /// result landed — exactly the bug that left Claude Code's
     /// VS Code extension showing only the meta tools.
     probe_lock: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    /// `session_id -> Instant the resolver first saw this session with no
+    /// roots yet`. Stamped lazily by [`Self::elapsed_since_first_seen`] so
+    /// the resolver's `PendingRoots` tier can wait a grace window for a root
+    /// to arrive before falling back to the Space default — preventing a
+    /// roots-capable client from flashing the default FeatureSet and then
+    /// flipping to its mapped one the instant its root lands.
+    first_seen: DashMap<String, Instant>,
 }
 
 impl SessionRootsRegistry {
@@ -69,7 +76,22 @@ impl SessionRootsRegistry {
             roots_capable: DashMap::new(),
             last_probe: DashMap::new(),
             probe_lock: DashMap::new(),
+            first_seen: DashMap::new(),
         })
+    }
+
+    /// Elapsed time since this session was first observed without roots,
+    /// stamping "now" on the first call. The resolver uses this to bound the
+    /// `PendingRoots` wait: while the result is below the grace window it
+    /// keeps waiting for a root; past it, it settles on the Space default.
+    /// Idempotent — the timestamp is only set once per session and cleared by
+    /// [`Self::remove`].
+    pub fn elapsed_since_first_seen(&self, session_id: &str) -> Duration {
+        let first = *self
+            .first_seen
+            .entry(session_id.to_string())
+            .or_insert_with(Instant::now);
+        first.elapsed()
     }
 
     /// Get (or create) the per-session probe lock. The returned Arc is
@@ -144,6 +166,7 @@ impl SessionRootsRegistry {
         self.roots_capable.remove(session_id);
         self.last_probe.remove(session_id);
         self.probe_lock.remove(session_id);
+        self.first_seen.remove(session_id);
     }
 
     /// Compare-and-set the session's resolved feature-set id. Returns `true`
@@ -228,6 +251,10 @@ impl SessionRootsRegistry {
             self.map.remove(&sid);
             self.last_resolution.remove(&sid);
             self.last_probe.remove(&sid);
+            // Reset the grace clock too, so the re-probed session waits afresh
+            // for its root to re-arrive instead of immediately defaulting on a
+            // stale first-seen timestamp.
+            self.first_seen.remove(&sid);
         }
 
         dropped.sort();

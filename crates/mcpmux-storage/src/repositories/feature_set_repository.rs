@@ -230,9 +230,20 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
+        // Builtin FeatureSets (the auto-seeded Starter) are the default
+        // fallback for unmapped folders, so their identity is fixed: name,
+        // description, and icon are preserved here regardless of the incoming
+        // values — only the MEMBERS (replaced below) and `updated_at` are
+        // editable. The DB's own `is_builtin` flag governs (not the caller's
+        // struct), so the lock holds for every caller, including the
+        // member-set command that routes through update(). Custom sets update
+        // normally.
         let rows_affected = conn.execute(
-            "UPDATE feature_sets 
-             SET name = ?2, description = ?3, icon = ?4, updated_at = ?5
+            "UPDATE feature_sets
+             SET name = CASE WHEN is_builtin = 1 THEN name ELSE ?2 END,
+                 description = CASE WHEN is_builtin = 1 THEN description ELSE ?3 END,
+                 icon = CASE WHEN is_builtin = 1 THEN icon ELSE ?4 END,
+                 updated_at = ?5
              WHERE id = ?1 AND is_deleted = 0",
             params![
                 feature_set.id,

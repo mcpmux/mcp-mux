@@ -82,9 +82,13 @@ impl McpMuxGatewayHandler {
     }
 
     /// Log resolver decision, emit `WorkspaceNeedsBinding` when a session
-    /// reports roots but no binding matched (`source=Default`), and — when
-    /// the session's resolved FS *flipped* from a prior value — fire a
-    /// per-peer `list_changed` so the client re-pulls its tools.
+    /// reports roots but no binding matched (`source=SpaceDefault` or `Deny`),
+    /// and — when the session's resolved FS *flipped* from a prior value —
+    /// fire a per-peer `list_changed` so the client re-pulls its tools. That
+    /// flip is also what broadcasts the freshly-resolved tools the moment a
+    /// root is reported: the resolution moves from `PendingRoots` (empty) to
+    /// either the folder's binding or the Space default, the fingerprint
+    /// changes, and the peer re-lists.
     ///
     /// `notifier` is optional: callers from contexts where peer notification
     /// doesn't apply (e.g. rootless init paths) can pass `None`.
@@ -126,12 +130,20 @@ impl McpMuxGatewayHandler {
                     }
                 }
 
-                // Prompt only when the session reported a root but no
-                // binding matched (`Deny` with a non-empty root_for_prompt).
-                // PendingRoots / ClientGrant / WorkspaceBinding never
-                // trigger the prompt.
-                let should_prompt =
-                    matches!(resolved.source, crate::services::ResolutionSource::Deny);
+                // Prompt only when the session reported a root that has no
+                // explicit binding — i.e. it fell back to the Space default
+                // (`SpaceDefault`), or there was no default FS to fall back to
+                // (`Deny`). Either way `root_for_prompt` is `Some(..)` for a
+                // folder-reporting session and `None` for a rootless one, so
+                // rootless defaults never prompt. PendingRoots / ClientGrant /
+                // WorkspaceBinding never trigger the prompt. The folder still
+                // works via the default FS meanwhile; the prompt just offers
+                // an explicit mapping.
+                let should_prompt = matches!(
+                    resolved.source,
+                    crate::services::ResolutionSource::Deny
+                        | crate::services::ResolutionSource::SpaceDefault
+                );
                 if let (true, Some(sid), Some(space_id), Some(root)) = (
                     should_prompt,
                     session_id,

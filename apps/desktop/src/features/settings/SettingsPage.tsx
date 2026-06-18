@@ -72,6 +72,11 @@ export function SettingsPage() {
   const [logRetentionDays, setLogRetentionDays] = useState<number>(30);
   const [savingRetention, setSavingRetention] = useState(false);
 
+  // Workspace mapping prompt — pops the "map this folder?" sheet when a client
+  // opens an unmapped folder. On by default.
+  const [mappingPromptEnabled, setMappingPromptEnabled] = useState(true);
+  const [savingMappingPrompt, setSavingMappingPrompt] = useState(false);
+
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
 
   // Gateway port — persisted user override, the default the app ships
@@ -211,6 +216,34 @@ export function SettingsPage() {
     };
     loadStartupSettings();
   }, []);
+
+  // Load workspace mapping-prompt setting on mount.
+  useEffect(() => {
+    invoke<boolean>('get_workspace_mapping_prompt_enabled')
+      .then(setMappingPromptEnabled)
+      .catch((err) => console.error('Failed to load mapping prompt setting:', err));
+  }, []);
+
+  const updateMappingPrompt = async (enabled: boolean) => {
+    const prev = mappingPromptEnabled;
+    setMappingPromptEnabled(enabled);
+    setSavingMappingPrompt(true);
+    try {
+      await invoke('set_workspace_mapping_prompt_enabled', { enabled });
+      success(
+        'Settings saved',
+        enabled
+          ? "You'll be asked to map new folders."
+          : 'New-folder prompts are off — unmapped folders still use your default Starter set.'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      error('Failed to save setting', msg);
+      setMappingPromptEnabled(prev);
+    } finally {
+      setSavingMappingPrompt(false);
+    }
+  };
 
   // Save startup settings when they change
   const updateStartupSetting = async (key: keyof StartupSettings, value: boolean) => {
@@ -521,6 +554,40 @@ export function SettingsPage() {
                 ) : null}
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Workspaces Section */}
+        <Card data-testid="settings-workspaces-section">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FolderOpen className="h-5 w-5" />
+              Workspaces
+            </CardTitle>
+            <CardDescription>
+              How McpMux handles folders your connected apps open.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <FolderOpen className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                <div>
+                  <label className="text-sm font-medium">Ask to map new folders</label>
+                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                    When a connected app opens a folder you haven't mapped, show a prompt to give
+                    it a specific feature set. The folder already works with your default Starter
+                    set either way.
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={mappingPromptEnabled}
+                onCheckedChange={updateMappingPrompt}
+                disabled={savingMappingPrompt}
+                data-testid="workspace-mapping-prompt-switch"
+              />
+            </div>
           </CardContent>
         </Card>
 

@@ -58,8 +58,11 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
 
   // Both FS types are member-driven now.
   const isConfigurable = true;
-  // The auto-seeded "Starter" FS is treated identically to a Custom one
-  // — the type tag is a UI hint, not a routing flag.
+  // The auto-seeded "Starter" FS has editable membership like a Custom one
+  // (change which tools it includes, or empty it). What's locked is its
+  // identity + lifecycle: it's the default fallback for unmapped folders, so
+  // its name is fixed (the backend ignores name changes on builtin rows) and
+  // it can't be deleted — the Delete action below is gated to Custom sets.
   const isStarter = isStarterFeatureSet(featureSet);
   const isCustom = featureSet.feature_set_type === 'custom';
 
@@ -257,7 +260,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                 <span
                   title={
                     isStarter
-                      ? 'Auto-created with this Space. Edit, rename, or delete freely — no special routing role.'
+                      ? "Auto-created with this Space. The default set for folders you haven't mapped — edit which tools it includes; its name is fixed and it can't be deleted."
                       : undefined
                   }
                   className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${
@@ -339,7 +342,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                     <div className="flex gap-2">
                       <Star className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
                       <div className="text-xs text-yellow-800 dark:text-yellow-200">
-                        <strong>Starter FeatureSet:</strong> auto-created with this Space. It&apos;s an ordinary FeatureSet — edit, rename, or delete it freely. <em>No special routing role:</em> Workspace bindings and per-client grants pick FeatureSets explicitly.
+                        <strong>Starter FeatureSet:</strong> auto-created with this Space and used as the <em>default</em> for folders you haven&apos;t explicitly mapped (and rootless sessions). Edit which tools it includes (or empty it) to change what they get. Its name is fixed and it <strong>can&apos;t be deleted</strong>, since the fallback always needs a stable target.
                       </div>
                     </div>
                   </div>

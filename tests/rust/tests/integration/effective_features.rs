@@ -113,6 +113,7 @@ impl Ctx {
             binding_repo.clone(),
             session_roots.clone(),
             client_repo.clone(),
+            fs_repo.clone(),
         );
         let feature_service =
             FeatureService::new(feature_repo.clone(), fs_repo.clone(), prefix_cache);
@@ -266,12 +267,27 @@ async fn empty_mapping_yields_zero_effective_tools() {
     assert!(ctx.effective_tools("sess").await.is_empty());
 }
 
-/// A reported root with no mapping resolves to Deny → empty feature-set list
-/// → zero effective tools. (The gateway then appends the `mcpmux_*` Tool
-/// Optimization tools only when that switch is on — covered in meta_tools.)
+/// A reported root with no mapping falls back to the default Space's Starter
+/// FS (the "every folder needs mapping" fix) → it sees exactly the Starter's
+/// tools, not nothing. We drop one tool into the Starter and confirm the
+/// unmapped session resolves to `SpaceDefault` and sees precisely that tool.
 #[tokio::test(flavor = "multi_thread")]
-async fn unbound_session_sees_zero_effective_tools() {
+async fn unbound_session_falls_back_to_starter_fs() {
     let ctx = Ctx::new().await;
+
+    // Put one tool in the default Space's Starter FS so the fallback is
+    // observable (the seeded Starter is otherwise empty).
+    let starter = ctx
+        .fs_repo
+        .get_starter_for_space(&ctx.space_id_str)
+        .await
+        .unwrap()
+        .expect("default Space has a Starter FS");
+    ctx.fs_repo
+        .add_feature_member(&starter.id, &ctx.gh_issue_id, MemberMode::Include)
+        .await
+        .unwrap();
+
     let root = if cfg!(windows) {
         "d:\\work\\unmapped"
     } else {
@@ -280,6 +296,52 @@ async fn unbound_session_sees_zero_effective_tools() {
     ctx.session_roots.set("sess", [root]);
     ctx.session_roots.set_roots_capable("sess", true);
 
+    let resolved = ctx.resolver.resolve(Some("sess"), None).await.unwrap();
+    assert_eq!(resolved.source, ResolutionSource::SpaceDefault);
+    assert_eq!(resolved.feature_set_ids, vec![starter.id]);
+    assert_eq!(
+        ctx.effective_tools("sess").await,
+        vec!["create_issue".to_string()],
+    );
+}
+
+/// The "grant nothing by default" off-switch: the Starter is builtin and can't
+/// be deleted, but an operator can EMPTY it. An empty Starter still resolves
+/// (source `SpaceDefault`), but yields zero effective tools — so unmapped
+/// folders see nothing until they're either bound or the Starter is populated.
+/// The seeded Starter starts empty, which is exactly this state.
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_starter_grants_nothing_to_unbound_session() {
+    let ctx = Ctx::new().await;
+
+    // Sanity-check the precondition: the seeded Starter has no members.
+    let starter = ctx
+        .fs_repo
+        .get_starter_for_space(&ctx.space_id_str)
+        .await
+        .unwrap()
+        .expect("default Space has a Starter FS");
+    assert!(
+        ctx.fs_repo
+            .get_feature_members(&starter.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "seeded Starter should start empty",
+    );
+
+    let root = if cfg!(windows) {
+        "d:\\work\\unmapped-empty"
+    } else {
+        "/work/unmapped-empty"
+    };
+    ctx.session_roots.set("sess", [root]);
+    ctx.session_roots.set_roots_capable("sess", true);
+
+    let resolved = ctx.resolver.resolve(Some("sess"), None).await.unwrap();
+    assert_eq!(resolved.source, ResolutionSource::SpaceDefault);
+    assert_eq!(resolved.feature_set_ids, vec![starter.id]);
+    // Resolves to the Starter, but it grants nothing.
     assert!(ctx.effective_tools("sess").await.is_empty());
 }
 

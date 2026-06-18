@@ -1,12 +1,15 @@
 //! FeatureSet entity - permission bundles for tools/prompts/resources
 //!
 //! Each FeatureSet is scoped to a space and is one of two types:
-//! - **Starter**: auto-created with the Space as a convenient starting
-//!   point. Has no special routing role under the resolver — bindings and
-//!   per-client grants pick FeatureSets explicitly. Pre-resolver-v3 this
-//!   was the "Default" type and acted as the implicit fallback; that
-//!   behaviour is gone, and the rename reflects the type's actual job
-//!   (a seed you can rename, edit, or delete freely).
+//! - **Starter**: auto-created with the Space. It's the **default fallback**
+//!   for folders that aren't explicitly mapped (and for rootless/unknown
+//!   sessions) — the resolver routes them here instead of denying. Its
+//!   membership is editable (change which tools it includes, or empty it to
+//!   grant nothing by default), but its **identity is locked**: builtin, so
+//!   not renamable and not deletable since the fallback always needs a stable
+//!   target. (Pre-resolver-v3 it was the "Default" type and also acted as the
+//!   implicit fallback; that role is back after a stint where it was a no-op
+//!   seed.)
 //! - **Custom**: any other operator-defined FeatureSet.
 
 use chrono::{DateTime, Utc};
@@ -16,15 +19,18 @@ use uuid::Uuid;
 /// The type of a FeatureSet.
 ///
 /// `Starter` is auto-created once per Space; `Custom` covers everything
-/// else. Routing-wise the two are interchangeable — the type tag is
-/// purely a UI affordance ("this one came pre-seeded with the Space").
+/// else. The type tag carries routing weight: the Starter is the default
+/// fallback the resolver routes unmapped/rootless sessions to, and it's
+/// builtin (not deletable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[derive(Default)]
 pub enum FeatureSetType {
-    /// Auto-created with the Space. Editable / deletable like any other
-    /// FS — no special routing semantics. Was historically called
-    /// `Default` (DB column value carried over via migration 013).
+    /// Auto-created with the Space and used as the **default fallback** for
+    /// unmapped folders / rootless sessions. Its members are editable, but its
+    /// identity is locked: builtin — not renamable and not deletable. Was
+    /// historically called `Default` (DB column value carried over via
+    /// migration 013).
     Starter,
     /// Any operator-defined FeatureSet.
     #[default]
@@ -237,9 +243,10 @@ impl FeatureSet {
             id: format!("fs_default_{}", space_id),
             name: "Starter".to_string(),
             description: Some(
-                "Auto-created with this Space. Edit, rename, or delete freely \
-                 — bindings and per-client grants pick FeatureSets explicitly, \
-                 so this one has no special routing role."
+                "Auto-created with this Space — the default set for folders \
+                 you haven't explicitly mapped. Edit which tools it includes \
+                 to change what they get. Its name is fixed and it can't be \
+                 deleted."
                     .to_string(),
             ),
             icon: Some("⭐".to_string()),

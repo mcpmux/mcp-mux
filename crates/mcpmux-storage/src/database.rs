@@ -118,6 +118,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "purge_orphaned_feature_set_members",
         sql: include_str!("migrations/017_purge_orphaned_feature_set_members.sql"),
     },
+    Migration {
+        version: 18,
+        name: "starter_is_default_fallback_copy",
+        sql: include_str!("migrations/018_starter_is_default_fallback_copy.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

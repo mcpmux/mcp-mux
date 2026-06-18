@@ -1,7 +1,7 @@
 //! FeatureSet Resolver Service.
 //!
-//! Capability-branched four-tier resolution. The branch point is the MCP
-//! `roots` capability declared by the client at `initialize`:
+//! Capability-branched resolution. The branch point is the MCP `roots`
+//! capability declared by the client at `initialize`:
 //!
 //! ```text
 //! resolve(session_id, client_id):
@@ -11,19 +11,50 @@
 //!
 //!     // Tier 1b — roots-capable, roots reported, but no binding yet
 //!     if session reported roots AND no binding matched:
-//!         return ([], <space>, Deny)   // emits WorkspaceNeedsBinding upstream
+//!         return (default_space, [starter_fs], SpaceDefault)   // unmapped folder
+//!         // (also emits WorkspaceNeedsBinding upstream so the user can still map)
 //!
 //!     // Tier 1c — declared `roots` but they haven't arrived yet
 //!     if session declared `roots` AND none yet in registry:
-//!         return ([], default_space, PendingRoots)
+//!         if within the pending-roots grace window:
+//!             return ([], default_space, PendingRoots)   // wait for the root
+//!         else:
+//!             return (default_space, [starter_fs], SpaceDefault)   // gave up waiting
 //!
 //!     // Tier 2 — rootless-by-design (Claude.ai web, ChatGPT, …)
 //!     if client has grants in the default space:
 //!         return (default_space, grants, ClientGrant)
 //!
-//!     // Tier 3 — no signal at all
-//!     return ([], default_space, Deny)
+//!     // Tier 3 — no roots, no grants
+//!     return (default_space, [starter_fs], SpaceDefault)
 //! ```
+//!
+//! # Default fallback (the "every folder needs mapping" fix)
+//!
+//! When nothing more specific resolves — an unmapped folder (Tier 1b), a
+//! rootless client with no grants, or a roots-capable client that never
+//! reported a folder (Tier 1c after the grace window) — the resolver falls
+//! back to the **default Space's Starter FeatureSet** instead of denying.
+//! That makes folders work out of the box: a freshly-opened project gets the
+//! Starter tools immediately, and the user only *needs* an explicit
+//! [`WorkspaceBinding`](mcpmux_core::WorkspaceBinding) when they want a folder
+//! to see something *other* than the default. The Starter FS's membership is
+//! the control surface: edit it to change what every unmapped folder sees, or
+//! empty it to grant nothing by default. (The Starter is builtin and can't be
+//! deleted, so the fallback always has a target.)
+//!
+//! ## Grace window — avoid "default then mapped" flips
+//!
+//! A roots-capable client that's *about* to report a folder must resolve
+//! straight to that folder's binding (or the default-for-unmapped), never
+//! flash the default tools first and then flip. So while a session has
+//! declared (or might declare) `roots` and none have arrived yet, the
+//! resolver holds at `PendingRoots` (empty) for a short grace window rather
+//! than defaulting immediately. Only once the window lapses with no root in
+//! sight does it settle on `SpaceDefault`, so a misbehaving client that never
+//! reports isn't stranded on meta-tools forever. A roots-capable session
+//! **never** falls through to another client's grants — after the grace it
+//! goes straight to the Space default, preserving per-session isolation.
 //!
 //! The caller's client identity is used **only** for the rootless fallback —
 //! every roots-capable session routes via its own reported roots, regardless
@@ -47,15 +78,24 @@
 //! [`SessionRootsRegistry::set_roots_capable`].
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
-use mcpmux_core::{SpaceRepository, WorkspaceBindingRepository};
+use mcpmux_core::{FeatureSetRepository, SpaceRepository, WorkspaceBindingRepository};
 use mcpmux_storage::InboundClientRepository;
 use serde::Serialize;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::session_roots::SessionRootsRegistry;
+
+/// How long a session that's declared (or might declare) the `roots`
+/// capability is held at [`ResolutionSource::PendingRoots`] before the
+/// resolver gives up waiting and falls back to the Space default. Sized to
+/// comfortably outlast a well-behaved client's `initialize` →
+/// `roots/list` round-trip (typically sub-second) so the grace only ever
+/// catches clients that declared `roots` but never actually report one.
+const DEFAULT_PENDING_ROOTS_GRACE: Duration = Duration::from_secs(5);
 
 /// Why the resolver picked the FS(es) it picked (or didn't pick any).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -70,9 +110,17 @@ pub enum ResolutionSource {
     /// Rootless-by-design client. The space-default's per-client
     /// `client_grants` were applied.
     ClientGrant,
-    /// No FeatureSet resolved. Either no roots + no grants, or the session
-    /// reported roots but no binding matched (the upstream caller emits
-    /// `WorkspaceNeedsBinding` in that subcase).
+    /// Fell back to the default Space's Starter FeatureSet because nothing
+    /// more specific resolved — an unmapped folder, a rootless client with
+    /// no grants, or a roots-capable client that never reported a folder.
+    /// For the unmapped-folder subcase the upstream caller still emits
+    /// `WorkspaceNeedsBinding` so the user can attach an explicit mapping.
+    SpaceDefault,
+    /// No FeatureSet resolved at all. Defensive: reached only when there's no
+    /// default Space, or — degenerately — the default Space somehow has no
+    /// Starter FeatureSet. The Starter is builtin and seeded with every Space,
+    /// so this is normally unreachable; to grant nothing by default the user
+    /// empties the Starter (still `SpaceDefault`, just with no members).
     Deny,
 }
 
@@ -114,6 +162,13 @@ pub struct FeatureSetResolverService {
     /// Reads `client_grants` for the rootless Tier-2 fallback. Stored as a
     /// concrete repo (storage owns this type and there's only ever one).
     client_repo: Arc<InboundClientRepository>,
+    /// Looks up each Space's Starter FeatureSet for the default fallback
+    /// (Tier 1b / Tier 1c-after-grace / Tier 3).
+    feature_set_repo: Arc<dyn FeatureSetRepository>,
+    /// Grace window for the `PendingRoots` tier — see
+    /// [`DEFAULT_PENDING_ROOTS_GRACE`]. Configurable so tests can force the
+    /// post-grace path deterministically without sleeping.
+    pending_grace: Duration,
 }
 
 impl FeatureSetResolverService {
@@ -122,13 +177,59 @@ impl FeatureSetResolverService {
         binding_repo: Arc<dyn WorkspaceBindingRepository>,
         session_roots: Arc<SessionRootsRegistry>,
         client_repo: Arc<InboundClientRepository>,
+        feature_set_repo: Arc<dyn FeatureSetRepository>,
     ) -> Self {
         Self {
             space_repo,
             binding_repo,
             session_roots,
             client_repo,
+            feature_set_repo,
+            pending_grace: DEFAULT_PENDING_ROOTS_GRACE,
         }
+    }
+
+    /// Override the pending-roots grace window. `Duration::ZERO` makes the
+    /// resolver skip the wait entirely and fall back to the Space default on
+    /// the first pending resolution — used by tests to exercise the
+    /// post-grace path without a real delay.
+    pub fn with_pending_grace(mut self, grace: Duration) -> Self {
+        self.pending_grace = grace;
+        self
+    }
+
+    /// Fall back to the default Space's Starter FeatureSet. Returns
+    /// [`ResolutionSource::SpaceDefault`] when a Starter exists (the normal
+    /// path — it's builtin and seeded per Space), or, defensively,
+    /// [`ResolutionSource::Deny`] in the degenerate case where the default
+    /// Space has no Starter. `space_id` is always the default Space here —
+    /// unmapped/rootless sessions have no other Space to route to.
+    async fn default_fallback(&self, default_space_id: Uuid) -> Result<ResolvedFeatureSet> {
+        if let Some(fs) = self
+            .feature_set_repo
+            .get_starter_for_space(&default_space_id.to_string())
+            .await?
+        {
+            debug!(
+                space_id = %default_space_id,
+                feature_set_id = %fs.id,
+                "[FeatureSetResolver] resolved via SpaceDefault (Starter fallback)",
+            );
+            return Ok(ResolvedFeatureSet {
+                feature_set_ids: vec![fs.id],
+                space_id: Some(default_space_id),
+                source: ResolutionSource::SpaceDefault,
+            });
+        }
+        debug!(
+            space_id = %default_space_id,
+            "[FeatureSetResolver] no Starter FeatureSet in default Space — deny",
+        );
+        Ok(ResolvedFeatureSet {
+            feature_set_ids: vec![],
+            space_id: Some(default_space_id),
+            source: ResolutionSource::Deny,
+        })
     }
 
     /// Borrow the session-roots registry. The notifier uses this to GC
@@ -211,14 +312,14 @@ impl FeatureSetResolverService {
                         source: ResolutionSource::WorkspaceBinding,
                     });
                 }
-                // Tier 1b: had roots, no binding — deny + upstream emits
-                // WorkspaceNeedsBinding so the user can choose an FS.
-                debug!("[FeatureSetResolver] roots reported but no binding matched — deny",);
-                return Ok(ResolvedFeatureSet {
-                    feature_set_ids: vec![],
-                    space_id: Some(default_space_id),
-                    source: ResolutionSource::Deny,
-                });
+                // Tier 1b: had roots, no binding. The folder is unmapped, so
+                // fall back to the default Space's Starter FS — the folder
+                // works immediately instead of getting nothing. Upstream
+                // still emits WorkspaceNeedsBinding (it prompts on
+                // SpaceDefault too) so the user can attach an explicit
+                // mapping whenever they want something other than the default.
+                debug!("[FeatureSetResolver] roots reported but no binding matched — SpaceDefault",);
+                return self.default_fallback(default_space_id).await;
             }
 
             // Tier 1c: client declared `roots` but none have ARRIVED yet
@@ -233,16 +334,37 @@ impl FeatureSetResolverService {
             // and fall through to Tier 2 so a granted-but-folderless client
             // still gets its tools.
             if !roots_arrived && !matches!(roots_capable_known, Some(false)) {
+                // Grace window: hold at PendingRoots (empty) while the client
+                // still might report a folder, so it resolves straight to
+                // that folder's binding (or the default-for-unmapped) instead
+                // of flashing the Space default and then flipping. Stamps
+                // first-seen on the first pending resolve and measures from
+                // there.
+                let elapsed = self.session_roots.elapsed_since_first_seen(sid);
+                if elapsed < self.pending_grace {
+                    debug!(
+                        session_id = %sid,
+                        capability = ?roots_capable_known,
+                        elapsed_ms = elapsed.as_millis(),
+                        "[FeatureSetResolver] roots-capable (or unknown), roots pending — empty until they arrive",
+                    );
+                    return Ok(ResolvedFeatureSet {
+                        feature_set_ids: vec![],
+                        space_id: Some(default_space_id),
+                        source: ResolutionSource::PendingRoots,
+                    });
+                }
+                // Grace lapsed with no root in sight — settle on the Space
+                // default rather than stranding the client on meta-tools
+                // forever. Go STRAIGHT to the default (not via Tier-2 grants):
+                // a roots-capable session must never pick up another client's
+                // grants (per-session isolation invariant).
                 debug!(
                     session_id = %sid,
                     capability = ?roots_capable_known,
-                    "[FeatureSetResolver] roots-capable (or unknown), roots pending — empty until they arrive",
+                    "[FeatureSetResolver] pending-roots grace lapsed, no root reported — SpaceDefault",
                 );
-                return Ok(ResolvedFeatureSet {
-                    feature_set_ids: vec![],
-                    space_id: Some(default_space_id),
-                    source: ResolutionSource::PendingRoots,
-                });
+                return self.default_fallback(default_space_id).await;
             }
         }
 
@@ -275,20 +397,16 @@ impl FeatureSetResolverService {
             }
         }
 
-        // Tier 3 — no roots, no grants. Deny.
-        // The mcpmux_* meta tools are still appended unconditionally by the
-        // request handler, so the LLM can self-bind / ask the user for
-        // a grant from this state.
+        // Tier 3 — no roots, no grants. Fall back to the Space default so a
+        // bare client still gets the Starter tools instead of nothing. The
+        // mcpmux_* meta tools are appended unconditionally by the request
+        // handler regardless, so the LLM can always self-bind / ask the user
+        // for a grant from here.
         debug!(
             space_id = %default_space_id,
             ?client_id,
-            "[FeatureSetResolver] no roots + no grants — deny",
+            "[FeatureSetResolver] no roots + no grants — SpaceDefault",
         );
-
-        Ok(ResolvedFeatureSet {
-            feature_set_ids: vec![],
-            space_id: Some(default_space_id),
-            source: ResolutionSource::Deny,
-        })
+        self.default_fallback(default_space_id).await
     }
 }

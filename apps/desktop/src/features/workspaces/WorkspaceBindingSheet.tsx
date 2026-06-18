@@ -1,15 +1,17 @@
 /**
  * Workspace Binding Sheet
  *
- * Fires when a connected client session resolves via source=Default for a
- * workspace root that has no binding yet. The user picks a Space + a
- * FeatureSet in that space, and we write a WorkspaceBinding locking both.
+ * Fires when a connected client session reports a workspace root that has no
+ * explicit binding yet — the folder is already working via the default
+ * Starter set, and this sheet offers to map it to something else. The user
+ * picks a Space + a FeatureSet, and we write a WorkspaceBinding locking both.
  *
  *  • Space picker  — defaults to the caller's current space, can be changed.
- *  • FS picker     — always includes a "space default" option (follow
- *                    whichever FS is active for the selected Space) plus
- *                    every Default + Custom set in that space.
- *  • Dismiss       — nothing written, ask again next session.
+ *  • FS picker     — pre-selects the Space's Starter (the active default),
+ *                    plus every Starter + Custom set in that space.
+ *  • Modify        — writes the binding for the picked Space + FS.
+ *  • Close         — nothing written; the folder keeps the default Starter
+ *                    set, and the sheet re-offers next session.
  *
  * Committing the binding emits `WorkspaceBindingChanged` on the backend,
  * which triggers `notifications/tools/list_changed` — the client re-fetches
@@ -17,6 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
@@ -61,8 +64,8 @@ export function WorkspaceBindingSheet() {
   // Only dedupe the currently-open sheet against itself — if one is already
   // showing, swallow a second emit for the same session. We deliberately
   // don't dedupe across sessions / reconnects: the backend only emits when
-  // `source=Default` (i.e. no binding exists), and reconnecting a client
-  // is a normal signal that the user may want to configure the folder.
+  // the folder has no explicit binding (it's on the default Starter set), and
+  // reconnecting a client is a normal signal that the user may want to map it.
   // Persisting the dismissal in a ref would black-hole later attempts
   // until the next app restart, which is how this bug surfaced before.
   const currentSessionRef = useRef<string | null>(null);
@@ -71,11 +74,23 @@ export function WorkspaceBindingSheet() {
   useEffect(() => {
     const un = listen<WorkspaceNeedsBindingPayload>(
       'workspace-needs-binding',
-      (event) => {
+      async (event) => {
         // Swallow only while a sheet is already showing — the user is
         // mid-decision, a second emit would stack a new sheet on top. Once
-        // the current sheet closes (Save or Not now), the next emit from
+        // the current sheet closes (Modify or Close), the next emit from
         // any fresh session on an unbound root opens the sheet again.
+        if (currentSessionRef.current !== null) return;
+        // Respect the "ask to map new folders" setting (on by default). Read
+        // it fresh each time so toggling it — from Settings or the in-sheet
+        // "stop asking" link — takes effect immediately, with no re-subscribe.
+        try {
+          const enabled = await invoke<boolean>('get_workspace_mapping_prompt_enabled');
+          if (!enabled) return;
+        } catch {
+          // If the setting can't be read, fall back to showing (default on).
+        }
+        // Re-check after the await: another emit may have opened a sheet while
+        // we were reading the setting.
         if (currentSessionRef.current !== null) return;
         const p = event.payload;
         setPayload(p);
@@ -169,6 +184,19 @@ export function WorkspaceBindingSheet() {
     markSeenAndClose(payload);
   };
 
+  // "Stop asking" escape hatch — turns the prompt off globally (it's on by
+  // default) and closes. Best-effort: if the write fails we still close so the
+  // click isn't a dead end. Re-enable lives in Settings → Workspaces.
+  const handleDisablePrompt = async () => {
+    if (!payload || saving) return;
+    try {
+      await invoke('set_workspace_mapping_prompt_enabled', { enabled: false });
+    } catch {
+      /* best-effort — close regardless */
+    }
+    markSeenAndClose(payload);
+  };
+
   if (!payload) return null;
 
   return (
@@ -194,12 +222,13 @@ export function WorkspaceBindingSheet() {
             New workspace detected
           </div>
           <h2 className="text-[22px] font-semibold leading-tight tracking-tight text-[rgb(var(--foreground))]">
-            Which tools should this folder get?
+            This folder is using your Starter set
           </h2>
           <p className="mt-2 text-sm text-[rgb(var(--muted))]">
-            You just opened this folder in a connected app. Choose a Space and a
-            feature set, and every app you open here will get exactly those
-            tools.
+            You just opened this folder in a connected app. It&apos;s already
+            configured with your default Starter tools. Pick a different Space
+            or feature set below to change what it gets, or close to keep the
+            Starter.
           </p>
 
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-4 py-3">
@@ -282,9 +311,10 @@ export function WorkspaceBindingSheet() {
               {error}
             </div>
           )}
-          {/* "Not now" auto-sizes to its label; the primary action takes
-              the rest of the row. Equal flex-1 columns wrapped the longer
-              "Remember for this folder" text onto two lines. */}
+          {/* "Close" keeps the default Starter set (nothing written); the
+              primary "Modify" applies the picked Space + feature set as an
+              explicit mapping. Labels deliberately avoid "Not now", which read
+              as "this folder is unmapped / has no tools" — it isn't. */}
           <div className="flex gap-2">
             <Button
               variant="secondary"
@@ -292,7 +322,7 @@ export function WorkspaceBindingSheet() {
               onClick={handleDismiss}
               disabled={saving}
             >
-              Not now
+              Close
             </Button>
             <Button
               variant="primary"
@@ -305,12 +335,24 @@ export function WorkspaceBindingSheet() {
               ) : (
                 <Check className="mr-1.5 h-4 w-4" />
               )}
-              Remember for this folder
+              Modify
             </Button>
           </div>
           <p className="mt-3 text-center text-[11px] text-[rgb(var(--muted))]">
             You can change this anytime in Workspaces.
           </p>
+          <div className="mt-1.5 text-center">
+            <button
+              type="button"
+              onClick={handleDisablePrompt}
+              disabled={saving}
+              title="Turn off the new-folder prompt. Re-enable it anytime in Settings → Workspaces."
+              className="text-[11px] text-[rgb(var(--muted))] underline-offset-2 transition-colors hover:text-[rgb(var(--foreground))] hover:underline disabled:opacity-50"
+              data-testid="workspace-binding-disable-prompt"
+            >
+              Asked too often? Stop asking about new folders
+            </button>
+          </div>
         </div>
       </div>
     </div>

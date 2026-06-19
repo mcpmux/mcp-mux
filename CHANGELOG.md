@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.4.0](https://github.com/mcpmux/mcp-mux/compare/v0.3.0...v0.4.0) (2026-06-19)
+
+
+### Features
+
+* [@mux](https://github.com/mux) UX + Windows updater fix + minimal-first optimization ([#171](https://github.com/mcpmux/mcp-mux/issues/171)) ([a215012](https://github.com/mcpmux/mcp-mux/commit/a215012ccd37388ffc6d802452e2fe03c9ce1ea5))
+* **featureset:** protect Starter from deletion + clarify mapping popup ([#176](https://github.com/mcpmux/mcp-mux/issues/176)) ([163ee0b](https://github.com/mcpmux/mcp-mux/commit/163ee0b0ef0ac0166be0ecf9e2f8bad1612dfad3))
+* **gateway:** default FeatureSet for unmapped roots + Mapped workspaces filter ([#175](https://github.com/mcpmux/mcp-mux/issues/175)) ([7fc50a0](https://github.com/mcpmux/mcp-mux/commit/7fc50a00923f74f752e5c279f60e232c1865c3e5))
+* pre-release update channel + automated pre-releases from main ([#159](https://github.com/mcpmux/mcp-mux/issues/159)) ([e9306c4](https://github.com/mcpmux/mcp-mux/commit/e9306c4a8ac1aee72be2530697a643b69fb130f6))
+* **spaces:** per-space base directories scope workspace roots to a Space ([#179](https://github.com/mcpmux/mcp-mux/issues/179)) ([fb825cf](https://github.com/mcpmux/mcp-mux/commit/fb825cfe66c6f383ea1f52d290a5519a67bffd5f))
+* workspace-root routing + Tool Optimization ([@mux](https://github.com/mux)) self-management + UI live-sync ([#151](https://github.com/mcpmux/mcp-mux/issues/151)) ([d614853](https://github.com/mcpmux/mcp-mux/commit/d6148538b6f40644f9367d3c872bc1f4f2f7be63))
+* **workspaces:** bulk-clear unmapped folders + clearer approval opt-out ([#172](https://github.com/mcpmux/mcp-mux/issues/172)) ([09b561c](https://github.com/mcpmux/mcp-mux/commit/09b561c901170cac2c6546ef8680b313f292eee6))
+* **workspaces:** setting to disable the new-folder mapping prompt ([#177](https://github.com/mcpmux/mcp-mux/issues/177)) ([d5df002](https://github.com/mcpmux/mcp-mux/commit/d5df002df03e9b80a0bd780ce9c52fd9e942d02e))
+
+
+### Bug Fixes
+
+* add Windsurf, JetBrains, and Android Studio to quick-connect grid ([#139](https://github.com/mcpmux/mcp-mux/issues/139)) ([fb58d9c](https://github.com/mcpmux/mcp-mux/commit/fb58d9ce6c46ec1a55356a9fecb35f34ae2b29f6))
+* **deps:** resolve 4 transitive security advisories failing Dependabot ([#174](https://github.com/mcpmux/mcp-mux/issues/174)) ([eb32289](https://github.com/mcpmux/mcp-mux/commit/eb32289ca7f309c52223f17cf3a1e1c0f0a61d7c))
+* **gateway:** ride out self-update port race + clearer update restart UX ([#173](https://github.com/mcpmux/mcp-mux/issues/173)) ([6868992](https://github.com/mcpmux/mcp-mux/commit/6868992faeb77c8fe32ad7c996b2d196ca586002))
+* **oauth:** DCR skip-invalid redirect URIs + drop duplicate RFC 8707 resource param ([#158](https://github.com/mcpmux/mcp-mux/issues/158)) ([661f162](https://github.com/mcpmux/mcp-mux/commit/661f1620105803acfe07087e997a1d4d00aa77d5))
+* **servers:** pin config-modal footer ([#163](https://github.com/mcpmux/mcp-mux/issues/163)) + silent Windows updates ([#165](https://github.com/mcpmux/mcp-mux/issues/165)) ([0ddbdb5](https://github.com/mcpmux/mcp-mux/commit/0ddbdb59c7229f8bd9dd0a4875216af5ab8977af))
+* **spaces:** clearer base-directories UX ([#180](https://github.com/mcpmux/mcp-mux/issues/180)) ([4a69908](https://github.com/mcpmux/mcp-mux/commit/4a699085087b775439180ace2467cda708b26fc3))
+* **storage:** purge orphaned feature_set_members after the refactor (migration 017) ([#167](https://github.com/mcpmux/mcp-mux/issues/167)) ([b90b05c](https://github.com/mcpmux/mcp-mux/commit/b90b05c038d9d1bc8fae395e83e0e8db713d3e3f))
+
+
+### Documentation
+
+* add Discord community link to README ([#149](https://github.com/mcpmux/mcp-mux/issues/149)) ([c32f78f](https://github.com/mcpmux/mcp-mux/commit/c32f78f7143177589ea96b4e33170f49cc343b30))
+* add Workspaces and Tool Optimization guides ([#164](https://github.com/mcpmux/mcp-mux/issues/164)) ([25a6fbb](https://github.com/mcpmux/mcp-mux/commit/25a6fbb94d3efcbd0cd5a714ac452c5e61608250))
+* complete the getting-started flow + workspace-driven routing ([#166](https://github.com/mcpmux/mcp-mux/issues/166)) ([92f8ac2](https://github.com/mcpmux/mcp-mux/commit/92f8ac2f053e27b4a1aec222eea7ff3f9986559c))
+
 ## [0.3.0](https://github.com/mcpmux/mcp-mux/compare/v0.2.3...v0.3.0) (2026-02-25)
 
 

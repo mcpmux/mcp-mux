@@ -157,21 +157,21 @@ export function SpacesPage() {
                           <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] text-xl">
                             {space.icon || '🌐'}
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <h3 className="truncate text-base font-semibold">{space.name}</h3>
+                          <button
+                            type="button"
+                            onClick={() => setBaseDirsSpace(space)}
+                            className="group min-w-0 flex-1 text-left"
+                            title="Manage base directories for this space"
+                            data-testid={`space-open-${space.id}`}
+                          >
+                            <h3 className="group-hover:text-primary-600 dark:group-hover:text-primary-400 truncate text-base font-semibold transition-colors">
+                              {space.name}
+                            </h3>
                             <p className="line-clamp-1 text-sm text-[rgb(var(--muted))]">
                               {space.description || 'No description'}
                             </p>
-                          </div>
+                          </button>
                           <div className="flex flex-shrink-0 items-center gap-1">
-                            <button
-                              onClick={() => setBaseDirsSpace(space)}
-                              className="rounded-lg p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))]"
-                              title="Base directories — scope folders to this space"
-                              data-testid={`space-base-dirs-${space.id}`}
-                            >
-                              <FolderTree className="h-4 w-4" />
-                            </button>
                             {space.is_default && (
                               <span
                                 className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
@@ -193,6 +193,16 @@ export function SpacesPage() {
                             )}
                           </div>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setBaseDirsSpace(space)}
+                          className="hover:text-primary-600 dark:hover:text-primary-400 inline-flex items-center gap-1.5 text-xs text-[rgb(var(--muted))] transition-colors"
+                          data-testid={`space-base-dirs-${space.id}`}
+                        >
+                          <FolderTree className="h-3.5 w-3.5" />
+                          Base directories
+                        </button>
                       </CardContent>
                     </Card>
                   );

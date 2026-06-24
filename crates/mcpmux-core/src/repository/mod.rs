@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     Client, Credential, CredentialType, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
-    OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir, WorkspaceBinding,
+    OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir, WorkspaceAppearance,
+    WorkspaceBinding,
 };
 
 /// Result type for repository operations
@@ -405,4 +406,43 @@ pub trait SpaceBuiltinConfigRepository: Send + Sync {
         tool_name: &str,
         enabled: bool,
     ) -> RepoResult<()>;
+}
+
+/// A persisted embedding keyed by content hash + model version.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddingRecord {
+    pub content_hash: String,
+    pub model_version: String,
+    pub vector: Vec<f32>,
+}
+
+/// Embedding repository trait — caches tool embedding vectors for semantic search.
+#[async_trait]
+pub trait EmbeddingRepository: Send + Sync {
+    /// Load vectors for a set of content hashes and a model version.
+    async fn get_many(
+        &self,
+        content_hashes: &[String],
+        model_version: &str,
+    ) -> RepoResult<Vec<EmbeddingRecord>>;
+
+    /// Insert or replace vectors by `(content_hash, model_version)`.
+    async fn upsert_many(&self, records: &[EmbeddingRecord]) -> RepoResult<()>;
+}
+
+/// Workspace appearance repository trait — icon overrides keyed by normalized
+/// workspace root (covers unmapped roots that have no binding).
+#[async_trait]
+pub trait WorkspaceAppearanceRepository: Send + Sync {
+    /// List all stored workspace appearance overrides.
+    async fn list(&self) -> RepoResult<Vec<WorkspaceAppearance>>;
+
+    /// Get a stored appearance by normalized workspace root.
+    async fn get(&self, workspace_root: &str) -> RepoResult<Option<WorkspaceAppearance>>;
+
+    /// Insert or update an appearance for a normalized workspace root.
+    async fn upsert(&self, appearance: &WorkspaceAppearance) -> RepoResult<()>;
+
+    /// Delete a stored appearance by normalized workspace root.
+    async fn delete(&self, workspace_root: &str) -> RepoResult<()>;
 }

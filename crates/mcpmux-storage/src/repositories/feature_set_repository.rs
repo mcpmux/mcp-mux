@@ -67,6 +67,7 @@ impl SqliteFeatureSetRepository {
                 .unwrap_or(MemberType::Feature),
             member_id: row.get(3)?,
             mode: MemberMode::parse(&row.get::<_, String>(4)?).unwrap_or(MemberMode::Include),
+            surfaced: row.get::<_, i32>(5).unwrap_or(0) == 1,
         })
     }
 
@@ -76,7 +77,7 @@ impl SqliteFeatureSetRepository {
         let conn = db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT id, feature_set_id, member_type, member_id, mode
+            "SELECT id, feature_set_id, member_type, member_id, mode, surfaced
              FROM feature_set_members
              WHERE feature_set_id = ?
              ORDER BY id",
@@ -95,7 +96,7 @@ impl SqliteFeatureSetRepository {
         feature_set_id: &str,
     ) -> Result<Vec<FeatureSetMember>> {
         let mut stmt = conn.prepare(
-            "SELECT id, feature_set_id, member_type, member_id, mode
+            "SELECT id, feature_set_id, member_type, member_id, mode, surfaced
              FROM feature_set_members
              WHERE feature_set_id = ?
              ORDER BY id",
@@ -210,14 +211,15 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         let now = chrono::Utc::now().to_rfc3339();
         for member in &feature_set.members {
             conn.execute(
-                "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, surfaced, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     member.id,
                     member.feature_set_id,
                     member.member_type.as_str(),
                     member.member_id,
                     member.mode.as_str(),
+                    if member.surfaced { 1 } else { 0 },
                     now,
                 ],
             )?;
@@ -267,14 +269,15 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         let now = chrono::Utc::now().to_rfc3339();
         for member in &feature_set.members {
             conn.execute(
-                "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, surfaced, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     member.id,
                     member.feature_set_id,
                     member.member_type.as_str(),
                     member.member_id,
                     member.mode.as_str(),
+                    if member.surfaced { 1 } else { 0 },
                     now,
                 ],
             )?;
@@ -372,17 +375,19 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
             member_type: MemberType::Feature,
             member_id: feature_id.to_string(),
             mode,
+            surfaced: false,
         };
 
         conn.execute(
-            "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, surfaced, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 member.id,
                 member.feature_set_id,
                 member.member_type.as_str(),
                 member.member_id,
                 member.mode.as_str(),
+                if member.surfaced { 1 } else { 0 },
                 chrono::Utc::now().to_rfc3339(),
             ],
         )?;
@@ -410,7 +415,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         let conn = db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT id, feature_set_id, member_type, member_id, mode
+            "SELECT id, feature_set_id, member_type, member_id, mode, surfaced
              FROM feature_set_members
              WHERE feature_set_id = ?1 AND member_type = 'feature'
              ORDER BY id",

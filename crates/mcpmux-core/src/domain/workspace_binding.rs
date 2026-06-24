@@ -33,6 +33,15 @@ use uuid::Uuid;
 pub struct WorkspaceBinding {
     pub id: Uuid,
     pub workspace_root: String,
+    /// Optional OAuth client scope. `None` is a global binding (the only kind
+    /// produced today — resolution stays exact-match-global). The column
+    /// exists for a later per-client routing phase; it is persisted but does
+    /// not affect resolution yet.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Optional friendly display label shown in the UI instead of the path.
+    #[serde(default)]
+    pub label: Option<String>,
     pub space_id: Uuid,
     /// Order matters for UI rendering only — the resolver treats them as
     /// a set. Stored in the `workspace_binding_feature_sets` junction
@@ -63,6 +72,8 @@ impl WorkspaceBinding {
         Self {
             id: Uuid::new_v4(),
             workspace_root: workspace_root.into(),
+            client_id: None,
+            label: None,
             space_id,
             feature_set_ids,
             created_at: now,

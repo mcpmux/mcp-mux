@@ -367,6 +367,7 @@ async fn composition_cycle_terminates_and_returns_union() {
         member_type: mtype,
         member_id: mid,
         mode: MemberMode::Include,
+        surfaced: false,
     };
 
     // X ⊇ {gh_issue (feature), Y (featureset)}

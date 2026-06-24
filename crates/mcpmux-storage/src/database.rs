@@ -128,6 +128,66 @@ const MIGRATIONS: &[Migration] = &[
         name: "space_base_dirs",
         sql: include_str!("migrations/019_space_base_dirs.sql"),
     },
+    Migration {
+        version: 20,
+        name: "workspace_binding_label",
+        sql: include_str!("migrations/020_workspace_binding_label.sql"),
+    },
+    Migration {
+        version: 21,
+        name: "installed_server_cloned_from",
+        sql: include_str!("migrations/021_installed_server_cloned_from.sql"),
+    },
+    Migration {
+        version: 22,
+        name: "installed_server_display_name_override",
+        sql: include_str!("migrations/022_installed_server_display_name_override.sql"),
+    },
+    Migration {
+        version: 23,
+        name: "feature_set_member_surfaced",
+        sql: include_str!("migrations/023_feature_set_member_surfaced.sql"),
+    },
+    Migration {
+        version: 24,
+        name: "workspace_icons",
+        sql: include_str!("migrations/024_workspace_icons.sql"),
+    },
+    Migration {
+        version: 25,
+        name: "tool_embeddings",
+        sql: include_str!("migrations/025_tool_embeddings.sql"),
+    },
+    Migration {
+        version: 26,
+        name: "installed_server_default_params",
+        sql: include_str!("migrations/026_installed_server_default_params.sql"),
+    },
+    Migration {
+        version: 27,
+        name: "workspace_binding_client_scope",
+        sql: include_str!("migrations/027_workspace_binding_client_scope.sql"),
+    },
+    Migration {
+        version: 28,
+        name: "server_update_policy",
+        sql: include_str!("migrations/028_server_update_policy.sql"),
+    },
+    Migration {
+        version: 29,
+        name: "server_version_cache",
+        sql: include_str!("migrations/029_server_version_cache.sql"),
+    },
+    Migration {
+        version: 30,
+        name: "default_params_strategy",
+        sql: include_str!("migrations/030_default_params_strategy.sql"),
+    },
+    Migration {
+        version: 31,
+        name: "server_current_version",
+        sql: include_str!("migrations/031_server_current_version.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

@@ -322,6 +322,8 @@ pub async fn update_workspace_binding(
     let updated = WorkspaceBinding {
         id: existing.id,
         workspace_root: normalized,
+        client_id: existing.client_id,
+        label: existing.label,
         space_id,
         feature_set_ids,
         created_at: existing.created_at,

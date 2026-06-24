@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use mcpmux_core::normalize_workspace_root;
+use tracing::debug;
 
 /// Thread-safe registry mapping `mcp-session-id` to the caller's reported
 /// workspace roots, plus the most recently resolved feature-set id so the
@@ -66,6 +67,18 @@ pub struct SessionRootsRegistry {
     /// roots-capable client from flashing the default FeatureSet and then
     /// flipping to its mapped one the instant its root lands.
     first_seen: DashMap<String, Instant>,
+    /// `session_id -> explicit workspace root pinned via the
+    /// `X-Mcpmux-Workspace` HTTP header`.
+    ///
+    /// McpMux's per-workspace client configs inject that header with the
+    /// folder's path, so a connection routes to its workspace binding even
+    /// when the client never reports MCP `roots` or reports a stale one (e.g.
+    /// Cursor sharing a single MCP host across windows, with
+    /// `roots.listChanged = false`). A pinned root is **authoritative**: it
+    /// shadows the probed [`Self::map`] roots in [`Self::get`], so the
+    /// resolver, the on-demand probe skip, and the prompt-root derivation all
+    /// honor the header with no special-casing. Already normalized on insert.
+    pinned: DashMap<String, String>,
 }
 
 impl SessionRootsRegistry {
@@ -77,6 +90,7 @@ impl SessionRootsRegistry {
             last_probe: DashMap::new(),
             probe_lock: DashMap::new(),
             first_seen: DashMap::new(),
+            pinned: DashMap::new(),
         })
     }
 
@@ -155,8 +169,51 @@ impl SessionRootsRegistry {
     }
 
     /// Retrieve the (already-normalized) roots for a session, if any.
+    ///
+    /// An explicit root pinned via the `X-Mcpmux-Workspace` header
+    /// ([`Self::set_pinned`]) takes precedence over — and entirely shadows —
+    /// the client's probed MCP roots. That single seam is what makes the
+    /// header authoritative everywhere `get` is consulted (resolver Tier 1,
+    /// the probe early-return, prompt-root derivation) without threading the
+    /// header through any of those call paths.
     pub fn get(&self, session_id: &str) -> Option<Vec<String>> {
+        if let Some(pinned) = self.pinned.get(session_id) {
+            return Some(vec![pinned.clone()]);
+        }
         self.map.get(session_id).map(|v| v.clone())
+    }
+
+    /// Pin an explicit workspace root for a session, sourced from the
+    /// `X-Mcpmux-Workspace` HTTP header. `raw_root` is a filesystem path or
+    /// `file://` URI; it's normalized like every other root before storage.
+    /// A value that normalizes to empty is ignored (no pin), so a malformed
+    /// header falls back to the client's reported roots rather than denying.
+    /// Cheap to call on the request hot path: redundant writes (same
+    /// normalized value already pinned) are skipped to avoid shard churn.
+    pub fn set_pinned(&self, session_id: &str, raw_root: &str) {
+        let normalized = normalize_workspace_root(raw_root);
+        if normalized.is_empty() {
+            return;
+        }
+        if self
+            .pinned
+            .get(session_id)
+            .is_some_and(|v| *v == normalized)
+        {
+            return;
+        }
+        debug!(
+            %session_id,
+            workspace_root = %normalized,
+            "[SessionRoots] pinned explicit workspace root from X-Mcpmux-Workspace header",
+        );
+        self.pinned.insert(session_id.to_string(), normalized);
+    }
+
+    /// The explicit workspace root pinned for a session via the header, if any
+    /// (already normalized).
+    pub fn get_pinned(&self, session_id: &str) -> Option<String> {
+        self.pinned.get(session_id).map(|v| v.clone())
     }
 
     /// Drop a session's roots — call on client disconnect.
@@ -167,6 +224,7 @@ impl SessionRootsRegistry {
         self.last_probe.remove(session_id);
         self.probe_lock.remove(session_id);
         self.first_seen.remove(session_id);
+        self.pinned.remove(session_id);
     }
 
     /// Compare-and-set the session's resolved feature-set id. Returns `true`
@@ -309,6 +367,56 @@ mod tests {
         assert_eq!(reg.len(), 1);
         reg.remove("sess-1");
         assert_eq!(reg.len(), 0);
+    }
+
+    #[test]
+    fn test_pinned_root_shadows_reported_roots() {
+        let reg = SessionRootsRegistry::default();
+        #[cfg(windows)]
+        let (reported, pin_in, pin_norm) = (
+            "file:///D:/reported/",
+            "D:\\Pinned\\Path",
+            "d:\\pinned\\path",
+        );
+        #[cfg(not(windows))]
+        let (reported, pin_in, pin_norm) = (
+            "file:///home/u/reported/",
+            "/home/u/Pinned",
+            "/home/u/Pinned",
+        );
+
+        reg.set("sess-1", [reported]);
+        reg.set_pinned("sess-1", pin_in);
+
+        // The pinned (header) root entirely shadows the probed root.
+        assert_eq!(reg.get("sess-1"), Some(vec![pin_norm.to_string()]));
+        assert_eq!(reg.get_pinned("sess-1"), Some(pin_norm.to_string()));
+    }
+
+    #[test]
+    fn test_set_pinned_ignores_empty_and_normalizes() {
+        let reg = SessionRootsRegistry::default();
+        // Whitespace/garbage that normalizes to empty leaves no pin, so a
+        // malformed header falls back to reported roots rather than denying.
+        reg.set_pinned("sess-1", "   ");
+        assert!(reg.get_pinned("sess-1").is_none());
+
+        #[cfg(windows)]
+        let (pin_in, pin_norm) = ("file:///D:/Foo/", "d:\\foo");
+        #[cfg(not(windows))]
+        let (pin_in, pin_norm) = ("file:///home/u/Foo/", "/home/u/Foo");
+        reg.set_pinned("sess-1", pin_in);
+        assert_eq!(reg.get_pinned("sess-1"), Some(pin_norm.to_string()));
+    }
+
+    #[test]
+    fn test_remove_clears_pinned() {
+        let reg = SessionRootsRegistry::default();
+        reg.set_pinned("sess-1", "/p");
+        assert!(reg.get_pinned("sess-1").is_some());
+        reg.remove("sess-1");
+        assert!(reg.get_pinned("sess-1").is_none());
+        assert!(reg.get("sess-1").is_none());
     }
 
     #[test]

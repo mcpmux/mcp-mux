@@ -655,3 +655,85 @@ async fn two_sessions_on_same_root_resolve_to_the_same_binding() {
     assert_eq!(r2.feature_set_ids, vec![f.fs_a_id.clone()]);
     assert_eq!(r1.space_id, r2.space_id);
 }
+
+// ---------------------------------------------------------------------------
+// Explicit workspace root via the X-Mcpmux-Workspace header (pinned root)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn pinned_header_root_routes_to_binding_without_any_reported_roots() {
+    // The deterministic fix for clients that don't report MCP roots reliably
+    // (e.g. Cursor multiplexing one MCP host across windows): a session flagged
+    // explicitly rootless, with no reported roots, still routes to its
+    // workspace binding purely from the X-Mcpmux-Workspace header the gateway
+    // pinned.
+    let f = Fixture::new().await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(test_root()),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set_roots_capable("s", false); // client says it has no roots
+    f.session_roots.set_pinned("s", test_root()); // ...but the header pins one
+
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn pinned_header_root_overrides_a_conflicting_reported_root() {
+    // The header is authoritative. When the client reports a stale/wrong root
+    // AND a header root is pinned, the pinned one wins — exactly the Cursor
+    // "reported the wrong window's root" failure, now corrected.
+    let f = Fixture::new().await;
+    let (reported, pinned) = if cfg!(windows) {
+        ("d:\\work\\reported", "d:\\work\\pinned")
+    } else {
+        ("/work/reported", "/work/pinned")
+    };
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(reported),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(pinned),
+            f.space_id,
+            f.fs_b_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set("s", [reported]);
+    f.session_roots.set_roots_capable("s", true);
+    f.session_roots.set_pinned("s", pinned);
+
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    // Resolved to the PINNED root's FS (B), not the reported root's FS (A).
+    assert_eq!(r.feature_set_ids, vec![f.fs_b_id]);
+    assert_ne!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn pinned_header_root_without_binding_falls_back_to_space_default() {
+    // A header root for an as-yet-unmapped folder still works out of the box on
+    // the Space default (upstream emits WorkspaceNeedsBinding so the user can
+    // attach an explicit mapping).
+    let f = Fixture::new().await;
+    f.session_roots.set_pinned("s", test_root());
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::SpaceDefault);
+    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    assert_eq!(r.space_id, Some(f.space_id));
+}

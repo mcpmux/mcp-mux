@@ -113,6 +113,32 @@ pub async fn mcp_oauth_middleware(
         space_id.to_string().parse().expect("valid header value"),
     );
 
+    // Pin an explicit workspace root advertised by the client via the
+    // `X-Mcpmux-Workspace` header (injected by McpMux's per-workspace client
+    // configs). It shadows the client's MCP-reported roots in the resolver, so
+    // a connection routes to its workspace binding even when the client never
+    // reports `roots` or reports a stale one (e.g. Cursor sharing one MCP host
+    // across windows). Unlike client/space id above, this header is
+    // client-asserted — the same trust model as MCP roots: any approved local
+    // client can claim any binding (see FeatureSetResolver trust model). Keyed
+    // by the `mcp-session-id` the client echoes on every post-initialize
+    // request (the same key the handler stores reported roots under).
+    let pin = {
+        let headers = request.headers();
+        let sid = headers
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let ws = headers
+            .get("x-mcpmux-workspace")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        sid.zip(ws)
+    };
+    if let Some((sid, ws)) = pin {
+        services.session_roots.set_pinned(&sid, &ws);
+    }
+
     // Extract MCP method from body if POST
     let mcp_method = if request.method() == axum::http::Method::POST {
         use axum::body::to_bytes;

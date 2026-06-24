@@ -76,6 +76,19 @@
 //!
 //! Roots-capable detection is stamped at `on_initialized` time into
 //! [`SessionRootsRegistry::set_roots_capable`].
+//!
+//! # Explicit workspace root via the `X-Mcpmux-Workspace` header
+//!
+//! A connection can carry an explicit workspace root in the
+//! `X-Mcpmux-Workspace` HTTP header, injected by McpMux's per-workspace client
+//! configs. The OAuth middleware pins it into
+//! [`SessionRootsRegistry::set_pinned`], where it **shadows** the client's
+//! probed MCP roots in [`SessionRootsRegistry::get`]. Because this resolver
+//! reads roots exclusively through `get`, a pinned root flows through Tier 1
+//! unchanged — an exact binding match, else the Space default — with no extra
+//! tier or parameter. This is the deterministic path for clients that don't
+//! report `roots` reliably (e.g. Cursor multiplexing one MCP host across
+//! windows): the header always wins over a stale or absent reported root.
 
 use std::sync::Arc;
 use std::time::Duration;

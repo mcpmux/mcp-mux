@@ -1,10 +1,39 @@
 # dev-rebased Surfacing Regression Fix
 
 **Last Updated:** Jun 24, 2026
-**Status:** Active — in progress
-**Branch:** `dev-rebased`
+**Status:** Phases 1–3 complete — Phase 4 handoff in progress (post-port verification pass done)
+**Branch:** `dev-rebased` (HEAD: `6c4d6b7`)
 **Depends on:** Working tree clean at `d2307d9` (docs planning commit)
 **Unblocks:** Gateway surfaces ~5 meta tools instead of 2228; hard-cut model restored; data-integrity regressions resolved; phase hand-off to `dev-rebased-post-port-completion.md`
+
+### Phase status
+
+| Phase | Status | Commit |
+| ----- | ------ | ------ |
+| 1 — Surfacing: list_* paths | ✅ Complete | `126fa2f` (list_tools pre-fix in `93e6bef`) |
+| 2 — Surfacing: call_* hard-cut guards | ✅ Complete | `b131a3f` |
+| 3 — Data integrity regressions | ✅ Complete | `6c4d6b7` |
+| 4 — Hand off to post-port completion | 🔄 In progress | See audit below |
+
+### Phase 6 verification (Jun 24, 2026)
+
+Automated gates on `6c4d6b7`:
+
+| Gate | Result |
+| ---- | ------ |
+| `pnpm validate` | ✅ pass (fmt, clippy, check, eslint, typecheck) |
+| `pnpm test:rust:unit` | ✅ 435 passed, 2 skipped |
+| `pnpm test:ts` | ✅ 334 passed |
+
+Surfacing code inspection:
+
+| Check | Result |
+| ----- | ------ |
+| `CORE_META_TOOLS` = 5 entries | ✅ `mod.rs` lines 82–88; asserted in `token_budget.rs` + `registry_advertises_core_tools_read_only_in_list` int test |
+| `list_as_tools()` filters to core only | ✅ `registry.rs:229` filters via `CORE_META_TOOLS.contains` |
+| `get_advertised_*` wired in handler | ✅ tools L746, prompts L1041/L1101, resources L1189/L1257 |
+| `call_tool` hard-cut guards | ✅ L844–937: advertised vs invokable check, `use_invoke_tool` / `bind_feature_set` errors, `list_inactive_discovery_tools` lookup |
+| `structured_content` passthrough | ✅ L1011 |
 
 ---
 
@@ -163,9 +192,27 @@ Three changes that could silently corrupt state or break user data:
 
 After Phases 1–3 are confirmed working (desktop Tauri app loads, gateway serves ~5 meta tools, `pnpm validate` clean), pick up the remaining port work from the existing plan:
 
-- [`dev-rebased-post-port-completion.md`](./dev-rebased-post-port-completion.md) **Phase 1** — audit + cherry-pick 10 `dev`-only commits (meta-tool / server-update fixes)
-- [`dev-rebased-post-port-completion.md`](./dev-rebased-post-port-completion.md) **Phase 2** — `lib/api` `invoke` → `apiCall` migration (12 remaining files)
-- [`dev-rebased-post-port-completion.md`](./dev-rebased-post-port-completion.md) **Phase 3** — feature-by-feature verification
+| Post-port phase | Status | Commit / notes |
+| --------------- | ------ | -------------- |
+| [`dev-rebased-post-port-completion.md`](./dev-rebased-post-port-completion.md) **Phase 1** — audit + cherry-pick 10 `dev`-only commits | ✅ Complete | `784cd41` |
+| **Phase 2** — `lib/api` `invoke` → `apiCall` migration (12 remaining files) | ✅ Complete | `9747c71`; grep confirms zero raw `invoke()` in `apps/desktop/src/lib/api/` |
+| **Phase 3** — feature-by-feature verification | 🔄 Automated pass done; manual QA open | Phase 6 verification pass (Jun 24); see manual checklist below |
+
+**Manual QA still required** (cannot automate in CI — from post-port Phase 3 checklist):
+
+- Dashboard: stat cards, health section, activity feed, quick links, gateway status bar
+- i18n: nav labels, renamed superapp vocab (`myServers`, `search`, `bundles`, `projects`, `clients`)
+- Spaces: CRUD, base dirs, switcher accent, panel counts
+- Servers: install/enable/auth/logs/clone/display name/source badge/update policy badges and notify/auto/pinned modes
+- Feature Sets: CRUD, tool add/remove, surfaced toggle, starter protection
+- Workspaces: folder→bundle binding, appearances, per-client scope
+- Clients: preset list, OAuth grant, access key copy, Connect IDE flow
+- Registry/Discover: catalog browse, install, search/filters
+- Builtin Servers: enable/disable per space, gateway tool list
+- Settings: gateway port, build stamp, pending updates, stale build banner, analytics toggle
+- Meta-tools (MCP client): bare-name invoke/schema, search synonyms + inactive preview, prefilled_params, display_name on deny, approval dialog, token budget
+- Web admin: SSE `:45819/events`, CF Access JWT on local dev, SPA 404 fallback
+- Surfacing smoke: fresh MCP session shows ~5 meta tools (not thousands); direct call to non-surfaced tool returns `use_invoke_tool` hint
 
 **Outcome:** `dev-rebased` reaches full feature parity with `dev` tip. Web admin loads cleanly. All verification items in the post-port completion doc are checked off.
 

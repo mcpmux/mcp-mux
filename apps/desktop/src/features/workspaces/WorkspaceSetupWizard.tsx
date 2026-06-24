@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -88,6 +89,12 @@ export function WorkspaceSetupWizard({
   const unmappedRoots = useMemo(
     () => reportedRoots.filter((r) => !boundRoots.has(r.toLowerCase())),
     [reportedRoots, boundRoots]
+  );
+  // Block picking a folder that already has a mapping (e.g. chosen via the
+  // folder dialog) — it must be edited from the Workspaces list, not re-created.
+  const alreadyMapped = useMemo(
+    () => !!folder && boundRoots.has(folder.toLowerCase()),
+    [folder, boundRoots]
   );
 
   const pickFolder = async () => {
@@ -182,12 +189,30 @@ export function WorkspaceSetupWizard({
             </Button>
 
             {folder && (
-              <div className="flex items-center gap-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2">
-                <Check className="h-4 w-4 flex-shrink-0 text-green-600" />
+              <div
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                  alreadyMapped
+                    ? 'border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-900/20'
+                    : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
+                }`}
+              >
+                {alreadyMapped ? (
+                  <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-600" />
+                ) : (
+                  <Check className="h-4 w-4 flex-shrink-0 text-green-600" />
+                )}
                 <span className="truncate font-mono text-xs" title={folder}>
                   {folder}
                 </span>
               </div>
+            )}
+            {alreadyMapped && (
+              <p
+                className="text-xs text-amber-700 dark:text-amber-400"
+                data-testid="wizard-folder-mapped-error"
+              >
+                This folder is already mapped — edit it from the Workspaces list instead.
+              </p>
             )}
 
             {unmappedRoots.length > 0 && (
@@ -315,7 +340,7 @@ export function WorkspaceSetupWizard({
             variant="primary"
             size="sm"
             onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
-            disabled={step === 1 && !folder}
+            disabled={step === 1 && (!folder || alreadyMapped)}
             data-testid="wizard-next"
           >
             {step === 2 ? 'Next' : 'Continue'}

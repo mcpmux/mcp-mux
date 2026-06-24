@@ -149,9 +149,9 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
   return (
     <div className="space-y-4" data-testid="workspace-install-panel">
       <p className="text-sm text-[rgb(var(--muted))]">
-        Drop McpMux into this folder&apos;s MCP config for the apps you use. Each gets a{' '}
+        Add McpMux to this folder&apos;s MCP config for the apps you use. Each gets an{' '}
         <code className="text-xs">X-Mcpmux-Workspace</code> header set to this path, so it routes
-        here automatically — even apps that don&apos;t report the folder (like Cursor).
+        here automatically — even apps that don&apos;t report the folder.
       </p>
 
       {/* Self-introductory auth nudge — disabling auth makes the written config

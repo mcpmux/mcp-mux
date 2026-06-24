@@ -50,6 +50,7 @@ import {
   listFeatureSets,
   type FeatureSet,
 } from '@/lib/api/featureSets';
+import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
 import { useSpaces } from '@/stores';
 import type { Space } from '@/lib/api/spaces';
 
@@ -1016,6 +1017,19 @@ function InspectorPanel({
             onSaveStatusChange={setSaveStatus}
           />
         </CollapsibleSection>
+
+        {entry && !isNew && (
+          <CollapsibleSection
+            icon={<Wrench className="h-5 w-5" />}
+            tone="primary"
+            title="Connect apps to this folder"
+            subtitle="Write the McpMux config into this folder for the apps you use, with this folder's workspace header."
+            defaultOpen={!isMapped}
+            testId="workspace-install-section"
+          >
+            <WorkspaceInstallPanel workspaceRoot={entry.root} />
+          </CollapsibleSection>
+        )}
 
         {entry && !isNew && (
           <CollapsibleSection

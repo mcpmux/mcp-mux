@@ -1,0 +1,261 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Check, Copy, Download, Loader2, ShieldCheck, ShieldOff, AlertCircle } from 'lucide-react';
+import { Button } from '@mcpmux/ui';
+import { getGatewayStatus } from '@/lib/api/gateway';
+import {
+  generateWorkspaceConfigSnippet,
+  getGatewayAuthDisabled,
+  installWorkspaceMcpConfig,
+  listWorkspaceInstallClients,
+  setGatewayAuthDisabled,
+  type WorkspaceInstallClient,
+  type WorkspaceInstallResult,
+} from '@/lib/api/workspaceInstall';
+
+/** Clients selected by default — the most common three. */
+const DEFAULT_SELECTED = ['cursor', 'claude-code', 'vscode'];
+
+/**
+ * "Connect apps to this folder" — writes (or extends) project-local MCP configs
+ * inside `workspaceRoot`, injecting `X-Mcpmux-Workspace: <folder path>` so the
+ * gateway routes those apps to this folder's binding deterministically, even
+ * when the client doesn't report MCP roots. Also surfaces (and can flip) the
+ * system-wide auth toggle inline, since disabling it makes the config a pure
+ * URL + header with no access key.
+ */
+export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string }) {
+  const [clients, setClients] = useState<WorkspaceInstallClient[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(DEFAULT_SELECTED));
+  const [mcpUrl, setMcpUrl] = useState<string | null>(null);
+  const [authDisabled, setAuthDisabled] = useState<boolean | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [results, setResults] = useState<WorkspaceInstallResult[] | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [togglingAuth, setTogglingAuth] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [list, status, disabled] = await Promise.all([
+          listWorkspaceInstallClients(),
+          getGatewayStatus().catch(() => ({ running: false, url: null as string | null })),
+          getGatewayAuthDisabled().catch(() => false),
+        ]);
+        if (cancelled) return;
+        setClients(list);
+        setAuthDisabled(disabled);
+        setMcpUrl(status.url ? `${status.url}/mcp` : null);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggleClient = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setResults(null);
+  };
+
+  const handleCopy = useCallback(
+    async (clientId: string) => {
+      if (!mcpUrl) return;
+      try {
+        const snip = await generateWorkspaceConfigSnippet({
+          client: clientId,
+          serverUrl: mcpUrl,
+          workspaceRoot,
+        });
+        await navigator.clipboard.writeText(snip.content);
+        setCopiedId(clientId);
+        setTimeout(() => setCopiedId((c) => (c === clientId ? null : c)), 1500);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [mcpUrl, workspaceRoot]
+  );
+
+  const handleInstall = async () => {
+    if (!mcpUrl || selected.size === 0) return;
+    setInstalling(true);
+    setError(null);
+    setResults(null);
+    try {
+      const res = await installWorkspaceMcpConfig({
+        workspaceRoot,
+        serverUrl: mcpUrl,
+        clients: Array.from(selected),
+      });
+      setResults(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleDisableAuth = async () => {
+    setTogglingAuth(true);
+    try {
+      const v = await setGatewayAuthDisabled(true);
+      setAuthDisabled(v);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTogglingAuth(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="workspace-install-panel">
+      <p className="text-sm text-[rgb(var(--muted))]">
+        Drop McpMux into this folder&apos;s MCP config for the apps you use. Each gets a{' '}
+        <code className="text-xs">X-Mcpmux-Workspace</code> header set to this path, so it routes
+        here automatically — even apps that don&apos;t report the folder (like Cursor).
+      </p>
+
+      {/* Self-introductory auth nudge — disabling auth makes the written config
+          a pure URL + header with no access key to manage. */}
+      {authDisabled === false && (
+        <div
+          className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-800/60 dark:bg-amber-900/20"
+          data-testid="workspace-install-auth-nudge"
+        >
+          <ShieldOff className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-amber-800 dark:text-amber-300">
+              Apps will need an access key to connect.
+            </p>
+            <p className="mt-0.5 text-amber-700 dark:text-amber-400">
+              For zero-config setup, disable system-wide authentication — apps then connect with
+              just the URL and this workspace header.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mt-2 h-7 text-xs"
+              disabled={togglingAuth}
+              onClick={handleDisableAuth}
+              data-testid="workspace-install-disable-auth"
+            >
+              {togglingAuth ? (
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+              ) : (
+                <ShieldOff className="mr-1.5 h-3 w-3" />
+              )}
+              Disable authentication
+            </Button>
+          </div>
+        </div>
+      )}
+      {authDisabled === true && (
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 text-xs text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-900/20 dark:text-emerald-300">
+          <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+          Authentication is off — apps connect with just the URL and workspace header.
+        </div>
+      )}
+
+      {/* Client checklist with per-row copy. */}
+      <div className="overflow-hidden rounded-lg border border-[rgb(var(--border))]">
+        {clients.map((c, i) => {
+          const checked = selected.has(c.id);
+          return (
+            <label
+              key={c.id}
+              className={`flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-[rgb(var(--surface-hover))] ${
+                i > 0 ? 'border-t border-[rgb(var(--border-subtle))]' : ''
+              }`}
+              data-testid={`workspace-install-client-${c.id}`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => toggleClient(c.id)}
+                className="h-4 w-4 flex-shrink-0 accent-primary-500"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-[rgb(var(--foreground))]">{c.label}</div>
+                <div className="truncate font-mono text-[11px] text-[rgb(var(--muted))]">
+                  {c.config_path}
+                </div>
+              </div>
+              <button
+                type="button"
+                title="Copy this client's config"
+                disabled={!mcpUrl}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleCopy(c.id);
+                }}
+                className="flex-shrink-0 rounded-md p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] disabled:opacity-40"
+                data-testid={`workspace-install-copy-${c.id}`}
+              >
+                {copiedId === c.id ? (
+                  <Check className="h-3.5 w-3.5 text-green-600" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </label>
+          );
+        })}
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {results && (
+        <div className="space-y-1.5" data-testid="workspace-install-results">
+          {results.map((r) => (
+            <div
+              key={r.client}
+              className="flex items-center gap-2 rounded-md border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-2.5 py-1.5 text-xs"
+            >
+              {r.action === 'error' ? (
+                <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />
+              ) : (
+                <Check className="h-3.5 w-3.5 flex-shrink-0 text-green-600" />
+              )}
+              <span className="font-medium">{r.label}</span>
+              <span className="text-[rgb(var(--muted))]">
+                {r.action === 'error' ? r.error : `${r.action} ${r.path}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Button
+        variant="primary"
+        size="sm"
+        className="w-full"
+        disabled={installing || selected.size === 0 || !mcpUrl}
+        onClick={handleInstall}
+        data-testid="workspace-install-button"
+      >
+        {installing ? (
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="mr-2 h-4 w-4" />
+        )}
+        {mcpUrl
+          ? `Install into ${selected.size} app${selected.size === 1 ? '' : 's'}`
+          : 'Start the gateway to install'}
+      </Button>
+    </div>
+  );
+}

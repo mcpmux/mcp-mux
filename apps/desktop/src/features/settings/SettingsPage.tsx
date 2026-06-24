@@ -31,6 +31,7 @@ import {
   Network,
   RotateCcw,
   AlertCircle,
+  ShieldOff,
 } from 'lucide-react';
 import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
@@ -76,6 +77,11 @@ export function SettingsPage() {
   // opens an unmapped folder. On by default.
   const [mappingPromptEnabled, setMappingPromptEnabled] = useState(true);
   const [savingMappingPrompt, setSavingMappingPrompt] = useState(false);
+
+  // System-wide inbound auth toggle. When disabled, local apps connect to the
+  // gateway with no access key — used by the one-click per-workspace install.
+  const [authDisabled, setAuthDisabled] = useState(false);
+  const [savingAuthDisabled, setSavingAuthDisabled] = useState(false);
 
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
 
@@ -242,6 +248,34 @@ export function SettingsPage() {
       setMappingPromptEnabled(prev);
     } finally {
       setSavingMappingPrompt(false);
+    }
+  };
+
+  // Load the system-wide inbound-auth toggle on mount.
+  useEffect(() => {
+    invoke<boolean>('get_gateway_auth_disabled')
+      .then(setAuthDisabled)
+      .catch((err) => console.error('Failed to load auth setting:', err));
+  }, []);
+
+  const updateAuthDisabled = async (disabled: boolean) => {
+    const prev = authDisabled;
+    setAuthDisabled(disabled);
+    setSavingAuthDisabled(true);
+    try {
+      await invoke('set_gateway_auth_disabled', { disabled });
+      success(
+        'Settings saved',
+        disabled
+          ? 'Authentication is off — local apps can connect with no access key.'
+          : 'Authentication is required again for inbound connections.'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      error('Failed to save setting', msg);
+      setAuthDisabled(prev);
+    } finally {
+      setSavingAuthDisabled(false);
     }
   };
 
@@ -586,6 +620,41 @@ export function SettingsPage() {
                 onCheckedChange={updateMappingPrompt}
                 disabled={savingMappingPrompt}
                 data-testid="workspace-mapping-prompt-switch"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Security Section */}
+        <Card data-testid="settings-security-section">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldOff className="h-5 w-5" />
+              Security
+            </CardTitle>
+            <CardDescription>
+              How McpMux authenticates apps connecting to the local gateway.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <ShieldOff className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                <div>
+                  <label className="text-sm font-medium">Disable authentication</label>
+                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                    Let local apps connect to the gateway with no access key — just the URL and a
+                    workspace header. Makes one-click per-workspace setup trivial. The gateway only
+                    listens on localhost, but any app on this machine can then reach it. Leave on
+                    unless you want the simplest setup.
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={authDisabled}
+                onCheckedChange={updateAuthDisabled}
+                disabled={savingAuthDisabled}
+                data-testid="disable-auth-switch"
               />
             </div>
           </CardContent>

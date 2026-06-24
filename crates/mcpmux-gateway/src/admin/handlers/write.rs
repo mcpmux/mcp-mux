@@ -2,8 +2,10 @@
 
 use axum::extract::{Path, State};
 use axum::Json;
+use serde::Deserialize;
 use serde_json::Value;
 
+use crate::admin::command_bridge::read as read_bridge;
 use crate::admin::command_bridge::space::UpdateSpaceInput;
 use crate::admin::command_bridge::write as bridge;
 use crate::admin::command_bridge::write::{
@@ -22,6 +24,24 @@ use crate::admin::router::AdminState;
 
 fn ok(value: Value) -> Json<Value> {
     Json(value)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConfigExportClientTypeBody {
+    client_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExportConfigRequestBody {
+    client_type: String,
+    space_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConfigExportToFileBody {
+    request: ExportConfigRequestBody,
+    path: String,
 }
 
 pub async fn create_space(
@@ -669,4 +689,39 @@ pub async fn set_update_channel(
         .await
         .map(ok)
         .map_err(ApiError::from_bridge)
+}
+
+pub async fn check_config_exists(
+    State(_state): State<AdminState>,
+    Json(body): Json<ConfigExportClientTypeBody>,
+) -> Result<Json<Value>, ApiError> {
+    read_bridge::check_config_exists(body.client_type)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn backup_existing_config(
+    State(_state): State<AdminState>,
+    Json(body): Json<ConfigExportClientTypeBody>,
+) -> Result<Json<Value>, ApiError> {
+    read_bridge::backup_existing_config(body.client_type)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn export_config_to_file(
+    State(state): State<AdminState>,
+    Json(body): Json<ConfigExportToFileBody>,
+) -> Result<Json<Value>, ApiError> {
+    read_bridge::export_config_to_file(
+        &state.bridge,
+        body.request.client_type,
+        body.request.space_id,
+        body.path,
+    )
+    .await
+    .map(ok)
+    .map_err(ApiError::from_bridge)
 }

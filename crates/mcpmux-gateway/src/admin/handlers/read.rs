@@ -95,6 +95,15 @@ pub struct CloneDependentsQuery {
     pub source_server_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigExportPreviewQuery {
+    pub client_type: String,
+    pub space_id: String,
+    #[serde(default)]
+    pub mask_credentials: bool,
+}
+
 fn ok(value: Value) -> Json<Value> {
     Json(value)
 }
@@ -669,6 +678,28 @@ pub async fn get_workspace_mapping_prompt_enabled(
     State(state): State<AdminState>,
 ) -> Result<Json<Value>, ApiError> {
     bridge::get_workspace_mapping_prompt_enabled(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn preview_config_export(
+    State(state): State<AdminState>,
+    Query(query): Query<ConfigExportPreviewQuery>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::preview_config_export(
+        &state.bridge,
+        query.client_type,
+        query.space_id,
+        query.mask_credentials,
+    )
+    .await
+    .map(ok)
+    .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_config_paths(State(_state): State<AdminState>) -> Result<Json<Value>, ApiError> {
+    bridge::get_config_paths()
         .await
         .map(ok)
         .map_err(ApiError::from_bridge)

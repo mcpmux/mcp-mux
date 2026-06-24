@@ -389,6 +389,23 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/api/v1/servers/clones/dependents",
             get(read::list_clone_dependents),
+        )
+        .route(
+            "/api/v1/config-export/preview",
+            get(read::preview_config_export),
+        )
+        .route("/api/v1/config-export/paths", get(read::get_config_paths))
+        .route(
+            "/api/v1/config-export/check",
+            post(write::check_config_exists),
+        )
+        .route(
+            "/api/v1/config-export/backup",
+            post(write::backup_existing_config),
+        )
+        .route(
+            "/api/v1/config-export/export",
+            post(write::export_config_to_file),
         );
 
     #[cfg(any(test, feature = "test-utils"))]

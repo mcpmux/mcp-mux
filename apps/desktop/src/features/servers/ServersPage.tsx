@@ -11,6 +11,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { pickPath } from '@/lib/backend/shell';
+import { isTauri } from '@/lib/backend/data/transport';
 import {
   ChevronDown,
   ChevronRight,
@@ -2139,22 +2140,27 @@ export function ServersPage() {
                             type="text"
                             value={currentValue}
                             onChange={(e) => handleChange(e.target.value)}
-                            placeholder={input.placeholder || t('configModal.selectFile')}
+                            placeholder={
+                              input.placeholder ||
+                              (isTauri() ? t('configModal.selectFile') : 'Enter absolute path')
+                            }
                             className="input w-full"
                             data-testid={`config-input-${input.id}`}
                           />
-                          <button
-                            type="button"
-                            className="btn btn-secondary shrink-0 px-2"
-                            onClick={async () => {
-                              const selected = await pickPath({ multiple: false, directory: false });
-                              if (typeof selected === 'string' && selected.length > 0) {
-                                handleChange(selected);
-                              }
-                            }}
-                          >
-                            <FolderOpen className="w-4 h-4" />
-                          </button>
+                          {isTauri() && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary shrink-0 px-2"
+                              onClick={async () => {
+                                const selected = await pickPath({ multiple: false, directory: false });
+                                if (typeof selected === 'string' && selected.length > 0) {
+                                  handleChange(selected);
+                                }
+                              }}
+                            >
+                              <FolderOpen className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       );
                     case 'directory_path':
@@ -2164,22 +2170,27 @@ export function ServersPage() {
                             type="text"
                             value={currentValue}
                             onChange={(e) => handleChange(e.target.value)}
-                            placeholder={input.placeholder || t('configModal.selectDirectory')}
+                            placeholder={
+                              input.placeholder ||
+                              (isTauri() ? t('configModal.selectDirectory') : 'Enter absolute path')
+                            }
                             className="input w-full"
                             data-testid={`config-input-${input.id}`}
                           />
-                          <button
-                            type="button"
-                            className="btn btn-secondary shrink-0 px-2"
-                            onClick={async () => {
-                              const selected = await pickPath({ directory: true, multiple: false });
-                              if (typeof selected === 'string' && selected.length > 0) {
-                                handleChange(selected);
-                              }
-                            }}
-                          >
-                            <FolderOpen className="w-4 h-4" />
-                          </button>
+                          {isTauri() && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary shrink-0 px-2"
+                              onClick={async () => {
+                                const selected = await pickPath({ directory: true, multiple: false });
+                                if (typeof selected === 'string' && selected.length > 0) {
+                                  handleChange(selected);
+                                }
+                              }}
+                            >
+                              <FolderOpen className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       );
                     case 'text':

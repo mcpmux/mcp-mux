@@ -7,6 +7,7 @@ import {
   type WorkspaceEventChannel,
 } from '@/hooks';
 import { pickPath } from '@/lib/backend/shell';
+import { isTauri } from '@/lib/backend/data/transport';
 import {
   AlertCircle,
   Check,
@@ -1794,6 +1795,7 @@ function BindingForm({
   const [fsIds, setFsIds] = useState<string[]>(initial?.feature_set_ids ?? []);
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [iconFilePath, setIconFilePath] = useState('');
   const isEdit = mode === 'edit';
 
   // Live validation of the workspace_root field. Edit + create-from-live
@@ -2167,36 +2169,70 @@ function BindingForm({
                 className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
                 data-testid="workspace-binding-icon-input"
               />
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      const picked = await pickPath({
-                        directory: false,
-                        multiple: false,
-                        title: t('form.pickIconTitle'),
-                        filters: [
-                          {
-                            name: t('form.imagesFilter'),
-                            extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
-                          },
-                        ],
-                      });
-                      if (typeof picked !== 'string' || picked.length === 0) return;
-                      const localRef = await uploadWorkspaceIcon(picked);
-                      setIcon(localRef);
-                      onIconChange?.(localRef);
-                      await persistIconNow(localRef);
-                    } catch (e) {
-                      onError(e instanceof Error ? e.message : String(e));
-                    }
-                  }}
-                  data-testid="workspace-binding-icon-upload"
-                >
-                  {t('form.upload')}
-                </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {isTauri() ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const picked = await pickPath({
+                          directory: false,
+                          multiple: false,
+                          title: t('form.pickIconTitle'),
+                          filters: [
+                            {
+                              name: t('form.imagesFilter'),
+                              extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
+                            },
+                          ],
+                        });
+                        if (typeof picked !== 'string' || picked.length === 0) return;
+                        const localRef = await uploadWorkspaceIcon(picked);
+                        setIcon(localRef);
+                        onIconChange?.(localRef);
+                        await persistIconNow(localRef);
+                      } catch (e) {
+                        onError(e instanceof Error ? e.message : String(e));
+                      }
+                    }}
+                    data-testid="workspace-binding-icon-upload"
+                  >
+                    {t('form.upload')}
+                  </Button>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={iconFilePath}
+                      onChange={(e) => setIconFilePath(e.target.value)}
+                      placeholder="Enter absolute path"
+                      className="min-w-0 flex-1 px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      data-testid="workspace-binding-icon-path-input"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={!iconFilePath.trim()}
+                      onClick={async () => {
+                        const picked = iconFilePath.trim();
+                        if (!picked) return;
+                        try {
+                          const localRef = await uploadWorkspaceIcon(picked);
+                          setIcon(localRef);
+                          onIconChange?.(localRef);
+                          await persistIconNow(localRef);
+                          setIconFilePath('');
+                        } catch (e) {
+                          onError(e instanceof Error ? e.message : String(e));
+                        }
+                      }}
+                      data-testid="workspace-binding-icon-upload"
+                    >
+                      {t('form.upload')}
+                    </Button>
+                  </>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2237,14 +2273,10 @@ function BindingForm({
             ].join(' ')}
             data-testid="workspace-binding-root-input"
           />
-          {rootEditable && (
+          {rootEditable && isTauri() && (
             <button
               type="button"
               onClick={async () => {
-                // Native directory picker — honors each OS's conventions
-                // (NSOpenPanel on macOS, IFileDialog on Windows, portal on
-                // Linux). The selected path is absolute already, so we
-                // just hand it off and let the live validator normalize.
                 try {
                   const picked = await pickPath({
                     directory: true,

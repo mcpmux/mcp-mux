@@ -10,6 +10,7 @@ import {
   type Space,
   type SpaceBaseDir,
 } from '@/lib/api/spaces';
+import { isTauri } from '@/lib/backend/data/transport';
 
 /**
  * Manage a Space's base directories.
@@ -30,6 +31,7 @@ export function SpaceBaseDirsModal({
   const [dirs, setDirs] = useState<SpaceBaseDir[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [webPath, setWebPath] = useState('');
   const { toasts, error: showError, dismiss } = useToast();
 
   const spaceId = space?.id ?? null;
@@ -58,17 +60,11 @@ export function SpaceBaseDirsModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const handleAdd = async () => {
-    if (!spaceId || busy) return;
-    let picked: string | string[] | null;
-    try {
-      picked = await openDialog({ directory: true, multiple: true, title: 'Add base directory' });
-    } catch {
-      return;
-    }
-    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
-    if (paths.length === 0) return; // cancelled — nothing added
-
+  /**
+   * Persist one or more absolute directory paths as base dirs for this Space.
+   */
+  const addPaths = async (paths: string[]) => {
+    if (!spaceId || paths.length === 0) return;
     setBusy(true);
     for (const p of paths) {
       try {
@@ -79,6 +75,32 @@ export function SpaceBaseDirsModal({
     }
     await load();
     setBusy(false);
+  };
+
+  /**
+   * Open the native folder picker (desktop) or no-op — web uses the text field.
+   */
+  const handleAdd = async () => {
+    if (!spaceId || busy || !isTauri()) return;
+    let picked: string | string[] | null;
+    try {
+      picked = await openDialog({ directory: true, multiple: true, title: 'Add base directory' });
+    } catch {
+      return;
+    }
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    if (paths.length === 0) return;
+    await addPaths(paths);
+  };
+
+  /**
+   * Add a base directory from the web-admin text path field.
+   */
+  const handleAddWebPath = async () => {
+    const trimmed = webPath.trim();
+    if (!trimmed || busy) return;
+    await addPaths([trimmed]);
+    setWebPath('');
   };
 
   const handleRemove = async (dir: SpaceBaseDir) => {
@@ -170,21 +192,46 @@ export function SpaceBaseDirsModal({
                 </ul>
               )}
 
-              {/* Add row — a clearly optional action, not the only way out. */}
-              <button
-                type="button"
-                onClick={handleAdd}
-                disabled={busy}
-                className="hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[rgb(var(--border))] px-3 py-3 text-sm font-medium text-[rgb(var(--muted))] transition-colors disabled:opacity-50"
-                data-testid="add-base-dir-btn"
-              >
-                {busy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <FolderPlus className="h-4 w-4" />
-                )}
-                Add folder…
-              </button>
+              {/* Add row — native picker on desktop, text path on web admin. */}
+              {isTauri() ? (
+                <button
+                  type="button"
+                  onClick={handleAdd}
+                  disabled={busy}
+                  className="hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[rgb(var(--border))] px-3 py-3 text-sm font-medium text-[rgb(var(--muted))] transition-colors disabled:opacity-50"
+                  data-testid="add-base-dir-btn"
+                >
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderPlus className="h-4 w-4" />
+                  )}
+                  Add folder…
+                </button>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={webPath}
+                    onChange={(e) => setWebPath(e.target.value)}
+                    placeholder="Enter absolute path"
+                    disabled={busy}
+                    className="min-w-0 flex-1 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-xs focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50"
+                    data-testid="add-base-dir-path-input"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void handleAddWebPath();
+                    }}
+                  />
+                  <Button
+                    variant="secondary"
+                    onClick={() => void handleAddWebPath()}
+                    disabled={busy || !webPath.trim()}
+                    data-testid="add-base-dir-btn"
+                  >
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderPlus className="h-4 w-4" />}
+                  </Button>
+                </div>
+              )}
 
               {dirs.length === 0 && !busy && (
                 <p className="mt-3 text-center text-xs text-[rgb(var(--muted))]">

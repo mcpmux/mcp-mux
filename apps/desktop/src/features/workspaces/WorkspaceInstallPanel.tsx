@@ -1,8 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Download, Loader2, ShieldCheck, ShieldOff, AlertCircle } from 'lucide-react';
+import {
+  AppWindow,
+  Check,
+  Copy,
+  Download,
+  Loader2,
+  ShieldCheck,
+  ShieldOff,
+  AlertCircle,
+} from 'lucide-react';
 import { Button } from '@mcpmux/ui';
+import cursorIcon from '@/assets/client-icons/cursor.svg';
+import claudeIcon from '@/assets/client-icons/claude.svg';
+import vscodeIcon from '@/assets/client-icons/vscode.png';
+import opencodeIcon from '@/assets/client-icons/opencode.svg';
+import zedIcon from '@/assets/client-icons/zed.svg';
 import { getGatewayStatus } from '@/lib/api/gateway';
 import { useNavigateTo, useSetPendingSettingsSection } from '@/stores';
+
+/** Brand icon per supported client id (falls back to a generic glyph). */
+const CLIENT_ICONS: Record<string, string> = {
+  cursor: cursorIcon,
+  'claude-code': claudeIcon,
+  vscode: vscodeIcon,
+  opencode: opencodeIcon,
+  zed: zedIcon,
+};
 import {
   generateWorkspaceConfigSnippet,
   getGatewayAuthDisabled,
@@ -209,6 +232,15 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
                 onChange={() => toggleClient(c.id)}
                 className="h-4 w-4 flex-shrink-0 accent-primary-500"
               />
+              {CLIENT_ICONS[c.id] ? (
+                <img
+                  src={CLIENT_ICONS[c.id]}
+                  alt=""
+                  className="h-5 w-5 flex-shrink-0 object-contain"
+                />
+              ) : (
+                <AppWindow className="h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+              )}
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-[rgb(var(--foreground))]">{c.label}</div>
                 <div className="truncate font-mono text-[11px] text-[rgb(var(--muted))]">

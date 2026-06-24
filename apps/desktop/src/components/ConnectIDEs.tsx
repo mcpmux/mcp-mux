@@ -7,6 +7,7 @@ import claudeIcon from '@/assets/client-icons/claude.svg';
 import windsurfIcon from '@/assets/client-icons/windsurf.svg';
 import jetbrainsIcon from '@/assets/client-icons/jetbrains.svg';
 import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
+import opencodeIcon from '@/assets/client-icons/opencode.svg';
 import { addToVscode, addToCursor } from '@/lib/api/clientInstall';
 
 type GridAction = 'deep_link' | 'copy_command' | 'copy_config';
@@ -93,6 +94,18 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
         'Copies a `claude mcp add` command. Run it in your shell — Claude Code ' +
         'loads mcpmux on the next `claude` invocation (existing sessions need ' +
         '/restart). Approve on this page when it connects.',
+    },
+    {
+      id: 'opencode',
+      name: 'opencode',
+      label: 'opencode',
+      icon: opencodeIcon,
+      action: 'copy_config',
+      handler: `"mcpmux": {\n  "type": "remote",\n  "url": "${mcpUrl}"\n}`,
+      nextStep:
+        'Copies a JSON snippet. In opencode, paste it under "mcp" in opencode.json ' +
+        '(project) or ~/.config/opencode/opencode.json (global), then restart ' +
+        'opencode. Approve on this page when it connects.',
     },
     {
       id: 'jetbrains',

@@ -35,7 +35,28 @@ describe('ConnectIDEs', () => {
     expect(screen.getByTestId('client-icon-vscode')).toBeInTheDocument();
     expect(screen.getByTestId('client-icon-cursor')).toBeInTheDocument();
     expect(screen.getByTestId('client-icon-claude-code')).toBeInTheDocument();
+    expect(screen.getByTestId('client-icon-opencode')).toBeInTheDocument();
     expect(screen.getByTestId('client-icon-copy-config')).toBeInTheDocument();
+  });
+
+  it('offers a global opencode config snippet (no workspace header)', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    render(<ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />);
+
+    await user.click(screen.getByTestId('client-icon-opencode'));
+    await user.click(screen.getByRole('button', { name: /Copy config/i }));
+
+    const copied = writeText.mock.calls[0][0] as string;
+    expect(copied).toContain('"type": "remote"');
+    expect(copied).toContain('localhost:45818/mcp');
+    // Global connect carries no per-workspace header.
+    expect(copied).not.toContain('X-Mcpmux-Workspace');
   });
 
   it('should show labels under icons', () => {

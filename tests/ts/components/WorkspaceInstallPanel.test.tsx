@@ -74,11 +74,14 @@ describe('WorkspaceInstallPanel', () => {
       .mockResolvedValue({ running: true, url: 'http://localhost:45818' });
   });
 
-  it('lists every supported client', async () => {
+  it('lists every supported client, each with an icon', async () => {
     render(<WorkspaceInstallPanel workspaceRoot={ROOT} />);
     expect(await screen.findByText('Cursor')).toBeTruthy();
     for (const c of CLIENTS) {
-      expect(screen.getByTestId(`workspace-install-client-${c.id}`)).toBeTruthy();
+      const row = screen.getByTestId(`workspace-install-client-${c.id}`);
+      expect(row).toBeTruthy();
+      // Each known client renders a brand icon image.
+      expect(row.querySelector('img')).toBeTruthy();
     }
   });
 

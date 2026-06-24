@@ -726,6 +726,49 @@ async fn pinned_header_root_overrides_a_conflicting_reported_root() {
 }
 
 #[tokio::test]
+async fn header_takes_priority_but_reported_roots_still_map_without_one() {
+    // The two mechanisms coexist by design: a session that only reports MCP
+    // roots (no header) keeps mapping via those roots; pinning a header root
+    // then overrides them. This guards against the pin ever becoming
+    // unconditional and breaking roots-reporting clients (VS Code, Claude Code).
+    let f = Fixture::new().await;
+    let (root_a, root_b) = if cfg!(windows) {
+        ("d:\\work\\a", "d:\\work\\b")
+    } else {
+        ("/work/a", "/work/b")
+    };
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(root_a),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(root_b),
+            f.space_id,
+            f.fs_b_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    // No header pinned → the reported root drives resolution (FS A).
+    f.session_roots.set("s", [root_a]);
+    f.session_roots.set_roots_capable("s", true);
+    let reported = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(reported.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(reported.feature_set_ids, vec![f.fs_a_id.clone()]);
+
+    // Pin a header root for a different folder → it takes priority (FS B).
+    f.session_roots.set_pinned("s", root_b);
+    let pinned = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(pinned.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(pinned.feature_set_ids, vec![f.fs_b_id.clone()]);
+}
+
+#[tokio::test]
 async fn pinned_header_root_without_binding_falls_back_to_space_default() {
     // A header root for an as-yet-unmapped folder still works out of the box on
     // the Space default (upstream emits WorkspaceNeedsBinding so the user can

@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use mcpmux_core::{
     AppSettingsRepository, ApplicationServices, FeatureSetRepository, GatewayPortService,
-    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager, SpaceService,
-    WorkspaceAppearanceRepository, WorkspaceBindingRepository,
+    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager, SpaceBaseDirRepository,
+    SpaceBuiltinConfigRepository, SpaceService, WorkspaceAppearanceRepository,
+    WorkspaceBindingRepository,
 };
 
 use super::runtime::GatewayRuntime;
@@ -42,6 +43,8 @@ pub struct AdminBridgeCtx {
     /// Gateway-dependent write operations (start/stop, server connections, OAuth grants).
     pub gateway_writes: Arc<dyn GatewayWriteRuntime>,
     pub feature_set_repository: Arc<dyn FeatureSetRepository>,
+    pub space_base_dir_repository: Arc<dyn SpaceBaseDirRepository>,
+    pub space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository>,
     /// Optional OS auto-launch value injected by desktop runtime.
     pub auto_launch_enabled: Option<bool>,
     /// Desktop app version (`CARGO_PKG_VERSION` from the app crate).

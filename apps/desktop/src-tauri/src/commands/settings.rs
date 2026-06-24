@@ -381,6 +381,54 @@ pub async fn update_admin_web_settings(
     Ok(())
 }
 
+const UPDATE_CHANNEL_KEY: &str = "updates.channel";
+const AUTO_INSTALL_UPDATES_KEY: &str = "updates.auto_install";
+
+/// Read the persisted desktop updater channel (`stable` or `prerelease`).
+#[tauri::command]
+pub async fn get_update_channel(app_state: State<'_, AppState>) -> Result<String, String> {
+    let stored = app_state
+        .settings_repository
+        .get(UPDATE_CHANNEL_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(if stored.as_deref() == Some("prerelease") {
+        "prerelease".to_string()
+    } else {
+        "stable".to_string()
+    })
+}
+
+/// Persist the desktop updater channel.
+#[tauri::command]
+pub async fn set_update_channel(
+    channel: String,
+    app_state: State<'_, AppState>,
+) -> Result<String, String> {
+    let normalized = if channel == "prerelease" {
+        "prerelease"
+    } else {
+        "stable"
+    };
+    app_state
+        .settings_repository
+        .set(UPDATE_CHANNEL_KEY, normalized)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(normalized.to_string())
+}
+
+/// Read whether desktop builds should auto-install updates when available.
+#[tauri::command]
+pub async fn get_auto_install_updates(app_state: State<'_, AppState>) -> Result<bool, String> {
+    let stored = app_state
+        .settings_repository
+        .get(AUTO_INSTALL_UPDATES_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(stored.map(|value| value == "true").unwrap_or(true))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

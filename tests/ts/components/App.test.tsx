@@ -6,11 +6,13 @@ import { renderWithI18n } from '../render-with-i18n.helpers';
 
 // ---------- Hoisted mock functions (available before vi.mock factories run) ----------
 
-const { mockInvoke, mockCheck, mockGetGatewayStatus, mockCheckForUpdate } = vi.hoisted(() => ({
+const { mockInvoke, mockCheck, mockGetGatewayStatus, mockCheckForUpdate, mockGetAutoInstallUpdates } =
+  vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockCheck: vi.fn(),
   mockGetGatewayStatus: vi.fn(),
   mockCheckForUpdate: vi.fn(),
+  mockGetAutoInstallUpdates: vi.fn().mockResolvedValue(false),
 }));
 
 // ---------- Module mocks ----------
@@ -26,6 +28,7 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
 
 vi.mock('@/lib/updates', () => ({
   checkForUpdate: mockCheckForUpdate,
+  getAutoInstallUpdates: mockGetAutoInstallUpdates,
 }));
 
 // Mock page components as lightweight stubs
@@ -314,7 +317,8 @@ describe('App – update banner', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     gatewayEventCallbacks = [];
-    setupInvoke({ get_version: '0.1.2', get_auto_install_updates: false });
+    setupInvoke({ get_version: '0.1.2' });
+    mockGetAutoInstallUpdates.mockResolvedValue(false);
     setupGateway({ running: false, url: null });
     mockCheckForUpdate.mockReset();
   });

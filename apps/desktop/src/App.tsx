@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { invoke } from '@tauri-apps/api/core';
 import { Sun, Moon, Download, X } from 'lucide-react';
 import { AppShell, Sidebar, SidebarItem, SidebarSection } from '@mcpmux/ui';
 import { ThemeProvider } from '@/components/ThemeProvider';
@@ -39,7 +38,7 @@ import { WorkspaceBindingSheet } from '@/features/workspaces';
 import { MetaToolApprovalDialog } from '@/features/metaTools';
 import { useGatewayEvents } from '@/hooks/useDomainEvents';
 import { getVersion } from '@/lib/api/app';
-import { checkForUpdate } from '@/lib/updates';
+import { checkForUpdate, getAutoInstallUpdates } from '@/lib/updates';
 
 /** McpMux title-bar icon — miniature cat icon */
 function McpMuxGlyph({ className }: { className?: string }) {
@@ -108,6 +107,7 @@ function AppContent() {
 
   useEffect(() => {
     if (import.meta.env.DEV && !import.meta.env.VITEST) return;
+    if (!isTauri()) return;
 
     const checkForUpdates = async () => {
       try {
@@ -117,7 +117,7 @@ function AppContent() {
 
         let autoInstall = true;
         try {
-          autoInstall = await invoke<boolean>('get_auto_install_updates');
+          autoInstall = await getAutoInstallUpdates();
         } catch {
           /* setting unavailable → keep the auto-install default */
         }

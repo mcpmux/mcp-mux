@@ -103,6 +103,14 @@ pub fn build_admin_router(state: AdminState) -> Router {
             delete(write::remove_server_from_config),
         )
         .route(
+            "/api/v1/spaces/{space_id}/base-dirs",
+            get(read::list_space_base_dirs).post(write::add_space_base_dir),
+        )
+        .route(
+            "/api/v1/spaces/base-dirs/{id}",
+            delete(write::remove_space_base_dir),
+        )
+        .route(
             "/api/v1/servers/installed",
             get(read::list_installed_servers),
         )
@@ -119,6 +127,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/api/v1/servers/{id}/oauth-connected",
             put(write::set_server_oauth_connected),
+        )
+        .route(
+            "/api/v1/servers/{id}/enabled",
+            put(write::set_server_enabled),
         )
         .route(
             "/api/v1/servers/connections",
@@ -175,6 +187,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
             get(read::get_registry_home_config),
         )
         .route("/api/v1/registry/offline", get(read::is_registry_offline))
+        .route(
+            "/api/v1/registry/categories",
+            get(read::list_registry_categories),
+        )
         .route("/api/v1/registry/refresh", post(write::refresh_registry))
         .route(
             "/api/v1/clients",
@@ -231,6 +247,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
             get(read::list_reported_workspace_roots),
         )
         .route(
+            "/api/v1/workspaces/reported-roots/clear-unmapped",
+            post(write::clear_unmapped_reported_roots),
+        )
+        .route(
             "/api/v1/workspaces/validate-root",
             get(read::validate_workspace_root),
         )
@@ -261,6 +281,23 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/api/v1/settings/meta-tools-enabled",
             get(read::get_meta_tools_enabled).put(write::set_meta_tools_enabled),
+        )
+        .route(
+            "/api/v1/settings/meta-tools-require-approval",
+            get(read::get_meta_tools_require_approval).put(write::set_meta_tools_require_approval),
+        )
+        .route(
+            "/api/v1/settings/workspace-mapping-prompt",
+            get(read::get_workspace_mapping_prompt_enabled)
+                .put(write::set_workspace_mapping_prompt_enabled),
+        )
+        .route(
+            "/api/v1/settings/auto-install-updates",
+            get(read::get_auto_install_updates),
+        )
+        .route(
+            "/api/v1/settings/update-channel",
+            get(read::get_update_channel).put(write::set_update_channel),
         )
         .route("/api/v1/app/version", get(read::get_version))
         .route("/api/v1/app/bundle-version", get(read::get_bundle_version))
@@ -331,6 +368,15 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/api/v1/server-features/{id}",
             get(read::get_server_feature),
+        )
+        .route("/api/v1/builtins", get(read::list_builtin_servers))
+        .route(
+            "/api/v1/builtins/server-enabled",
+            put(write::set_builtin_server_enabled),
+        )
+        .route(
+            "/api/v1/builtins/tool-enabled",
+            put(write::set_builtin_tool_enabled),
         )
         .route(
             "/api/v1/servers/clones/available",

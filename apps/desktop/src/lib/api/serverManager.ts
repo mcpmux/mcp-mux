@@ -10,6 +10,8 @@
 /** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
+import { isTauri } from "@/lib/backend/data/transport";
+
 import { apiCall } from "./transport";
 
 /**
@@ -215,6 +217,9 @@ export async function disconnectServerV2(
 export async function onServerStatus(
   callback: (event: ServerStatusEvent) => void
 ): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return () => {};
+  }
   return listen<{
     space_id: string;
     server_id: string;
@@ -239,6 +244,9 @@ export async function onServerStatus(
 export async function onAuthProgress(
   callback: (event: AuthProgressEvent) => void
 ): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return () => {};
+  }
   return listen<{
     space_id: string;
     server_id: string;
@@ -261,6 +269,9 @@ export async function onAuthProgress(
 export async function onFeaturesUpdated(
   callback: (event: FeaturesUpdatedEvent) => void
 ): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return () => {};
+  }
   return listen<{
     space_id: string;
     server_id: string;

@@ -782,3 +782,105 @@ pub async fn list_clone_dependents(
 pub async fn now_utc() -> Result<Value> {
     as_json(Utc::now().to_rfc3339())
 }
+
+const META_TOOLS_REQUIRE_APPROVAL_KEY: &str = "meta_tools.require_approval";
+const UPDATE_CHANNEL_KEY: &str = "updates.channel";
+const AUTO_INSTALL_UPDATES_KEY: &str = "updates.auto_install";
+
+/// Registry categories are bundle-derived; ADR-001 keeps categories client-side in filters.
+pub async fn list_registry_categories(_ctx: &AdminBridgeCtx) -> Result<Value> {
+    Ok(Value::Array(vec![]))
+}
+
+pub async fn list_space_base_dirs(ctx: &AdminBridgeCtx, space_id: String) -> Result<Value> {
+    let space_uuid = Uuid::parse_str(&space_id)?;
+    let rows = ctx
+        .space_base_dir_repository
+        .list_by_space(&space_uuid)
+        .await?;
+    Ok(Value::Array(
+        rows.into_iter()
+            .map(|row| {
+                json!({
+                    "id": row.id,
+                    "space_id": row.space_id,
+                    "path": row.path,
+                    "created_at": row.created_at.to_rfc3339(),
+                })
+            })
+            .collect(),
+    ))
+}
+
+pub async fn list_builtin_servers(ctx: &AdminBridgeCtx, space_id: String) -> Result<Value> {
+    let repo = &ctx.space_builtin_config_repository;
+    let mut out = Vec::new();
+    for descriptor in mcpmux_core::builtin_servers() {
+        let enabled = repo
+            .server_enabled_override(&space_id, descriptor.id)
+            .await?
+            .unwrap_or(descriptor.default_enabled);
+        let disabled = repo.disabled_tools(&space_id, descriptor.id).await?;
+        let tools = descriptor
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "write": tool.write,
+                    "enabled": !disabled.iter().any(|name| name == tool.name),
+                })
+            })
+            .collect::<Vec<_>>();
+        out.push(json!({
+            "id": descriptor.id,
+            "name": descriptor.name,
+            "description": descriptor.description,
+            "enabled": enabled,
+            "tools": tools,
+        }));
+    }
+    Ok(Value::Array(out))
+}
+
+pub async fn get_meta_tools_require_approval(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let stored = ctx
+        .settings_repository
+        .get(META_TOOLS_REQUIRE_APPROVAL_KEY)
+        .await?;
+    let required = stored.map(|value| value != "false").unwrap_or(true);
+    as_json(required)
+}
+
+pub async fn get_auto_install_updates(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let stored = ctx
+        .settings_repository
+        .get(AUTO_INSTALL_UPDATES_KEY)
+        .await?;
+    let enabled = stored.map(|value| value == "true").unwrap_or(true);
+    as_json(enabled)
+}
+
+const WORKSPACE_MAPPING_PROMPT_KEY: &str = "workspaces.mapping_prompt_enabled";
+
+fn mapping_prompt_enabled_from(stored: Option<&str>) -> bool {
+    stored.map(|s| s != "false").unwrap_or(true)
+}
+
+pub async fn get_workspace_mapping_prompt_enabled(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let stored = ctx
+        .settings_repository
+        .get(WORKSPACE_MAPPING_PROMPT_KEY)
+        .await?;
+    as_json(mapping_prompt_enabled_from(stored.as_deref()))
+}
+
+pub async fn get_update_channel(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let stored = ctx.settings_repository.get(UPDATE_CHANNEL_KEY).await?;
+    let channel = stored
+        .filter(|value| value == "prerelease")
+        .map(|_| "prerelease".to_string())
+        .unwrap_or_else(|| "stable".to_string());
+    as_json(channel)
+}

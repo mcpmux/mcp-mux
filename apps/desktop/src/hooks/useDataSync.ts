@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { listSpaces } from '@/lib/api/spaces';
 import { refreshOAuthTokensOnStartup } from '@/lib/api/gateway';
+import { isTauri } from '@/lib/backend/data/transport';
+import { enableAdminSse } from '@/lib/backend/events/admin-sse-hub';
 
 /**
  * Syncs data from Rust backend to Zustand store.
@@ -36,6 +38,9 @@ export function useDataSync() {
         console.error('[useDataSync] Failed to sync:', error);
       } finally {
         setLoading('spaces', false);
+        if (!isTauri()) {
+          enableAdminSse();
+        }
         console.log('[useDataSync] Data sync complete');
       }
     }

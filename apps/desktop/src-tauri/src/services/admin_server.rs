@@ -351,6 +351,29 @@ impl GatewayRuntime for DesktopGatewayRuntime {
         }
         Ok(json!(result))
     }
+
+    async fn clear_unmapped_reported_roots(
+        &self,
+        bound_roots_lower: Vec<String>,
+    ) -> anyhow::Result<serde_json::Value> {
+        use std::collections::HashSet;
+
+        let bound: HashSet<String> = bound_roots_lower.into_iter().collect();
+        let guard = self.gateway_state.read().await;
+        let Some(reg) = guard.session_roots.as_ref() else {
+            return Ok(json!(0));
+        };
+        let dropped = reg.forget_unmapped_roots(|root| bound.contains(&root.to_lowercase()));
+        let count = dropped.len();
+        if count > 0 {
+            if let Some(ref gw) = guard.gateway_state {
+                gw.read()
+                    .await
+                    .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+            }
+        }
+        Ok(json!(count))
+    }
 }
 
 /// Map gateway pool status to the UI-facing string (`oauth_required`, not `auth_required`).
@@ -484,6 +507,8 @@ pub async fn start_admin_server_if_enabled(
         gateway_runtime,
         gateway_writes,
         feature_set_repository: app_state.feature_set_repository.clone(),
+        space_base_dir_repository: app_state.space_base_dir_repository.clone(),
+        space_builtin_config_repository: app_state.space_builtin_config_repository.clone(),
         auto_launch_enabled,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         bundle_version: get_bundle_version(),

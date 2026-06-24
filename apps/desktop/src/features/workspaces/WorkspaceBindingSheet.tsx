@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { invoke } from '@tauri-apps/api/core';
+import { apiCall } from '@/lib/api/transport';
 import { useWorkspaceEvents } from '@/lib/backend/events';
 import { Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
@@ -81,7 +81,7 @@ export function WorkspaceBindingSheet() {
     return subscribe('workspace-needs-binding', async (p) => {
       if (currentSessionRef.current !== null) return;
       try {
-        const enabled = await invoke<boolean>('get_workspace_mapping_prompt_enabled');
+        const enabled = await apiCall<boolean>('get_workspace_mapping_prompt_enabled');
         if (!enabled) return;
       } catch {
         /* setting unavailable → default to showing */
@@ -177,7 +177,7 @@ export function WorkspaceBindingSheet() {
   const handleDisablePrompt = async () => {
     if (!payload || saving) return;
     try {
-      await invoke('set_workspace_mapping_prompt_enabled', { enabled: false });
+      await apiCall('set_workspace_mapping_prompt_enabled', { enabled: false });
       markSeenAndClose(payload);
     } catch (e) {
       setError(typeof e === 'string' ? e : String(e));

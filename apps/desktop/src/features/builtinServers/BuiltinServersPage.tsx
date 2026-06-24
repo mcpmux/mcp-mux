@@ -23,6 +23,7 @@ import {
   setBuiltinToolEnabled,
   type BuiltinServer,
 } from '@/lib/api/builtinServers';
+import { isTauri } from '@/lib/backend/data/transport';
 import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
 import { useViewSpace, useDefaultSpace } from '@/stores';
 
@@ -81,7 +82,7 @@ export function BuiltinServersPage() {
   // Refetch when this Space's config changes elsewhere (the gateway forwards
   // `builtin-server-config-changed` after a toggle).
   useEffect(() => {
-    if (!spaceId) return;
+    if (!spaceId || !isTauri()) return;
     let unlisten: (() => void) | undefined;
     void listen<{ space_id: string }>('builtin-server-config-changed', (e) => {
       if (e.payload.space_id === spaceId) {

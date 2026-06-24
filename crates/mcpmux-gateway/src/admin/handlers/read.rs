@@ -607,3 +607,69 @@ pub async fn list_clone_dependents(
         .map(ok)
         .map_err(ApiError::from_bridge)
 }
+
+pub async fn list_registry_categories(
+    State(state): State<AdminState>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::list_registry_categories(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn list_space_base_dirs(
+    State(state): State<AdminState>,
+    Path(space_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::list_space_base_dirs(&state.bridge, space_id)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn list_builtin_servers(
+    State(state): State<AdminState>,
+    Query(query): Query<SpaceQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let space_id = query
+        .space_id
+        .ok_or_else(|| ApiError::bad_request("spaceId is required"))?;
+    bridge::list_builtin_servers(&state.bridge, space_id)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_meta_tools_require_approval(
+    State(state): State<AdminState>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::get_meta_tools_require_approval(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_auto_install_updates(
+    State(state): State<AdminState>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::get_auto_install_updates(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_update_channel(State(state): State<AdminState>) -> Result<Json<Value>, ApiError> {
+    bridge::get_update_channel(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_workspace_mapping_prompt_enabled(
+    State(state): State<AdminState>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::get_workspace_mapping_prompt_enabled(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}

@@ -7,14 +7,15 @@ use serde_json::Value;
 use crate::admin::command_bridge::space::UpdateSpaceInput;
 use crate::admin::command_bridge::write as bridge;
 use crate::admin::command_bridge::write::{
-    AddMemberBody, CloneServerBody, CreateClientBody, CreateFeatureSetBody, CreateSpaceBody,
-    DisconnectServerBody, GatewayPortBody, GatewayPublicUrlBody, GatewayStartBody,
-    InstallServerBody, LogRetentionBody, MetaToolApprovalBody, MetaToolRevokeBody,
-    MetaToolsEnabledBody, OAuthClientUpdateBody, OAuthGrantBody, SaveServerInputsBody,
-    SaveSpaceConfigBody, ServerConnectionBody, ServerUpdateSettingsBody, SetMembersBody,
-    SetServerDisplayNameBody, SetServerOAuthConnectedBody, StartupSettingsBody,
-    UninstallServerBody, UpdateFeatureSetBody, UploadIconBody, WorkspaceAppearanceBody,
-    WorkspaceBindingBody,
+    AddMemberBody, BuiltinServerEnabledBody, BuiltinToolEnabledBody, CloneServerBody,
+    CreateClientBody, CreateFeatureSetBody, CreateSpaceBody, DisconnectServerBody, GatewayPortBody,
+    GatewayPublicUrlBody, GatewayStartBody, InstallServerBody, LogRetentionBody,
+    MetaToolApprovalBody, MetaToolRevokeBody, MetaToolsEnabledBody, MetaToolsRequireApprovalBody,
+    OAuthClientUpdateBody, OAuthGrantBody, SaveServerInputsBody, SaveSpaceConfigBody,
+    ServerConnectionBody, ServerUpdateSettingsBody, SetMembersBody, SetServerDisplayNameBody,
+    SetServerEnabledBody, SetServerOAuthConnectedBody, SpaceBaseDirBody, StartupSettingsBody,
+    UninstallServerBody, UpdateChannelBody, UpdateFeatureSetBody, UploadIconBody,
+    WorkspaceAppearanceBody, WorkspaceBindingBody, WorkspaceMappingPromptBody,
 };
 use crate::admin::handlers::error::ApiError;
 use crate::admin::router::AdminState;
@@ -574,6 +575,97 @@ pub async fn check_all_server_versions(
     State(state): State<AdminState>,
 ) -> Result<Json<Value>, ApiError> {
     bridge::check_all_server_versions(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn add_space_base_dir(
+    State(state): State<AdminState>,
+    Path(space_id): Path<String>,
+    Json(body): Json<SpaceBaseDirBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::add_space_base_dir(&state.bridge, space_id, body)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn remove_space_base_dir(
+    State(state): State<AdminState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::remove_space_base_dir(&state.bridge, id)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn set_server_enabled(
+    State(state): State<AdminState>,
+    Path(id): Path<String>,
+    Json(body): Json<SetServerEnabledBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::set_server_enabled(&state.bridge, id, body)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn set_builtin_server_enabled(
+    State(state): State<AdminState>,
+    Json(body): Json<BuiltinServerEnabledBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::set_builtin_server_enabled(&state.bridge, body)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn set_builtin_tool_enabled(
+    State(state): State<AdminState>,
+    Json(body): Json<BuiltinToolEnabledBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::set_builtin_tool_enabled(&state.bridge, body)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn clear_unmapped_reported_roots(
+    State(state): State<AdminState>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::clear_unmapped_reported_roots(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn set_meta_tools_require_approval(
+    State(state): State<AdminState>,
+    Json(body): Json<MetaToolsRequireApprovalBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::set_meta_tools_require_approval(&state.bridge, body)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn set_workspace_mapping_prompt_enabled(
+    State(state): State<AdminState>,
+    Json(body): Json<WorkspaceMappingPromptBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::set_workspace_mapping_prompt_enabled(&state.bridge, body)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn set_update_channel(
+    State(state): State<AdminState>,
+    Json(body): Json<UpdateChannelBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::set_update_channel(&state.bridge, body)
         .await
         .map(ok)
         .map_err(ApiError::from_bridge)

@@ -6,6 +6,12 @@ export const appSettingsRoutes: Record<string, RouteHandler> = {
   get_startup_settings: () => ({ method: 'GET', path: '/api/v1/settings/startup' }),
   get_server_update_settings: () => ({ method: 'GET', path: '/api/v1/settings/server-updates' }),
   get_meta_tools_enabled: () => ({ method: 'GET', path: '/api/v1/settings/meta-tools-enabled' }),
+  get_meta_tools_require_approval: () => ({
+    method: 'GET',
+    path: '/api/v1/settings/meta-tools-require-approval',
+  }),
+  get_auto_install_updates: () => ({ method: 'GET', path: '/api/v1/settings/auto-install-updates' }),
+  get_update_channel: () => ({ method: 'GET', path: '/api/v1/settings/update-channel' }),
   get_version: () => ({ method: 'GET', path: '/api/v1/app/version' }),
   get_bundle_version: () => ({ method: 'GET', path: '/api/v1/app/bundle-version' }),
   get_build_info: () => ({ method: 'GET', path: '/api/v1/app/build-info' }),
@@ -36,6 +42,25 @@ export const appSettingsRoutes: Record<string, RouteHandler> = {
     method: 'PUT',
     path: '/api/v1/settings/meta-tools-enabled',
     body: { enabled: args.enabled },
+  }),
+  set_meta_tools_require_approval: (args) => ({
+    method: 'PUT',
+    path: '/api/v1/settings/meta-tools-require-approval',
+    body: { required: args.required },
+  }),
+  get_workspace_mapping_prompt_enabled: () => ({
+    method: 'GET',
+    path: '/api/v1/settings/workspace-mapping-prompt',
+  }),
+  set_workspace_mapping_prompt_enabled: (args) => ({
+    method: 'PUT',
+    path: '/api/v1/settings/workspace-mapping-prompt',
+    body: { enabled: args.enabled },
+  }),
+  set_update_channel: (args) => ({
+    method: 'PUT',
+    path: '/api/v1/settings/update-channel',
+    body: { channel: args.channel },
   }),
   clear_server_logs: (args) => ({
     method: 'DELETE',

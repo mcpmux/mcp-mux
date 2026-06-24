@@ -200,6 +200,23 @@ impl GatewayRuntime for LiveGatewayRuntime {
         }
         Ok(json!(result))
     }
+
+    async fn clear_unmapped_reported_roots(&self, bound_roots_lower: Vec<String>) -> Result<Value> {
+        use std::collections::HashSet;
+
+        let bound: HashSet<String> = bound_roots_lower.into_iter().collect();
+        let dropped = self
+            .session_roots
+            .forget_unmapped_roots(|root| bound.contains(&root.to_lowercase()));
+        let count = dropped.len();
+        if count > 0 {
+            self.gateway_state
+                .read()
+                .await
+                .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+        }
+        Ok(json!(count))
+    }
 }
 
 fn connection_status_to_ui(status: ConnectionStatus) -> &'static str {

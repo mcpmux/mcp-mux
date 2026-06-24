@@ -31,10 +31,16 @@ export const serversRoutes: Record<string, RouteHandler> = {
       args_append: args.argsAppend,
       extra_headers: args.extraHeaders,
       default_params: args.defaultParams,
+      default_params_strategy: args.defaultParamsStrategy,
       display_name_override: args.displayNameOverride,
       update_policy: args.updatePolicy,
       pinned_version: args.pinnedVersion,
     },
+  }),
+  set_server_enabled: (args) => ({
+    method: 'PUT',
+    path: `/api/v1/servers/${encodeURIComponent(String(args.id))}/enabled`,
+    body: { space_id: args.spaceId, enabled: args.enabled },
   }),
   set_server_display_name: (args) => ({
     method: 'PUT',

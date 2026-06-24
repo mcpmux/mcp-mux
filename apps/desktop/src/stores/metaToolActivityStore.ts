@@ -12,6 +12,7 @@
 import { create } from 'zustand';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { MetaToolAuditEvent } from '@/lib/api/metaTools';
+import { isTauri } from '@/lib/backend/data/transport';
 
 /** Ring-buffer size — most recent N invocations kept in memory. */
 export const MAX_META_TOOL_ROWS = 50;
@@ -46,9 +47,24 @@ let unlistenPromise: Promise<UnlistenFn> | null = null;
 export function startMetaToolActivityListener(): void {
   if (listening) return;
   listening = true;
-  unlistenPromise = listen<MetaToolAuditEvent>('meta-tool-invoked', (event) => {
-    useMetaToolActivityStore.getState().push(event.payload);
+
+  if (isTauri()) {
+    unlistenPromise = listen<MetaToolAuditEvent>('meta-tool-invoked', (event) => {
+      useMetaToolActivityStore.getState().push(event.payload);
+    });
+    return;
+  }
+
+  const source = new EventSource('/api/v1/events');
+  source.addEventListener('meta-tool-invoked', (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as MetaToolAuditEvent;
+      useMetaToolActivityStore.getState().push(payload);
+    } catch {
+      // ignore malformed frames
+    }
   });
+  unlistenPromise = Promise.resolve(() => source.close());
 }
 
 /** Tear down the listener (mainly for tests / hot-reload hygiene). */

@@ -12,6 +12,10 @@ export const workspacesRoutes: Record<string, RouteHandler> = {
     method: 'GET',
     path: '/api/v1/workspaces/reported-roots',
   }),
+  clear_unmapped_reported_roots: () => ({
+    method: 'POST',
+    path: '/api/v1/workspaces/reported-roots/clear-unmapped',
+  }),
   validate_workspace_root: (args) => ({
     method: 'GET',
     path: `/api/v1/workspaces/validate-root${buildQuery({ path: args.path })}`,

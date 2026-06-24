@@ -41,4 +41,17 @@ export const spacesRoutes: Record<string, RouteHandler> = {
     method: 'DELETE',
     path: `/api/v1/spaces/${encodeURIComponent(String(args.spaceId))}/config/servers/${encodeURIComponent(String(args.serverId))}`,
   }),
+  list_space_base_dirs: (args) => ({
+    method: 'GET',
+    path: `/api/v1/spaces/${encodeURIComponent(String(args.spaceId))}/base-dirs`,
+  }),
+  add_space_base_dir: (args) => ({
+    method: 'POST',
+    path: `/api/v1/spaces/${encodeURIComponent(String(args.spaceId))}/base-dirs`,
+    body: { path: args.path },
+  }),
+  remove_space_base_dir: (args) => ({
+    method: 'DELETE',
+    path: `/api/v1/spaces/base-dirs/${encodeURIComponent(String(args.id))}`,
+  }),
 };

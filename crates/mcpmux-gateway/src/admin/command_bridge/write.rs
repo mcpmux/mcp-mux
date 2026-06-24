@@ -957,3 +957,177 @@ pub async fn check_all_server_versions(_ctx: &AdminBridgeCtx) -> Result<Value> {
     // ponytail: version probing lands in Phase 5
     Err(anyhow!("Server version checking not yet available"))
 }
+
+const META_TOOLS_REQUIRE_APPROVAL_KEY: &str = "meta_tools.require_approval";
+const WORKSPACE_MAPPING_PROMPT_KEY: &str = "workspaces.mapping_prompt_enabled";
+const UPDATE_CHANNEL_KEY: &str = "updates.channel";
+
+#[derive(Debug, Deserialize)]
+pub struct SpaceBaseDirBody {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetServerEnabledBody {
+    pub space_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuiltinServerEnabledBody {
+    pub space_id: String,
+    pub server_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuiltinToolEnabledBody {
+    pub space_id: String,
+    pub server_id: String,
+    pub tool_name: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MetaToolsRequireApprovalBody {
+    pub required: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceMappingPromptBody {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateChannelBody {
+    pub channel: String,
+}
+
+pub async fn add_space_base_dir(
+    ctx: &AdminBridgeCtx,
+    space_id: String,
+    body: SpaceBaseDirBody,
+) -> Result<Value> {
+    use mcpmux_core::validate_workspace_root as validate_workspace_root_path;
+    use mcpmux_core::WorkspaceRootValidation;
+
+    let space_uuid = Uuid::parse_str(&space_id)?;
+    let normalized = match validate_workspace_root_path(&body.path) {
+        WorkspaceRootValidation::Ok { normalized } => normalized,
+        WorkspaceRootValidation::Empty => return Err(anyhow!("Pick a folder first.")),
+        WorkspaceRootValidation::Invalid { reason } => return Err(anyhow!(reason)),
+    };
+    let row = ctx
+        .space_base_dir_repository
+        .add(&space_uuid, &normalized)
+        .await?;
+    Ok(json!({
+        "id": row.id,
+        "space_id": row.space_id,
+        "path": row.path,
+        "created_at": row.created_at.to_rfc3339(),
+    }))
+}
+
+pub async fn remove_space_base_dir(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {
+    ctx.space_base_dir_repository.remove(&id).await?;
+    Ok(json!({ "ok": true }))
+}
+
+pub async fn set_server_enabled(
+    ctx: &AdminBridgeCtx,
+    id: String,
+    body: SetServerEnabledBody,
+) -> Result<Value> {
+    let space_uuid = Uuid::parse_str(&body.space_id)?;
+    if body.enabled {
+        ctx.services.server().enable(space_uuid, &id).await?;
+    } else {
+        ctx.services.server().disable(space_uuid, &id).await?;
+    }
+    Ok(json!({ "ok": true }))
+}
+
+async fn emit_builtin_changed(ctx: &AdminBridgeCtx, space_id: Uuid) -> Result<()> {
+    if let Some(gateway_state) = ctx.gateway_writes.gateway_state().await {
+        gateway_state
+            .read()
+            .await
+            .emit_domain_event(mcpmux_core::DomainEvent::BuiltinServerConfigChanged { space_id });
+    }
+    Ok(())
+}
+
+pub async fn set_builtin_server_enabled(
+    ctx: &AdminBridgeCtx,
+    body: BuiltinServerEnabledBody,
+) -> Result<Value> {
+    let space_id = Uuid::parse_str(&body.space_id)?;
+    ctx.space_builtin_config_repository
+        .set_server_enabled(&body.space_id, &body.server_id, body.enabled)
+        .await?;
+    emit_builtin_changed(ctx, space_id).await?;
+    Ok(json!({ "ok": true }))
+}
+
+pub async fn set_builtin_tool_enabled(
+    ctx: &AdminBridgeCtx,
+    body: BuiltinToolEnabledBody,
+) -> Result<Value> {
+    let space_id = Uuid::parse_str(&body.space_id)?;
+    ctx.space_builtin_config_repository
+        .set_tool_enabled(
+            &body.space_id,
+            &body.server_id,
+            &body.tool_name,
+            body.enabled,
+        )
+        .await?;
+    emit_builtin_changed(ctx, space_id).await?;
+    Ok(json!({ "ok": true }))
+}
+
+pub async fn clear_unmapped_reported_roots(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let bound: std::collections::HashSet<String> = ctx
+        .workspace_binding_repository
+        .list()
+        .await?
+        .into_iter()
+        .map(|binding| binding.workspace_root.to_lowercase())
+        .collect();
+    ctx.gateway_runtime
+        .clear_unmapped_reported_roots(bound.into_iter().collect())
+        .await
+}
+
+pub async fn set_meta_tools_require_approval(
+    ctx: &AdminBridgeCtx,
+    body: MetaToolsRequireApprovalBody,
+) -> Result<Value> {
+    ctx.settings_repository
+        .set(META_TOOLS_REQUIRE_APPROVAL_KEY, &body.required.to_string())
+        .await?;
+    as_json(body.required)
+}
+
+pub async fn set_workspace_mapping_prompt_enabled(
+    ctx: &AdminBridgeCtx,
+    body: WorkspaceMappingPromptBody,
+) -> Result<Value> {
+    ctx.settings_repository
+        .set(WORKSPACE_MAPPING_PROMPT_KEY, &body.enabled.to_string())
+        .await?;
+    as_json(body.enabled)
+}
+
+pub async fn set_update_channel(ctx: &AdminBridgeCtx, body: UpdateChannelBody) -> Result<Value> {
+    let normalized = if body.channel == "prerelease" {
+        "prerelease"
+    } else {
+        "stable"
+    };
+    ctx.settings_repository
+        .set(UPDATE_CHANNEL_KEY, normalized)
+        .await?;
+    as_json(normalized)
+}

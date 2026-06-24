@@ -1,4 +1,5 @@
 import { appSettingsRoutes } from './app-settings.routes';
+import { builtinsRoutes } from './builtins.routes';
 import { catalogRoutes } from './catalog.routes';
 import { configExportRoutes } from './config-export.routes';
 import { gatewayRoutes } from './gateway.routes';
@@ -12,6 +13,7 @@ const COMMAND_ROUTES = {
   ...gatewayRoutes,
   ...spacesRoutes,
   ...serversRoutes,
+  ...builtinsRoutes,
   ...catalogRoutes,
   ...permissionsRoutes,
   ...workspacesRoutes,

@@ -10,6 +10,7 @@ export const catalogRoutes: Record<string, RouteHandler> = {
   }),
   get_registry_ui_config: () => ({ method: 'GET', path: '/api/v1/registry/ui-config' }),
   get_registry_home_config: () => ({ method: 'GET', path: '/api/v1/registry/home-config' }),
+  list_registry_categories: () => ({ method: 'GET', path: '/api/v1/registry/categories' }),
   is_registry_offline: () => ({ method: 'GET', path: '/api/v1/registry/offline' }),
   refresh_registry: () => ({ method: 'POST', path: '/api/v1/registry/refresh' }),
   list_server_features: (args) => ({

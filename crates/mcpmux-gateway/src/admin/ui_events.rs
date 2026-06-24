@@ -410,5 +410,11 @@ pub fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, Value) {
                 "space_id": space_id,
             }),
         ),
+        DomainEvent::WorkspaceAppearanceChanged { workspace_root } => (
+            "workspace-appearance-changed",
+            serde_json::json!({
+                "workspace_root": workspace_root,
+            }),
+        ),
     }
 }

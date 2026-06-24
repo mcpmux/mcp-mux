@@ -9,6 +9,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 mod commands;
+mod macos_dock;
+mod macos_permissions;
+mod main_window;
 mod services;
 mod state;
 mod tray;
@@ -245,19 +248,7 @@ pub fn run() {
                 }
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                if let Err(e) = window.show() {
-                    warn!("Failed to show window: {}", e);
-                }
-                if let Err(e) = window.unminimize() {
-                    warn!("Failed to unminimize window: {}", e);
-                }
-                if let Err(e) = window.set_focus() {
-                    warn!("Failed to focus window: {}", e);
-                }
-            } else {
-                warn!("Main window not found");
-            }
+            main_window::show_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -269,6 +260,16 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            if commands::should_start_hidden() {
+                macos_dock::set_dock_visible(app.handle(), false);
+            }
+
+            // Register McpMux with macOS TCC for resources that spawned MCP
+            // servers may need. Without this, the app never appears in
+            // Privacy & Security → Contacts and child reads of AddressBook
+            // hit a silent EPERM. Idempotent + non-blocking.
+            macos_permissions::ensure_contacts_registered();
+
             info!("Initializing application state...");
 
             // Get data directory (Local, not Roaming - machine-specific data)
@@ -692,9 +693,7 @@ pub fn run() {
                                 Ok(Some(value)) if value == "true" => {
                                     // Close to tray - hide window instead of closing
                                     info!("[Window] Close requested, hiding to tray");
-                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
-                                        let _ = window.hide();
-                                    }
+                                    main_window::hide_main_window_to_tray(&app_handle_clone);
                                 }
                                 Ok(Some(value)) if value == "false" => {
                                     // Actually close the app
@@ -704,9 +703,7 @@ pub fn run() {
                                 _ => {
                                     // Default behavior: close to tray
                                     info!("[Window] Close requested (default), hiding to tray");
-                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
-                                        let _ = window.hide();
-                                    }
+                                    main_window::hide_main_window_to_tray(&app_handle_clone);
                                 }
                             }
                         });
@@ -719,7 +716,7 @@ pub fn run() {
                 // Check if app should start hidden (auto-launch with --hidden flag)
                 if commands::should_start_hidden() {
                     info!("[Window] Starting hidden (--hidden flag present)");
-                    let _ = main_window.hide();
+                    main_window::hide_main_window_to_tray(app.handle());
                 }
             }
 
@@ -944,6 +941,12 @@ pub fn run() {
             commands::delete_workspace_binding,
             commands::validate_workspace_root,
             commands::get_workspace_effective_features,
+            // Workspace appearance commands
+            commands::list_workspace_appearances,
+            commands::upsert_workspace_appearance,
+            commands::delete_workspace_appearance,
+            commands::upload_workspace_icon,
+            commands::resolve_workspace_icon_path,
             // Meta-tool approval (self-management mcpmux_* tools)
             commands::respond_to_meta_tool_approval,
             commands::list_meta_tool_grants,

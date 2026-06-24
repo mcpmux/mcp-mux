@@ -410,6 +410,15 @@ pub enum DomainEvent {
     /// different tool list, so the notifier re-pushes `tools/list_changed` to
     /// that Space's peers.
     BuiltinServerConfigChanged { space_id: Uuid },
+
+    // ════════════════════════════════════════════════════════════════════════
+    // WORKSPACE APPEARANCES
+    // ════════════════════════════════════════════════════════════════════════
+    /// A workspace appearance (icon, theme) was upserted or deleted.
+    ///
+    /// The desktop Workspaces tab and space switcher listen for this to
+    /// refresh their icon display without a full reload.
+    WorkspaceAppearanceChanged { workspace_root: String },
 }
 
 // ============================================================================
@@ -451,6 +460,7 @@ impl DomainEvent {
             Self::SessionRootsChanged => "session_roots_changed",
             Self::MetaToolInvoked { .. } => "meta_tool_invoked",
             Self::BuiltinServerConfigChanged { .. } => "builtin_server_config_changed",
+            Self::WorkspaceAppearanceChanged { .. } => "workspace_appearance_changed",
         }
     }
 
@@ -528,7 +538,8 @@ impl DomainEvent {
             | Self::GatewayStarted { .. }
             | Self::GatewayStopped
             | Self::SessionRootsChanged
-            | Self::MetaToolInvoked { .. } => None,
+            | Self::MetaToolInvoked { .. }
+            | Self::WorkspaceAppearanceChanged { .. } => None,
         }
     }
 

@@ -61,6 +61,11 @@ pub struct GatewayState {
     client_metadata_service: Option<Arc<ClientMetadataService>>,
     /// Unified event broadcaster (UI subscribes to receive all domain events)
     domain_event_tx: broadcast::Sender<DomainEvent>,
+    /// When true, inbound MCP connections are accepted WITHOUT a Bearer token
+    /// (localhost-only convenience). Default false (auth required). Seeded from
+    /// the `gateway.auth_disabled` app setting at startup and flipped live by
+    /// the desktop toggle. A valid token is still honored when present.
+    auth_disabled: bool,
 }
 
 impl GatewayState {
@@ -77,6 +82,7 @@ impl GatewayState {
             inbound_client_repository: None,
             client_metadata_service: None,
             domain_event_tx,
+            auth_disabled: false,
         }
     }
 
@@ -84,6 +90,24 @@ impl GatewayState {
     pub fn set_base_url(&mut self, base_url: String) {
         info!("[State] Base URL configured: {}", base_url);
         self.base_url = base_url;
+    }
+
+    /// Whether inbound MCP auth is disabled — connections may be accepted
+    /// without a Bearer token. See [`Self::auth_disabled`] field docs.
+    pub fn auth_disabled(&self) -> bool {
+        self.auth_disabled
+    }
+
+    /// Enable/disable system-wide inbound auth. Called at startup (seed from
+    /// settings) and live from the desktop toggle.
+    pub fn set_auth_disabled(&mut self, disabled: bool) {
+        if self.auth_disabled != disabled {
+            info!(
+                "[State] Inbound auth {}",
+                if disabled { "DISABLED" } else { "enabled" }
+            );
+        }
+        self.auth_disabled = disabled;
     }
 
     /// Subscribe to domain events (new unified channel)
@@ -263,5 +287,21 @@ impl Default for GatewayState {
     fn default() -> Self {
         let (domain_event_tx, _) = broadcast::channel(256);
         Self::new(domain_event_tx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_disabled_defaults_off_and_toggles() {
+        let mut state = GatewayState::default();
+        // Secure default: auth is required (not disabled).
+        assert!(!state.auth_disabled());
+        state.set_auth_disabled(true);
+        assert!(state.auth_disabled());
+        state.set_auth_disabled(false);
+        assert!(!state.auth_disabled());
     }
 }

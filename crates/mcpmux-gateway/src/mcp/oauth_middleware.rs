@@ -18,6 +18,12 @@ use crate::auth::validate_token;
 use crate::logging::TraceContext;
 use crate::server::ServiceContainer;
 
+/// Synthetic client identity used when system-wide inbound auth is disabled and
+/// a connection arrives without a (valid) Bearer token. Routing still prefers
+/// the `X-Mcpmux-Workspace` header → binding; this id only feeds the rootless
+/// `client_grants` fallback (which finds none) → Space default.
+const ANONYMOUS_CLIENT_ID: &str = "mcpmux-anonymous";
+
 /// OAuth middleware for MCP endpoints using rmcp
 ///
 /// Extracts Bearer token → Verifies JWT → Resolves space → Injects OAuthContext
@@ -38,75 +44,99 @@ pub async fn mcp_oauth_middleware(
         .map(|ctx| ctx.trace_id.clone())
         .unwrap_or_else(|| "??????".to_string());
 
-    // Extract Authorization header
+    // System-wide inbound auth can be disabled (localhost-only convenience):
+    // when off, a connection is accepted without a Bearer token and routed by
+    // the workspace header / default space. A valid token is still honored when
+    // present, so flipping the setting never breaks an already-configured
+    // client. Default is auth-required.
+    let require_auth = !services.gateway_state.read().await.auth_disabled();
+
     let auth_header = request
         .headers()
         .get("authorization")
-        .and_then(|v| v.to_str().ok());
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let token = auth_header
+        .as_deref()
+        .and_then(|v| v.strip_prefix("Bearer "));
 
-    let Some(auth_value) = auth_header else {
-        warn!(trace_id = %trace_id, "Missing Authorization header");
-        return unauthorized_response("Missing Authorization header");
-    };
-
-    // Extract Bearer token
-    let token = match auth_value.strip_prefix("Bearer ") {
-        Some(t) => t,
-        None => {
-            warn!(trace_id = %trace_id, "Authorization header must use Bearer scheme");
-            return unauthorized_response("Authorization header must use Bearer scheme");
+    // Verify the Bearer token whenever one is present.
+    let claims = match token {
+        Some(token) => {
+            let jwt_secret = {
+                let state = services.gateway_state.read().await;
+                state.get_jwt_secret().map(|s| s.to_vec())
+            };
+            match jwt_secret {
+                Some(secret) => validate_token(token, &secret),
+                None => {
+                    warn!(trace_id = %trace_id, "JWT secret not configured");
+                    None
+                }
+            }
         }
+        None => None,
     };
 
-    // Verify JWT and extract claims
-    let jwt_secret = {
-        let state = services.gateway_state.read().await;
-        match state.get_jwt_secret() {
-            Some(secret) => secret.to_vec(),
-            None => {
-                warn!(trace_id = %trace_id, "JWT secret not configured");
+    // Resolve (client_id, space_id) from the token, or — when auth is disabled
+    // — fall back to an anonymous identity on the default space.
+    let (client_id, space_id) = if let Some(claims) = claims {
+        match services
+            .space_resolver_service
+            .resolve_space_for_client(&claims.client_id)
+            .await
+        {
+            Ok(id) => (claims.client_id, id),
+            Err(e) => {
+                warn!(
+                    trace_id = %trace_id,
+                    client_id = %claims.client_id,
+                    "Failed to resolve space: {}", e
+                );
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "Server not configured for authentication",
+                    format!("Failed to resolve space: {}", e),
+                )
+                    .into_response();
+            }
+        }
+    } else if require_auth {
+        // No valid token and auth is required → 401 with the specific reason.
+        let msg = match auth_header.as_deref() {
+            None => "Missing Authorization header",
+            Some(v) if !v.starts_with("Bearer ") => "Authorization header must use Bearer scheme",
+            _ => "Invalid token",
+        };
+        warn!(trace_id = %trace_id, "{}", msg);
+        return unauthorized_response(msg);
+    } else {
+        // Auth disabled → accept anonymously on the default space. Routing
+        // still prefers the workspace header (pinned below) → binding.
+        match services.dependencies.space_repo.get_default().await {
+            Ok(Some(space)) => (ANONYMOUS_CLIENT_ID.to_string(), space.id),
+            Ok(None) => {
+                warn!(trace_id = %trace_id, "Auth disabled but no default space configured");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "No default space configured",
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                warn!(trace_id = %trace_id, "Failed to resolve default space: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to resolve default space: {}", e),
                 )
                     .into_response();
             }
         }
     };
 
-    let claims = match validate_token(token, &jwt_secret) {
-        Some(claims) => claims,
-        None => {
-            warn!(trace_id = %trace_id, "Token verification failed");
-            return unauthorized_response("Invalid token");
-        }
-    };
-
-    // Resolve space for this client
-    let space_id = match services
-        .space_resolver_service
-        .resolve_space_for_client(&claims.client_id)
-        .await
-    {
-        Ok(id) => id,
-        Err(e) => {
-            warn!(
-                trace_id = %trace_id,
-                client_id = %claims.client_id,
-                "Failed to resolve space: {}", e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to resolve space: {}", e),
-            )
-                .into_response();
-        }
-    };
-
     // Inject OAuth context via custom headers (rmcp will preserve these)
     request.headers_mut().insert(
         "x-mcpmux-client-id",
-        claims.client_id.parse().expect("valid header value"),
+        client_id.parse().expect("valid header value"),
     );
     request.headers_mut().insert(
         "x-mcpmux-space-id",
@@ -152,7 +182,7 @@ pub async fn mcp_oauth_middleware(
                 // Log single consolidated entry line
                 info!(
                     trace_id = %trace_id,
-                    client = %&claims.client_id[..claims.client_id.len().min(12)],
+                    client = %&client_id[..client_id.len().min(12)],
                     space = %&space_id.to_string()[..8],
                     method = method.as_deref().unwrap_or("-"),
                     "→ MCP"
@@ -185,7 +215,7 @@ pub async fn mcp_oauth_middleware(
         warn!(
             trace_id = %trace_id,
             status = %status,
-            client = %claims.client_id,
+            client = %client_id,
             method = mcp_method.as_deref().unwrap_or("-"),
             "← MCP error"
         );

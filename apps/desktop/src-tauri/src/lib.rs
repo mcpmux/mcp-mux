@@ -945,6 +945,8 @@ pub fn run() {
             commands::get_gateway_port_settings,
             commands::set_gateway_port,
             commands::reset_gateway_port,
+            commands::get_gateway_auth_disabled,
+            commands::set_gateway_auth_disabled,
             commands::probe_gateway_start,
             commands::take_pending_port_conflict,
             commands::start_gateway,

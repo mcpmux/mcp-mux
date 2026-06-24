@@ -920,6 +920,23 @@ pub async fn start_gateway(
     let grant_service = server.grant_service();
     let session_roots = server.session_roots();
 
+    // Seed the system-wide inbound-auth toggle into the running gateway from
+    // persisted settings (default: auth required). Live changes go through
+    // `set_gateway_auth_disabled`.
+    {
+        let disabled = app_state
+            .settings_repository
+            .get(GATEWAY_AUTH_DISABLED_KEY)
+            .await
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if disabled {
+            gw_state.write().await.set_auth_disabled(true);
+        }
+    }
+
     // Subscribe to OAuth completions BEFORE spawn so we don't miss early
     // events emitted during initial auto-connect.
     let oauth_completion_rx = pool_service.oauth_manager().subscribe();
@@ -1103,6 +1120,47 @@ pub async fn reset_gateway_port(app_state: State<'_, AppState>) -> Result<(), St
 
     info!("[Gateway] Cleared persisted gateway port — reverting to default on next start");
     Ok(())
+}
+
+/// App-settings key for the system-wide inbound-auth toggle. Stored as
+/// `"true"`/`"false"`; missing means auth is required (the secure default).
+pub const GATEWAY_AUTH_DISABLED_KEY: &str = "gateway.auth_disabled";
+
+/// Whether inbound MCP authentication is disabled — connections are accepted
+/// without an access key (localhost-only convenience). Default **false** (auth
+/// required).
+#[tauri::command]
+pub async fn get_gateway_auth_disabled(app_state: State<'_, AppState>) -> Result<bool, String> {
+    let stored = app_state
+        .settings_repository
+        .get(GATEWAY_AUTH_DISABLED_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(stored.map(|v| v == "true").unwrap_or(false))
+}
+
+/// Enable/disable system-wide inbound auth. Persists the setting AND mirrors it
+/// into the running gateway so the change takes effect immediately (no
+/// restart). When the gateway isn't running it's a no-op beyond persistence —
+/// `start_gateway` seeds the value on launch.
+#[tauri::command]
+pub async fn set_gateway_auth_disabled(
+    disabled: bool,
+    app_state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<bool, String> {
+    app_state
+        .settings_repository
+        .set(GATEWAY_AUTH_DISABLED_KEY, &disabled.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let state = gateway_state.read().await;
+    if let Some(ref gw) = state.gateway_state {
+        gw.write().await.set_auth_disabled(disabled);
+    }
+    info!("[Gateway] Inbound auth disabled set to {}", disabled);
+    Ok(disabled)
 }
 
 /// Which port source a startup attempt would use.

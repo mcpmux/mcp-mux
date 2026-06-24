@@ -14,17 +14,20 @@ import cursorIcon from '@/assets/client-icons/cursor.svg';
 import claudeIcon from '@/assets/client-icons/claude.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import opencodeIcon from '@/assets/client-icons/opencode.svg';
+import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
 import zedIcon from '@/assets/client-icons/zed.svg';
+import { ClientBrandIcon } from '@/components/ClientBrandIcon';
 import { getGatewayStatus } from '@/lib/api/gateway';
 import { useNavigateTo, useSetPendingSettingsSection } from '@/stores';
 
-/** Brand icon per supported client id (falls back to a generic glyph). */
-const CLIENT_ICONS: Record<string, string> = {
-  cursor: cursorIcon,
-  'claude-code': claudeIcon,
-  vscode: vscodeIcon,
-  opencode: opencodeIcon,
-  zed: zedIcon,
+/** Brand icon per supported client id (falls back to a generic glyph). opencode
+ *  ships theme-specific marks, so it carries a dark variant. */
+const CLIENT_ICONS: Record<string, { light: string; dark?: string }> = {
+  cursor: { light: cursorIcon },
+  'claude-code': { light: claudeIcon },
+  vscode: { light: vscodeIcon },
+  opencode: { light: opencodeIcon, dark: opencodeIconDark },
+  zed: { light: zedIcon },
 };
 import {
   generateWorkspaceConfigSnippet,
@@ -233,9 +236,9 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
                 className="h-4 w-4 flex-shrink-0 accent-primary-500"
               />
               {CLIENT_ICONS[c.id] ? (
-                <img
-                  src={CLIENT_ICONS[c.id]}
-                  alt=""
+                <ClientBrandIcon
+                  light={CLIENT_ICONS[c.id].light}
+                  dark={CLIENT_ICONS[c.id].dark}
                   className="h-5 w-5 flex-shrink-0 object-contain"
                 />
               ) : (

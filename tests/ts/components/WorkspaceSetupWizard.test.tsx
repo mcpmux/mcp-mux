@@ -11,12 +11,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { openMock, validateMock } = vi.hoisted(() => ({
-  openMock: vi.fn(),
+const { validateMock } = vi.hoisted(() => ({
   validateMock: vi.fn(),
 }));
 
-vi.mock('@tauri-apps/plugin-dialog', () => ({ open: openMock }));
+// `@tauri-apps/plugin-dialog` is mocked globally in setup.ts (open: vi.fn()).
+// We reconfigure that shared mock per-test via vi.importMock (a static import
+// of this mocked-only package isn't Vite-resolvable from the test).
 vi.mock('@/lib/api/workspaceBindings', () => ({ validateWorkspaceRoot: validateMock }));
 vi.mock('@/lib/api/featureSets', () => ({
   isStarterFeatureSet: (fs: { feature_set_type: string }) =>
@@ -50,7 +51,6 @@ const props = (over: any = {}) => ({
 
 describe('WorkspaceSetupWizard', () => {
   beforeEach(() => {
-    openMock.mockReset();
     validateMock.mockReset();
   });
 
@@ -85,6 +85,25 @@ describe('WorkspaceSetupWizard', () => {
     // The parent navigates to the new mapping's inspector (effective features);
     // the wizard itself does not close.
     expect(p.onClose).not.toHaveBeenCalled();
+  });
+
+  it('does not offer an already-mapped folder in the detected list', () => {
+    // The quick-pick list filters out folders that already have a binding, so a
+    // mapped folder can't be re-picked there; an unmapped one is still offered.
+    // (Picking a mapped folder via the OS dialog is guarded separately by the
+    // alreadyMapped check, which disables Next and shows an inline error.)
+    render(
+      <WorkspaceSetupWizard
+        {...props({
+          reportedRoots: ['/proj/app', '/proj/other'],
+          existingBindings: [
+            { id: 'b1', workspace_root: '/proj/app', space_id: 's1', feature_set_ids: ['fs_starter'] },
+          ],
+        })}
+      />
+    );
+    expect(screen.queryByRole('button', { name: /\/proj\/app$/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /\/proj\/other$/ })).toBeTruthy();
   });
 
   it('lets you go Back from a later step', async () => {

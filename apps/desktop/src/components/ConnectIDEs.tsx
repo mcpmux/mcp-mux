@@ -8,7 +8,9 @@ import windsurfIcon from '@/assets/client-icons/windsurf.svg';
 import jetbrainsIcon from '@/assets/client-icons/jetbrains.svg';
 import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
 import opencodeIcon from '@/assets/client-icons/opencode.svg';
+import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
 import { addToVscode, addToCursor } from '@/lib/api/clientInstall';
+import { ClientBrandIcon } from './ClientBrandIcon';
 
 type GridAction = 'deep_link' | 'copy_command' | 'copy_config';
 
@@ -17,6 +19,8 @@ interface GridEntry {
   name: string;
   label: string;
   icon?: string;
+  /** Optional dark-theme variant; rendered via ClientBrandIcon when present. */
+  iconDark?: string;
   action: GridAction;
   handler: (() => Promise<void>) | string;
   /**
@@ -100,6 +104,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       name: 'opencode',
       label: 'opencode',
       icon: opencodeIcon,
+      iconDark: opencodeIconDark,
       action: 'copy_config',
       handler: `"mcpmux": {\n  "type": "remote",\n  "url": "${mcpUrl}"\n}`,
       nextStep:
@@ -197,8 +202,9 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
               data-testid={`client-icon-${entry.id}`}
             >
               {entry.icon ? (
-                <img
-                  src={entry.icon}
+                <ClientBrandIcon
+                  light={entry.icon}
+                  dark={entry.iconDark}
                   alt={entry.name}
                   className="h-5 w-5 object-contain"
                 />

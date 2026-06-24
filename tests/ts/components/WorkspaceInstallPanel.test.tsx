@@ -19,15 +19,15 @@ const {
   installMock,
   snippetMock,
   getAuthMock,
-  setAuthMock,
   gatewayStatusMock,
+  navigateMock,
 } = vi.hoisted(() => ({
   listClientsMock: vi.fn(),
   installMock: vi.fn(),
   snippetMock: vi.fn(),
   getAuthMock: vi.fn(),
-  setAuthMock: vi.fn(),
   gatewayStatusMock: vi.fn(),
+  navigateMock: vi.fn(),
 }));
 
 vi.mock('@/lib/api/workspaceInstall', () => ({
@@ -35,11 +35,14 @@ vi.mock('@/lib/api/workspaceInstall', () => ({
   installWorkspaceMcpConfig: installMock,
   generateWorkspaceConfigSnippet: snippetMock,
   getGatewayAuthDisabled: getAuthMock,
-  setGatewayAuthDisabled: setAuthMock,
 }));
 
 vi.mock('@/lib/api/gateway', () => ({
   getGatewayStatus: gatewayStatusMock,
+}));
+
+vi.mock('@/stores', () => ({
+  useNavigateTo: () => navigateMock,
 }));
 
 import { WorkspaceInstallPanel } from '@/features/workspaces/WorkspaceInstallPanel';
@@ -61,7 +64,7 @@ describe('WorkspaceInstallPanel', () => {
     installMock.mockReset();
     snippetMock.mockReset();
     getAuthMock.mockReset().mockResolvedValue(true);
-    setAuthMock.mockReset();
+    navigateMock.mockReset();
     gatewayStatusMock
       .mockReset()
       .mockResolvedValue({ running: true, url: 'http://localhost:45818' });
@@ -122,20 +125,16 @@ describe('WorkspaceInstallPanel', () => {
     expect(installMock.mock.calls[0][0].clients).toEqual(['opencode']);
   });
 
-  it('shows the auth nudge and disables auth inline', async () => {
+  it('shows the auth nudge and routes to Settings (no inline disable)', async () => {
     const user = userEvent.setup();
     getAuthMock.mockResolvedValue(false); // auth currently required
-    setAuthMock.mockResolvedValue(true);
     render(<WorkspaceInstallPanel workspaceRoot={ROOT} />);
 
-    const disableBtn = await screen.findByTestId('workspace-install-disable-auth');
-    await user.click(disableBtn);
-
-    await waitFor(() => expect(setAuthMock).toHaveBeenCalledWith(true));
-    // Nudge is replaced by the "auth is off" confirmation.
-    await waitFor(() =>
-      expect(screen.queryByTestId('workspace-install-auth-nudge')).toBeNull()
-    );
+    // Auth is application-wide: the panel links to Settings instead of
+    // flipping it inline.
+    const openSettings = await screen.findByTestId('workspace-install-open-auth-settings');
+    await user.click(openSettings);
+    expect(navigateMock).toHaveBeenCalledWith('settings');
   });
 
   it('copies a client snippet to the clipboard', async () => {

@@ -2,12 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Download, Loader2, ShieldCheck, ShieldOff, AlertCircle } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
 import { getGatewayStatus } from '@/lib/api/gateway';
+import { useNavigateTo } from '@/stores';
 import {
   generateWorkspaceConfigSnippet,
   getGatewayAuthDisabled,
   installWorkspaceMcpConfig,
   listWorkspaceInstallClients,
-  setGatewayAuthDisabled,
   type WorkspaceInstallClient,
   type WorkspaceInstallResult,
 } from '@/lib/api/workspaceInstall';
@@ -62,7 +62,7 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
   const [results, setResults] = useState<WorkspaceInstallResult[] | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [togglingAuth, setTogglingAuth] = useState(false);
+  const navigateTo = useNavigateTo();
 
   useEffect(() => {
     let cancelled = false;
@@ -146,18 +146,6 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
     }
   };
 
-  const handleDisableAuth = async () => {
-    setTogglingAuth(true);
-    try {
-      const v = await setGatewayAuthDisabled(true);
-      setAuthDisabled(v);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setTogglingAuth(false);
-    }
-  };
-
   return (
     <div className="space-y-4" data-testid="workspace-install-panel">
       <p className="text-sm text-[rgb(var(--muted))]">
@@ -179,23 +167,18 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
               Apps will need an access key to connect.
             </p>
             <p className="mt-0.5 text-amber-700 dark:text-amber-400">
-              For zero-config setup, disable system-wide authentication — apps then connect with
-              just the URL and this workspace header.
+              Authentication is an application-wide setting. For zero-config setup, turn it off in
+              Settings → Security — apps then connect with just the URL and this workspace header.
             </p>
             <Button
               variant="secondary"
               size="sm"
               className="mt-2 h-7 text-xs"
-              disabled={togglingAuth}
-              onClick={handleDisableAuth}
-              data-testid="workspace-install-disable-auth"
+              onClick={() => navigateTo('settings')}
+              data-testid="workspace-install-open-auth-settings"
             >
-              {togglingAuth ? (
-                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-              ) : (
-                <ShieldOff className="mr-1.5 h-3 w-3" />
-              )}
-              Disable authentication
+              <ShieldOff className="mr-1.5 h-3 w-3" />
+              Open Settings
             </Button>
           </div>
         </div>

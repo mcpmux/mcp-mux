@@ -4,18 +4,19 @@
 //! between Tauri commands.
 
 use mcpmux_core::{
-    AppSettingsRepository, AppSettingsService, CredentialRepository, FeatureSetRepository,
-    GatewayPortService, InboundMcpClientRepository, InstalledServerRepository, LogConfig,
-    OutboundOAuthRepository, ServerDiscoveryService,
-    ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager,
-    SpaceBaseDirRepository, SpaceBuiltinConfigRepository, SpaceRepository, SpaceService,
-    WorkspaceBindingRepository,
+    AppSettingsRepository, AppSettingsService, ApplicationServices, ApplicationServicesBuilder,
+    CredentialRepository, EventBus, FeatureSetRepository, GatewayPortService,
+    InboundMcpClientRepository, InstalledServerRepository, LogConfig, OutboundOAuthRepository,
+    ServerDiscoveryService, ServerFeatureRepository as CoreServerFeatureRepository,
+    ServerLogManager, SpaceBaseDirRepository, SpaceBuiltinConfigRepository, SpaceRepository,
+    SpaceService, WorkspaceAppearanceRepository, WorkspaceBindingRepository,
 };
 use mcpmux_storage::{
     Database, FieldEncryptor, SqliteAppSettingsRepository, SqliteCredentialRepository,
     SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
     SqliteOutboundOAuthRepository, SqliteServerFeatureRepository, SqliteSpaceBaseDirRepository,
-    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
+    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceAppearanceRepository,
+    SqliteWorkspaceBindingRepository,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -54,6 +55,8 @@ pub struct AppState {
     pub space_base_dir_repository: Arc<dyn SpaceBaseDirRepository>,
     /// Per-Space built-in server config (Tool Optimization enablement + tool toggles)
     pub space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository>,
+    /// Workspace appearances (icons, theme accent colours)
+    pub workspace_appearance_repository: Arc<dyn WorkspaceAppearanceRepository>,
     /// Server feature repository for discovered MCP features (implements core trait)
     pub server_feature_repository: Arc<SqliteServerFeatureRepository>,
     /// Server feature repository cast to core trait (for gateway services)
@@ -118,6 +121,9 @@ impl AppState {
         let space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository> =
             Arc::new(SqliteSpaceBuiltinConfigRepository::new(db.clone()));
 
+        let workspace_appearance_repository: Arc<dyn WorkspaceAppearanceRepository> =
+            Arc::new(SqliteWorkspaceAppearanceRepository::new(db.clone()));
+
         let server_feature_repository = Arc::new(SqliteServerFeatureRepository::new(db.clone()));
         let server_feature_repository_core: Arc<dyn CoreServerFeatureRepository> =
             server_feature_repository.clone();
@@ -177,6 +183,7 @@ impl AppState {
             workspace_binding_repository,
             space_base_dir_repository,
             space_builtin_config_repository,
+            workspace_appearance_repository,
             server_feature_repository,
             server_feature_repository_core,
             encryptor,
@@ -207,5 +214,21 @@ impl AppState {
     pub fn space_config_path(&self, space_id: &str) -> Result<PathBuf, String> {
         mcpmux_core::get_space_config_path(&self.spaces_dir, space_id)
             .map_err(|e| format!("Invalid space id '{space_id}': {e}"))
+    }
+
+    /// Build shared `ApplicationServices` for command bridge and admin HTTP.
+    pub fn build_application_services(
+        &self,
+        event_bus: Arc<EventBus>,
+    ) -> anyhow::Result<ApplicationServices> {
+        ApplicationServicesBuilder::new()
+            .with_event_bus(event_bus)
+            .with_space_repo(self.space_service.space_repository())
+            .with_installed_server_repo(self.installed_server_repository.clone())
+            .with_feature_set_repo(self.feature_set_repository.clone())
+            .with_server_feature_repo(self.server_feature_repository_core.clone())
+            .with_client_repo(self.client_repository.clone())
+            .with_credential_repo(self.credential_repository.clone())
+            .build()
     }
 }

@@ -12,7 +12,7 @@ use mcpmux_gateway::{
 };
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
@@ -442,9 +442,21 @@ pub fn start_domain_event_bridge(
                 "[Gateway] Forwarding domain event to UI"
             );
 
-            if let Err(e) = app_handle_clone.emit(channel, payload) {
-                error!("[Gateway] Failed to emit {} event: {}", channel, e);
-            }
+            // Emit to Tauri webview and admin SSE subscribers.
+            let ui_event_bus = {
+                let admin_state: tauri::State<
+                    '_,
+                    Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+                > = app_handle_clone.state();
+                let guard = admin_state.read().await;
+                guard.ui_event_bus.clone()
+            };
+            crate::services::ui_events::emit_ui_channel(
+                &app_handle_clone,
+                Some(&ui_event_bus),
+                channel,
+                payload,
+            );
         }
 
         info!("[Gateway] Domain event bridge stopped");
@@ -1120,6 +1132,24 @@ pub async fn start_gateway(
         warn!("[Gateway] Failed to emit gateway-changed(started): {}", e);
     }
 
+    // Sync admin server health endpoint and register SSE stream.
+    {
+        use crate::services::admin_server::{register_gateway_sse, set_gateway_running};
+        let admin_state: tauri::State<
+            '_,
+            Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+        > = app_handle.state();
+        let guard = admin_state.read().await;
+        set_gateway_running(&guard, true);
+        if let Some(gw_state) = state.gateway_state.clone() {
+            let admin_guard_clone = admin_state.clone();
+            let gw_state_clone = gw_state;
+            drop(guard);
+            let guard2 = admin_guard_clone.read().await;
+            register_gateway_sse(&guard2, &gw_state_clone).await;
+        }
+    }
+
     Ok(url)
 }
 
@@ -1151,6 +1181,18 @@ pub async fn stop_gateway(
 
     if let Err(e) = app_handle.emit("gateway-changed", serde_json::json!({"action": "stopped"})) {
         warn!("[Gateway] Failed to emit gateway-changed(stopped): {}", e);
+    }
+
+    // Sync admin server health endpoint and clear SSE stream.
+    {
+        use crate::services::admin_server::{clear_gateway_sse, set_gateway_running};
+        let admin_state: tauri::State<
+            '_,
+            Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+        > = app_handle.state();
+        let guard = admin_state.read().await;
+        set_gateway_running(&guard, false);
+        clear_gateway_sse(&guard).await;
     }
 
     Ok(())
@@ -1987,6 +2029,31 @@ pub struct PoolStatsResponse {
     pub total_instances: usize,
     pub connected_instances: usize,
     pub total_space_server_mappings: usize,
+}
+
+/// Reload (or stop-then-start) the web admin server based on current settings.
+///
+/// Call this after the user toggles `gateway.admin_enabled`, changes the admin
+/// port, or modifies Cloudflare Access settings so the admin server picks up the
+/// new configuration without requiring a full app restart.
+#[tauri::command]
+pub async fn reload_admin_server(
+    app_handle: tauri::AppHandle,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    server_manager_state: State<'_, Arc<RwLock<ServerManagerState>>>,
+) -> Result<(), String> {
+    let admin_state: tauri::State<'_, Arc<tokio::sync::RwLock<crate::services::AdminServerState>>> =
+        app_handle.state();
+    let event_bus = mcpmux_core::create_shared_event_bus();
+    crate::services::admin_server::reload_admin_server(
+        app_handle.clone(),
+        admin_state.inner().clone(),
+        gateway_state.inner().clone(),
+        server_manager_state.inner().clone(),
+        event_bus,
+    )
+    .await;
+    Ok(())
 }
 
 #[cfg(test)]

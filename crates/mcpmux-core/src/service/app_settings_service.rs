@@ -22,6 +22,14 @@ pub mod keys {
         pub const PORT: &str = "gateway.port";
         /// Auto-start gateway on app launch (bool)
         pub const AUTO_START: &str = "gateway.auto_start";
+        /// Web admin server enabled (bool)
+        pub const ADMIN_ENABLED: &str = "gateway.admin_enabled";
+        /// Web admin server port (u16)
+        pub const ADMIN_PORT: &str = "gateway.admin_port";
+        /// Trust Cloudflare Access JWT (bool)
+        pub const ADMIN_TRUST_CF_ACCESS: &str = "gateway.admin_trust_cf_access";
+        /// Cloudflare team domain for JWT issuer verification
+        pub const ADMIN_CF_TEAM_DOMAIN: &str = "gateway.admin_cf_team_domain";
     }
 
     /// OAuth callback settings namespace
@@ -187,6 +195,77 @@ impl AppSettingsService {
                 keys::gateway::AUTO_START,
                 if auto_start { "true" } else { "false" },
             )
+            .await
+    }
+
+    // =========================================================================
+    // Admin server settings
+    // =========================================================================
+
+    /// Default admin server port.
+    pub const DEFAULT_ADMIN_PORT: u16 = 45819;
+
+    /// Get whether the web admin server is enabled (default: false).
+    pub async fn get_admin_enabled(&self) -> bool {
+        self.get_string(keys::gateway::ADMIN_ENABLED)
+            .await
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    }
+
+    /// Set whether the web admin server is enabled.
+    pub async fn set_admin_enabled(&self, enabled: bool) -> anyhow::Result<()> {
+        info!("[Settings] Setting admin_enabled to {}", enabled);
+        self.repository
+            .set(
+                keys::gateway::ADMIN_ENABLED,
+                if enabled { "true" } else { "false" },
+            )
+            .await
+    }
+
+    /// Get the configured admin server port (defaults to `DEFAULT_ADMIN_PORT`).
+    pub async fn get_admin_port(&self) -> Option<u16> {
+        self.get_typed(keys::gateway::ADMIN_PORT).await
+    }
+
+    /// Set the admin server port.
+    pub async fn set_admin_port(&self, port: u16) -> anyhow::Result<()> {
+        info!("[Settings] Setting admin port to {}", port);
+        self.repository
+            .set(keys::gateway::ADMIN_PORT, &port.to_string())
+            .await
+    }
+
+    /// Get whether to trust Cloudflare Access JWTs (default: false).
+    pub async fn get_admin_trust_cf_access(&self) -> bool {
+        self.get_string(keys::gateway::ADMIN_TRUST_CF_ACCESS)
+            .await
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    }
+
+    /// Set whether to trust Cloudflare Access JWTs.
+    pub async fn set_admin_trust_cf_access(&self, trust: bool) -> anyhow::Result<()> {
+        info!("[Settings] Setting admin_trust_cf_access to {}", trust);
+        self.repository
+            .set(
+                keys::gateway::ADMIN_TRUST_CF_ACCESS,
+                if trust { "true" } else { "false" },
+            )
+            .await
+    }
+
+    /// Get the Cloudflare team domain for admin JWT verification.
+    pub async fn get_admin_cf_team_domain(&self) -> Option<String> {
+        self.get_string(keys::gateway::ADMIN_CF_TEAM_DOMAIN).await
+    }
+
+    /// Set the Cloudflare team domain.
+    pub async fn set_admin_cf_team_domain(&self, domain: &str) -> anyhow::Result<()> {
+        info!("[Settings] Setting admin_cf_team_domain");
+        self.repository
+            .set(keys::gateway::ADMIN_CF_TEAM_DOMAIN, domain)
             .await
     }
 

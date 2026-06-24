@@ -33,6 +33,11 @@ impl SpaceService {
         }
     }
 
+    /// Return a clone of the underlying space repository.
+    pub fn space_repository(&self) -> Arc<dyn SpaceRepository> {
+        self.repository.clone()
+    }
+
     /// List all spaces
     pub async fn list(&self) -> anyhow::Result<Vec<Space>> {
         self.repository.list().await

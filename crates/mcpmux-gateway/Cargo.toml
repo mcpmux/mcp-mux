@@ -17,7 +17,9 @@ async-stream = "0.3"
 # Web framework
 axum.workspace = true
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+jsonwebtoken = "9"
+subtle = "2.6"
 http = "1.1"
 http-body-util.workspace = true
 
@@ -65,3 +67,6 @@ mcpmux-storage.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[features]
+test-utils = []

@@ -563,8 +563,31 @@ pub fn run() {
                 }
             });
 
-            app.manage(gateway_state);
-            app.manage(server_manager_state);
+            app.manage(gateway_state.clone());
+            app.manage(server_manager_state.clone());
+
+            // Create and manage admin server state, then start admin server
+            {
+                let admin_state = Arc::new(tokio::sync::RwLock::new(
+                    services::admin_server::AdminServerState::new(),
+                ));
+                let app_handle_for_admin = app.handle().clone();
+                let gw_state_for_admin = gateway_state.clone();
+                let sm_state_for_admin = server_manager_state.clone();
+                let event_bus_for_admin = event_bus.clone();
+                let admin_state_clone = admin_state.clone();
+                app.manage(admin_state);
+                tauri::async_runtime::spawn(async move {
+                    services::admin_server::start_admin_server_if_enabled(
+                        app_handle_for_admin,
+                        admin_state_clone,
+                        gw_state_for_admin,
+                        sm_state_for_admin,
+                        event_bus_for_admin,
+                    )
+                    .await;
+                });
+            }
 
             // Start file watcher for user space config files (hot-reload)
             {
@@ -969,6 +992,7 @@ pub fn run() {
             commands::start_gateway,
             commands::stop_gateway,
             commands::restart_gateway,
+            commands::reload_admin_server,
             commands::generate_gateway_config,
             commands::connect_server,
             commands::disconnect_server,

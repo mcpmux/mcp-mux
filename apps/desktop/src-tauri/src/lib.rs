@@ -921,6 +921,10 @@ pub fn run() {
             commands::delete_workspace_binding,
             commands::validate_workspace_root,
             commands::get_workspace_effective_features,
+            // Per-workspace MCP client config install (X-Mcpmux-Workspace header)
+            commands::list_workspace_install_clients,
+            commands::generate_workspace_config_snippet,
+            commands::install_workspace_mcp_config,
             // Meta-tool approval (self-management mcpmux_* tools)
             commands::respond_to_meta_tool_approval,
             commands::list_meta_tool_grants,

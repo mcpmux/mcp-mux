@@ -21,6 +21,7 @@ pub mod server_manager;
 pub mod settings;
 pub mod space;
 pub mod workspace_binding;
+pub mod workspace_install;
 
 // Re-export commands for convenience
 pub use builtin_servers::*;
@@ -40,3 +41,4 @@ pub use server_manager::*;
 pub use settings::*;
 pub use space::*;
 pub use workspace_binding::*;
+pub use workspace_install::*;

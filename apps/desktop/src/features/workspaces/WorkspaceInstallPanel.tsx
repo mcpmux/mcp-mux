@@ -12,8 +12,34 @@ import {
   type WorkspaceInstallResult,
 } from '@/lib/api/workspaceInstall';
 
-/** Clients selected by default — the most common three. */
+/** Clients selected by default the first time, before the user picks. */
 const DEFAULT_SELECTED = ['cursor', 'claude-code', 'vscode'];
+
+/** Where the last client selection is remembered across folders/sessions. */
+const SELECTION_STORAGE_KEY = 'mcpmux:workspace-install-clients';
+
+/** Read the remembered client selection, or null when none/invalid. */
+function loadSavedSelection(): Set<string> | null {
+  try {
+    const raw = localStorage.getItem(SELECTION_STORAGE_KEY);
+    if (!raw) return null;
+    const arr: unknown = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.every((x) => typeof x === 'string')) {
+      return new Set(arr as string[]);
+    }
+  } catch {
+    /* ignore corrupt / unavailable storage */
+  }
+  return null;
+}
+
+function saveSelection(ids: Set<string>) {
+  try {
+    localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * "Connect apps to this folder" — writes (or extends) project-local MCP configs
@@ -25,7 +51,11 @@ const DEFAULT_SELECTED = ['cursor', 'claude-code', 'vscode'];
  */
 export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string }) {
   const [clients, setClients] = useState<WorkspaceInstallClient[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(DEFAULT_SELECTED));
+  // Restore the user's last selection (remembered across folders); fall back to
+  // the common-three default the first time.
+  const [selected, setSelected] = useState<Set<string>>(
+    () => loadSavedSelection() ?? new Set(DEFAULT_SELECTED)
+  );
   const [mcpUrl, setMcpUrl] = useState<string | null>(null);
   const [authDisabled, setAuthDisabled] = useState<boolean | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -45,6 +75,13 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
         ]);
         if (cancelled) return;
         setClients(list);
+        // Drop any remembered ids that aren't supported anymore; if that
+        // leaves nothing, fall back to the defaults that do exist.
+        setSelected((prev) => {
+          const known = new Set(list.map((c) => c.id));
+          const pruned = [...prev].filter((id) => known.has(id));
+          return new Set(pruned.length ? pruned : DEFAULT_SELECTED.filter((id) => known.has(id)));
+        });
         setAuthDisabled(disabled);
         setMcpUrl(status.url ? `${status.url}/mcp` : null);
       } catch (e) {
@@ -55,6 +92,11 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
       cancelled = true;
     };
   }, []);
+
+  // Remember the selection across folders and sessions.
+  useEffect(() => {
+    saveSelection(selected);
+  }, [selected]);
 
   const toggleClient = (id: string) => {
     setSelected((prev) => {

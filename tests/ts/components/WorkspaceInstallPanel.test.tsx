@@ -56,6 +56,7 @@ const ROOT = process.platform === 'win32' ? 'd:\\proj\\app' : '/proj/app';
 
 describe('WorkspaceInstallPanel', () => {
   beforeEach(() => {
+    localStorage.clear();
     listClientsMock.mockReset().mockResolvedValue(CLIENTS);
     installMock.mockReset();
     snippetMock.mockReset();
@@ -92,6 +93,33 @@ describe('WorkspaceInstallPanel', () => {
     expect(arg.clients).toEqual(['cursor', 'claude-code', 'vscode']);
     // Result row is shown.
     expect(await screen.findByTestId('workspace-install-results')).toBeTruthy();
+  });
+
+  it('remembers the previous client selection across renders', async () => {
+    const user = userEvent.setup();
+    installMock.mockResolvedValue([]);
+
+    // First mount: deselect the defaults down to just opencode, then install
+    // (which persists the selection).
+    const first = render(<WorkspaceInstallPanel workspaceRoot={ROOT} />);
+    await screen.findByTestId('workspace-install-client-cursor');
+    for (const id of ['cursor', 'claude-code', 'vscode']) {
+      await user.click(screen.getByTestId(`workspace-install-client-${id}`));
+    }
+    await user.click(screen.getByTestId('workspace-install-client-opencode'));
+    await user.click(screen.getByTestId('workspace-install-button'));
+    await waitFor(() => expect(installMock).toHaveBeenCalled());
+    expect(installMock.mock.calls[0][0].clients).toEqual(['opencode']);
+    first.unmount();
+
+    // Second mount: the remembered selection (opencode only) is restored, not
+    // the big-three default.
+    installMock.mockClear();
+    render(<WorkspaceInstallPanel workspaceRoot={ROOT} />);
+    await screen.findByTestId('workspace-install-button');
+    await user.click(screen.getByTestId('workspace-install-button'));
+    await waitFor(() => expect(installMock).toHaveBeenCalled());
+    expect(installMock.mock.calls[0][0].clients).toEqual(['opencode']);
   });
 
   it('shows the auth nudge and disables auth inline', async () => {

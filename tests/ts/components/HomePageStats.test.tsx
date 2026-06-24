@@ -36,6 +36,7 @@ vi.mock('@/lib/api/registry', () => ({ listInstalledServers: mockListInstalled }
 vi.mock('@/stores', () => ({
   useViewSpace: () => ({ id: 'space-1', name: 'My Space' }),
   useNavigateTo: () => () => {},
+  useSetPendingWorkspaceNew: () => () => {},
 }));
 vi.mock('@/components/ConnectionCard', () => ({ ConnectionCard: () => null }));
 

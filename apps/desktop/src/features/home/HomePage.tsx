@@ -10,12 +10,21 @@
  * the page that manages what it counts.
  */
 import { useEffect, useState, useCallback } from 'react';
-import { Server, Wrench, Monitor, Globe, ArrowUpRight, Compass, ArrowRight } from 'lucide-react';
+import {
+  Server,
+  Wrench,
+  Monitor,
+  Globe,
+  ArrowUpRight,
+  Compass,
+  ArrowRight,
+  FolderPlus,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ConnectionCard } from '@/components/ConnectionCard';
 import { useGatewayEvents, useServerStatusEvents, useDomainEvents } from '@/hooks/useDomainEvents';
-import { useViewSpace, useNavigateTo } from '@/stores';
+import { useViewSpace, useNavigateTo, useSetPendingWorkspaceNew } from '@/stores';
 import type { NavItem } from '@/stores/types';
 import { spaceAccentColor } from '@/lib/spaceAccent';
 
@@ -152,6 +161,39 @@ function GetStartedStrip() {
   );
 }
 
+/**
+ * Per-folder setup entry point. The ConnectionCard above connects an app to
+ * the gateway globally; this routes into the Workspaces walkthrough to map a
+ * specific project and write its per-folder config.
+ */
+function SetUpFolderCard() {
+  const navigateTo = useNavigateTo();
+  const openWizard = useSetPendingWorkspaceNew();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        openWizard(true);
+        navigateTo('workspaces');
+      }}
+      data-testid="home-setup-folder"
+      className="group flex w-full items-center gap-3 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] p-4 text-left shadow transition-all duration-200 hover:-translate-y-0.5 hover:border-[rgb(var(--border))] hover:shadow-md"
+    >
+      <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/12 text-[rgb(var(--primary))]">
+        <FolderPlus className="h-5 w-5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold">Set up a folder</span>
+        <span className="block text-xs text-[rgb(var(--muted))]">
+          Map a project to its tools and connect your apps to it — even ones that don&apos;t report
+          the folder.
+        </span>
+      </span>
+      <ArrowRight className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] transition-transform group-hover:translate-x-0.5" />
+    </button>
+  );
+}
+
 export function HomePage() {
   const [stats, setStats] = useState({
     installedServers: 0,
@@ -232,6 +274,9 @@ export function HomePage() {
       {/* Canonical connection surface — owns URL, Start/Stop, IDE grid,
           pending-approval nudge. */}
       <ConnectionCard />
+
+      {/* Per-folder setup — opens the Workspaces walkthrough. */}
+      <SetUpFolderCard />
 
       {/* Stat tiles — each is a shortcut into the page that manages it. */}
       <div

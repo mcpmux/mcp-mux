@@ -41,6 +41,8 @@ vi.mock('@/lib/api/featureSets', () => ({
 
 vi.mock('@/stores', () => ({
   useSpaces: () => [{ id: 's1', name: 'Space One' }],
+  usePendingWorkspaceNew: () => false,
+  useSetPendingWorkspaceNew: () => () => {},
 }));
 
 import { WorkspacesPage } from '@/features/workspaces/WorkspacesPage';

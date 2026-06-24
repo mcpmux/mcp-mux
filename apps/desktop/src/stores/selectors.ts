@@ -12,6 +12,9 @@ export const usePendingSettingsSection = () =>
   useAppStore((state) => state.pendingSettingsSection);
 export const useSetPendingSettingsSection = () =>
   useAppStore((state) => state.setPendingSettingsSection);
+export const usePendingWorkspaceNew = () => useAppStore((state) => state.pendingWorkspaceNew);
+export const useSetPendingWorkspaceNew = () =>
+  useAppStore((state) => state.setPendingWorkspaceNew);
 export const useTheme = () => useAppStore((state) => state.theme);
 export const useSidebarCollapsed = () => useAppStore((state) => state.sidebarCollapsed);
 export const useAnalyticsEnabled = () => useAppStore((state) => state.analyticsEnabled);

@@ -28,6 +28,8 @@ export interface AppState {
   pendingClientId: string | null;
   /** Section to scroll to + flash when navigating to Settings (e.g. 'security'). */
   pendingSettingsSection: string | null;
+  /** When true, the Workspaces page opens the New-mapping walkthrough on arrival. */
+  pendingWorkspaceNew: boolean;
 
   // UI state
   sidebarCollapsed: boolean;
@@ -53,6 +55,7 @@ export interface AppActions {
   navigateTo: (nav: NavItem) => void;
   setPendingClientId: (id: string | null) => void;
   setPendingSettingsSection: (section: string | null) => void;
+  setPendingWorkspaceNew: (v: boolean) => void;
 
   // UI
   toggleSidebar: () => void;

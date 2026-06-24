@@ -9,6 +9,7 @@ const initialState: AppState = {
   activeNav: 'home',
   pendingClientId: null,
   pendingSettingsSection: null,
+  pendingWorkspaceNew: false,
   sidebarCollapsed: false,
   theme: 'system',
   analyticsEnabled: true,
@@ -82,6 +83,11 @@ export const useAppStore = create<AppStore>()(
       setPendingSettingsSection: (section) =>
         set((state) => {
           state.pendingSettingsSection = section;
+        }),
+
+      setPendingWorkspaceNew: (v) =>
+        set((state) => {
+          state.pendingWorkspaceNew = v;
         }),
 
       // UI

@@ -131,6 +131,21 @@ fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Return git/build metadata stamped into the binary by `build.rs`.
+///
+/// The admin UI uses this to detect a stale SPA bundle — it compares the
+/// SHA here against the one baked into the on-disk `web-admin` bundle, and
+/// prompts the user to run `pnpm build:web:admin` after pulling new UI changes.
+#[tauri::command]
+fn get_build_info() -> serde_json::Value {
+    serde_json::json!({
+        "git_sha": env!("MCPMUX_BUILD_GIT_SHA"),
+        "git_branch": env!("MCPMUX_BUILD_GIT_BRANCH"),
+        "commit_time": env!("MCPMUX_BUILD_COMMIT_TIME"),
+        "build_time": env!("MCPMUX_BUILD_TIME"),
+    })
+}
+
 /// Get the on-disk bundle version (macOS only).
 ///
 /// After a Homebrew Cask upgrade, the `.app` bundle on disk has the new version
@@ -875,6 +890,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_version,
             get_bundle_version,
+            get_build_info,
             // Space commands
             commands::list_spaces,
             commands::get_space,
@@ -903,6 +919,12 @@ pub fn run() {
             commands::set_server_enabled,
             commands::set_server_oauth_connected,
             commands::save_server_inputs,
+            commands::set_server_display_name,
+            commands::clone_server,
+            commands::is_clone_id_available,
+            commands::suggest_clone_suffix,
+            commands::list_clone_dependents,
+            commands::update_server_package,
             // FeatureSet commands
             commands::list_feature_sets,
             commands::list_feature_sets_by_space,
@@ -947,6 +969,9 @@ pub fn run() {
             commands::delete_workspace_appearance,
             commands::upload_workspace_icon,
             commands::resolve_workspace_icon_path,
+            // Meta-tools toggle
+            commands::get_meta_tools_enabled,
+            commands::set_meta_tools_enabled,
             // Meta-tool approval (self-management mcpmux_* tools)
             commands::respond_to_meta_tool_approval,
             commands::list_meta_tool_grants,
@@ -1018,10 +1043,12 @@ pub fn run() {
             // Startup settings commands
             commands::get_startup_settings,
             commands::update_startup_settings,
-            commands::get_auto_install_updates,
-            commands::set_auto_install_updates,
-            commands::get_update_channel,
-            commands::set_update_channel,
+            commands::get_server_update_settings,
+            commands::update_server_update_settings,
+            commands::check_all_server_updates,
+            commands::check_server_version,
+            commands::get_admin_web_settings,
+            commands::update_admin_web_settings,
             commands::get_workspace_mapping_prompt_enabled,
             commands::set_workspace_mapping_prompt_enabled,
         ])

@@ -415,10 +415,7 @@ pub async fn start_admin_server_if_enabled(
         return;
     }
 
-    let port = settings
-        .get_admin_port()
-        .await
-        .unwrap_or(mcpmux_gateway::DEFAULT_ADMIN_PORT);
+    let port = settings.get_admin_port().await;
     let trust_cf_access = settings.get_admin_trust_cf_access().await;
     let cf_team_domain = settings.get_admin_cf_team_domain().await;
 

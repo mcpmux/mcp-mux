@@ -55,6 +55,9 @@ pub struct ToolCallResult {
     pub is_error: bool,
 }
 
+/// Default timeout for MCP tool calls (60 seconds)
+const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Actionable error when a server is not in the effective enable set.
 pub fn format_server_inactive_error(server_id: &str) -> String {
     format!(
@@ -88,6 +91,33 @@ pub fn format_invoke_permission_denied(
     }
 }
 
+/// Redirect message for direct backend `read_resource` attempts.
+#[allow(dead_code)]
+pub fn format_direct_read_redirect(uri: &str) -> String {
+    format!(
+        "Direct backend resource reads are not supported. \
+         Use mcpmux_search_resources to discover readable URIs, then \
+         mcpmux_read_resource to fetch one: \
+         mcpmux_read_resource({{ \"uri\": \"{uri}\" }})"
+    )
+}
+
+/// Redirect message for direct backend `get_prompt` attempts.
+#[allow(dead_code)]
+pub fn format_direct_fetch_prompt_redirect(
+    qualified_name: &str,
+    server_id: &str,
+    prompt_name: &str,
+) -> String {
+    format!(
+        "Direct backend prompt fetches are not supported. \
+         Use mcpmux_search_prompts to discover fetchable prompts, then \
+         mcpmux_fetch_prompt to fetch one: \
+         mcpmux_fetch_prompt({{ \"server_id\": \"{server_id}\", \"prompt\": \"{prompt_name}\", \"args\": {{}} }}) \
+         (qualified name was '{qualified_name}')"
+    )
+}
+
 /// Actionable error when a server is not in the binding FeatureSet ACL.
 pub fn format_server_not_in_binding_error(server_id: &str) -> String {
     format!(
@@ -97,8 +127,19 @@ pub fn format_server_not_in_binding_error(server_id: &str) -> String {
     )
 }
 
-/// Default timeout for MCP tool calls (60 seconds)
-const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Redirect message for direct backend `call_tool` attempts.
+#[allow(dead_code)]
+pub fn format_direct_call_redirect(
+    qualified_name: &str,
+    server_id: &str,
+    tool_name: &str,
+) -> String {
+    format!(
+        "Direct backend tool calls are not supported. Use mcpmux_invoke_tool instead: \
+         mcpmux_invoke_tool({{ \"server_id\": \"{server_id}\", \"tool\": \"{tool_name}\", \"args\": {{}} }}) \
+         (qualified name was '{qualified_name}')"
+    )
+}
 
 /// RoutingService dispatches requests to backend MCP servers
 pub struct RoutingService {
@@ -133,7 +174,7 @@ impl RoutingService {
         // Resolve feature sets to allowed features
         let allowed_features = self
             .feature_service
-            .get_tools_for_grants(&space_id_str, feature_set_ids)
+            .get_invokable_tools_for_grants(&space_id_str, feature_set_ids)
             .await?;
 
         // Filter to just tools
@@ -232,58 +273,68 @@ impl RoutingService {
     ) -> Result<ToolCallResult> {
         let space_id_str = space_id.to_string();
 
-        // Authorize AND route in one step by matching the requested qualified
-        // name against the resolved feature set — using the SAME encoding the
-        // list path uses (`ServerFeature::qualified_name`). This guarantees
-        // "if it lists, it calls": the (server_id, tool_name) we route to come
-        // straight from the matched feature, so there's no dependency on the
-        // prefix-cache reverse lookup, which could be stale and surface a
-        // listed tool as "not allowed by the current grants".
+        // 1. Find the server that provides this tool
+        let (server_id, actual_tool_name) = self
+            .feature_service
+            .find_server_for_qualified_tool(&space_id_str, tool_name)
+            .await?
+            .ok_or_else(|| anyhow!("Tool '{}' not found", tool_name))?;
+
+        // 2. Check if the tool is allowed by grants
         let allowed_features = self
             .feature_service
-            .resolve_feature_sets(&space_id_str, feature_set_ids)
+            .get_invokable_tools_for_grants(&space_id_str, feature_set_ids)
             .await?;
 
-        let feature = allowed_features.iter().find(|f| {
-            f.feature_type == FeatureType::Tool && f.is_available && f.qualified_name() == tool_name
-        });
-
-        let (server_id, actual_tool_name) = match feature {
-            Some(f) => (f.server_id.clone(), f.feature_name.clone()),
-            None => {
-                let available = allowed_features
-                    .iter()
-                    .filter(|f| f.feature_type == FeatureType::Tool && f.is_available)
-                    .count();
-                warn!(
-                    "[RoutingService] Tool '{}' not in the resolved feature set ({} tools available)",
-                    tool_name, available
-                );
-                return Err(anyhow!(
-                    "Tool '{}' is not allowed by the current grants",
-                    tool_name
-                ));
-            }
-        };
-
         info!(
-            "[RoutingService] Tool '{}' ALLOWED → server={}, tool={}",
+            "[RoutingService] Checking authorization for tool '{}' (server: {}, actual_name: {})",
             tool_name, server_id, actual_tool_name
         );
+        info!(
+            "[RoutingService] Feature sets to check: {:?}",
+            feature_set_ids
+        );
+        info!(
+            "[RoutingService] Total allowed features: {}",
+            allowed_features.len()
+        );
+
+        // Log all tool features for debugging
+        let tool_features: Vec<_> = allowed_features
+            .iter()
+            .filter(|f| f.feature_type == FeatureType::Tool)
+            .map(|f| format!("{}::{}", f.server_id, f.feature_name))
+            .collect();
+        info!("[RoutingService] Allowed tools: {:?}", tool_features);
+
+        let is_allowed = allowed_features.iter().any(|f| {
+            f.feature_type == FeatureType::Tool
+                && f.server_id == server_id
+                && f.feature_name == actual_tool_name
+                && f.is_available
+        });
+
+        if !is_allowed {
+            warn!(
+                "[RoutingService] Tool '{}' NOT allowed. Looking for server_id='{}', feature_name='{}', is_available=true",
+                tool_name, server_id, actual_tool_name
+            );
+            return Err(anyhow!(format_invoke_permission_denied(
+                tool_name,
+                &server_id,
+                &actual_tool_name,
+                &[],
+            )));
+        }
+
+        info!("[RoutingService] Tool '{}' is ALLOWED", tool_name);
 
         info!(
             "[RoutingService] Calling tool {} on server {}",
             actual_tool_name, server_id
         );
 
-        // Log the tool call attempt. Persist only the argument KEY names, not
-        // their values — tool arguments routinely carry secrets/PII, and this
-        // log is written to plaintext `current.log`. Keys alone are enough to
-        // debug routing without leaking payloads.
-        let arg_keys: Vec<&str> = arguments
-            .as_object()
-            .map(|o| o.keys().map(String::as_str).collect())
-            .unwrap_or_default();
+        // Log the tool call attempt
         self.log(
             &space_id,
             &server_id,
@@ -291,7 +342,7 @@ impl RoutingService {
             format!("Calling tool: {}", actual_tool_name),
             Some(serde_json::json!({
                 "tool": actual_tool_name,
-                "argument_keys": arg_keys
+                "arguments": arguments
             })),
         )
         .await;

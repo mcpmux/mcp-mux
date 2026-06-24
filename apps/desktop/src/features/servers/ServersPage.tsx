@@ -44,6 +44,17 @@ import { ServerLogViewer } from '@/components/ServerLogViewer';
 import { ConfigEditorModal } from '@/components/ConfigEditorModal';
 import { ServerDefinitionModal } from '@/components/ServerDefinitionModal';
 import { SourceBadge } from '@/components/SourceBadge';
+import { CloneAccountModal } from './CloneAccountModal';
+import { UninstallSourceWithClonesDialog } from './UninstallSourceWithClonesDialog';
+import {
+  shouldShowPackageUpdate,
+  resolveCurrentPackageVersion,
+  isPackageManagedTransport,
+  isValidSemver,
+} from './server-update-policy.helpers';
+import type { ClonedInstalledServer } from '@/lib/api/serverClone';
+import { listCloneDependents } from '@/lib/api/serverClone';
+import { checkServerVersion } from '@/lib/api/settings';
 
 // Helper to merge definitions with states (same as registryStore)
 function mergeDefinitionsWithStates(
@@ -81,6 +92,13 @@ function mergeDefinitionsWithStates(
       env_overrides: state?.env_overrides ?? {},
       args_append: state?.args_append ?? [],
       extra_headers: state?.extra_headers ?? {},
+      display_name_override: state?.display_name_override,
+      cloned_from: state?.cloned_from,
+      update_policy: state?.update_policy,
+      pinned_version: state?.pinned_version,
+      latest_available_version: state?.latest_available_version,
+      current_version: state?.current_version,
+      version_checked_at: state?.version_checked_at,
     } as ServerViewModel;
   });
 }
@@ -115,6 +133,13 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
         env_overrides: state.env_overrides ?? {},
         args_append: state.args_append ?? [],
         extra_headers: state.extra_headers ?? {},
+        display_name_override: state.display_name_override,
+        cloned_from: state.cloned_from,
+        update_policy: state.update_policy,
+        pinned_version: state.pinned_version,
+        latest_available_version: state.latest_available_version,
+        current_version: state.current_version,
+        version_checked_at: state.version_checked_at,
       } as ServerViewModel;
     } catch (e) {
       console.warn('[ServersPage] Failed to parse cached_definition, using minimal fallback:', e);
@@ -151,6 +176,13 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
     env_overrides: state.env_overrides ?? {},
     args_append: state.args_append ?? [],
     extra_headers: state.extra_headers ?? {},
+    display_name_override: state.display_name_override,
+    cloned_from: state.cloned_from,
+    update_policy: state.update_policy,
+    pinned_version: state.pinned_version,
+    latest_available_version: state.latest_available_version,
+    current_version: state.current_version,
+    version_checked_at: state.version_checked_at,
   } as ServerViewModel;
 }
 
@@ -201,6 +233,15 @@ export function ServersPage() {
   const [definitionServer, setDefinitionServer] = useState<{ id: string; name: string } | null>(
     null
   );
+
+  // Clone account wizard state
+  const [cloneModalServer, setCloneModalServer] = useState<ServerViewModel | null>(null);
+
+  // Uninstall source-with-clones confirmation
+  const [uninstallClonesDialog, setUninstallClonesDialog] = useState<{
+    server: ServerViewModel;
+    dependents: ClonedInstalledServer[];
+  } | null>(null);
 
   // Config editor state
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
@@ -766,31 +807,209 @@ export function ServersPage() {
     }
   };
 
+  const performUninstall = async (serverIds: string[]) => {
+    const { uninstallServer } = await import('@/lib/api/registry');
+    const { disconnectServer } = await import('@/lib/api/gateway');
+
+    for (const serverId of serverIds) {
+      const srv = installedServers.find((s) => s.id === serverId);
+      if (gatewayRunning && srv?.enabled && viewSpace) {
+        try {
+          await disconnectServer(serverId, viewSpace.id);
+        } catch (e) {
+          console.warn(`[ServersPage] Failed to disconnect server from gateway:`, e);
+        }
+      }
+      await uninstallServer(serverId, viewSpace?.id ?? '');
+    }
+    await loadData();
+  };
+
   const handleUninstall = async (server: ServerViewModel) => {
+    if (!viewSpace) {
+      return;
+    }
+
+    const dependents = await listCloneDependents(viewSpace.id, server.id);
+    if (dependents.length > 0) {
+      setUninstallClonesDialog({ server, dependents });
+      return;
+    }
+
     const { getUninstallLabel } = await import('@/components/SourceBadge');
     const actionLabel = getUninstallLabel(server.installation_source);
 
     setActionLoading(`uninstall-${server.id}`);
     try {
-      const { uninstallServer } = await import('@/lib/api/registry');
-      const { disconnectServer } = await import('@/lib/api/gateway');
-
-      if (gatewayRunning && server.enabled && viewSpace) {
-        try {
-          await disconnectServer(server.id, viewSpace.id);
-        } catch (e) {
-          console.warn(`[ServersPage] Failed to disconnect server from gateway:`, e);
-        }
-      }
-
-      // ServerAppService handles source-aware cleanup automatically:
-      // - UserConfig: removes from JSON file + DB
-      // - Registry/ManualEntry: just removes from DB
-      await uninstallServer(server.id, viewSpace?.id ?? '');
-      await loadData();
+      await performUninstall([server.id]);
       showToast(`${server.name} ${actionLabel.toLowerCase()}ed`, 'success');
     } catch (e) {
       showToast(String(e), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUninstallSourceOnly = async () => {
+    if (!uninstallClonesDialog) {
+      return;
+    }
+
+    const { server } = uninstallClonesDialog;
+    const { getUninstallLabel } = await import('@/components/SourceBadge');
+    const actionLabel = getUninstallLabel(server.installation_source);
+
+    setUninstallClonesDialog(null);
+    setActionLoading(`uninstall-${server.id}`);
+    try {
+      await performUninstall([server.id]);
+      showToast(`${server.name} ${actionLabel.toLowerCase()}ed`, 'success');
+    } catch (e) {
+      showToast(String(e), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUninstallAllWithClones = async () => {
+    if (!uninstallClonesDialog) {
+      return;
+    }
+
+    const { server, dependents } = uninstallClonesDialog;
+    const serverIds = [...dependents.map((d) => d.server_id), server.id];
+
+    setUninstallClonesDialog(null);
+    setActionLoading(`uninstall-${server.id}`);
+    try {
+      await performUninstall(serverIds);
+      showToast(
+        `${server.name} and ${dependents.length} clone${dependents.length === 1 ? '' : 's'} removed`,
+        'success'
+      );
+    } catch (e) {
+      showToast(String(e), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCloneComplete = async (cloned: ClonedInstalledServer) => {
+    await loadData();
+    showToast(`${cloned.server_name ?? cloned.server_id} created`, 'success');
+  };
+
+  const handleUpdateNow = async (server: ServerViewModel) => {
+    if (!viewSpace) {
+      return;
+    }
+
+    setActionLoading(`update-${server.id}`);
+    try {
+      const { updateServerPackage } = await import('@/lib/api/serverManager');
+      await updateServerPackage(viewSpace.id, server.id);
+      showToast(`Updating ${server.name}…`, 'info');
+      await loadData();
+    } catch (e) {
+      showToast(String(e), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCheckForUpdate = async (server: ServerViewModel) => {
+    if (!viewSpace) {
+      return;
+    }
+
+    setActionLoading(`check-update-${server.id}`);
+    try {
+      const result = await checkServerVersion(viewSpace.id, server.id);
+      setInstalledServers((current) =>
+        current.map((entry) => {
+          if (entry.id !== server.id) {
+            return entry;
+          }
+          return {
+            ...entry,
+            latest_available_version: result.latestVersion,
+            version_checked_at: result.checkedAt,
+          };
+        })
+      );
+
+      if (result.updateAvailable && result.latestVersion) {
+        showToast(`Update available: v${result.latestVersion}`, 'info');
+      } else {
+        showToast(`${server.name} is up to date`, 'success');
+      }
+    } catch (e) {
+      showToast(String(e), 'error');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleLockToCurrentVersion = async (server: ServerViewModel) => {
+    if (!viewSpace) {
+      return;
+    }
+
+    setActionLoading(`lock-version-${server.id}`);
+    try {
+      const { saveServerInputs } = await import('@/lib/api/registry');
+
+      let version =
+        resolveCurrentPackageVersion({
+          pinnedVersion: server.pinned_version,
+          transportCommand:
+            server.transport.type === 'stdio' ? server.transport.command : undefined,
+          transportArgs:
+            server.transport.type === 'stdio' ? server.transport.args : undefined,
+          installedVersion: server.current_version,
+        }) ?? server.latest_available_version;
+
+      if (!version) {
+        const probe = await checkServerVersion(viewSpace.id, server.id);
+        version = probe.currentVersion ?? probe.latestVersion;
+        setInstalledServers((current) =>
+          current.map((entry) => {
+            if (entry.id !== server.id) {
+              return entry;
+            }
+            return {
+              ...entry,
+              latest_available_version: probe.latestVersion ?? entry.latest_available_version,
+              version_checked_at: probe.checkedAt,
+            };
+          })
+        );
+      }
+
+      if (!version || !isValidSemver(version)) {
+        showToast('Cannot pin: version could not be determined', 'error');
+        return;
+      }
+
+      await saveServerInputs(
+        server.id,
+        server.input_values,
+        viewSpace.id,
+        server.env_overrides,
+        server.args_append,
+        server.extra_headers,
+        'pinned',
+        version
+      );
+
+      if (server.enabled) {
+        await retryConnectionV2(server.id);
+      }
+
+      showToast(`Locked to v${version}`, 'success');
+      await loadData();
+    } catch (error) {
+      showToast(String(error), 'error');
     } finally {
       setActionLoading(null);
     }
@@ -1270,13 +1489,43 @@ export function ServersPage() {
                         isConnected={
                           serverAction === 'running' || serverAction === 'connected_auto'
                         }
+                        isPackageManaged={
+                          server.transport.type === 'stdio' &&
+                          isPackageManagedTransport(server.transport.command)
+                        }
+                        updatePolicy={server.update_policy ?? 'notify'}
+                        hasUpdateAvailable={
+                          server.transport.type === 'stdio' &&
+                          shouldShowPackageUpdate({
+                            updatePolicy: server.update_policy ?? 'notify',
+                            latestVersion: server.latest_available_version,
+                            currentVersion: resolveCurrentPackageVersion({
+                              pinnedVersion: server.pinned_version,
+                              transportCommand: server.transport.command,
+                              transportArgs: server.transport.args,
+                              installedVersion: server.current_version,
+                            }),
+                            transportCommand: server.transport.command,
+                            transportArgs: server.transport.args,
+                          })
+                        }
+                        latestVersion={server.latest_available_version}
+                        canCloneAccount={
+                          !server.cloned_from &&
+                          (server.installation_source?.type === 'registry' ||
+                            server.installation_source?.type === 'manual_entry')
+                        }
                         onConfigure={() => handleConfigureClick(server)}
                         onRefresh={() => handleRefresh(server)}
                         onReconnect={() => handleReconnect(server)}
+                        onUpdateNow={() => handleUpdateNow(server)}
+                        onCheckForUpdate={() => handleCheckForUpdate(server)}
+                        onLockToCurrentVersion={() => handleLockToCurrentVersion(server)}
                         onViewLogs={() => setLogViewerServer({ id: server.id, name: server.name })}
                         onViewDefinition={() =>
                           setDefinitionServer({ id: server.id, name: server.name })
                         }
+                        onCloneAccount={() => setCloneModalServer(server)}
                         onUninstall={() => handleUninstall(server)}
                       />
                     </div>
@@ -1811,6 +2060,29 @@ export function ServersPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Uninstall Source With Clones Dialog */}
+      {uninstallClonesDialog && (
+        <UninstallSourceWithClonesDialog
+          open
+          sourceName={uninstallClonesDialog.server.name}
+          dependents={uninstallClonesDialog.dependents}
+          onCancel={() => setUninstallClonesDialog(null)}
+          onUninstallSourceOnly={handleUninstallSourceOnly}
+          onUninstallAll={handleUninstallAllWithClones}
+        />
+      )}
+
+      {/* Clone Account Modal */}
+      {cloneModalServer && viewSpace && (
+        <CloneAccountModal
+          open
+          spaceId={viewSpace.id}
+          sourceServer={cloneModalServer}
+          onClose={() => setCloneModalServer(null)}
+          onCloned={handleCloneComplete}
+        />
       )}
 
       {/* Log Viewer Modal */}

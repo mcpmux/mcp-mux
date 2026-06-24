@@ -225,8 +225,10 @@ impl AppSettingsService {
     }
 
     /// Get the configured admin server port (defaults to `DEFAULT_ADMIN_PORT`).
-    pub async fn get_admin_port(&self) -> Option<u16> {
-        self.get_typed(keys::gateway::ADMIN_PORT).await
+    pub async fn get_admin_port(&self) -> u16 {
+        self.get_typed(keys::gateway::ADMIN_PORT)
+            .await
+            .unwrap_or(Self::DEFAULT_ADMIN_PORT)
     }
 
     /// Set the admin server port.
@@ -261,11 +263,12 @@ impl AppSettingsService {
         self.get_string(keys::gateway::ADMIN_CF_TEAM_DOMAIN).await
     }
 
-    /// Set the Cloudflare team domain.
-    pub async fn set_admin_cf_team_domain(&self, domain: &str) -> anyhow::Result<()> {
+    /// Set the Cloudflare team domain (empty or None clears).
+    pub async fn set_admin_cf_team_domain(&self, domain: Option<&str>) -> anyhow::Result<()> {
+        let value = domain.unwrap_or("").trim();
         info!("[Settings] Setting admin_cf_team_domain");
         self.repository
-            .set(keys::gateway::ADMIN_CF_TEAM_DOMAIN, domain)
+            .set(keys::gateway::ADMIN_CF_TEAM_DOMAIN, value)
             .await
     }
 

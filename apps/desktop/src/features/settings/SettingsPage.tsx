@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
+import { ServerUpdatesSection } from './ServerUpdatesSection';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
 
@@ -323,6 +324,12 @@ export function SettingsPage() {
 
         {/* Updates Section */}
         <UpdateChecker />
+
+        {/* Server Package Updates Section */}
+        <ServerUpdatesSection
+          onSuccess={(title, message) => success(title, message)}
+          onError={(title, message) => error(title, message)}
+        />
 
         {/* Startup & System Tray Section - always show toggles so e2e and slow backends see the section */}
         <Card data-testid="settings-startup-section">

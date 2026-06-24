@@ -533,4 +533,41 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         )?;
         Ok(())
     }
+
+    async fn set_display_name_override(&self, id: &Uuid, value: Option<String>) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+
+        conn.execute(
+            "UPDATE installed_servers SET display_name_override = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id.to_string(), value, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    async fn update_version_cache(
+        &self,
+        id: &Uuid,
+        latest_available_version: Option<String>,
+        current_version: Option<String>,
+        version_checked_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+
+        conn.execute(
+            "UPDATE installed_servers
+             SET latest_available_version = ?2, current_version = ?3,
+                 version_checked_at = ?4, updated_at = ?5
+             WHERE id = ?1",
+            params![
+                id.to_string(),
+                latest_available_version,
+                current_version,
+                version_checked_at.to_rfc3339(),
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
 }

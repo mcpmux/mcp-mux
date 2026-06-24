@@ -87,7 +87,18 @@ export async function saveServerInputs(
   spaceId: string,
   envOverrides?: Record<string, string>,
   argsAppend?: string[],
-  extraHeaders?: Record<string, string>
+  extraHeaders?: Record<string, string>,
+  updatePolicy?: string,
+  pinnedVersion?: string
 ): Promise<void> {
-  return invoke<void>('save_server_inputs', { id, inputValues, spaceId, envOverrides, argsAppend, extraHeaders });
+  return invoke<void>('save_server_inputs', {
+    id,
+    inputValues,
+    spaceId,
+    envOverrides,
+    argsAppend,
+    extraHeaders,
+    updatePolicy,
+    pinnedVersion,
+  });
 }

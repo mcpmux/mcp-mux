@@ -58,7 +58,9 @@ export type DomainEventChannel =
   | 'client-changed'
   | 'grants-changed'
   | 'gateway-changed'
-  | 'mcp-notification';
+  | 'mcp-notification'
+  | 'server-version-checked'
+  | 'server-update-available';
 
 /** Base event payload */
 export interface DomainEventPayload {
@@ -160,6 +162,20 @@ export interface MCPNotificationPayload extends DomainEventPayload {
   server_id: string;
 }
 
+/** Server version probe completed payload */
+export interface ServerVersionCheckedPayload extends DomainEventPayload {
+  space_id: string;
+  server_id: string;
+}
+
+/** Server update available payload */
+export interface ServerUpdateAvailablePayload extends DomainEventPayload {
+  space_id: string;
+  server_id: string;
+  current_version?: string | null;
+  latest_version?: string | null;
+}
+
 /** Payload type map for type safety */
 export interface PayloadTypeMap {
   'space-changed': SpaceChangedPayload;
@@ -172,6 +188,8 @@ export interface PayloadTypeMap {
   'grants-changed': GrantsChangedPayload;
   'gateway-changed': GatewayChangedPayload;
   'mcp-notification': MCPNotificationPayload;
+  'server-version-checked': ServerVersionCheckedPayload;
+  'server-update-available': ServerUpdateAvailablePayload;
 }
 
 /** Type-safe callback for specific channels */
@@ -201,6 +219,8 @@ const ALL_CHANNELS: DomainEventChannel[] = [
   'grants-changed',
   'gateway-changed',
   'mcp-notification',
+  'server-version-checked',
+  'server-update-available',
 ];
 
 /**

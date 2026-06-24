@@ -180,6 +180,13 @@ export async function logoutServer(
 }
 
 /**
+ * Reconnect and apply latest package resolution (explicit user update).
+ */
+export async function updateServerPackage(spaceId: string, serverId: string): Promise<void> {
+  return invoke('update_server_package', { spaceId, serverId });
+}
+
+/**
  * Disconnect server - Stop connection but keep enabled and preserve credentials
  * 
  * Preserves: Everything (tokens, DCR, inputs, enabled flag)

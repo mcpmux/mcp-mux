@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::pool::transport::resolution::build_transport_config;
+use crate::pool::transport::resolution::{build_transport_config, TransportResolutionOptions};
 use crate::pool::{
     ConnectionContext, ConnectionResult, FeatureService, PoolService, ServerKey, ServerManager,
 };
@@ -199,6 +199,7 @@ impl GatewayWriteRuntime for LiveGatewayWriteRuntime {
             &server_definition.transport,
             &installed,
             Some(&self.data_dir),
+            TransportResolutionOptions::default(),
         );
 
         let ctx = ConnectionContext::auto(space_uuid, server_id.clone(), transport);

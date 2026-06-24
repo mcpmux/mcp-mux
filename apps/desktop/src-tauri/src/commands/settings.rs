@@ -5,7 +5,14 @@ use tauri::State;
 use tauri_plugin_autostart::AutoLaunchManager;
 use tracing::{debug, info};
 
+use crate::services::admin_server::reload_admin_server;
 use crate::state::AppState;
+use crate::{commands::gateway::GatewayAppState, commands::server_manager::ServerManagerState};
+use mcpmux_core::{AppSettingsService, ApplicationServices, UpdatePolicy};
+use mcpmux_gateway::services::ServerVersionProbeService;
+use serde_json::json;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Startup and system tray settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,101 +129,117 @@ pub async fn update_startup_settings(
     Ok(())
 }
 
-/// App-settings key for the "auto-install updates on launch" switch.
-const AUTO_INSTALL_UPDATES_KEY: &str = "updates.auto_install";
-
-/// Whether the app downloads + installs updates automatically on launch
-/// (then relaunches into the new version). Default **true** — a missing
-/// setting means auto-install is on.
-#[tauri::command]
-pub async fn get_auto_install_updates(app_state: State<'_, AppState>) -> Result<bool, String> {
-    let stored = app_state
-        .settings_repository
-        .get(AUTO_INSTALL_UPDATES_KEY)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(stored.map(|v| v != "false").unwrap_or(true))
+/// Default update policy applied to newly installed servers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerUpdateSettings {
+    pub default_update_policy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_checked_at: Option<String>,
 }
 
-/// Enable/disable automatic update installation on launch. Persisted.
+/// Get the app-wide default server update policy.
 #[tauri::command]
-pub async fn set_auto_install_updates(
-    enabled: bool,
+pub async fn get_server_update_settings(
     app_state: State<'_, AppState>,
-) -> Result<bool, String> {
+) -> Result<ServerUpdateSettings, String> {
+    let policy = app_state
+        .settings_repository
+        .get("servers.default_update_policy")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| UpdatePolicy::Notify.as_db_str().to_string());
+
+    Ok(ServerUpdateSettings {
+        default_update_policy: policy,
+        last_checked_at: app_state
+            .settings_repository
+            .get("servers.last_version_probe_at")
+            .await
+            .ok()
+            .flatten(),
+    })
+}
+
+/// Persist the app-wide default server update policy.
+#[tauri::command]
+pub async fn update_server_update_settings(
+    settings: ServerUpdateSettings,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let policy = UpdatePolicy::from_db_str(&settings.default_update_policy);
     app_state
         .settings_repository
-        .set(AUTO_INSTALL_UPDATES_KEY, &enabled.to_string())
+        .set("servers.default_update_policy", policy.as_db_str())
         .await
-        .map_err(|e| e.to_string())?;
-    info!("[Settings] Auto-install updates set to {}", enabled);
-    Ok(enabled)
+        .map_err(|e| format!("Failed to save default update policy: {}", e))?;
+    Ok(())
 }
 
-/// App-settings key for the update channel ("stable" | "prerelease").
-const UPDATE_CHANNEL_KEY: &str = "updates.channel";
-/// Default update channel when the setting is missing.
-const UPDATE_CHANNEL_STABLE: &str = "stable";
-const UPDATE_CHANNEL_PRERELEASE: &str = "prerelease";
-
-/// Normalize an arbitrary stored/incoming value to a known channel, defaulting
-/// to "stable". Keeps the gateway between the frontend and the updater header
-/// strict so a corrupt setting can never select an unknown channel.
-fn normalize_channel(raw: &str) -> &'static str {
-    if raw.eq_ignore_ascii_case(UPDATE_CHANNEL_PRERELEASE) {
-        UPDATE_CHANNEL_PRERELEASE
-    } else {
-        UPDATE_CHANNEL_STABLE
-    }
+/// Build a version probe service wired to the desktop app state and event bus.
+fn build_version_probe(
+    app_state: &AppState,
+    application_services: &ApplicationServices,
+) -> ServerVersionProbeService {
+    ServerVersionProbeService::new(
+        app_state.installed_server_repository.clone(),
+        app_state.settings_repository.clone(),
+        application_services.event_bus.clone(),
+    )
 }
 
-/// Which update channel the app follows. The frontend sends this as the
-/// `X-Mcpmux-Channel` header on update checks so the resolver returns the
-/// newest stable or pre-release manifest. Default **stable** — a missing
-/// setting means the stable channel.
+/// Probe all notify/auto package-managed servers for available updates.
 #[tauri::command]
-pub async fn get_update_channel(app_state: State<'_, AppState>) -> Result<String, String> {
-    let stored = app_state
-        .settings_repository
-        .get(UPDATE_CHANNEL_KEY)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(stored
-        .map(|v| normalize_channel(&v).to_string())
-        .unwrap_or_else(|| UPDATE_CHANNEL_STABLE.to_string()))
-}
-
-/// Set the update channel ("stable" | "prerelease"). Unknown values are
-/// coerced to "stable". Persisted; returns the normalized value actually saved.
-#[tauri::command]
-pub async fn set_update_channel(
-    channel: String,
+pub async fn check_all_server_updates(
     app_state: State<'_, AppState>,
-) -> Result<String, String> {
-    let normalized = normalize_channel(&channel);
-    app_state
-        .settings_repository
-        .set(UPDATE_CHANNEL_KEY, normalized)
-        .await
-        .map_err(|e| e.to_string())?;
-    info!("[Settings] Update channel set to {}", normalized);
-    Ok(normalized.to_string())
+    application_services: State<'_, Arc<ApplicationServices>>,
+) -> Result<serde_json::Value, String> {
+    let probe = build_version_probe(&app_state, &application_services);
+    let summary = probe.probe_all().await.map_err(|e| e.to_string())?;
+    Ok(json!({
+        "checked": summary.checked,
+        "updatesAvailable": summary.updates_available,
+        "checkedAt": summary.checked_at.to_rfc3339(),
+    }))
 }
 
-/// App-settings key for the "ask to map new folders" prompt switch.
+/// Probe one installed server for package updates.
+#[tauri::command]
+pub async fn check_server_version(
+    space_id: String,
+    server_id: String,
+    app_state: State<'_, AppState>,
+    application_services: State<'_, Arc<ApplicationServices>>,
+) -> Result<serde_json::Value, String> {
+    let probe = build_version_probe(&app_state, &application_services);
+    let result = probe
+        .probe_server(&space_id, &server_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!({
+        "spaceId": result.space_id,
+        "serverId": result.server_id,
+        "currentVersion": result.current_version,
+        "latestVersion": result.latest_version,
+        "updateAvailable": result.update_available,
+        "checkedAt": result.checked_at.to_rfc3339(),
+    }))
+}
+
+/// Check if app should start hidden (for auto-launch with --hidden flag)
+pub fn should_start_hidden() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    args.contains(&"--hidden".to_string())
+}
+
 const WORKSPACE_MAPPING_PROMPT_KEY: &str = "workspaces.mapping_prompt_enabled";
 
-/// Interpret a stored value for the workspace mapping-prompt toggle. Missing or
-/// any non-`"false"` value means **enabled** — the prompt is on by default, so
-/// only an explicit opt-out turns it off.
 fn mapping_prompt_enabled_from(stored: Option<&str>) -> bool {
-    stored.map(|v| v != "false").unwrap_or(true)
+    stored.map(|s| s != "false").unwrap_or(true)
 }
 
-/// Whether McpMux pops the "map this folder?" sheet when a connected client
-/// opens a folder that has no explicit binding (it's on the default Starter
-/// set). Default **true**. Users who find the prompt noisy can turn it off
-/// here or via the link in the sheet itself.
+/// Get whether the "map this folder?" prompt is enabled. Default true.
 #[tauri::command]
 pub async fn get_workspace_mapping_prompt_enabled(
     app_state: State<'_, AppState>,
@@ -229,8 +252,7 @@ pub async fn get_workspace_mapping_prompt_enabled(
     Ok(mapping_prompt_enabled_from(stored.as_deref()))
 }
 
-/// Enable/disable the "map this folder?" prompt. Persisted; returns the value
-/// actually saved.
+/// Enable/disable the "map this folder?" prompt. Persisted; returns the value actually saved.
 #[tauri::command]
 pub async fn set_workspace_mapping_prompt_enabled(
     enabled: bool,
@@ -245,16 +267,119 @@ pub async fn set_workspace_mapping_prompt_enabled(
     Ok(enabled)
 }
 
-/// Check if app should start hidden (for auto-launch with --hidden flag)
-pub fn should_start_hidden() -> bool {
-    let args: Vec<String> = std::env::args().collect();
-    args.contains(&"--hidden".to_string())
+/// Get the current value of the meta-tools master switch.
+///
+/// When disabled, the gateway hides the entire `mcpmux_*` namespace from
+/// connected MCP clients — no introspection, no self-management. Default
+/// ON.
+#[tauri::command]
+pub async fn get_meta_tools_enabled(app_state: State<'_, AppState>) -> Result<bool, String> {
+    match app_state
+        .settings_repository
+        .get("gateway.meta_tools_enabled")
+        .await
+    {
+        Ok(Some(v)) => Ok(!matches!(v.as_str(), "false" | "0")),
+        _ => Ok(true),
+    }
 }
 
-// The meta-tools master switch moved out of global app-settings into per-Space
-// built-in-server config — see `commands::builtin_servers`
-// (`list_builtin_servers` / `set_builtin_server_enabled` /
-// `set_builtin_tool_enabled`).
+/// Flip the meta-tools master switch. The change takes effect on the NEXT
+/// `list_tools` / `call_tool` from any connected client — existing cached
+/// tool lists are invalidated by the usual `tools/list_changed` push.
+#[tauri::command]
+pub async fn set_meta_tools_enabled(
+    enabled: bool,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .settings_repository
+        .set(
+            "gateway.meta_tools_enabled",
+            if enabled { "true" } else { "false" },
+        )
+        .await
+        .map_err(|e| format!("Failed to save meta_tools_enabled: {}", e))?;
+    info!("[Settings] meta_tools_enabled = {}", enabled);
+    Ok(())
+}
+
+/// Web admin HTTP server settings (loopback-only remote UI).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminWebSettings {
+    pub enabled: bool,
+    pub port: u16,
+    pub trust_cf_access: bool,
+    pub cf_team_domain: String,
+}
+
+/// Load web admin settings from the app settings store.
+#[tauri::command]
+pub async fn get_admin_web_settings(
+    app_state: State<'_, AppState>,
+) -> Result<AdminWebSettings, String> {
+    let settings = AppSettingsService::new(app_state.settings_repository.clone());
+    Ok(AdminWebSettings {
+        enabled: settings.get_admin_enabled().await,
+        port: settings.get_admin_port().await,
+        trust_cf_access: settings.get_admin_trust_cf_access().await,
+        cf_team_domain: settings
+            .get_admin_cf_team_domain()
+            .await
+            .unwrap_or_default(),
+    })
+}
+
+/// Persist web admin settings and restart the admin server to apply.
+#[tauri::command]
+pub async fn update_admin_web_settings(
+    settings: AdminWebSettings,
+    app: tauri::AppHandle,
+    app_state: State<'_, AppState>,
+    admin_state: State<'_, Arc<tokio::sync::RwLock<crate::services::AdminServerState>>>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    server_manager_state: State<'_, Arc<RwLock<ServerManagerState>>>,
+    application_services: State<'_, Arc<ApplicationServices>>,
+) -> Result<(), String> {
+    if settings.port < 1024 {
+        return Err("Admin port must be between 1024 and 65535".to_string());
+    }
+    if settings.trust_cf_access && settings.cf_team_domain.trim().is_empty() {
+        return Err(
+            "Cloudflare team domain is required when Trust CF Access is enabled".to_string(),
+        );
+    }
+
+    let store = AppSettingsService::new(app_state.settings_repository.clone());
+    store
+        .set_admin_enabled(settings.enabled)
+        .await
+        .map_err(|e| format!("Failed to save admin_enabled: {}", e))?;
+    store
+        .set_admin_port(settings.port)
+        .await
+        .map_err(|e| format!("Failed to save admin_port: {}", e))?;
+    store
+        .set_admin_trust_cf_access(settings.trust_cf_access)
+        .await
+        .map_err(|e| format!("Failed to save admin_trust_cf_access: {}", e))?;
+    store
+        .set_admin_cf_team_domain(Some(settings.cf_team_domain.trim()))
+        .await
+        .map_err(|e| format!("Failed to save admin_cf_team_domain: {}", e))?;
+
+    reload_admin_server(
+        app,
+        admin_state.inner().clone(),
+        gateway_state.inner().clone(),
+        server_manager_state.inner().clone(),
+        application_services.event_bus.clone(),
+    )
+    .await;
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -349,41 +474,5 @@ mod tests {
         assert!(!settings.auto_launch);
         assert!(!settings.start_minimized);
         assert!(!settings.close_to_tray);
-    }
-
-    #[test]
-    fn test_normalize_channel_prerelease_variants() {
-        assert_eq!(normalize_channel("prerelease"), UPDATE_CHANNEL_PRERELEASE);
-        assert_eq!(normalize_channel("Prerelease"), UPDATE_CHANNEL_PRERELEASE);
-        assert_eq!(normalize_channel("PRERELEASE"), UPDATE_CHANNEL_PRERELEASE);
-    }
-
-    #[test]
-    fn test_normalize_channel_defaults_to_stable() {
-        assert_eq!(normalize_channel("stable"), UPDATE_CHANNEL_STABLE);
-        assert_eq!(normalize_channel(""), UPDATE_CHANNEL_STABLE);
-        assert_eq!(normalize_channel("beta"), UPDATE_CHANNEL_STABLE);
-        assert_eq!(normalize_channel("garbage"), UPDATE_CHANNEL_STABLE);
-    }
-
-    #[test]
-    fn test_normalize_channel_returns_canonical_static() {
-        // Always returns one of the two canonical lowercase tokens.
-        for input in ["StAbLe", "pre", "prerelease", "x"] {
-            let out = normalize_channel(input);
-            assert!(out == UPDATE_CHANNEL_STABLE || out == UPDATE_CHANNEL_PRERELEASE);
-        }
-    }
-
-    #[test]
-    fn test_mapping_prompt_enabled_defaults_on() {
-        // Missing setting → on by default.
-        assert!(mapping_prompt_enabled_from(None));
-        // Only an explicit "false" disables it.
-        assert!(!mapping_prompt_enabled_from(Some("false")));
-        assert!(mapping_prompt_enabled_from(Some("true")));
-        // Any unexpected value is treated as enabled (fail-open to the default).
-        assert!(mapping_prompt_enabled_from(Some("")));
-        assert!(mapping_prompt_enabled_from(Some("garbage")));
     }
 }

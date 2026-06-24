@@ -761,6 +761,8 @@ pub async fn save_server_inputs(
             body.env_overrides,
             body.args_append,
             body.extra_headers,
+            None,
+            None,
         )
         .await?;
     as_json(installed)

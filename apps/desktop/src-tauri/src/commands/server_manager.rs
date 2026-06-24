@@ -7,7 +7,12 @@
 //! - Connect/Reconnect button based on connection history
 
 use crate::AppState;
-use mcpmux_gateway::pool::transport::resolution::build_transport_config; // Import from gateway
+use chrono::Utc;
+use mcpmux_core::{ApplicationServices, DomainEvent};
+use mcpmux_gateway::pool::transport::resolution::{
+    build_transport_config, TransportResolutionOptions,
+};
+use mcpmux_gateway::services::ServerVersionProbeService;
 use mcpmux_gateway::{
     ConnectionContext, ConnectionResult, ConnectionStatus, ServerKey, ServerManager,
 };
@@ -72,6 +77,12 @@ pub async fn get_server_statuses(
         .collect())
 }
 
+/// Options for enable / reconnect server manager flows.
+#[derive(Debug, Clone, Copy, Default)]
+struct ConnectServerOptions {
+    apply_package_update: bool,
+}
+
 /// Enable a server and attempt connection
 ///
 /// This replaces the old `set_server_enabled(true)` + `connect_server()` pattern.
@@ -86,6 +97,92 @@ pub async fn get_server_statuses(
 pub async fn enable_server_v2(
     space_id: String,
     server_id: String,
+    state: State<'_, Arc<RwLock<ServerManagerState>>>,
+    gateway_state: State<'_, Arc<RwLock<crate::commands::gateway::GatewayAppState>>>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    connect_enabled_server(
+        space_id,
+        server_id,
+        ConnectServerOptions::default(),
+        state,
+        gateway_state,
+        app_state,
+    )
+    .await
+}
+
+/// Reconnect an enabled server and apply latest package resolution (notify/auto npx/uvx).
+#[tauri::command]
+pub async fn update_server_package(
+    space_id: String,
+    server_id: String,
+    state: State<'_, Arc<RwLock<ServerManagerState>>>,
+    gateway_state: State<'_, Arc<RwLock<crate::commands::gateway::GatewayAppState>>>,
+    app_state: State<'_, AppState>,
+    application_services: State<'_, Arc<ApplicationServices>>,
+) -> Result<(), String> {
+    let space_uuid = Uuid::parse_str(&space_id).map_err(|e| format!("Invalid space_id: {}", e))?;
+
+    {
+        let manager_state = state.read().await;
+        if let Some(pool_service) = manager_state.pool_service.as_ref() {
+            pool_service.remove_instance(space_uuid, &server_id);
+            info!(
+                "[ServerManager] Removed existing instance for package update: {}",
+                server_id
+            );
+        }
+    }
+
+    let installed_repo = app_state.installed_server_repository.clone();
+    let settings_repo = app_state.settings_repository.clone();
+    let event_bus = application_services.event_bus.clone();
+
+    connect_enabled_server(
+        space_id.clone(),
+        server_id.clone(),
+        ConnectServerOptions {
+            apply_package_update: true,
+        },
+        state,
+        gateway_state,
+        app_state,
+    )
+    .await?;
+
+    // Immediately record current_version = latest_available_version so the
+    // badge clears before the probe runs. The probe will confirm or refine
+    // this value from the npx cache / uv tool list.
+    if let Ok(Some(server)) = installed_repo.get_by_server_id(&space_id, &server_id).await {
+        if let Some(latest) = server.latest_available_version {
+            let _ = installed_repo
+                .update_version_cache(&server.id, Some(latest.clone()), Some(latest), Utc::now())
+                .await;
+        }
+    }
+
+    let probe = ServerVersionProbeService::new(installed_repo, settings_repo, event_bus.clone());
+    if let Err(error) = probe.probe_server(&space_id, &server_id).await {
+        warn!(
+            "[ServerManager] Post-update version probe failed for {}: {}",
+            server_id, error
+        );
+    }
+
+    event_bus.sender().emit(DomainEvent::ServerVersionChecked {
+        space_id: space_uuid,
+        server_id: server_id.clone(),
+    });
+
+    Ok(())
+}
+
+/// Connect an enabled installed server with optional one-shot package update resolution.
+async fn connect_enabled_server(
+    space_id: String,
+    server_id: String,
+    options: ConnectServerOptions,
     state: State<'_, Arc<RwLock<ServerManagerState>>>,
     gateway_state: State<'_, Arc<RwLock<crate::commands::gateway::GatewayAppState>>>,
     app_state: State<'_, AppState>,
@@ -135,6 +232,9 @@ pub async fn enable_server_v2(
         &server_definition.transport,
         &installed,
         Some(app_state.data_dir()),
+        TransportResolutionOptions {
+            apply_package_update: options.apply_package_update,
+        },
     );
 
     // Attempt connection with auto_reconnect=true to avoid starting OAuth flow
@@ -324,6 +424,7 @@ pub async fn start_auth_v2(
         &server_definition.transport,
         &installed,
         Some(app_state.data_dir()),
+        TransportResolutionOptions::default(),
     );
     let ctx = ConnectionContext::new(space_uuid, server_id.clone(), transport);
     let result = pool_service.connect_server(&ctx).await;
@@ -433,8 +534,16 @@ pub async fn retry_connection(
         }
     }
 
-    // Now enable_server_v2 will create a fresh connection with current config
-    enable_server_v2(space_id, server_id, state, gateway_state, app_state).await
+    // Fresh connection with current config (no one-shot package update).
+    connect_enabled_server(
+        space_id,
+        server_id,
+        ConnectServerOptions::default(),
+        state,
+        gateway_state,
+        app_state,
+    )
+    .await
 }
 
 /// Logout server - Clear OAuth tokens but keep enabled

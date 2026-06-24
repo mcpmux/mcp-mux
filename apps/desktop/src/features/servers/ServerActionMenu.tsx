@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import {
   MoreVertical,
   Settings,
@@ -78,6 +79,7 @@ export function ServerActionMenu({
   onCloneAccount,
   onUninstall,
 }: ServerActionMenuProps) {
+  const { t } = useTranslation('servers');
   const showUpdateNow =
     isPackageManaged &&
     isEnabled &&
@@ -88,8 +90,8 @@ export function ServerActionMenu({
   const showLockToCurrentVersion =
     isPackageManaged && onLockToCurrentVersion != null && updatePolicy !== 'pinned';
   const updateLabel = latestVersion
-    ? `Update available: v${latestVersion}`
-    : 'Update available';
+    ? t('actions.updateAvailableVersion', { version: latestVersion })
+    : t('actions.updateAvailable');
 
   return (
     <DropdownMenu>
@@ -97,15 +99,15 @@ export function ServerActionMenu({
         <button
           type="button"
           className="relative p-2 text-sm rounded-lg bg-[rgb(var(--surface-hover))] border border-[rgb(var(--border))] text-[rgb(var(--foreground))]/70 hover:bg-[rgb(var(--surface-elevated))] hover:text-[rgb(var(--foreground))] transition-colors"
-          title="More actions"
-          aria-label="More actions"
+          title={t('actions.moreActions')}
+          aria-label={t('actions.moreActions')}
           data-testid={`action-menu-${serverId}`}
         >
           <MoreVertical className="h-4 w-4" />
           {hasUpdateAvailable && (
             <span
               className="absolute top-1 right-1 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-[rgb(var(--surface-hover))]"
-              aria-label="Update available"
+              aria-label={t('actions.updateBadge')}
               data-testid={`update-badge-${serverId}`}
             />
           )}
@@ -122,17 +124,17 @@ export function ServerActionMenu({
         )}
         <DropdownMenuAction
           icon={Settings}
-          label={hasInputs ? 'Configure' : 'Settings'}
+          label={hasInputs ? t('actions.configure') : t('actions.settings')}
           onSelect={onConfigure}
           data-testid={`configure-server-${serverId}`}
         />
         {isEnabled && (
-          <DropdownMenuAction icon={RefreshCw} label="Refresh" onSelect={onRefresh} />
+          <DropdownMenuAction icon={RefreshCw} label={t('actions.refresh')} onSelect={onRefresh} />
         )}
         {showUpdateNow && !hasUpdateAvailable && (
           <DropdownMenuAction
             icon={Download}
-            label="Update now"
+            label={t('actions.updateNow')}
             onSelect={onUpdateNow}
             data-testid={`update-now-${serverId}`}
           />
@@ -140,7 +142,7 @@ export function ServerActionMenu({
         {showCheckForUpdate && (
           <DropdownMenuAction
             icon={Search}
-            label="Check for update"
+            label={t('actions.checkForUpdate')}
             onSelect={onCheckForUpdate}
             data-testid={`check-update-${serverId}`}
           />
@@ -148,7 +150,7 @@ export function ServerActionMenu({
         {showLockToCurrentVersion && (
           <DropdownMenuAction
             icon={Lock}
-            label="Lock to current version"
+            label={t('actions.lockVersion')}
             onSelect={onLockToCurrentVersion}
             data-testid={`lock-version-${serverId}`}
           />
@@ -156,27 +158,27 @@ export function ServerActionMenu({
         {isOAuth && isEnabled && (
           <DropdownMenuAction
             icon={RotateCcw}
-            label="Reconnect"
+            label={t('actions.reconnect')}
             onSelect={onReconnect}
             variant="warning"
           />
         )}
         <DropdownMenuAction
           icon={FileText}
-          label="View logs"
+          label={t('actions.viewLogs')}
           onSelect={onViewLogs}
           data-testid={`view-logs-${serverId}`}
         />
         <DropdownMenuAction
           icon={Code}
-          label="View definition"
+          label={t('actions.viewDefinition')}
           onSelect={onViewDefinition}
           data-testid={`view-definition-${serverId}`}
         />
         {canCloneAccount && onCloneAccount && (
           <DropdownMenuAction
             icon={Copy}
-            label="Add another account…"
+            label={t('actions.cloneAccount')}
             onSelect={onCloneAccount}
             data-testid={`clone-account-${serverId}`}
           />
@@ -184,7 +186,7 @@ export function ServerActionMenu({
         <DropdownMenuSeparator />
         <DropdownMenuAction
           icon={Trash2}
-          label="Uninstall"
+          label={t('actions.uninstall')}
           onSelect={onUninstall}
           variant="danger"
           data-testid={`uninstall-menu-${serverId}`}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Card,
   CardHeader,
@@ -20,12 +21,15 @@ import {
   buildPendingServerUpdates,
   type ServerPendingUpdate,
 } from '@/features/servers/server-pending-updates.helpers';
-import { useDomainEvents } from '@/hooks/useDomainEvents';
-import { pendingUpdateKey } from '@/features/servers/server-pending-updates.helpers';
-import { ServerPendingUpdatesList } from './ServerPendingUpdatesList';
-import { getUpdatePolicyOptions } from '@/features/servers/server-update-policy.helpers';
+import { useDomainEvents } from '@/lib/backend/events/useDomainEvents';
+import {
+  pendingUpdateKey,
+  ServerPendingUpdatesList,
+} from './ServerPendingUpdatesList';
 
-/** Format an ISO timestamp for display in settings. */
+/**
+ * Format an ISO timestamp for display in settings.
+ */
 function formatCheckedAt(value: string | null | undefined): string | null {
   if (!value) {
     return null;
@@ -38,8 +42,11 @@ function formatCheckedAt(value: string | null | undefined): string | null {
 }
 
 interface ServerUpdatesSectionProps {
+  /** Show a success toast (title, optional message). */
   onSuccess?: (title: string, message?: string) => void;
+  /** Show an error toast (title, optional message). */
   onError?: (title: string, message?: string) => void;
+  /** Show an info toast (title, optional message). */
   onInfo?: (title: string, message?: string) => void;
 }
 
@@ -51,6 +58,7 @@ export function ServerUpdatesSection({
   onError,
   onInfo,
 }: ServerUpdatesSectionProps) {
+  const { t } = useTranslation('settings');
   const [settings, setSettings] = useState<ServerUpdateSettings>({
     defaultUpdatePolicy: 'notify',
   });
@@ -63,9 +71,30 @@ export function ServerUpdatesSection({
   const [updatingAll, setUpdatingAll] = useState(false);
   const { subscribe } = useDomainEvents();
 
-  const policyOptions = useMemo(() => getUpdatePolicyOptions(), []);
+  const policyOptions = useMemo(
+    (): { value: UpdatePolicy; label: string; description: string }[] => [
+      {
+        value: 'notify',
+        label: t('serverUpdates.policy.notify'),
+        description: t('serverUpdates.policy.notifyDesc'),
+      },
+      {
+        value: 'auto',
+        label: t('serverUpdates.policy.auto'),
+        description: t('serverUpdates.policy.autoDesc'),
+      },
+      {
+        value: 'pinned',
+        label: t('serverUpdates.policy.pinned'),
+        description: t('serverUpdates.policy.pinnedDesc'),
+      },
+    ],
+    [t]
+  );
 
-  /** Load installed servers and derive which have newer packages available. */
+  /**
+   * Load installed servers and derive which have newer packages available.
+   */
   const refreshPendingUpdates = useCallback(async () => {
     setLoadingPending(true);
     try {
@@ -111,7 +140,9 @@ export function ServerUpdatesSection({
     });
   }, [refreshPendingUpdates, subscribe]);
 
-  /** Persist a new default update policy for newly installed servers. */
+  /**
+   * Persist a new default update policy for newly installed servers.
+   */
   const handlePolicyChange = async (policy: UpdatePolicy) => {
     const previous = settings;
     const next = { ...settings, defaultUpdatePolicy: policy };
@@ -127,30 +158,34 @@ export function ServerUpdatesSection({
     }
   };
 
-  /** Reconnect one server so transport resolution picks up the latest package. */
+  /**
+   * Reconnect one server so transport resolution picks up the latest package.
+   */
   const handleUpdateOne = async (update: ServerPendingUpdate) => {
     const rowKey = pendingUpdateKey(update);
     setUpdatingServerKey(rowKey);
     try {
       await updateServerPackage(update.spaceId, update.serverId);
       onSuccess?.(
-        `Updated ${update.name}`,
-        `Reconnecting with v${update.latestVersion}…`
+        t('serverUpdates.toast.updated', { name: update.name }),
+        t('serverUpdates.toast.reconnecting', { version: update.latestVersion })
       );
       await refreshPendingUpdates();
     } catch (err) {
       console.error('[Settings] Failed to update server:', err);
-      onError?.(`Failed to update ${update.name}`, String(err));
+      onError?.(t('serverUpdates.toast.failedUpdate', { name: update.name }), String(err));
     } finally {
       setUpdatingServerKey(null);
     }
   };
 
-  /** Reconnect every enabled server that has a pending package update. */
+  /**
+   * Reconnect every enabled server that has a pending package update.
+   */
   const handleUpdateAll = async () => {
     const targets = pendingUpdates.filter((update) => update.enabled);
     if (targets.length === 0) {
-      onInfo?.('No enabled servers to update', 'Enable a server first, then update.');
+      onInfo?.(t('serverUpdates.toast.noEnabled'), t('serverUpdates.toast.enableFirst'));
       return;
     }
 
@@ -173,24 +208,26 @@ export function ServerUpdatesSection({
 
     if (failures.length === 0) {
       onSuccess?.(
-        `${succeeded} server${succeeded === 1 ? '' : 's'} updated`,
-        'Reconnecting with latest packages…'
+        t('serverUpdates.toast.updatedCount', { count: succeeded }),
+        t('serverUpdates.toast.reconnectingAll')
       );
       return;
     }
 
     if (succeeded > 0) {
       onInfo?.(
-        `${succeeded} of ${targets.length} servers updated`,
-        `Failed: ${failures.join(', ')}`
+        t('serverUpdates.toast.partialUpdate', { succeeded, total: targets.length }),
+        t('serverUpdates.toast.failedList', { list: failures.join(', ') })
       );
       return;
     }
 
-    onError?.('All updates failed', failures.join(', '));
+    onError?.(t('serverUpdates.toast.failedAll'), failures.join(', '));
   };
 
-  /** Trigger a bulk npm/uv version probe across eligible servers. */
+  /**
+   * Trigger a bulk npm/uv version probe across eligible servers.
+   */
   const handleCheckAll = async () => {
     setCheckingAll(true);
     try {
@@ -202,21 +239,21 @@ export function ServerUpdatesSection({
       await refreshPendingUpdates();
 
       if (result.checked === 0) {
-        onInfo?.('No eligible servers', 'Only npx/uvx servers with notify policy are probed.');
+        onInfo?.(t('serverUpdates.toast.noEligible'), t('serverUpdates.toast.eligibleHint'));
       } else if (result.updatesAvailable > 0) {
         onInfo?.(
-          `${result.updatesAvailable} update${result.updatesAvailable === 1 ? '' : 's'} available`,
-          'Update from the list below.'
+          t('serverUpdates.toast.updatesAvailable', { count: result.updatesAvailable }),
+          t('serverUpdates.toast.updatesHint')
         );
       } else {
         onSuccess?.(
-          'All servers are up to date',
-          `Checked ${result.checked} server${result.checked === 1 ? '' : 's'}.`
+          t('serverUpdates.toast.allUpToDate'),
+          t('serverUpdates.toast.checkedCount', { count: result.checked })
         );
       }
     } catch (err) {
       console.error('[Settings] Failed to check all server updates:', err);
-      onError?.('Version check failed', String(err));
+      onError?.(t('serverUpdates.toast.failedCheck'), String(err));
     } finally {
       setCheckingAll(false);
     }
@@ -229,24 +266,22 @@ export function ServerUpdatesSection({
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Package className="h-5 w-5" />
-          Server updates
+          {t('serverUpdates.title')}
         </CardTitle>
-        <CardDescription>
-          Control how McpMux handles package updates for npx/uvx servers.
-        </CardDescription>
+        <CardDescription>{t('serverUpdates.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading…
+            {t('loading')}
           </div>
         ) : (
           <>
             <div className="flex items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <label className="text-sm font-medium" htmlFor="default-update-policy">
-                  Default update policy
+                  {t('serverUpdates.defaultPolicy')}
                 </label>
                 <p className="text-xs text-[rgb(var(--muted))] mt-1">
                   {
@@ -273,9 +308,11 @@ export function ServerUpdatesSection({
 
             <div className="flex items-center justify-between gap-4 border-t border-[rgb(var(--border-subtle))] pt-4">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium">Check for updates</p>
+                <p className="text-sm font-medium">{t('serverUpdates.checkForUpdates')}</p>
                 <p className="text-xs text-[rgb(var(--muted))] mt-1">
-                  {lastCheckedLabel ? `Last checked: ${lastCheckedLabel}` : 'Never checked'}
+                  {lastCheckedLabel
+                    ? t('serverUpdates.lastChecked', { time: lastCheckedLabel })
+                    : t('serverUpdates.neverChecked')}
                 </p>
               </div>
               <button
@@ -290,14 +327,14 @@ export function ServerUpdatesSection({
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
-                Check all
+                {t('serverUpdates.checkAll')}
               </button>
             </div>
 
             {loadingPending ? (
               <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Loading pending updates…
+                {t('serverUpdates.loadingUpdates')}
               </div>
             ) : (
               <ServerPendingUpdatesList

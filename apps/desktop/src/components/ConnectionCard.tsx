@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowRight,
   Bell,
@@ -38,6 +39,7 @@ function extractPort(url: string | null): string {
  * compact status pill rather than repeating the URL.
  */
 export function ConnectionCard() {
+  const { t } = useTranslation('dashboard');
   const viewSpace = useViewSpace();
   const navigateTo = useNavigateTo();
   const gatewayControl = useGatewayControl();
@@ -142,19 +144,19 @@ export function ConnectionCard() {
                 className="text-sm font-semibold text-[rgb(var(--card-foreground))]"
                 data-testid="connection-status-text"
               >
-                {status.running ? 'Gateway running' : 'Gateway stopped'}
+                {status.running ? t('connectionCard.running') : t('connectionCard.stopped')}
               </span>
               {status.running && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[rgb(var(--muted))] px-1.5 py-0.5 rounded-md bg-[rgb(var(--surface))] border border-[rgb(var(--border-subtle))]">
                   <Lock className="h-2.5 w-2.5" />
-                  Local only
+                  {t('connectionCard.localOnly')}
                 </span>
               )}
             </div>
             <p className="text-xs text-[rgb(var(--muted))] mt-0.5 truncate">
               {status.running
-                ? 'Accepting IDE connections on this device.'
-                : 'Start the gateway to let IDEs connect through McpMux.'}
+                ? t('connectionCard.runningDesc')
+                : t('connectionCard.stoppedDesc')}
             </p>
           </div>
         </div>
@@ -170,7 +172,7 @@ export function ConnectionCard() {
           ) : (
             <Power className="h-3.5 w-3.5" />
           )}
-          {status.running ? 'Stop' : 'Start'}
+          {status.running ? t('connectionCard.stop') : t('connectionCard.start')}
         </Button>
       </div>
 
@@ -179,7 +181,7 @@ export function ConnectionCard() {
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[rgb(var(--muted))]">
-              Endpoint
+              {t('connectionCard.endpoint')}
             </label>
             <button
               type="button"
@@ -188,9 +190,9 @@ export function ConnectionCard() {
               data-testid="connection-port-settings-link"
             >
               <Sliders className="h-3 w-3" />
-              Port {port}
+              {t('connectionCard.portLabel', { port })}
               <span className="opacity-0 group-hover:opacity-100 transition-opacity">
-                · change in Settings
+                {t('connectionCard.changeInSettings')}
               </span>
             </button>
           </div>
@@ -206,7 +208,7 @@ export function ConnectionCard() {
               }
               px-4 py-3 text-left focus:outline-none`}
             data-testid="connection-url-copy-btn"
-            title="Click to copy"
+            title={t('connectionCard.clickToCopy')}
           >
             <code
               className="flex-1 font-mono text-sm truncate select-all text-[rgb(var(--card-foreground))]"
@@ -220,16 +222,17 @@ export function ConnectionCard() {
                   ? 'text-green-600 dark:text-green-400'
                   : 'text-[rgb(var(--muted))] group-hover:text-[rgb(var(--primary))]'
               }`}
+              data-testid={copied ? 'connection-url-copied' : undefined}
             >
               {copied ? (
                 <>
                   <Check className="h-3.5 w-3.5" />
-                  Copied
+                  {t('connectionCard.copied')}
                 </>
               ) : (
                 <>
                   <Copy className="h-3.5 w-3.5" />
-                  Copy
+                  {t('connectionCard.copy')}
                 </>
               )}
             </span>
@@ -250,10 +253,10 @@ export function ConnectionCard() {
               <Bell className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
               <div className="min-w-0">
                 <p className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                  {pendingApprovals} client{pendingApprovals === 1 ? '' : 's'} waiting for approval
+                  {t('connectionCard.pendingApprovals', { count: pendingApprovals })}
                 </p>
                 <p className="text-xs text-amber-700 dark:text-amber-300 truncate">
-                  Review and approve to let them through.
+                  {t('connectionCard.pendingApprovalsDesc')}
                 </p>
               </div>
             </div>
@@ -264,12 +267,14 @@ export function ConnectionCard() {
         {/* Connect a client — the grid reuses the chromeless ConnectIDEsGrid. */}
         <div className="pt-4 border-t border-[rgb(var(--border-subtle))]">
           <div className="mb-3">
-            <p className="text-sm font-semibold text-[rgb(var(--card-foreground))]">
-              Connect a client
+            <p
+              className="text-sm font-semibold text-[rgb(var(--card-foreground))]"
+              data-testid="connect-client-heading"
+            >
+              {t('connectionCard.connectHeading')}
             </p>
             <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
-              VS Code &amp; Cursor are one-click. The rest copy a config you paste into your IDE's
-              MCP settings. Either path ends with an approval prompt here.
+              {t('connectionCard.connectDesc')}
             </p>
           </div>
           <ConnectIDEsGrid gatewayUrl={displayUrl} gatewayRunning={status.running} />

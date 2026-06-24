@@ -1,10 +1,8 @@
+import { useTranslation } from 'react-i18next';
 import { Button } from '@mcpmux/ui';
 import { Download, Loader2 } from 'lucide-react';
 
-import {
-  pendingUpdateKey,
-  type ServerPendingUpdate,
-} from '@/features/servers/server-pending-updates.helpers';
+import type { ServerPendingUpdate } from '@/features/servers/server-pending-updates.helpers';
 
 interface ServerPendingUpdatesListProps {
   updates: ServerPendingUpdate[];
@@ -14,6 +12,12 @@ interface ServerPendingUpdatesListProps {
   onUpdateAll: () => void;
 }
 
+/**
+ * Row key for per-server update-in-progress tracking.
+ */
+export function pendingUpdateKey(update: ServerPendingUpdate): string {
+  return `${update.spaceId}:${update.serverId}`;
+}
 
 /**
  * List of servers with available package updates and per-row / bulk actions.
@@ -25,6 +29,8 @@ export function ServerPendingUpdatesList({
   onUpdateOne,
   onUpdateAll,
 }: ServerPendingUpdatesListProps) {
+  const { t } = useTranslation('settings');
+
   if (updates.length === 0) {
     return null;
   }
@@ -38,9 +44,7 @@ export function ServerPendingUpdatesList({
     >
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium">
-          {updates.length === 1
-            ? '1 update available'
-            : `${updates.length} updates available`}
+          {t('serverUpdates.pending.available', { count: updates.length })}
         </p>
         <Button
           type="button"
@@ -52,12 +56,12 @@ export function ServerPendingUpdatesList({
           {updatingAll ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Updating…
+              {t('serverUpdates.pending.updating')}
             </>
           ) : (
             <>
               <Download className="h-4 w-4" />
-              Update all
+              {t('serverUpdates.pending.updateAll')}
             </>
           )}
         </Button>
@@ -77,8 +81,10 @@ export function ServerPendingUpdatesList({
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{update.name}</p>
                 <p className="text-xs text-[rgb(var(--muted))]">
-                  {update.currentVersion ? `v${update.currentVersion}` : 'current'} →{' '}
-                  v{update.latestVersion}
+                  {update.currentVersion
+                    ? `v${update.currentVersion}`
+                    : t('serverUpdates.pending.unpinned')}{' '}
+                  → v{update.latestVersion}
                 </p>
               </div>
               <Button
@@ -87,10 +93,14 @@ export function ServerPendingUpdatesList({
                 variant="secondary"
                 onClick={() => onUpdateOne(update)}
                 disabled={!update.enabled || isUpdating}
-                title={update.enabled ? undefined : 'Enable this server first'}
+                title={update.enabled ? undefined : t('serverUpdates.pending.enableFirst')}
                 data-testid={`update-server-${update.serverId}`}
               >
-                {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Update'}
+                {isUpdating ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  t('serverUpdates.pending.update')
+                )}
               </Button>
             </li>
           );

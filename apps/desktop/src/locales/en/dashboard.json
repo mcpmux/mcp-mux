@@ -1,0 +1,119 @@
+{
+  "page": {
+    "title": "Dashboard",
+    "welcome": "Welcome to McpMux — your centralized MCP server manager."
+  },
+  "statusbar": {
+    "gatewayTitle": "View connection details on the dashboard",
+    "gatewayRunning": "Gateway",
+    "gatewayPortSuffix": " · :{{port}}",
+    "gatewayStopped": "Gateway stopped",
+    "spaceLabel": "Space: {{name}}"
+  },
+  "theme": {
+    "lightMode": "Light mode",
+    "darkMode": "Dark mode"
+  },
+  "updateBanner": {
+    "brand": "McpMux",
+    "isAvailable": "is available.",
+    "updateNow": "Update now",
+    "dismissAria": "Dismiss update notification"
+  },
+  "quickLinks": {
+    "title": "Quick links",
+    "description": "Jump to any section from the sidebar",
+    "descriptions": {
+      "servers": "Manage installed backends",
+      "registry": "Browse the server registry",
+      "spaces": "Organize servers and permissions",
+      "featuresets": "Edit permission bundles",
+      "workspaces": "Bind folders to Bundles",
+      "clients": "Manage connected AI apps",
+      "settings": "Gateway, updates, and preferences"
+    }
+  },
+  "statCards": {
+    "servers": {
+      "title": "Servers",
+      "description": "MCP backends installed in this Space",
+      "metric": "Connected / Installed",
+      "ariaLabel": "Go to My Servers"
+    },
+    "featuresets": {
+      "title": "Bundles",
+      "description": "Permission bundles scoped to this Space",
+      "metric": "Active bundles",
+      "ariaLabel": "Go to Bundles"
+    },
+    "clients": {
+      "title": "Clients",
+      "description": "AI apps authorized to use your gateway",
+      "metric": "Registered clients",
+      "ariaLabel": "Go to Clients"
+    },
+    "space": {
+      "title": "Space",
+      "description": "Isolation boundary for servers and permissions",
+      "total_one": "{{count}} Space total",
+      "total_other": "{{count}} Spaces total",
+      "ariaLabel": "Go to Spaces"
+    },
+    "workspaces": {
+      "title": "Projects",
+      "description": "Folder paths mapped to Bundles",
+      "metric": "Path bindings",
+      "ariaLabel": "Go to Projects"
+    }
+  },
+  "health": {
+    "title": "Server health",
+    "description": "Enabled servers that need configuration, auth, or reconnect attention",
+    "loading": "Checking server status…",
+    "badges": {
+      "error": "Error",
+      "authRequired": "Auth required",
+      "needsSetup": "Needs setup"
+    },
+    "allGood": {
+      "title": "All enabled servers look good",
+      "description": "No missing config, auth, or connection errors in this Space."
+    },
+    "viewAllErrors": "View all errors →",
+    "viewAllServers": "View all servers →",
+    "details": {
+      "connectionError": "Connection error",
+      "authRequired": "Authentication required",
+      "missingConfig": "Missing required configuration"
+    }
+  },
+  "activity": {
+    "title": "Recent activity",
+    "description": "Latest meta-tool calls from connected MCP clients (live, last {{count}})",
+    "empty": {
+      "before": "No activity yet. Rows appear when clients invoke ",
+      "after": " tools."
+    },
+    "clientPrefix": "client {{id}}…"
+  },
+  "connectionCard": {
+    "running": "Gateway running",
+    "stopped": "Gateway stopped",
+    "localOnly": "Local only",
+    "runningDesc": "Accepting IDE connections on this device.",
+    "stoppedDesc": "Start the gateway to let IDEs connect through McpMux.",
+    "start": "Start",
+    "stop": "Stop",
+    "endpoint": "Endpoint",
+    "portLabel": "Port {{port}}",
+    "changeInSettings": "· change in Settings",
+    "clickToCopy": "Click to copy",
+    "copied": "Copied",
+    "copy": "Copy",
+    "pendingApprovals_one": "{{count}} client waiting for approval",
+    "pendingApprovals_other": "{{count}} clients waiting for approval",
+    "pendingApprovalsDesc": "Review and approve to let them through.",
+    "connectHeading": "Connect a client",
+    "connectDesc": "VS Code & Cursor are one-click. The rest copy a config you paste into your IDE's MCP settings. Either path ends with an approval prompt here."
+  }
+}

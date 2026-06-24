@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { FolderPlus, FolderOpen, Loader2, Trash2, X } from 'lucide-react';
 import { Button, useToast, ToastContainer } from '@mcpmux/ui';
@@ -25,6 +26,7 @@ export function SpaceBaseDirsModal({
   space: Space | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation('spaces');
   const [dirs, setDirs] = useState<SpaceBaseDir[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -157,7 +159,7 @@ export function SpaceBaseDirsModal({
                         onClick={() => handleRemove(dir)}
                         disabled={busy}
                         className="flex-shrink-0 rounded-lg p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-50 dark:hover:bg-red-900/20"
-                        title="Remove this folder"
+                        title={t('baseDirs.removeTitle')}
                         aria-label={`Remove ${dir.path}`}
                         data-testid={`remove-base-dir-${dir.id}`}
                       >

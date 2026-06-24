@@ -1,5 +1,6 @@
-import { useEffect, useState, useRef } from 'react';
-import { X, Download, Trash2, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { X, Download, Trash2, RefreshCw, Copy } from 'lucide-react';
 import { useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import { getServerLogs, clearServerLogs, getServerLogFile, type ServerLogEntry } from '@/lib/api/logs';
 
@@ -32,7 +33,33 @@ const SOURCE_COLORS: Record<string, string> = {
   server: 'text-cyan-400',
 };
 
+/**
+ * Formats an ISO timestamp for log display and export.
+ */
+function formatTimestamp(ts: string): string {
+  const date = new Date(ts);
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  const ms = date.getMilliseconds().toString().padStart(3, '0');
+  return `${hours}:${minutes}:${seconds}.${ms}`;
+}
+
+/**
+ * Formats a log entry as a single plain-text line for display export.
+ */
+function formatLogLine(log: ServerLogEntry): string {
+  const level = log.level.toUpperCase().padEnd(5);
+  const base = `${formatTimestamp(log.timestamp)}  ${level}  ${log.source}  ${log.message}`;
+  if (!log.metadata) {
+    return base;
+  }
+  return `${base}  ${JSON.stringify(log.metadata)}`;
+}
+
 export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogViewerProps) {
+  const { t } = useTranslation('settings');
+  const { t: tCommon } = useTranslation('common');
   const [logs, setLogs] = useState<ServerLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +70,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
   const { toasts, success, error: showError, dismiss } = useToast();
   const { confirm, ConfirmDialogElement } = useConfirm();
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -68,22 +95,30 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
     } finally {
       setLoading(false);
     }
-  };
+  }, [levelFilter, serverId]);
 
   useEffect(() => {
-    loadLogs();
-  }, [serverId, levelFilter]);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    void loadLogs();
+  }, [loadLogs]);
 
   // Auto-refresh every 2 seconds if enabled
   useEffect(() => {
     if (!autoRefresh) return;
-    
+
     const interval = setInterval(() => {
-      loadLogs();
+      void loadLogs();
     }, 2000);
-    
+
     return () => clearInterval(interval);
-  }, [autoRefresh, serverId, levelFilter]);
+  }, [autoRefresh, loadLogs]);
 
   // Track scroll position
   const handleScroll = () => {
@@ -95,9 +130,10 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
 
   const handleClearLogs = async () => {
     if (!await confirm({
-      title: 'Clear logs',
-      message: `Clear all logs for "${serverName}"? This cannot be undone.`,
-      confirmLabel: 'Clear',
+      title: t('logs.viewer.confirm.clearTitle'),
+      message: t('logs.viewer.confirm.clearMessage', { serverName }),
+      confirmLabel: t('logs.viewer.confirm.clearConfirm'),
+      cancelLabel: tCommon('actions.cancel'),
       variant: 'danger',
     })) {
       return;
@@ -106,9 +142,15 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
     try {
       await clearServerLogs(serverId);
       setLogs([]);
-      success('Logs cleared', `All logs for "${serverName}" have been cleared`);
+      success(
+        t('logs.viewer.toast.cleared'),
+        t('logs.viewer.toast.clearedBody', { serverName }),
+      );
     } catch (e) {
-      showError('Failed to clear logs', e instanceof Error ? e.message : String(e));
+      showError(
+        t('logs.viewer.toast.clearFailed'),
+        e instanceof Error ? e.message : String(e),
+      );
     }
   };
 
@@ -116,19 +158,13 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
     try {
       const filePath = await getServerLogFile(serverId);
       await navigator.clipboard.writeText(filePath);
-      success('Path copied', `Log file path copied to clipboard`);
+      success(t('logs.viewer.toast.pathCopied'), t('logs.viewer.toast.pathCopiedBody'));
     } catch (e) {
-      showError('Failed to get log file path', e instanceof Error ? e.message : String(e));
+      showError(
+        t('logs.viewer.toast.pathFailed'),
+        e instanceof Error ? e.message : String(e),
+      );
     }
-  };
-
-  const formatTimestamp = (ts: string) => {
-    const date = new Date(ts);
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    const seconds = date.getSeconds().toString().padStart(2, '0');
-    const ms = date.getMilliseconds().toString().padStart(3, '0');
-    return `${hours}:${minutes}:${seconds}.${ms}`;
   };
 
   const filteredLogs = logs.filter(log => {
@@ -138,6 +174,31 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
     return logLevelIndex >= filterLevelIndex;
   });
 
+  /** Copies all currently visible (filtered) log lines to the clipboard. */
+  const handleCopyAll = async () => {
+    if (filteredLogs.length === 0) {
+      showError(
+        t('logs.viewer.toast.nothingToCopy'),
+        t('logs.viewer.toast.nothingToCopyBody'),
+      );
+      return;
+    }
+
+    try {
+      const text = filteredLogs.map((log) => formatLogLine(log)).join('\n');
+      await navigator.clipboard.writeText(text);
+      success(
+        t('logs.viewer.toast.logsCopiedTitle'),
+        t('logs.viewer.toast.logsCopied', { count: filteredLogs.length }),
+      );
+    } catch (e) {
+      showError(
+        t('logs.viewer.toast.copyFailed'),
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <ToastContainer toasts={toasts} onClose={dismiss} />
@@ -146,7 +207,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[rgb(var(--border-subtle))]">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold">Server Logs</h2>
+            <h2 className="text-lg font-semibold">{t('logs.viewer.title')}</h2>
             <span className="text-sm text-[rgb(var(--muted))]">{serverName}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -156,7 +217,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
               onChange={(e) => setLevelFilter(e.target.value as LogLevel | 'all')}
               className="px-3 py-1.5 text-sm bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border-subtle))] rounded-lg"
             >
-              <option value="all">All Levels</option>
+              <option value="all">{t('logs.viewer.allLevels')}</option>
               {LOG_LEVELS.map(level => (
                 <option key={level} value={level}>
                   {level.toUpperCase()}
@@ -170,7 +231,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
                 onClick={loadLogs}
                 disabled={loading}
                 className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors"
-                title="Refresh logs"
+                title={t('logs.viewer.refreshTitle')}
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               </button>
@@ -181,9 +242,9 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
                     ? 'bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] border-[rgb(var(--primary))]'
                     : 'bg-[rgb(var(--surface-elevated))] border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))]'
                 }`}
-                title="Toggle auto-refresh (every 2s)"
+                title={t('logs.viewer.autoRefreshTitle')}
               >
-                Auto
+                {t('logs.viewer.autoRefresh')}
               </button>
             </div>
             
@@ -191,16 +252,26 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
             <button
               onClick={handleOpenInEditor}
               className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors"
-              title="Open log file in external editor"
+              title={t('logs.viewer.openInEditorTitle')}
             >
               <Download className="h-4 w-4" />
+            </button>
+
+            {/* Copy All */}
+            <button
+              onClick={handleCopyAll}
+              disabled={filteredLogs.length === 0}
+              className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              title={t('logs.viewer.copyAllTitle')}
+            >
+              <Copy className="h-4 w-4" />
             </button>
             
             {/* Clear Logs */}
             <button
               onClick={handleClearLogs}
               className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors text-red-400"
-              title="Clear all logs"
+              title={t('logs.viewer.clearTitle')}
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -229,7 +300,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
             <div className="text-red-400">{error}</div>
           ) : filteredLogs.length === 0 ? (
             <div className="text-center text-[rgb(var(--muted))] py-12">
-              No logs found
+              {t('logs.viewer.noLogs')}
             </div>
           ) : (
             <div className="space-y-1">
@@ -272,13 +343,14 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
         {/* Footer */}
         <div className="p-3 border-t border-[rgb(var(--border-subtle))] text-xs text-[rgb(var(--muted))] flex items-center justify-between">
           <span>
-            {filteredLogs.length} log{filteredLogs.length !== 1 ? 's' : ''}
-            {levelFilter !== 'all' && ` (filtered from ${logs.length} total)`}
+            {t('logs.viewer.logCount', { count: filteredLogs.length })}
+            {levelFilter !== 'all' &&
+              t('logs.viewer.filteredFrom', { total: logs.length })}
           </span>
           {autoRefresh && (
             <span className="flex items-center gap-2">
               <span className="h-2 w-2 bg-[rgb(var(--primary))] rounded-full animate-pulse" />
-              Auto-refreshing...
+              {t('logs.viewer.autoRefreshing')}
             </span>
           )}
         </div>

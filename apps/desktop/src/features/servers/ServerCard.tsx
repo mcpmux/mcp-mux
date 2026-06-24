@@ -7,9 +7,10 @@
  * - Auth progress display during OAuth
  */
 
-import { Loader2, AlertCircle, Clock, Wifi, WifiOff } from "lucide-react";
-import type { ServerViewModel } from "../../types/registry";
-import type { ConnectionStatus } from "@/lib/api/serverManager";
+import { Loader2, AlertCircle, Clock, Wifi, WifiOff } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import type { ServerViewModel } from '../../types/registry';
+import type { ConnectionStatus } from '@/lib/api/serverManager';
 
 interface ServerCardProps {
   server: ServerViewModel;
@@ -31,6 +32,9 @@ interface ServerCardProps {
   onUninstall?: () => void;
 }
 
+/**
+ * Installed-server card with connection status and primary actions.
+ */
 export function ServerCard({
   server,
   runtimeStatus,
@@ -45,22 +49,23 @@ export function ServerCard({
   onConfigure,
   onUninstall,
 }: ServerCardProps) {
-  // Determine effective status
-  const status: ConnectionStatus = runtimeStatus ?? (server.enabled ? "disconnected" : "disconnected");
+  const { t } = useTranslation('servers');
 
-  // Status display helpers
+  const status: ConnectionStatus =
+    runtimeStatus ?? (server.enabled ? 'disconnected' : 'disconnected');
+
   const getStatusIcon = () => {
     switch (status) {
-      case "connected":
+      case 'connected':
         return <Wifi className="w-4 h-4 text-[rgb(var(--success))]" />;
-      case "connecting":
-      case "refreshing":
+      case 'connecting':
+      case 'refreshing':
         return <Loader2 className="w-4 h-4 text-[rgb(var(--primary))] animate-spin" />;
-      case "authenticating":
+      case 'authenticating':
         return <Clock className="w-4 h-4 text-[rgb(var(--warning))]" />;
-      case "oauth_required":
+      case 'oauth_required':
         return <AlertCircle className="w-4 h-4 text-[rgb(var(--warning))]" />;
-      case "error":
+      case 'error':
         return <AlertCircle className="w-4 h-4 text-[rgb(var(--error))]" />;
       default:
         return <WifiOff className="w-4 h-4 text-[rgb(var(--muted))]" />;
@@ -69,43 +74,45 @@ export function ServerCard({
 
   const getStatusText = () => {
     switch (status) {
-      case "connected":
-        return "Connected";
-      case "connecting":
-        return "Connecting...";
-      case "refreshing":
-        return "Refreshing...";
-      case "authenticating":
-        return authRemainingSeconds !== undefined
-          ? `Authenticating... (${Math.ceil(authRemainingSeconds / 60)}m remaining)`
-          : "Authenticating...";
-      case "oauth_required":
-        return "Authentication required";
-      case "error":
-        return server.last_error ?? "Connection error";
+      case 'connected':
+        return t('status.connected');
+      case 'connecting':
+        return t('status.connecting');
+      case 'refreshing':
+        return t('status.refreshing');
+      case 'authenticating':
+        if (authRemainingSeconds !== undefined) {
+          return t('status.authenticatingMinutesRemaining', {
+            minutes: Math.ceil(authRemainingSeconds / 60),
+          });
+        }
+        return t('status.authenticating');
+      case 'oauth_required':
+        return t('status.authRequired');
+      case 'error':
+        return server.last_error ?? t('connection.error');
       default:
-        return server.enabled ? "Disabled" : "Not enabled";
+        return server.enabled ? t('status.disabled') : t('status.notEnabled');
     }
   };
 
   const getStatusColor = () => {
     switch (status) {
-      case "connected":
-        return "text-[rgb(var(--success))]";
-      case "connecting":
-      case "refreshing":
-        return "text-[rgb(var(--primary))]";
-      case "authenticating":
-      case "oauth_required":
-        return "text-[rgb(var(--warning))]";
-      case "error":
-        return "text-[rgb(var(--error))]";
+      case 'connected':
+        return 'text-[rgb(var(--success))]';
+      case 'connecting':
+      case 'refreshing':
+        return 'text-[rgb(var(--primary))]';
+      case 'authenticating':
+      case 'oauth_required':
+        return 'text-[rgb(var(--warning))]';
+      case 'error':
+        return 'text-[rgb(var(--error))]';
       default:
-        return "text-[rgb(var(--muted))]";
+        return 'text-[rgb(var(--muted))]';
     }
   };
 
-  // Primary action button
   const renderPrimaryAction = () => {
     if (!server.enabled) {
       return (
@@ -114,12 +121,11 @@ export function ServerCard({
           disabled={isLoading}
           className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] transition-colors disabled:opacity-50"
         >
-          {isLoading ? "Enabling..." : "Enable"}
+          {isLoading ? t('actions.enabling') : t('actions.enable')}
         </button>
       );
     }
 
-    // Check for missing required inputs
     if (server.missing_required_inputs && onConfigure) {
       return (
         <button
@@ -127,47 +133,51 @@ export function ServerCard({
           disabled={isLoading}
           className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--warning))] text-white hover:bg-[rgb(var(--warning))]/90 transition-colors disabled:opacity-50"
         >
-          Configure
+          {t('actions.configure')}
         </button>
       );
     }
 
     switch (status) {
-      case "connecting":
-      case "refreshing":
+      case 'connecting':
+      case 'refreshing':
         return (
           <button
             disabled
             className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--surface-elevated))] text-[rgb(var(--muted))] cursor-not-allowed flex items-center gap-2"
           >
             <Loader2 className="w-4 h-4 animate-spin" />
-            {status === "refreshing" ? "Refreshing..." : "Connecting..."}
+            {status === 'refreshing' ? t('status.refreshing') : t('status.connecting')}
           </button>
         );
 
-      case "connected":
+      case 'connected':
         return (
           <button
             onClick={onDisable}
             disabled={isLoading}
             className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-50"
           >
-            Disconnect
+            {t('actions.disconnect')}
           </button>
         );
 
-      case "oauth_required":
+      case 'oauth_required':
         return (
           <button
             onClick={onConnect}
             disabled={isLoading}
             className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--success))] text-white hover:bg-[rgb(var(--success))]/90 transition-colors disabled:opacity-50"
           >
-            {isLoading ? "Connecting..." : hasConnectedBefore ? "Reconnect" : "Connect"}
+            {isLoading
+              ? t('actions.connecting')
+              : hasConnectedBefore
+                ? t('actions.reconnect')
+                : t('actions.connect')}
           </button>
         );
 
-      case "authenticating":
+      case 'authenticating':
         return (
           <div className="flex items-center gap-2">
             <button
@@ -175,37 +185,40 @@ export function ServerCard({
               className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--warning))] text-white cursor-not-allowed flex items-center gap-2"
             >
               <Loader2 className="w-4 h-4 animate-spin" />
-              Authenticating...
+              {t('actions.authenticating')}
             </button>
             <button
               onClick={onCancel}
               className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
             >
-              Cancel
+              {t('actions.cancel')}
             </button>
           </div>
         );
 
-      case "error":
+      case 'error':
         return (
           <button
             onClick={onRetry ?? onConnect}
             disabled={isLoading}
             className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--error))] text-white hover:bg-[rgb(var(--error))]/90 transition-colors disabled:opacity-50"
           >
-            {isLoading ? "Retrying..." : hasConnectedBefore ? "Reconnect" : "Retry"}
+            {isLoading
+              ? t('actions.retrying')
+              : hasConnectedBefore
+                ? t('actions.reconnect')
+                : t('actions.retry')}
           </button>
         );
 
       default:
-        // Disconnected but enabled - try to connect
         return (
           <button
             onClick={onConnect}
             disabled={isLoading}
             className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] transition-colors disabled:opacity-50"
           >
-            Connect
+            {t('actions.connect')}
           </button>
         );
     }
@@ -214,18 +227,23 @@ export function ServerCard({
   return (
     <div className="p-4 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-elevated))] hover:border-[rgb(var(--border))] transition-colors">
       <div className="flex items-center justify-between">
-        {/* Server Info */}
         <div className="flex items-center gap-4 min-w-0 flex-1">
-          {/* Icon */}
           <div className="w-10 h-10 rounded-lg bg-[rgb(var(--surface-dim))] flex items-center justify-center flex-shrink-0 text-xl">
             {server.icon?.startsWith('http') ? (
-              <img src={server.icon} alt="" className="w-7 h-7 object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.append(document.createTextNode('📦')); }} />
+              <img
+                src={server.icon}
+                alt=""
+                className="w-7 h-7 object-contain"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  e.currentTarget.parentElement!.append(document.createTextNode('📦'));
+                }}
+              />
             ) : (
-              server.icon || "🔌"
+              server.icon || '🔌'
             )}
           </div>
 
-          {/* Name & Status */}
           <div className="min-w-0 flex-1">
             <h3 className="font-semibold text-[rgb(var(--foreground))] truncate">
               {server.name}
@@ -237,29 +255,26 @@ export function ServerCard({
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {renderPrimaryAction()}
 
-          {/* Disable button (if enabled and not the primary action) */}
-          {server.enabled && status !== "connected" && status !== "disconnected" && (
+          {server.enabled && status !== 'connected' && status !== 'disconnected' && (
             <button
               onClick={onDisable}
               disabled={isLoading}
               className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))] transition-colors disabled:opacity-50"
             >
-              Disable
+              {t('actions.disable')}
             </button>
           )}
 
-          {/* Uninstall button */}
           {onUninstall && (
             <button
               onClick={onUninstall}
               disabled={isLoading}
               className="px-4 py-2 text-sm rounded-lg border border-[rgb(var(--error))]/30 text-[rgb(var(--error))] hover:bg-[rgb(var(--error))]/10 transition-colors disabled:opacity-50"
             >
-              Uninstall
+              {t('actions.uninstall')}
             </button>
           )}
         </div>

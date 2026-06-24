@@ -88,6 +88,9 @@ export async function saveServerInputs(
   envOverrides?: Record<string, string>,
   argsAppend?: string[],
   extraHeaders?: Record<string, string>,
+  defaultParams?: Record<string, unknown>,
+  defaultParamsStrategy?: 'fill' | 'override',
+  displayNameOverride?: string,
   updatePolicy?: string,
   pinnedVersion?: string
 ): Promise<void> {
@@ -98,6 +101,9 @@ export async function saveServerInputs(
     envOverrides,
     argsAppend,
     extraHeaders,
+    defaultParams,
+    defaultParamsStrategy,
+    displayNameOverride,
     updatePolicy,
     pinnedVersion,
   });

@@ -1,17 +1,16 @@
 /**
  * WorkspaceBindingSheet — the "map this folder?" prompt and its disable switch.
- *
- * The sheet pops on a `workspace-needs-binding` event, but only when the
- * "Ask to map new folders" setting is on (default). These tests drive the
- * event through the (globally mocked) Tauri `listen` and assert the sheet
- * honors the setting, plus that the in-sheet "stop asking" link turns it off.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { renderWithI18n } from '../render-with-i18n.helpers';
+
+const { workspaceHandlers } = vi.hoisted(() => ({
+  workspaceHandlers: new Map<string, (payload: unknown) => void>(),
+}));
 
 vi.mock('@/lib/api/workspaceBindings', () => ({
   createWorkspaceBinding: vi.fn(),
@@ -30,23 +29,30 @@ vi.mock('@/lib/api/featureSets', () => ({
     ]),
 }));
 
+vi.mock('@/lib/backend/events', () => ({
+  useWorkspaceEvents: () => ({
+    subscribe: (channel: string, cb: (payload: unknown) => void) => {
+      workspaceHandlers.set(channel, cb);
+      return () => workspaceHandlers.delete(channel);
+    },
+    subscribeMany: vi.fn(() => () => {}),
+  }),
+}));
+
 import { WorkspaceBindingSheet } from '@/features/workspaces/WorkspaceBindingSheet';
 
 const TITLE = /This folder is using your Starter set/i;
 
 /** Invoke the captured `workspace-needs-binding` listener with a payload. */
 function fireNeedsBinding(overrides: Record<string, unknown> = {}) {
-  const call = vi.mocked(listen).mock.calls.find((c) => c[0] === 'workspace-needs-binding');
-  if (!call) throw new Error('workspace-needs-binding listener was not registered');
-  const cb = call[1] as (e: { payload: unknown }) => unknown | Promise<unknown>;
+  const cb = workspaceHandlers.get('workspace-needs-binding');
+  if (!cb) throw new Error('workspace-needs-binding listener was not registered');
   return cb({
-    payload: {
-      client_id: 'c',
-      session_id: 's',
-      space_id: 's1',
-      workspace_root: '/home/u/proj',
-      ...overrides,
-    },
+    client_id: 'c',
+    session_id: 's',
+    space_id: 's1',
+    workspace_root: '/home/u/proj',
+    ...overrides,
   });
 }
 
@@ -59,19 +65,20 @@ function mockPromptEnabled(enabled: boolean) {
 
 describe('WorkspaceBindingSheet – mapping prompt toggle', () => {
   beforeEach(() => {
+    workspaceHandlers.clear();
     vi.mocked(invoke).mockReset();
   });
 
   it('shows the sheet when the prompt setting is enabled', async () => {
     mockPromptEnabled(true);
-    render(<WorkspaceBindingSheet />);
+    renderWithI18n(<WorkspaceBindingSheet />);
     await fireNeedsBinding();
     expect(await screen.findByText(TITLE)).toBeTruthy();
   });
 
   it('does NOT show the sheet when the prompt setting is disabled', async () => {
     mockPromptEnabled(false);
-    render(<WorkspaceBindingSheet />);
+    renderWithI18n(<WorkspaceBindingSheet />);
     await fireNeedsBinding();
     await waitFor(() => expect(screen.queryByText(TITLE)).toBeNull());
   });
@@ -79,7 +86,7 @@ describe('WorkspaceBindingSheet – mapping prompt toggle', () => {
   it('the in-sheet "stop asking" link disables the setting and closes', async () => {
     const user = userEvent.setup();
     mockPromptEnabled(true);
-    render(<WorkspaceBindingSheet />);
+    renderWithI18n(<WorkspaceBindingSheet />);
     await fireNeedsBinding();
     await screen.findByText(TITLE);
 
@@ -95,7 +102,7 @@ describe('WorkspaceBindingSheet – mapping prompt toggle', () => {
 
   it('locks the Space picker when the folder is base-dir scoped', async () => {
     mockPromptEnabled(true);
-    render(<WorkspaceBindingSheet />);
+    renderWithI18n(<WorkspaceBindingSheet />);
     await fireNeedsBinding({ space_locked: true });
     await screen.findByText(TITLE);
 
@@ -105,7 +112,7 @@ describe('WorkspaceBindingSheet – mapping prompt toggle', () => {
 
   it('leaves the Space picker editable for an ordinary unmapped folder', async () => {
     mockPromptEnabled(true);
-    render(<WorkspaceBindingSheet />);
+    renderWithI18n(<WorkspaceBindingSheet />);
     await fireNeedsBinding({ space_locked: false });
     await screen.findByText(TITLE);
 

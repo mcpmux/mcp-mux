@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Loader2, Save, Trash2, X } from 'lucide-react';
 import { Button, useConfirm, useToast, ToastContainer } from '@mcpmux/ui';
 import type { Space } from '@/lib/api/spaces';
@@ -17,6 +18,7 @@ export interface SpacePanelProps {
  * Slide-out panel for editing a Space's display metadata (name, icon, description).
  */
 export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelProps) {
+  const { t } = useTranslation(['spaces', 'common']);
   const [name, setName] = useState(space.name);
   const [icon, setIcon] = useState(space.icon ?? '🌐');
   const [description, setDescription] = useState(space.description ?? '');
@@ -47,7 +49,7 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
   const handleSave = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError('Name is required');
+      setError(t('panel.validation.nameRequired'));
       return;
     }
 
@@ -59,12 +61,12 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
         icon: icon.trim() || undefined,
         description: description.trim() || undefined,
       });
-      success('Space updated', `"${updated.name}" has been saved.`);
+      success(t('panel.toast.updated'), t('panel.toast.updatedBody', { name: updated.name }));
       onSaved(updated);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
-      showError('Save failed', msg);
+      showError(t('panel.toast.saveFailed'), msg);
     } finally {
       setIsSaving(false);
     }
@@ -75,10 +77,10 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
    */
   const handleDelete = async () => {
     const ok = await confirm({
-      title: 'Delete Space',
-      message: `Are you sure you want to delete "${space.name}"? This action cannot be undone.`,
-      confirmLabel: 'Delete',
-      cancelLabel: 'Cancel',
+      title: t('panel.confirm.deleteTitle'),
+      message: t('panel.confirm.deleteMessage', { name: space.name }),
+      confirmLabel: t('panel.confirm.deleteConfirm'),
+      cancelLabel: t('common:actions.cancel'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -86,11 +88,11 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
     setIsDeleting(true);
     try {
       await deleteSpace(space.id);
-      success('Space deleted', `"${space.name}" has been removed.`);
+      success(t('panel.toast.deleted'), t('panel.toast.deletedBody', { name: space.name }));
       onDeleted(space.id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      showError('Delete failed', msg);
+      showError(t('panel.toast.deleteFailed'), msg);
     } finally {
       setIsDeleting(false);
     }
@@ -119,7 +121,7 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
               <h2 className="text-lg font-bold truncate">{space.name}</h2>
               {space.is_default && (
                 <span className="inline-flex mt-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                  Default
+                  {t('panel.default')}
                 </span>
               )}
             </div>
@@ -128,7 +130,7 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
-            aria-label="Close panel"
+            aria-label={t('panel.closeAria')}
             data-testid="space-panel-close"
           >
             <X className="h-5 w-5" />
@@ -145,7 +147,7 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))] mb-2">
-            Icon
+            {t('panel.icon')}
           </label>
           <div className="flex gap-2 flex-wrap">
             {SPACE_ICON_OPTIONS.map((emoji) => (
@@ -167,7 +169,7 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))] mb-2">
-            Name
+            {t('panel.name')}
           </label>
           <input
             type="text"
@@ -180,13 +182,13 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
 
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))] mb-2">
-            Description
+            {t('panel.description')}
           </label>
           <input
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Optional description"
+            placeholder={t('panel.descriptionPlaceholder')}
             className="w-full px-3 py-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
             data-testid="space-panel-description"
           />
@@ -207,7 +209,7 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
           ) : (
             <Save className="h-4 w-4 mr-2" />
           )}
-          Save Changes
+          {t('panel.saveChanges')}
         </Button>
         {!space.is_default && (
           <Button
@@ -219,7 +221,7 @@ export function SpacePanel({ space, onClose, onSaved, onDeleted }: SpacePanelPro
             data-testid="space-panel-delete"
           >
             <Trash2 className="h-4 w-4 mr-2" />
-            Delete Space
+            {t('panel.deleteSpace')}
           </Button>
         )}
       </div>

@@ -32,6 +32,7 @@
     "test:ci": "pnpm test",
     "test:coverage": "cargo llvm-cov --workspace --html && vitest run -c tests/ts/vitest.config.ts --coverage",
     "lint": "pnpm -r lint && cargo clippy --workspace -- -D warnings",
+    "lint:i18n": "node scripts/lint-i18n.mjs",
     "lint:fix": "pnpm -r lint:fix && cargo clippy --workspace --fix --allow-dirty",
     "format": "prettier --write . && cargo fmt --all",
     "format:check": "prettier --check . && cargo fmt --all --check",

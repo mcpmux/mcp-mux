@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import type { ServerViewModel } from '../../types/registry';
 
@@ -30,14 +31,14 @@ export const STATUS_FILTER_IDS: StatusFilterKey[] = [
 /**
  * Resolve the display label for a transport filter chip.
  */
-export function getTransportFilterLabel(id: TransportFilter): string {
+export function getTransportFilterLabel(t: TFunction<'servers'>, id: TransportFilter): string {
   switch (id) {
     case 'all':
-      return 'All';
+      return t('filters.transportAll');
     case 'stdio':
-      return 'Stdio';
+      return t('filters.transportStdio');
     case 'http':
-      return 'HTTP';
+      return t('filters.transportHttp');
     default: {
       const _exhaustive: never = id;
       return _exhaustive;
@@ -48,16 +49,16 @@ export function getTransportFilterLabel(id: TransportFilter): string {
 /**
  * Resolve the display label for a status filter chip.
  */
-export function getStatusFilterLabel(id: StatusFilterKey): string {
+export function getStatusFilterLabel(t: TFunction<'servers'>, id: StatusFilterKey): string {
   switch (id) {
     case 'connected':
-      return 'Connected';
+      return t('filters.statusConnected');
     case 'disabled':
-      return 'Disabled';
+      return t('filters.statusDisabled');
     case 'error':
-      return 'Error';
+      return t('filters.statusError');
     case 'needs_setup':
-      return 'Needs Setup';
+      return t('filters.statusNeedsSetup');
     default: {
       const _exhaustive: never = id;
       return _exhaustive;
@@ -222,23 +223,29 @@ export function computeServerCountSummary(
 /**
  * Compact inline summary next to the My Servers title.
  */
-export function formatServerCountSummary(summary: ServerCountSummary): string {
-  return `${summary.connected} connected, ${summary.installed - summary.connected} other`;
+export function formatServerCountSummary(
+  t: TFunction<'servers'>,
+  summary: ServerCountSummary
+): string {
+  return t('countSummary.inline', summary);
 }
 
 /**
  * Tooltip lines for the server count hover panel.
  */
-export function describeServerCountSummary(summary: ServerCountSummary): string[] {
+export function describeServerCountSummary(
+  t: TFunction<'servers'>,
+  summary: ServerCountSummary
+): string[] {
   const lines = [
-    `${summary.installed} installed`,
-    `${summary.connected} connected`,
-    `${summary.disabled} disabled`,
-    `${summary.error} with errors`,
+    t('countSummary.installed', { count: summary.installed }),
+    t('countSummary.connected', { count: summary.connected }),
+    t('countSummary.disabled', { count: summary.disabled }),
+    t('countSummary.error', { count: summary.error }),
   ];
 
   if (summary.needsSetup > 0) {
-    lines.push(`${summary.needsSetup} need setup`);
+    lines.push(t('countSummary.needsSetup', { count: summary.needsSetup }));
   }
 
   return lines;
@@ -248,21 +255,25 @@ export function describeServerCountSummary(summary: ServerCountSummary): string[
  * Human-readable lines describing the currently applied server list filters.
  */
 export function describeAppliedServerFilters(
+  t: TFunction<'servers'>,
   transportFilter: TransportFilter,
   activeStatusFilters: ReadonlySet<StatusFilterKey>
 ): string[] {
-  const transportLabel = getTransportFilterLabel(transportFilter);
+  const transportLabel = getTransportFilterLabel(t, transportFilter);
 
   const statusLabel =
     activeStatusFilters.size === 0
-      ? 'All'
+      ? t('filters.all')
       : STATUS_FILTER_IDS.filter((filterId) => activeStatusFilters.has(filterId))
-          .map((filterId) => getStatusFilterLabel(filterId))
+          .map((filterId) => getStatusFilterLabel(t, filterId))
           .join(', ');
 
   if (countActiveServerFilters(transportFilter, activeStatusFilters) === 0) {
-    return ['No filters applied', 'Showing all servers'];
+    return [t('filters.noFiltersApplied'), t('filters.showingAll')];
   }
 
-  return [`Transport: ${transportLabel}`, `Status: ${statusLabel}`];
+  return [
+    t('filters.transportLine', { label: transportLabel }),
+    t('filters.statusLine', { label: statusLabel }),
+  ];
 }

@@ -2,6 +2,7 @@
  * Source Badge component for displaying server installation source.
  */
 
+import { useTranslation } from 'react-i18next';
 import type { InstallationSource } from '@/types/registry';
 
 interface SourceBadgeProps {
@@ -13,21 +14,18 @@ interface SourceBadgeProps {
 
 /**
  * Badge showing where a server was installed from.
- *
- * - Clone: Indigo badge — derived from another installed server
- * - Registry: Blue badge — installed from official/bundled registry
- * - Config File: Green badge — synced from user's JSON config file
- * - Manual: Gray badge — manually entered via UI
  */
 export function SourceBadge({ source, clonedFrom, className = '' }: SourceBadgeProps) {
+  const { t } = useTranslation('common');
+
   if (clonedFrom) {
     return (
       <span
         className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 ${className}`}
-        title={`Cloned from ${clonedFrom}`}
+        title={t('sourceBadge.cloneTitle', { serverId: clonedFrom })}
         data-testid="source-badge-clone"
       >
-        Clone of {clonedFrom}
+        {t('sourceBadge.cloneLabel', { serverId: clonedFrom })}
       </span>
     );
   }
@@ -41,9 +39,9 @@ export function SourceBadge({ source, clonedFrom, className = '' }: SourceBadgeP
       return (
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 ${className}`}
-          title="Installed from registry"
+          title={t('sourceBadge.registryTitle')}
         >
-          Registry
+          {t('sourceBadge.registry')}
         </span>
       );
 
@@ -51,9 +49,9 @@ export function SourceBadge({ source, clonedFrom, className = '' }: SourceBadgeP
       return (
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 ${className}`}
-          title={`From config: ${source.file_path}`}
+          title={t('sourceBadge.configFileTitle', { path: source.file_path })}
         >
-          Config File
+          {t('sourceBadge.configFile')}
         </span>
       );
 
@@ -61,9 +59,9 @@ export function SourceBadge({ source, clonedFrom, className = '' }: SourceBadgeP
       return (
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 ${className}`}
-          title="Manually added"
+          title={t('sourceBadge.manualTitle')}
         >
-          Manual
+          {t('sourceBadge.manual')}
         </span>
       );
 

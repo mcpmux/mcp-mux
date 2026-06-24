@@ -1,29 +1,29 @@
+import type { TFunction } from 'i18next';
 import type { UpdatePolicy } from '@/lib/api/settings';
 
-/** Update policy option for display in the UI. */
-export interface UpdatePolicyOption {
+/**
+ * Per-server update policy labels for Configure and Settings.
+ */
+export function getUpdatePolicyOptions(t: TFunction<'servers'>): {
   value: UpdatePolicy;
   label: string;
   description: string;
-}
-
-/** Per-server update policy labels for Configure and Settings. */
-export function getUpdatePolicyOptions(): UpdatePolicyOption[] {
+}[] {
   return [
     {
       value: 'notify',
-      label: 'Notify',
-      description: 'Check for updates and show a badge when one is available.',
+      label: t('updatePolicy.notify.label'),
+      description: t('updatePolicy.notify.description'),
     },
     {
       value: 'auto',
-      label: 'Auto',
-      description: 'Automatically update to the latest version on connect.',
+      label: t('updatePolicy.auto.label'),
+      description: t('updatePolicy.auto.description'),
     },
     {
       value: 'pinned',
-      label: 'Pinned',
-      description: 'Lock to a specific version; never auto-update.',
+      label: t('updatePolicy.pinned.label'),
+      description: t('updatePolicy.pinned.description'),
     },
   ];
 }
@@ -42,17 +42,23 @@ const FLOATING_NPM_TAGS = new Set([
   'release',
 ]);
 
-/** Returns true for npm dist-tags that do not pin an exact semver. */
+/**
+ * Returns true for npm dist-tags that do not pin an exact semver.
+ */
 export function npmVersionTagIsFloating(tag: string): boolean {
   return FLOATING_NPM_TAGS.has(tag.trim().replace(/^@/, '').toLowerCase());
 }
 
-/** Returns true when `version` matches a basic semver shape. */
+/**
+ * Returns true when `version` matches a basic semver shape.
+ */
 export function isValidSemver(version: string): boolean {
   return BASIC_SEMVER_PATTERN.test(version.trim());
 }
 
-/** Returns true when the stdio transport uses npx or uvx/uv (package-managed). */
+/**
+ * Returns true when the stdio transport uses npx or uvx/uv (package-managed).
+ */
 export function isPackageManagedTransport(command: string | undefined): boolean {
   if (!command) {
     return false;
@@ -60,7 +66,9 @@ export function isPackageManagedTransport(command: string | undefined): boolean 
   return command === 'npx' || command === 'uvx' || command === 'uv';
 }
 
-/** Single UI guard mirroring Rust `probe_update_available` plus pinned/auto exclusion. */
+/**
+ * Single UI guard mirroring Rust `probe_update_available` plus pinned/auto exclusion.
+ */
 export function shouldShowPackageUpdate(input: {
   updatePolicy: UpdatePolicy;
   latestVersion: string | null | undefined;
@@ -87,7 +95,9 @@ export function shouldShowPackageUpdate(input: {
   return isNewerVersion(input.latestVersion, input.currentVersion);
 }
 
-/** Returns true when the npx package arg already tracks a floating dist-tag like `@latest`. */
+/**
+ * Returns true when the npx package arg already tracks a floating dist-tag like `@latest`.
+ */
 function packageUsesFloatingNpmTag(
   transportCommand: string | undefined,
   transportArgs: string[] | undefined
@@ -103,7 +113,9 @@ function packageUsesFloatingNpmTag(
   return version != null && npmVersionTagIsFloating(version);
 }
 
-/** Parse a semver-ish version string into numeric segments for comparison. */
+/**
+ * Parse a semver-ish version string into numeric segments for comparison.
+ */
 function parseVersionParts(version: string): number[] {
   return version
     .trim()
@@ -115,7 +127,9 @@ function parseVersionParts(version: string): number[] {
     .filter((part) => !Number.isNaN(part));
 }
 
-/** Returns true when `latest` is strictly newer than `current`. */
+/**
+ * Returns true when `latest` is strictly newer than `current`.
+ */
 function isNewerVersion(latest: string, current: string): boolean {
   const latestParts = parseVersionParts(latest);
   const currentParts = parseVersionParts(current);
@@ -141,7 +155,11 @@ function isNewerVersion(latest: string, current: string): boolean {
  * Precedence:
  *  1. `pinnedVersion` — explicit user pin (`UpdatePolicy::Pinned`)
  *  2. `installedVersion` — actual installed version written by the backend probe
- *  3. `argVersion` — semver baked into transport args, used as a cold-cache fallback
+ *     (`current_version` DB column, populated from npx cache / `uv tool list`).
+ *     This takes precedence over args so that post-update the badge clears even
+ *     when the args still carry the pre-update semver.
+ *  3. `argVersion` — semver baked into transport args (`@semver` / `==semver`),
+ *     used as a cold-cache fallback before the server has ever been probed.
  */
 export function resolveCurrentPackageVersion(input: {
   pinnedVersion?: string | null;
@@ -160,7 +178,9 @@ export function resolveCurrentPackageVersion(input: {
   return resolveArgPackageVersion(input.transportCommand, input.transportArgs);
 }
 
-/** Extract an exact semver baked into the npx/uvx package argument, if any. */
+/**
+ * Extract an exact semver baked into the npx/uvx package argument, if any.
+ */
 function resolveArgPackageVersion(
   transportCommand: string | undefined,
   transportArgs: string[] | undefined
@@ -195,7 +215,9 @@ function resolveArgPackageVersion(
   return null;
 }
 
-/** Split an npm package arg into name and optional version tag. */
+/**
+ * Split an npm package arg into name and optional version tag.
+ */
 function splitNpmPackageArg(packageArg: string): [string, string | null] {
   if (packageArg.startsWith('@') && packageArg.indexOf('@', 1) > 0) {
     const scopedSplit = packageArg.indexOf('@', 1);
@@ -208,22 +230,22 @@ function splitNpmPackageArg(packageArg: string): [string, string | null] {
   return [packageArg, null];
 }
 
-/** Locate the npm package argument after `-y` / `--yes`. */
+/**
+ * Locate the npm package argument after `-y` / `--yes`.
+ */
 function findNpxPackageArg(args: string[]): string | undefined {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (
-      (arg === '-y' || arg === '--yes') &&
-      index + 1 < args.length &&
-      !args[index + 1].startsWith('-')
-    ) {
+    if ((arg === '-y' || arg === '--yes') && index + 1 < args.length && !args[index + 1].startsWith('-')) {
       return args[index + 1];
     }
   }
   return args.find((arg) => !arg.startsWith('-') && arg !== '--');
 }
 
-/** Locate the first positional package arg for uvx / uv run. */
+/**
+ * Locate the first positional package arg for uvx / uv run.
+ */
 function findUvxPackageArg(command: string, args: string[]): string | undefined {
   if (command === 'uvx') {
     return args.find((arg) => !arg.startsWith('-'));

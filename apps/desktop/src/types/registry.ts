@@ -103,6 +103,10 @@ export interface InstalledServerState {
   extra_headers: Record<string, string>;
   oauth_connected: boolean;
   source: InstallationSource; // How this server was installed
+  /** Per-invoke default params merged into tool calls. */
+  default_params?: Record<string, unknown>;
+  /** Merge strategy for default_params: 'fill' (caller wins) or 'override' (defaults win). */
+  default_params_strategy?: 'fill' | 'override';
   /** User-supplied display label that survives user-config sync. */
   display_name_override?: string | null;
   /** Source server ID if this was cloned. */
@@ -139,6 +143,10 @@ export interface ServerViewModel extends ServerDefinition {
   args_append?: string[];
   /** Extra HTTP headers (http only) */
   extra_headers?: Record<string, string>;
+  /** Per-invoke default params merged into tool calls. */
+  default_params?: Record<string, unknown>;
+  /** Merge strategy for default_params. */
+  default_params_strategy?: 'fill' | 'override';
   /** User-supplied display label that survives user-config sync. */
   display_name_override?: string | null;
   /** Source server ID if this was cloned. */

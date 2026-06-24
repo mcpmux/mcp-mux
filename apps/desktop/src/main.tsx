@@ -1,26 +1,24 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { invoke } from '@tauri-apps/api/core';
-import { emit } from '@tauri-apps/api/event';
+import './i18n';
+import { logWebAdminBuildInfo } from '@/lib/build-info.helpers';
+import { initTauriTestApi } from '@/lib/backend/shell';
+import '@/lib/monaco-setup';
 import App from './App';
 import './index.css';
 
-// Expose Tauri API for E2E testing
-// This allows tests to set up data and simulate events programmatically
-declare global {
-  interface Window {
-    __TAURI_TEST_API__?: {
-      invoke: typeof invoke;
-      emit: typeof emit;
-    };
-  }
+/**
+ * Boot the SPA after the web-admin build banner finishes (keeps console.group unbroken).
+ */
+async function bootstrap(): Promise<void> {
+  initTauriTestApi();
+  await logWebAdminBuildInfo();
+
+  ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
 }
 
-// Always expose for now - can be gated by env var if needed
-window.__TAURI_TEST_API__ = { invoke, emit };
-
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+void bootstrap();

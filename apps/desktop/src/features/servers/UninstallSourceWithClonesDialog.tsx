@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { AlertCircle } from 'lucide-react';
 import { resolveInstalledDisplayName } from './server-display-name.helpers';
 
@@ -27,6 +28,8 @@ export function UninstallSourceWithClonesDialog({
   onUninstallSourceOnly,
   onUninstallAll,
 }: UninstallSourceWithClonesDialogProps) {
+  const { t } = useTranslation(['servers', 'common']);
+
   if (!open) {
     return null;
   }
@@ -57,15 +60,15 @@ export function UninstallSourceWithClonesDialog({
             <AlertCircle className="h-5 w-5 text-amber-500" />
           </div>
           <div>
-            <h3 className="text-base font-semibold">Uninstall account clones?</h3>
+            <h3 className="text-base font-semibold">{t('uninstallClones.title')}</h3>
             <p className="mt-2 text-sm text-[rgb(var(--muted))]">
-              <strong>{sourceName}</strong> has{' '}
-              {dependents.length === 1 ? '1 account clone' : `${dependents.length} account clones`}{' '}
-              ({dependentList}).
+              {t('uninstallClones.description', {
+                count: dependents.length,
+                sourceName,
+                dependentList,
+              })}
             </p>
-            <p className="mt-2 text-sm text-[rgb(var(--muted))]">
-              You can uninstall only the source, or uninstall all {totalCount} installs at once.
-            </p>
+            <p className="mt-2 text-sm text-[rgb(var(--muted))]">{t('uninstallClones.hint')}</p>
           </div>
         </div>
         <div className="flex flex-wrap justify-end gap-3">
@@ -74,21 +77,21 @@ export function UninstallSourceWithClonesDialog({
             className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface-active))] px-4 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
             data-testid="uninstall-clones-cancel"
           >
-            Cancel
+            {t('common:actions.cancel')}
           </button>
           <button
             onClick={onUninstallSourceOnly}
             className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface-active))] px-4 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
             data-testid="uninstall-clones-source-only"
           >
-            Uninstall source only
+            {t('uninstallClones.sourceOnly')}
           </button>
           <button
             onClick={onUninstallAll}
             className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-red-700"
             data-testid="uninstall-clones-all"
           >
-            Uninstall all ({totalCount})
+            {t('uninstallClones.uninstallAll', { count: totalCount })}
           </button>
         </div>
       </div>

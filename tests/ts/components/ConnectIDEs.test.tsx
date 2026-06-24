@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { renderWithI18n } from '../render-with-i18n.helpers';
 
 vi.mock('../../../apps/desktop/src/lib/api/clientInstall', () => ({
   addToVscode: vi.fn(),
@@ -22,14 +23,14 @@ describe('ConnectIDEs', () => {
   });
 
   it('should render the card title', () => {
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
     expect(screen.getByText('Connect Your IDEs')).toBeInTheDocument();
   });
 
   it('should render icon buttons for all entries', () => {
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
     expect(screen.getByTestId('client-icon-vscode')).toBeInTheDocument();
@@ -39,7 +40,7 @@ describe('ConnectIDEs', () => {
   });
 
   it('should show labels under icons', () => {
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
     expect(screen.getByText('VS Code')).toBeInTheDocument();
@@ -50,7 +51,7 @@ describe('ConnectIDEs', () => {
 
   it('should show popover when clicking a client icon', async () => {
     const user = userEvent.setup();
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
 
@@ -62,7 +63,7 @@ describe('ConnectIDEs', () => {
 
   it('should close popover when clicking the same icon again', async () => {
     const user = userEvent.setup();
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
 
@@ -77,7 +78,7 @@ describe('ConnectIDEs', () => {
     const user = userEvent.setup();
     mockedAddVscode.mockResolvedValue(undefined);
 
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
 
@@ -91,7 +92,7 @@ describe('ConnectIDEs', () => {
     const user = userEvent.setup();
     mockedAddCursor.mockResolvedValue(undefined);
 
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
 
@@ -103,7 +104,7 @@ describe('ConnectIDEs', () => {
 
   it('should show Copy command for Claude Code', async () => {
     const user = userEvent.setup();
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
 
@@ -122,7 +123,7 @@ describe('ConnectIDEs', () => {
       configurable: true,
     });
 
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
 
@@ -143,7 +144,7 @@ describe('ConnectIDEs', () => {
       configurable: true,
     });
 
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
 
@@ -157,7 +158,7 @@ describe('ConnectIDEs', () => {
 
   it('should disable Add button when gateway not running', async () => {
     const user = userEvent.setup();
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={false} />
     );
 
@@ -168,7 +169,7 @@ describe('ConnectIDEs', () => {
   });
 
   it('should show orange indicator when gateway not running', () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={false} />
     );
     const dot = container.querySelector('.bg-orange-500');
@@ -176,7 +177,7 @@ describe('ConnectIDEs', () => {
   });
 
   it('should show gateway URL', () => {
-    render(
+    renderWithI18n(
       <ConnectIDEs gatewayUrl="http://localhost:45818" gatewayRunning={true} />
     );
     expect(screen.getByText('http://localhost:45818')).toBeInTheDocument();

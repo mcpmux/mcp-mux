@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useTranslation } from 'react-i18next';
 import {
   Card,
   CardHeader,
@@ -23,6 +23,7 @@ import {
   XCircle,
   Trash2,
   BarChart3,
+  Sparkles,
   Github,
   Bug,
   Lightbulb,
@@ -31,33 +32,43 @@ import {
   Network,
   RotateCcw,
   AlertCircle,
+  Globe,
 } from 'lucide-react';
 import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
+import { AboutSection } from './AboutSection';
 import { ServerUpdatesSection } from './ServerUpdatesSection';
+import { getMetaToolsEnabled, setMetaToolsEnabled } from '@/lib/api/metaTools';
+import {
+  getAdminWebSettings,
+  getGatewayPortSettings,
+  getLogsPath,
+  getStartupSettings,
+  openLogsFolder,
+  resetGatewayPort,
+  setGatewayPort,
+  setGatewayPublicUrl,
+  updateAdminWebSettings,
+  updateStartupSettings,
+  type AdminWebSettings,
+  type GatewayPortSettings,
+  type StartupSettings,
+} from '@/lib/api/settings';
+import { getLogRetentionDays, setLogRetentionDays as saveLogRetentionDays } from '@/lib/api/logs';
+import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
-
-interface StartupSettings {
-  autoLaunch: boolean;
-  startMinimized: boolean;
-  closeToTray: boolean;
-}
-
-interface GatewayPortSettings {
-  configuredPort: number | null;
-  defaultPort: number;
-  activePort: number | null;
-}
+import { isTauri } from '@/lib/api/transport';
 
 export function SettingsPage() {
+  const { t } = useTranslation(['settings', 'common']);
   const theme = useTheme();
   const setTheme = useAppStore((state) => state.setTheme);
   const analyticsEnabled = useAnalyticsEnabled();
   const setAnalyticsEnabled = useAppStore((state) => state.setAnalyticsEnabled);
   const [logsPath, setLogsPath] = useState<string>('');
   const [openingLogs, setOpeningLogs] = useState(false);
-  const { toasts, success, error } = useToast();
+  const { toasts, success, error, info } = useToast();
   const gatewayControl = useGatewayControl();
 
   // Startup settings state
@@ -73,28 +84,36 @@ export function SettingsPage() {
   const [logRetentionDays, setLogRetentionDays] = useState<number>(30);
   const [savingRetention, setSavingRetention] = useState(false);
 
-  // Workspace mapping prompt — pops the "map this folder?" sheet when a client
-  // opens an unmapped folder. On by default.
-  const [mappingPromptEnabled, setMappingPromptEnabled] = useState(true);
-  const [savingMappingPrompt, setSavingMappingPrompt] = useState(false);
-
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
+  const [metaToolsEnabled, setMetaToolsEnabledState] = useState<boolean>(true);
+  const [loadingMetaTools, setLoadingMetaTools] = useState(true);
 
   // Gateway port — persisted user override, the default the app ships
   // with, and the port the currently-running gateway is bound to. When
   // saved ≠ active, the user has to restart the gateway to apply.
   const [portSettings, setPortSettings] = useState<GatewayPortSettings | null>(null);
   const [portDraft, setPortDraft] = useState<string>('');
+  const [publicUrlDraft, setPublicUrlDraft] = useState<string>('');
   const [portError, setPortError] = useState<string | null>(null);
+  const [publicUrlError, setPublicUrlError] = useState<string | null>(null);
   const [savingPort, setSavingPort] = useState(false);
+  const [savingPublicUrl, setSavingPublicUrl] = useState(false);
   const [resettingPort, setResettingPort] = useState(false);
+
+  const [adminWeb, setAdminWeb] = useState<AdminWebSettings | null>(null);
+  const [adminPortDraft, setAdminPortDraft] = useState('45819');
+  const [adminCfDomainDraft, setAdminCfDomainDraft] = useState('');
+  const [loadingAdminWeb, setLoadingAdminWeb] = useState(true);
+  const [savingAdminWeb, setSavingAdminWeb] = useState(false);
 
   const loadPortSettings = async () => {
     try {
-      const s = await invoke<GatewayPortSettings>('get_gateway_port_settings');
+      const s = await getGatewayPortSettings();
       setPortSettings(s);
       setPortDraft(String(s.configuredPort ?? s.defaultPort));
+      setPublicUrlDraft(s.publicUrl ?? '');
       setPortError(null);
+      setPublicUrlError(null);
     } catch (err) {
       console.error('Failed to load gateway port settings:', err);
     }
@@ -104,13 +123,64 @@ export function SettingsPage() {
     loadPortSettings();
   }, []);
 
+  const loadAdminWebSettings = async () => {
+    try {
+      const s = await getAdminWebSettings();
+      setAdminWeb(s);
+      setAdminPortDraft(String(s.port));
+      setAdminCfDomainDraft(s.cfTeamDomain);
+    } catch (err) {
+      console.error('Failed to load web admin settings:', err);
+    } finally {
+      setLoadingAdminWeb(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isTauri()) {
+      setLoadingAdminWeb(false);
+      return;
+    }
+    loadAdminWebSettings();
+  }, []);
+
+  const persistAdminWeb = async (next: AdminWebSettings) => {
+    setSavingAdminWeb(true);
+    try {
+      await updateAdminWebSettings(next);
+      setAdminWeb(next);
+      setAdminPortDraft(String(next.port));
+      setAdminCfDomainDraft(next.cfTeamDomain);
+      success(
+        t('toast.webAdminUpdated'),
+        next.enabled
+          ? t('toast.webAdminEnabled', { port: next.port })
+          : t('toast.webAdminStopped')
+      );
+    } catch (err) {
+      error(t('toast.failedWebAdmin'), String(err));
+    } finally {
+      setSavingAdminWeb(false);
+    }
+  };
+
+  const handleSaveAdminPort = async () => {
+    if (!adminWeb) return;
+    const parsed = validatePort(adminPortDraft);
+    if ('error' in parsed) {
+      error(t('toast.invalidAdminPort'), parsed.error);
+      return;
+    }
+    await persistAdminWeb({ ...adminWeb, port: parsed.port });
+  };
+
   const validatePort = (raw: string): { port: number } | { error: string } => {
     const trimmed = raw.trim();
-    if (!trimmed) return { error: 'Enter a port number' };
-    if (!/^\d+$/.test(trimmed)) return { error: 'Port must be a number' };
+    if (!trimmed) return { error: t('validation.enterPort') };
+    if (!/^\d+$/.test(trimmed)) return { error: t('validation.portMustBeNumber') };
     const n = Number(trimmed);
     if (n < 1024 || n > 65535) {
-      return { error: 'Port must be between 1024 and 65535' };
+      return { error: t('validation.portRange') };
     }
     return { port: n };
   };
@@ -124,37 +194,53 @@ export function SettingsPage() {
     setPortError(null);
     setSavingPort(true);
     try {
-      await invoke('set_gateway_port', { port: parsed.port });
+      await setGatewayPort(parsed.port);
       await loadPortSettings();
       success(
-        'Gateway port saved',
+        t('toast.gatewayPortSaved'),
         portSettings?.activePort && portSettings.activePort !== parsed.port
-          ? `Restart the gateway for port ${parsed.port} to take effect.`
-          : `Next gateway start will use port ${parsed.port}.`
+          ? t('toast.gatewayRestartForPort', { port: parsed.port })
+          : t('toast.gatewayNextStartPort', { port: parsed.port })
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setPortError(msg);
-      error('Failed to save port', msg);
+      error(t('toast.failedSavePort'), msg);
     } finally {
       setSavingPort(false);
+    }
+  };
+
+  const handleSavePublicUrl = async () => {
+    setSavingPublicUrl(true);
+    try {
+      await setGatewayPublicUrl(publicUrlDraft);
+      await loadPortSettings();
+      setPublicUrlError(null);
+      success(t('toast.publicUrlSaved'), t('toast.publicUrlHint'));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPublicUrlError(msg);
+      error(t('toast.failedSavePublicUrl'), msg);
+    } finally {
+      setSavingPublicUrl(false);
     }
   };
 
   const handleResetPort = async () => {
     setResettingPort(true);
     try {
-      await invoke('reset_gateway_port');
+      await resetGatewayPort();
       await loadPortSettings();
       success(
-        'Reset to default',
+        t('toast.resetToDefault'),
         portSettings && portSettings.activePort !== portSettings.defaultPort
-          ? `Restart the gateway for port ${portSettings.defaultPort} to take effect.`
-          : `Next gateway start will use port ${portSettings?.defaultPort ?? ''}.`
+          ? t('toast.gatewayRestartForPort', { port: portSettings.defaultPort })
+          : t('toast.gatewayNextStartPort', { port: portSettings?.defaultPort ?? '' })
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      error('Failed to reset port', msg);
+      error(t('toast.failedResetPort'), msg);
     } finally {
       setResettingPort(false);
     }
@@ -166,14 +252,36 @@ export function SettingsPage() {
       await loadPortSettings();
       if (outcome.status === 'cancelled') return;
       success(
-        'Gateway restarted',
+        t('toast.gatewayRestarted'),
         outcome.fellBackToDynamic
-          ? `Saved port was unavailable — now running on :${outcome.port} instead.`
-          : 'The new port is now active.'
+          ? t('toast.gatewayFellBack', { port: outcome.port })
+          : t('toast.gatewayPortActive')
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      error('Failed to restart gateway', msg);
+      error(t('toast.failedRestartGateway'), msg);
+    }
+  };
+
+  useEffect(() => {
+    getMetaToolsEnabled()
+      .then((v) => setMetaToolsEnabledState(v))
+      .catch((e) => console.error('Failed to load meta_tools_enabled', e))
+      .finally(() => setLoadingMetaTools(false));
+  }, []);
+
+  const handleToggleMetaTools = async (next: boolean) => {
+    const previous = metaToolsEnabled;
+    setMetaToolsEnabledState(next);
+    try {
+      await setMetaToolsEnabled(next);
+      success(
+        next ? t('toast.metaToolsEnabled') : t('toast.metaToolsDisabled'),
+        next ? t('toast.metaToolsEnabledDesc') : t('toast.metaToolsDisabledDesc')
+      );
+    } catch (e) {
+      setMetaToolsEnabledState(previous);
+      error(t('toast.failedToSaveSetting'), e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -181,7 +289,7 @@ export function SettingsPage() {
   useEffect(() => {
     const loadLogsPath = async () => {
       try {
-        const path = await invoke<string>('get_logs_path');
+        const path = await getLogsPath();
         setLogsPath(path);
       } catch (error) {
         console.error('Failed to get logs path:', error);
@@ -194,7 +302,7 @@ export function SettingsPage() {
   useEffect(() => {
     const loadRetention = async () => {
       try {
-        const days = await invoke<number>('get_log_retention_days');
+        const days = await getLogRetentionDays();
         setLogRetentionDays(days);
       } catch (err) {
         console.error('Failed to load log retention setting:', err);
@@ -207,7 +315,7 @@ export function SettingsPage() {
   useEffect(() => {
     const loadStartupSettings = async () => {
       try {
-        const settings = await invoke<StartupSettings>('get_startup_settings');
+        const settings = await getStartupSettings();
         setStartupSettings(settings);
       } catch (error) {
         console.error('Failed to load startup settings:', error);
@@ -218,58 +326,33 @@ export function SettingsPage() {
     loadStartupSettings();
   }, []);
 
-  // Load workspace mapping-prompt setting on mount.
-  useEffect(() => {
-    invoke<boolean>('get_workspace_mapping_prompt_enabled')
-      .then(setMappingPromptEnabled)
-      .catch((err) => console.error('Failed to load mapping prompt setting:', err));
-  }, []);
-
-  const updateMappingPrompt = async (enabled: boolean) => {
-    const prev = mappingPromptEnabled;
-    setMappingPromptEnabled(enabled);
-    setSavingMappingPrompt(true);
-    try {
-      await invoke('set_workspace_mapping_prompt_enabled', { enabled });
-      success(
-        'Settings saved',
-        enabled
-          ? "You'll be asked to map new folders."
-          : 'New-folder prompts are off — unmapped folders still use your default Starter set.'
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      error('Failed to save setting', msg);
-      setMappingPromptEnabled(prev);
-    } finally {
-      setSavingMappingPrompt(false);
-    }
-  };
-
   // Save startup settings when they change
-  const updateStartupSetting = async (key: keyof StartupSettings, value: boolean) => {
+  const updateStartupSetting = async (
+    key: keyof StartupSettings,
+    value: boolean
+  ) => {
     console.log(`[Settings] Updating ${key} to ${value}`);
-
+    
     // Save old state for rollback
     const oldSettings = { ...startupSettings };
     const newSettings = { ...startupSettings, [key]: value };
-
+    
     // Update UI immediately for better UX
     setStartupSettings(newSettings);
     setSavingSettings(true);
-
+    
     try {
       console.log('[Settings] Invoking update_startup_settings:', newSettings);
-      await invoke('update_startup_settings', { settings: newSettings });
+      await updateStartupSettings(newSettings);
       console.log('[Settings] Successfully saved:', newSettings);
-
+      
       // Show success toast
-      success('Settings saved', 'Your preferences have been updated');
+      success(t('toast.settingsSaved'), t('toast.preferencesUpdated'));
     } catch (err) {
       console.error('[Settings] Failed to save:', err);
       // Show error toast
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      error('Failed to save settings', errorMessage);
+      error(t('toast.failedToSaveSettings'), errorMessage);
       // Revert on error
       setStartupSettings(oldSettings);
     } finally {
@@ -282,14 +365,16 @@ export function SettingsPage() {
     setLogRetentionDays(days);
     setSavingRetention(true);
     try {
-      await invoke('set_log_retention_days', { days });
+      await saveLogRetentionDays(days);
       success(
-        'Settings saved',
-        `Log retention set to ${days === 0 ? 'keep forever' : `${days} days`}`
+        t('toast.settingsSaved'),
+        t('toast.logRetention', {
+          value: days === 0 ? t('toast.keepForever') : t('toast.days', { count: days }),
+        })
       );
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      error('Failed to save setting', errorMessage);
+      error(t('toast.failedToSaveSetting'), errorMessage);
       setLogRetentionDays(oldDays);
     } finally {
       setSavingRetention(false);
@@ -299,7 +384,7 @@ export function SettingsPage() {
   const handleOpenLogs = async () => {
     setOpeningLogs(true);
     try {
-      await invoke('open_logs_folder');
+      await openLogsFolder();
     } catch (error) {
       console.error('Failed to open logs folder:', error);
     } finally {
@@ -309,54 +394,45 @@ export function SettingsPage() {
 
   return (
     <>
-      <ToastContainer
-        toasts={toasts}
-        onClose={(id) => toasts.find((t) => t.id === id)?.onClose(id)}
-      />
+      <ToastContainer toasts={toasts} onClose={(id) => toasts.find(t => t.id === id)?.onClose(id)} />
       {gatewayControl.ConfirmDialogElement}
-      <div className="space-y-6">
+      <div className="space-y-6" data-testid="settings-page">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-[rgb(var(--muted))]">
-            App preferences, startup behavior, and updates.
-          </p>
+          <h1 className="text-2xl font-bold" data-testid="settings-title">
+            {t('title')}
+          </h1>
+          <p className="text-[rgb(var(--muted))]">{t('subtitle')}</p>
         </div>
 
-        {/* Updates Section */}
-        <UpdateChecker />
+      {/* Updates / About — desktop shows updater; web-admin shows build info */}
+      {isTauri() ? <UpdateChecker /> : <AboutSection />}
 
-        {/* Server Package Updates Section */}
-        <ServerUpdatesSection
-          onSuccess={(title, message) => success(title, message)}
-          onError={(title, message) => error(title, message)}
-        />
+      <ServerUpdatesSection onSuccess={success} onError={error} onInfo={info} />
 
-        {/* Startup & System Tray Section - always show toggles so e2e and slow backends see the section */}
-        <Card data-testid="settings-startup-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Power className="h-5 w-5" />
-              Startup & System Tray
-            </CardTitle>
-            <CardDescription>
-              Control how McpMux starts and behaves with the system tray.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loadingSettings ? (
-              <div className="mb-4 flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading…
-              </div>
-            ) : null}
-            <div className="space-y-6">
+      {/* Startup & System Tray Section - always show toggles so e2e and slow backends see the section */}
+      <Card data-testid="settings-startup-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Power className="h-5 w-5" />
+            {t('startup.title')}
+          </CardTitle>
+          <CardDescription>{t('startup.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loadingSettings ? (
+            <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))] mb-4">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t('loading')}
+            </div>
+          ) : null}
+          <div className="space-y-6">
               <div className="flex items-center justify-between gap-4">
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <Power className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <Power className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
                   <div>
-                    <label className="text-sm font-medium">Launch at Startup</label>
-                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                      Start McpMux automatically when you log in to your system
+                    <label className="text-sm font-medium">{t('startup.autoLaunch')}</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      {t('startup.autoLaunchDesc')}
                     </p>
                   </div>
                 </div>
@@ -372,12 +448,12 @@ export function SettingsPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4">
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <Minimize2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <Minimize2 className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
                   <div>
-                    <label className="text-sm font-medium">Start Minimized</label>
-                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                      Launch in background to system tray (requires auto-launch enabled)
+                    <label className="text-sm font-medium">{t('startup.startMinimized')}</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      {t('startup.startMinimizedDesc')}
                     </p>
                   </div>
                 </div>
@@ -393,13 +469,12 @@ export function SettingsPage() {
               </div>
 
               <div className="flex items-center justify-between gap-4">
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <XCircle className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
                   <div>
-                    <label className="text-sm font-medium">Close to Tray</label>
-                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                      Keep running in system tray when window is closed (use "Quit" from tray to
-                      exit)
+                    <label className="text-sm font-medium">{t('startup.closeToTray')}</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      {t('startup.closeToTrayDesc')}
                     </p>
                   </div>
                 </div>
@@ -417,336 +492,509 @@ export function SettingsPage() {
               {savingSettings && (
                 <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving settings...
+                  {t('savingSettings')}
                 </div>
               )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Gateway Section — port override + reset to default */}
+      <Card data-testid="settings-gateway-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Network className="h-5 w-5" />
+            {t('gateway.title')}
+          </CardTitle>
+          <CardDescription>{t('gateway.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {portSettings === null ? (
+            <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t('loading')}
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Gateway Section — port override + reset to default */}
-        <Card data-testid="settings-gateway-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Network className="h-5 w-5" />
-              Gateway
-            </CardTitle>
-            <CardDescription>
-              The local port every AI client connects to. Changing it takes effect on the next
-              gateway start — existing IDE configs pointing at the old port will need updating.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {portSettings === null ? (
-              <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading…
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-start gap-3">
-                  <Network className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
-                  <div className="min-w-0 flex-1">
-                    <label htmlFor="gateway-port-input" className="text-sm font-medium">
-                      Gateway port
-                    </label>
-                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                      Default is <span className="font-mono">{portSettings.defaultPort}</span>. Use
-                      a port between 1024 and 65535.
-                      {portSettings.activePort !== null ? (
-                        <>
-                          {' '}
-                          Currently running on{' '}
-                          <span className="font-mono" data-testid="gateway-active-port">
-                            :{portSettings.activePort}
-                          </span>
-                          .
-                        </>
-                      ) : (
-                        ' Gateway is stopped.'
-                      )}
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <input
-                        id="gateway-port-input"
-                        type="number"
-                        inputMode="numeric"
-                        min={1024}
-                        max={65535}
-                        value={portDraft}
-                        onChange={(e) => {
-                          setPortDraft(e.target.value);
-                          if (portError) setPortError(null);
-                        }}
-                        disabled={savingPort || resettingPort}
-                        className="focus:ring-primary-500/40 w-28 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2"
-                        data-testid="gateway-port-input"
-                      />
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={handleSavePort}
-                        disabled={
-                          savingPort ||
-                          resettingPort ||
-                          portDraft.trim() ===
-                            String(portSettings.configuredPort ?? portSettings.defaultPort)
-                        }
-                        data-testid="gateway-port-save-btn"
-                      >
-                        {savingPort ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Save
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={handleResetPort}
-                        disabled={
-                          savingPort || resettingPort || portSettings.configuredPort === null
-                        }
-                        data-testid="gateway-port-reset-btn"
-                        title={
-                          portSettings.configuredPort === null
-                            ? 'Already using the default port'
-                            : `Reset to ${portSettings.defaultPort}`
-                        }
-                      >
-                        {resettingPort ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                        )}
-                        Reset to default
-                      </Button>
-                    </div>
-                    {portError ? (
-                      <p
-                        className="mt-2 text-xs text-red-600 dark:text-red-400"
-                        data-testid="gateway-port-error"
-                      >
-                        {portError}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-
-                {portSettings.activePort !== null &&
-                portSettings.configuredPort !== null &&
-                portSettings.configuredPort !== portSettings.activePort ? (
-                  <div
-                    className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-700/60 dark:bg-amber-900/20"
-                    data-testid="gateway-port-restart-hint"
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <Network className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <label
+                    htmlFor="gateway-port-input"
+                    className="text-sm font-medium"
                   >
-                    <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-                    <div className="flex-1">
-                      <p className="font-semibold text-amber-800 dark:text-amber-200">
-                        Restart required
-                      </p>
-                      <p className="mt-0.5 text-amber-700 dark:text-amber-300">
-                        Saved port <span className="font-mono">:{portSettings.configuredPort}</span>{' '}
-                        doesn't match the running port{' '}
-                        <span className="font-mono">:{portSettings.activePort}</span>. Restart the
-                        gateway to apply — your IDE configs will need to point at the new URL.
-                      </p>
-                    </div>
+                    {t('gateway.portLabel')}
+                  </label>
+                  <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                    {t('gateway.portDescDefault', { port: portSettings.defaultPort })}{' '}
+                    {portSettings.activePort !== null ? (
+                      <>
+                        {t('gateway.portDescRunning', { port: portSettings.activePort })}
+                      </>
+                    ) : (
+                      t('gateway.portDescStopped')
+                    )}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <input
+                      id="gateway-port-input"
+                      type="number"
+                      inputMode="numeric"
+                      min={1024}
+                      max={65535}
+                      value={portDraft}
+                      onChange={(e) => {
+                        setPortDraft(e.target.value);
+                        if (portError) setPortError(null);
+                      }}
+                      disabled={savingPort || resettingPort}
+                      className="w-28 px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+                      data-testid="gateway-port-input"
+                    />
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSavePort}
+                      disabled={
+                        savingPort ||
+                        resettingPort ||
+                        portDraft.trim() === String(portSettings.configuredPort ?? portSettings.defaultPort)
+                      }
+                      data-testid="gateway-port-save-btn"
+                    >
+                      {savingPort ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : null}
+                      {t('common:actions.save')}
+                    </Button>
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={handleRestartGateway}
-                      data-testid="gateway-restart-btn"
+                      onClick={handleResetPort}
+                      disabled={
+                        savingPort ||
+                        resettingPort ||
+                        portSettings.configuredPort === null
+                      }
+                      data-testid="gateway-port-reset-btn"
+                      title={
+                        portSettings.configuredPort === null
+                          ? t('gateway.alreadyDefault')
+                          : t('gateway.resetTitle', { port: portSettings.defaultPort })
+                      }
                     >
-                      Restart gateway
+                      {resettingPort ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-4 w-4 mr-2" />
+                      )}
+                      {t('gateway.resetToDefault')}
                     </Button>
                   </div>
-                ) : null}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Workspaces Section */}
-        <Card data-testid="settings-workspaces-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FolderOpen className="h-5 w-5" />
-              Workspaces
-            </CardTitle>
-            <CardDescription>
-              How McpMux handles folders your connected apps open.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
-                <FolderOpen className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
-                <div>
-                  <label className="text-sm font-medium">Ask to map new folders</label>
-                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                    When a connected app opens a folder you haven't mapped, show a prompt to give
-                    it a specific feature set. The folder already works with your default Starter
-                    set either way.
-                  </p>
+                  {portError ? (
+                    <p
+                      className="text-xs text-red-600 dark:text-red-400 mt-2"
+                      data-testid="gateway-port-error"
+                    >
+                      {portError}
+                    </p>
+                  ) : null}
                 </div>
               </div>
-              <Switch
-                checked={mappingPromptEnabled}
-                onCheckedChange={updateMappingPrompt}
-                disabled={savingMappingPrompt}
-                data-testid="workspace-mapping-prompt-switch"
-              />
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Appearance Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Appearance</CardTitle>
-            <CardDescription>Customize the look and feel of McpMux.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <Globe className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <label
+                    htmlFor="gateway-public-url-input"
+                    className="text-sm font-medium"
+                  >
+                    {t('gateway.publicUrlLabel')}
+                  </label>
+                  <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                    {t('gateway.publicUrlDesc')}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <input
+                      id="gateway-public-url-input"
+                      type="url"
+                      placeholder={t('gateway.publicUrlPlaceholder')}
+                      value={publicUrlDraft}
+                      onChange={(e) => {
+                        setPublicUrlDraft(e.target.value);
+                        if (publicUrlError) setPublicUrlError(null);
+                      }}
+                      disabled={savingPublicUrl}
+                      className="min-w-[16rem] flex-1 px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-primary-500/40"
+                      data-testid="gateway-public-url-input"
+                    />
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSavePublicUrl}
+                      disabled={
+                        savingPublicUrl ||
+                        publicUrlDraft.trim() === (portSettings.publicUrl ?? '')
+                      }
+                      data-testid="gateway-public-url-save-btn"
+                    >
+                      {savingPublicUrl ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : null}
+                      {t('common:actions.save')}
+                    </Button>
+                  </div>
+                  {publicUrlError ? (
+                    <p
+                      className="text-xs text-red-600 dark:text-red-400 mt-2"
+                      data-testid="gateway-public-url-error"
+                    >
+                      {publicUrlError}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              {portSettings.activePort !== null &&
+              portSettings.configuredPort !== null &&
+              portSettings.configuredPort !== portSettings.activePort ? (
+                <div
+                  className="flex items-start gap-2 p-3 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 text-xs"
+                  data-testid="gateway-port-restart-hint"
+                >
+                  <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="font-semibold text-amber-800 dark:text-amber-200">
+                      {t('gateway.restartRequired')}
+                    </p>
+                    <p className="text-amber-700 dark:text-amber-300 mt-0.5">
+                      {t('gateway.restartHint', {
+                        saved: portSettings.configuredPort,
+                        active: portSettings.activePort,
+                      })}
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleRestartGateway}
+                    data-testid="gateway-restart-btn"
+                  >
+                    {t('gateway.restartButton')}
+                  </Button>
+                </div>
+              ) : null}
+
+              {isTauri() ? (
+              <div
+                className="border-t border-[rgb(var(--border))] pt-4 mt-2"
+                data-testid="settings-web-admin-section"
+              >
+                <div className="flex items-start gap-3">
+                  <Globe className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+                  <div className="flex-1 min-w-0 space-y-4">
+                    <div>
+                      <p className="text-sm font-medium">{t('gateway.webAdminTitle')}</p>
+                      <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                        {t('gateway.webAdminDesc', { port: adminPortDraft })}
+                      </p>
+                    </div>
+
+                    {loadingAdminWeb || adminWeb === null ? (
+                      <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {t('loading')}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-medium">{t('gateway.enableWebAdmin')}</p>
+                            <p className="text-xs text-[rgb(var(--muted))]">
+                              {t('gateway.enableWebAdminDesc')}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={adminWeb.enabled}
+                            disabled={savingAdminWeb}
+                            onCheckedChange={(enabled) =>
+                              persistAdminWeb({ ...adminWeb, enabled })
+                            }
+                            data-testid="settings-admin-enabled-switch"
+                          />
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="admin-port-input"
+                            className="text-sm font-medium"
+                          >
+                            {t('gateway.adminPort')}
+                          </label>
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <input
+                              id="admin-port-input"
+                              type="number"
+                              inputMode="numeric"
+                              min={1024}
+                              max={65535}
+                              value={adminPortDraft}
+                              onChange={(e) => setAdminPortDraft(e.target.value)}
+                              disabled={savingAdminWeb || !adminWeb.enabled}
+                              className="w-28 px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                              data-testid="settings-admin-port-input"
+                            />
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={handleSaveAdminPort}
+                              disabled={
+                                savingAdminWeb ||
+                                !adminWeb.enabled ||
+                                adminPortDraft.trim() === String(adminWeb.port)
+                              }
+                              data-testid="settings-admin-port-save-btn"
+                            >
+                              {t('gateway.savePort')}
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-medium">{t('gateway.trustCfAccess')}</p>
+                            <p className="text-xs text-[rgb(var(--muted))]">
+                              {t('gateway.trustCfAccessDesc')}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={adminWeb.trustCfAccess}
+                            disabled={savingAdminWeb || !adminWeb.enabled}
+                            onCheckedChange={(trustCfAccess) =>
+                              persistAdminWeb({ ...adminWeb, trustCfAccess })
+                            }
+                            data-testid="settings-admin-cf-access-switch"
+                          />
+                        </div>
+
+                        {adminWeb.enabled ? (
+                          <div>
+                            <label
+                              htmlFor="admin-cf-domain-input"
+                              className="text-sm font-medium"
+                            >
+                              {t('gateway.cfTeamDomain')}
+                            </label>
+                            <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                              {t('gateway.cfTeamDomainDesc')}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2 mt-2">
+                              <input
+                                id="admin-cf-domain-input"
+                                type="text"
+                                placeholder={t('gateway.cfTeamDomainPlaceholder')}
+                                value={adminCfDomainDraft}
+                                onChange={(e) => setAdminCfDomainDraft(e.target.value)}
+                                disabled={savingAdminWeb || !adminWeb.enabled}
+                                className="flex-1 min-w-[12rem] px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                                data-testid="settings-admin-cf-domain-input"
+                              />
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={() =>
+                                  persistAdminWeb({
+                                    ...adminWeb,
+                                    cfTeamDomain: adminCfDomainDraft.trim(),
+                                  })
+                                }
+                                disabled={
+                                  savingAdminWeb ||
+                                  !adminWeb.enabled ||
+                                  adminCfDomainDraft.trim() === adminWeb.cfTeamDomain
+                                }
+                              >
+                                {t('gateway.saveDomain')}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              ) : null}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Appearance Section */}
+      <Card data-testid="settings-appearance-section">
+        <CardHeader>
+          <CardTitle>{t('appearance.title')}</CardTitle>
+          <CardDescription>{t('appearance.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">{t('appearance.theme')}</label>
+              <div className="flex gap-2 mt-2" data-testid="theme-buttons">
+                <Button
+                  variant={theme === 'light' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setTheme('light')}
+                  data-testid="theme-light-btn"
+                >
+                  <Sun className="h-4 w-4 mr-2" />
+                  {t('appearance.light')}
+                </Button>
+                <Button
+                  variant={theme === 'dark' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setTheme('dark')}
+                  data-testid="theme-dark-btn"
+                >
+                  <Moon className="h-4 w-4 mr-2" />
+                  {t('appearance.dark')}
+                </Button>
+                <Button
+                  variant={theme === 'system' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setTheme('system')}
+                  data-testid="theme-system-btn"
+                >
+                  <Monitor className="h-4 w-4 mr-2" />
+                  {t('appearance.system')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Self-management meta tools — `mcpmux_*` namespace */}
+      <Card data-testid="settings-meta-tools-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5" />
+            {t('metaTools.title')}
+          </CardTitle>
+          <CardDescription>{t('metaTools.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <Sparkles className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
               <div>
-                <label className="text-sm font-medium">Theme</label>
-                <div className="mt-2 flex gap-2" data-testid="theme-buttons">
-                  <Button
-                    variant={theme === 'light' ? 'primary' : 'secondary'}
-                    size="sm"
-                    onClick={() => setTheme('light')}
-                    data-testid="theme-light-btn"
-                  >
-                    <Sun className="mr-2 h-4 w-4" />
-                    Light
-                  </Button>
-                  <Button
-                    variant={theme === 'dark' ? 'primary' : 'secondary'}
-                    size="sm"
-                    onClick={() => setTheme('dark')}
-                    data-testid="theme-dark-btn"
-                  >
-                    <Moon className="mr-2 h-4 w-4" />
-                    Dark
-                  </Button>
-                  <Button
-                    variant={theme === 'system' ? 'primary' : 'secondary'}
-                    size="sm"
-                    onClick={() => setTheme('system')}
-                    data-testid="theme-system-btn"
-                  >
-                    <Monitor className="mr-2 h-4 w-4" />
-                    System
-                  </Button>
-                </div>
+                <label className="text-sm font-medium">{t('metaTools.advertise')}</label>
+                <p className="text-xs text-[rgb(var(--muted))] mt-1">{t('metaTools.advertiseDesc')}</p>
               </div>
             </div>
-          </CardContent>
-        </Card>
+            <Switch
+              checked={metaToolsEnabled}
+              onCheckedChange={handleToggleMetaTools}
+              disabled={loadingMetaTools}
+              data-testid="meta-tools-enabled-switch"
+            />
+          </div>
+          <MetaToolGrantsPanel />
+          <MetaToolAuditLog />
+        </CardContent>
+      </Card>
 
-        {/* Analytics Section */}
-        <Card data-testid="settings-analytics-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
-              Analytics
-            </CardTitle>
-            <CardDescription>
-              Help improve McpMux by sharing anonymous usage data. No personal information is
-              collected.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
-                <BarChart3 className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
-                <div>
-                  <label className="text-sm font-medium">Share Usage Data</label>
-                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                    Sends anonymous data like app version, OS, and feature usage to help us
-                    prioritize improvements. Location is approximated from IP by PostHog. No
-                    credentials or server configurations are shared.
-                  </p>
-                </div>
+      {/* Analytics Section */}
+      <Card data-testid="settings-analytics-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart3 className="h-5 w-5" />
+            {t('analytics.title')}
+          </CardTitle>
+          <CardDescription>{t('analytics.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <BarChart3 className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+              <div>
+                <label className="text-sm font-medium">{t('analytics.share')}</label>
+                <p className="text-xs text-[rgb(var(--muted))] mt-1">{t('analytics.shareDesc')}</p>
               </div>
-              <Switch
-                checked={analyticsEnabled}
-                onCheckedChange={setAnalyticsEnabled}
-                data-testid="analytics-switch"
-              />
             </div>
-          </CardContent>
-        </Card>
+            <Switch
+              checked={analyticsEnabled}
+              onCheckedChange={setAnalyticsEnabled}
+              data-testid="analytics-switch"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
-        {/* Contribute & feedback — the single global "help make mcpmux
+      {/* Contribute & feedback — the single global "help make mcpmux
           better" card. Mirrors the items in <ContributeMenu> so power
           users have quick access without digging into GitHub. */}
-        <Card data-testid="settings-contribute-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Heart className="h-5 w-5" />
-              Contribute &amp; feedback
-            </CardTitle>
-            <CardDescription>
-              mcpmux is open source. Request a server, report a bug, suggest a feature, or jump
-              straight to the source.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <ContributeRow
-                icon={Package}
-                title="Request a new server"
-                subtitle="Ask the community to add an MCP server to the registry"
-                onClick={() => openExternal(CONTRIBUTE.requestServer())}
-                testId="contribute-request-server"
-              />
-              <ContributeRow
-                icon={Bug}
-                title="Report a bug"
-                subtitle="Something broken in the desktop app or gateway"
-                onClick={() => openExternal(CONTRIBUTE.bug)}
-                testId="contribute-report-bug"
-              />
-              <ContributeRow
-                icon={Lightbulb}
-                title="Suggest a feature"
-                subtitle="An idea for mcpmux itself"
-                onClick={() => openExternal(CONTRIBUTE.featureRequest)}
-                testId="contribute-feature-request"
-              />
-              <ContributeRow
-                icon={Github}
-                title="Open on GitHub"
-                subtitle="Browse source, issues, pull requests"
-                onClick={() => openExternal(CONTRIBUTE.repo)}
-                testId="contribute-open-github"
-              />
-            </div>
-          </CardContent>
-        </Card>
+      <Card data-testid="settings-contribute-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Heart className="h-5 w-5" />
+            {t('contribute.title')}
+          </CardTitle>
+          <CardDescription>{t('contribute.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <ContributeRow
+              icon={Package}
+              title={t('contribute.requestServer')}
+              subtitle={t('contribute.requestServerDesc')}
+              onClick={() => openExternal(CONTRIBUTE.requestServer())}
+              testId="contribute-request-server"
+            />
+            <ContributeRow
+              icon={Bug}
+              title={t('contribute.reportBug')}
+              subtitle={t('contribute.reportBugDesc')}
+              onClick={() => openExternal(CONTRIBUTE.bug)}
+              testId="contribute-report-bug"
+            />
+            <ContributeRow
+              icon={Lightbulb}
+              title={t('contribute.suggestFeature')}
+              subtitle={t('contribute.suggestFeatureDesc')}
+              onClick={() => openExternal(CONTRIBUTE.featureRequest)}
+              testId="contribute-feature-request"
+            />
+            <ContributeRow
+              icon={Github}
+              title={t('contribute.openGithub')}
+              subtitle={t('contribute.openGithubDesc')}
+              onClick={() => openExternal(CONTRIBUTE.repo)}
+              testId="contribute-open-github"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
-        {/* Logs Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5" />
-              Logs
-            </CardTitle>
-            <CardDescription>
-              View application logs for debugging and troubleshooting.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Log Files Location</label>
-                <p
-                  className="bg-surface-secondary mt-1 rounded px-2 py-1 font-mono text-sm text-[rgb(var(--muted))]"
-                  data-testid="logs-path"
-                >
-                  {logsPath || 'Loading...'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
+      {/* Logs Section */}
+      <Card data-testid="settings-logs-section">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5" />
+            {t('logs.title')}
+          </CardTitle>
+          <CardDescription>{t('logs.description')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">{t('logs.location')}</label>
+              <p className="text-sm text-[rgb(var(--muted))] mt-1 font-mono bg-surface-secondary rounded px-2 py-1" data-testid="logs-path">
+                {logsPath || t('logs.loading')}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {isTauri() ? (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -755,48 +1003,48 @@ export function SettingsPage() {
                   data-testid="open-logs-btn"
                 >
                   {openingLogs ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <FolderOpen className="mr-2 h-4 w-4" />
+                    <FolderOpen className="h-4 w-4 mr-2" />
                   )}
-                  Open Logs Folder
+                  {t('logs.openFolder')}
                 </Button>
-              </div>
-              <div className="border-t border-[rgb(var(--border))] pt-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <Trash2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
-                    <div>
-                      <label className="text-sm font-medium">Auto-Cleanup</label>
-                      <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                        Automatically delete log files older than the selected period
-                      </p>
-                    </div>
-                  </div>
-                  <select
-                    value={logRetentionDays}
-                    onChange={(e) => handleRetentionChange(Number(e.target.value))}
-                    disabled={savingRetention}
-                    className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm text-[rgb(var(--foreground))]"
-                    data-testid="log-retention-select"
-                  >
-                    <option value={7}>7 days</option>
-                    <option value={14}>14 days</option>
-                    <option value={30}>30 days</option>
-                    <option value={60}>60 days</option>
-                    <option value={90}>90 days</option>
-                    <option value={0}>Keep forever</option>
-                  </select>
-                </div>
-              </div>
-              <p className="text-xs text-[rgb(var(--muted))]">
-                Logs are rotated daily. Each file contains detailed debug information including
-                thread IDs and source locations.
-              </p>
+              ) : null}
             </div>
-          </CardContent>
-        </Card>
-      </div>
+            <div className="border-t border-[rgb(var(--border))] pt-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <Trash2 className="h-5 w-5 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
+                  <div>
+                    <label className="text-sm font-medium">{t('logs.autoCleanup')}</label>
+                    <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                      {t('logs.autoCleanupDesc')}
+                    </p>
+                  </div>
+                </div>
+                <select
+                  value={logRetentionDays}
+                  onChange={(e) => handleRetentionChange(Number(e.target.value))}
+                  disabled={savingRetention}
+                  className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))] text-[rgb(var(--foreground))]"
+                  data-testid="log-retention-select"
+                >
+                  <option value={7}>{t('logs.retention7')}</option>
+                  <option value={14}>{t('logs.retention14')}</option>
+                  <option value={30}>{t('logs.retention30')}</option>
+                  <option value={60}>{t('logs.retention60')}</option>
+                  <option value={90}>{t('logs.retention90')}</option>
+                  <option value={0}>{t('logs.keepForever')}</option>
+                </select>
+              </div>
+            </div>
+            <p className="text-xs text-[rgb(var(--muted))]">
+              {t('logs.footer')}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
     </>
   );
 }
@@ -822,13 +1070,13 @@ function ContributeRow({
     <button
       type="button"
       onClick={onClick}
-      className="hover:border-primary-400/60 hover:bg-primary-500/5 flex items-start gap-3 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-3 text-left transition-colors"
+      className="text-left flex items-start gap-3 p-3 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] hover:border-primary-400/60 hover:bg-primary-500/5 transition-colors"
       data-testid={testId}
     >
-      <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
+      <Icon className="h-4 w-4 mt-0.5 text-[rgb(var(--muted))] flex-shrink-0" />
       <div className="min-w-0">
         <p className="text-sm font-medium">{title}</p>
-        <p className="mt-0.5 text-[11px] leading-snug text-[rgb(var(--muted))]">{subtitle}</p>
+        <p className="text-[11px] text-[rgb(var(--muted))] leading-snug mt-0.5">{subtitle}</p>
       </div>
     </button>
   );

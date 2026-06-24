@@ -45,9 +45,20 @@ export async function setMetaToolsRequireApproval(required: boolean): Promise<bo
   return invoke('set_meta_tools_require_approval', { required });
 }
 
-// The mcpmux_* enablement switch is now per-Space — see
-// `@/lib/api/builtinServers` (listBuiltinServers / setBuiltinServerEnabled /
-// setBuiltinToolEnabled). The old global get/set_meta_tools_enabled were removed.
+// Per-Space enablement also lives in `@/lib/api/builtinServers`.
+
+/**
+ * Read the master switch that controls whether `mcpmux_*` meta tools are
+ * advertised to connected MCP clients. Default ON.
+ */
+export async function getMetaToolsEnabled(): Promise<boolean> {
+  return invoke('get_meta_tools_enabled');
+}
+
+/** Persist the global meta-tools enablement switch. */
+export async function setMetaToolsEnabled(enabled: boolean): Promise<boolean> {
+  return invoke('set_meta_tools_enabled', { enabled });
+}
 
 /**
  * Respond to a pending approval request. Normally called by

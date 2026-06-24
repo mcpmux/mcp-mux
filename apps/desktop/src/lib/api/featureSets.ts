@@ -47,6 +47,8 @@ export interface FeatureSetMember {
   member_type: MemberType;
   member_id: string;
   mode: MemberMode;
+  /** When true, this member is advertised in tool discovery surfaces. */
+  surfaced?: boolean;
 }
 
 /**

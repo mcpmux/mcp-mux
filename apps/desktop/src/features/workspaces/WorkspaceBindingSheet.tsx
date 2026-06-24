@@ -1,17 +1,15 @@
 /**
  * Workspace Binding Sheet
  *
- * Fires when a connected client session reports a workspace root that has no
- * explicit binding yet — the folder is already working via the default
- * Starter set, and this sheet offers to map it to something else. The user
- * picks a Space + a FeatureSet, and we write a WorkspaceBinding locking both.
+ * Fires when a connected client session resolves via source=Default for a
+ * workspace root that has no binding yet. The user picks a Space + a
+ * FeatureSet in that space, and we write a WorkspaceBinding locking both.
  *
  *  • Space picker  — defaults to the caller's current space, can be changed.
- *  • FS picker     — pre-selects the Space's Starter (the active default),
- *                    plus every Starter + Custom set in that space.
- *  • Modify        — writes the binding for the picked Space + FS.
- *  • Close         — nothing written; the folder keeps the default Starter
- *                    set, and the sheet re-offers next session.
+ *  • FS picker     — always includes a "space default" option (follow
+ *                    whichever FS is active for the selected Space) plus
+ *                    every Default + Custom set in that space.
+ *  • Dismiss       — nothing written, ask again next session.
  *
  * Committing the binding emits `WorkspaceBindingChanged` on the backend,
  * which triggers `notifications/tools/list_changed` — the client re-fetches
@@ -19,8 +17,10 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { useWorkspaceEvents } from '@/lib/backend/events';
 import { Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
 import { createWorkspaceBinding } from '@/lib/api/workspaceBindings';
@@ -36,8 +36,8 @@ interface WorkspaceNeedsBindingPayload {
   session_id: string;
   space_id: string;
   workspace_root: string;
-  /** The folder is scoped to `space_id` by a Space base directory — lock the
-   * Space field to it (the user only picks the feature set). */
+  collision_client_id?: string | null;
+  /** When true, the folder is scoped to `space_id` by a Space base directory. */
   space_locked?: boolean;
 }
 
@@ -55,6 +55,7 @@ function shortenPath(path: string): string {
 }
 
 export function WorkspaceBindingSheet() {
+  const { t } = useTranslation('workspaces');
   const [payload, setPayload] = useState<WorkspaceNeedsBindingPayload | null>(null);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState<string>('');
@@ -67,45 +68,32 @@ export function WorkspaceBindingSheet() {
   // Only dedupe the currently-open sheet against itself — if one is already
   // showing, swallow a second emit for the same session. We deliberately
   // don't dedupe across sessions / reconnects: the backend only emits when
-  // the folder has no explicit binding (it's on the default Starter set), and
-  // reconnecting a client is a normal signal that the user may want to map it.
+  // `source=Default` (i.e. no binding exists), and reconnecting a client
+  // is a normal signal that the user may want to configure the folder.
   // Persisting the dismissal in a ref would black-hole later attempts
   // until the next app restart, which is how this bug surfaced before.
   const currentSessionRef = useRef<string | null>(null);
   currentSessionRef.current = payload?.session_id ?? null;
 
+  const { subscribe } = useWorkspaceEvents();
+
   useEffect(() => {
-    const un = listen<WorkspaceNeedsBindingPayload>(
-      'workspace-needs-binding',
-      async (event) => {
-        // Swallow only while a sheet is already showing — the user is
-        // mid-decision, a second emit would stack a new sheet on top. Once
-        // the current sheet closes (Modify or Close), the next emit from
-        // any fresh session on an unbound root opens the sheet again.
-        if (currentSessionRef.current !== null) return;
-        // Respect the "ask to map new folders" setting (on by default). Read
-        // it fresh each time so toggling it — from Settings or the in-sheet
-        // "stop asking" link — takes effect immediately, with no re-subscribe.
-        try {
-          const enabled = await invoke<boolean>('get_workspace_mapping_prompt_enabled');
-          if (!enabled) return;
-        } catch {
-          // If the setting can't be read, fall back to showing (default on).
-        }
-        // Re-check after the await: another emit may have opened a sheet while
-        // we were reading the setting.
-        if (currentSessionRef.current !== null) return;
-        const p = event.payload;
-        setPayload(p);
-        setSelectedSpaceId(p.space_id);
-        setSelectedFsId('');
-        setError(null);
+    return subscribe('workspace-needs-binding', async (p) => {
+      if (currentSessionRef.current !== null) return;
+      try {
+        const enabled = await invoke<boolean>('get_workspace_mapping_prompt_enabled');
+        if (!enabled) return;
+      } catch {
+        /* setting unavailable → default to showing */
       }
-    );
-    return () => {
-      un.then((fn) => fn());
-    };
-  }, []);
+      if (currentSessionRef.current !== null) return;
+      const payloadData = p as WorkspaceNeedsBindingPayload;
+      setPayload(payloadData);
+      setSelectedSpaceId(payloadData.space_id);
+      setSelectedFsId('');
+      setError(null);
+    });
+  }, [subscribe]);
 
   // Load every Space once the sheet is visible so the user can pin the
   // binding to a different Space than the caller happened to land in.
@@ -161,7 +149,7 @@ export function WorkspaceBindingSheet() {
   const handleSave = async () => {
     if (!payload || saving || !selectedSpaceId) return;
     if (!selectedFsId) {
-      setError('Pick a feature set first');
+      setError(t('sheet.pickFeatureSet'));
       return;
     }
     setSaving(true);
@@ -170,9 +158,8 @@ export function WorkspaceBindingSheet() {
       await createWorkspaceBinding({
         workspace_root: payload.workspace_root,
         space_id: selectedSpaceId,
-        // Sheet flow only writes one FS — the multi-FS picker lives in the
-        // full Workspaces editor.
         feature_set_ids: [selectedFsId],
+        client_id: payload.client_id,
       });
       markSeenAndClose(payload);
     } catch (e) {
@@ -187,17 +174,14 @@ export function WorkspaceBindingSheet() {
     markSeenAndClose(payload);
   };
 
-  // "Stop asking" escape hatch — turns the prompt off globally (it's on by
-  // default) and closes. Best-effort: if the write fails we still close so the
-  // click isn't a dead end. Re-enable lives in Settings → Workspaces.
   const handleDisablePrompt = async () => {
     if (!payload || saving) return;
     try {
       await invoke('set_workspace_mapping_prompt_enabled', { enabled: false });
-    } catch {
-      /* best-effort — close regardless */
+      markSeenAndClose(payload);
+    } catch (e) {
+      setError(typeof e === 'string' ? e : String(e));
     }
-    markSeenAndClose(payload);
   };
 
   if (!payload) return null;
@@ -214,7 +198,7 @@ export function WorkspaceBindingSheet() {
         <button
           className="absolute right-4 top-4 rounded-full p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))]"
           onClick={handleDismiss}
-          aria-label="Close"
+          aria-label={t('sheet.closeAria')}
         >
           <X className="h-4 w-4" />
         </button>
@@ -222,16 +206,13 @@ export function WorkspaceBindingSheet() {
         <div className="px-8 pt-10 pb-6">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1 text-xs font-medium text-[rgb(var(--muted))]">
             <Sparkles className="h-3 w-3 text-[rgb(var(--accent))]" />
-            New workspace detected
+            {payload.collision_client_id ? t('sheet.badgeCollision') : t('sheet.badgeNew')}
           </div>
           <h2 className="text-[22px] font-semibold leading-tight tracking-tight text-[rgb(var(--foreground))]">
-            This folder is using your Starter set
+            {payload.collision_client_id ? t('sheet.titleCollision') : t('sheet.titleNew')}
           </h2>
           <p className="mt-2 text-sm text-[rgb(var(--muted))]">
-            You just opened this folder in a connected app. It&apos;s already
-            configured with your default Starter tools. Pick a different Space
-            or feature set below to change what it gets, or close to keep the
-            Starter.
+            {payload.collision_client_id ? t('sheet.descCollision') : t('sheet.descNew')}
           </p>
 
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-4 py-3">
@@ -249,14 +230,9 @@ export function WorkspaceBindingSheet() {
 
         <div className="flex-1 overflow-y-auto px-8 pb-6 space-y-6">
           <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              Space
+            <div className="mb-3 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+              {t('sheet.space')}
             </div>
-            <p className="mb-3 text-xs text-[rgb(var(--muted))]">
-              {payload.space_locked
-                ? 'This folder is under a base directory of this space, so it stays in this space — just pick the feature set below.'
-                : 'A profile that groups MCP servers — pick the one this folder draws its tools from.'}
-            </p>
             <div className="relative">
               <select
                 value={selectedSpaceId}
@@ -269,7 +245,7 @@ export function WorkspaceBindingSheet() {
                   <option key={s.id} value={s.id}>
                     {s.icon ? `${s.icon}  ` : ''}
                     {s.name}
-                    {s.is_default ? ' · default' : ''}
+                    {s.is_default ? t('form.defaultSuffix') : ''}
                   </option>
                 ))}
               </select>
@@ -278,20 +254,16 @@ export function WorkspaceBindingSheet() {
           </div>
 
           <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              Feature set
+            <div className="mb-3 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+              {t('sheet.toolSet')}
             </div>
-            <p className="mb-3 text-xs text-[rgb(var(--muted))]">
-              The exact tools, prompts, and resources this folder is allowed to
-              use.
-            </p>
             {loadingFs ? (
               <div className="flex items-center justify-center py-8 text-[rgb(var(--muted))]">
                 <Loader2 className="h-4 w-4 animate-spin" />
               </div>
             ) : featureSets.length === 0 ? (
               <div className="rounded-xl border border-dashed border-[rgb(var(--border))] px-4 py-6 text-center text-xs text-[rgb(var(--muted))]">
-                No feature sets in this space yet.
+                {t('sheet.noFeatureSets')}
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -301,8 +273,8 @@ export function WorkspaceBindingSheet() {
                     selected={selectedFsId === fs.id}
                     onSelect={() => setSelectedFsId(fs.id)}
                     title={fs.name}
-                    subtitle={fs.description || describeFs(fs)}
-                    badge={isStarterFeatureSet(fs) ? 'starter' : undefined}
+                    subtitle={fs.description || describeFs(fs, t)}
+                    badge={isStarterFeatureSet(fs) ? t('sheet.starter') : undefined}
                   />
                 ))}
               </div>
@@ -316,10 +288,9 @@ export function WorkspaceBindingSheet() {
               {error}
             </div>
           )}
-          {/* "Close" keeps the default Starter set (nothing written); the
-              primary "Modify" applies the picked Space + feature set as an
-              explicit mapping. Labels deliberately avoid "Not now", which read
-              as "this folder is unmapped / has no tools" — it isn't. */}
+          {/* "Not now" auto-sizes to its label; the primary action takes
+              the rest of the row. Equal flex-1 columns wrapped the longer
+              "Remember for this folder" text onto two lines. */}
           <div className="flex gap-2">
             <Button
               variant="secondary"
@@ -327,7 +298,7 @@ export function WorkspaceBindingSheet() {
               onClick={handleDismiss}
               disabled={saving}
             >
-              Close
+              {t('sheet.notNow')}
             </Button>
             <Button
               variant="primary"
@@ -340,22 +311,22 @@ export function WorkspaceBindingSheet() {
               ) : (
                 <Check className="mr-1.5 h-4 w-4" />
               )}
-              Modify
+              {t('sheet.remember')}
             </Button>
           </div>
           <p className="mt-3 text-center text-[11px] text-[rgb(var(--muted))]">
-            You can change this anytime in Workspaces.
+            {t('sheet.footer')}
           </p>
           <div className="mt-1.5 text-center">
             <button
               type="button"
               onClick={handleDisablePrompt}
               disabled={saving}
-              title="Turn off the new-folder prompt. Re-enable it anytime in Settings → Workspaces."
+              title={t('sheet.disablePromptTitle')}
               className="text-[11px] text-[rgb(var(--muted))] underline-offset-2 transition-colors hover:text-[rgb(var(--foreground))] hover:underline disabled:opacity-50"
               data-testid="workspace-binding-disable-prompt"
             >
-              Asked too often? Stop asking about new folders
+              {t('sheet.disablePrompt')}
             </button>
           </div>
         </div>
@@ -425,12 +396,15 @@ function ChoiceRow({
   );
 }
 
-function describeFs(fs: FeatureSet): string {
+/**
+ * Fallback description for a feature set row when no description is set.
+ */
+function describeFs(fs: FeatureSet, t: TFunction<'workspaces'>): string {
   switch (fs.feature_set_type) {
     case 'default':
-      return 'The auto-seeded fallback set for this space';
+      return t('sheet.fsDefault');
     case 'custom':
-      return `${fs.members.length} member${fs.members.length === 1 ? '' : 's'}`;
+      return t('sheet.fsMembers', { count: fs.members.length });
     default:
       return '';
   }

@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, Eye, ShieldAlert, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
 import type { MetaToolAuditEvent } from '@/lib/api/metaTools';
@@ -32,6 +33,7 @@ function DecisionIcon({ decision }: { decision: string }) {
  * Compact live feed of recent `mcpmux_*` meta-tool invocations from connected clients.
  */
 export function DashboardRecentActivity() {
+  const { t } = useTranslation('dashboard');
   const [rows, setRows] = useState<MetaToolAuditEvent[]>([]);
 
   const appendRow = useCallback((event: MetaToolAuditEvent) => {
@@ -48,14 +50,16 @@ export function DashboardRecentActivity() {
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Eye className="h-4 w-4" />
-          Recent Activity
+          {t('activity.title')}
         </CardTitle>
-        <CardDescription>Last {MAX_ROWS} meta-tool invocations</CardDescription>
+        <CardDescription>{t('activity.description', { count: MAX_ROWS })}</CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <p className="text-sm italic text-[rgb(var(--muted))]">
-            Waiting for <code className="font-mono">mcpmux_*</code> tool calls…
+            {t('activity.empty.before')}
+            <code className="font-mono">mcpmux_*</code>
+            {t('activity.empty.after')}
           </p>
         ) : (
           <ul className="divide-y divide-[rgb(var(--border-subtle))]">
@@ -74,7 +78,7 @@ export function DashboardRecentActivity() {
                     </span>
                   </div>
                   <div className="mt-0.5 truncate text-[11px] text-[rgb(var(--muted))]">
-                    client {row.client_id.slice(0, 8)} •{' '}
+                    {t('activity.clientPrefix', { id: row.client_id.slice(0, 8) })} •{' '}
                     {new Date(row.timestamp).toLocaleTimeString()}
                   </div>
                   {row.summary && (

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { HoverTooltip } from '@mcpmux/ui';
 import {
   describeServerCountSummary,
@@ -13,14 +14,16 @@ interface ServersCountSummaryProps {
  * Inline installed-server counts beside the My Servers title, with hover breakdown.
  */
 export function ServersCountSummary({ summary }: ServersCountSummaryProps) {
+  const { t } = useTranslation('servers');
+
   if (summary.installed === 0) {
     return null;
   }
 
   return (
     <HoverTooltip
-      title="Server Summary"
-      lines={describeServerCountSummary(summary)}
+      title={t('countSummary.title')}
+      lines={describeServerCountSummary(t, summary)}
       data-testid="servers-count-tooltip"
       className="flex-shrink min-w-0"
     >
@@ -28,7 +31,7 @@ export function ServersCountSummary({ summary }: ServersCountSummaryProps) {
         className="text-sm text-[rgb(var(--muted))] truncate cursor-default"
         data-testid="servers-count-summary"
       >
-        {formatServerCountSummary(summary)}
+        {formatServerCountSummary(t, summary)}
       </p>
     </HoverTooltip>
   );

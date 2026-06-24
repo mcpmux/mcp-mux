@@ -11,8 +11,8 @@
  * renders from this data and nothing else.
  *
  * NOTE: `key` values are NavItem store keys and `testId`s are the e2e selector
- * contract (ADR-003) — both are stable identifiers. Only `label`/`icon`/`hint`
- * are presentation and safe to change.
+ * contract (ADR-003) — both are stable identifiers. Only `labelKey`/`hintKey`/
+ * `icon` are presentation and safe to change.
  */
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -28,19 +28,30 @@ import {
   Settings,
 } from 'lucide-react';
 import type { NavItem } from '@/stores/types';
+import type nav from '@/locales/en/nav.json';
+
+/** Top-level nav label keys (excludes nested `zones` / `hints` objects). */
+type NavLabelKey = Exclude<keyof typeof nav, 'zones' | 'hints'>;
+
+/** Sidebar hint keys under `nav.hints`. */
+type NavHintKey = `hints.${keyof typeof nav.hints}`;
+
+/** Zone section title keys under `nav.zones`. */
+type NavZoneTitleKey = `zones.${keyof typeof nav.zones}`;
 
 export interface NavEntry {
   key: NavItem;
-  label: string;
+  /** i18n key under the `nav` namespace (e.g. `home` → nav:home). */
+  labelKey: NavLabelKey;
   icon: LucideIcon;
   testId: string;
-  /** One-line tooltip so newcomers learn the map by hovering. */
-  hint: string;
+  /** i18n key under nav:hints.* */
+  hintKey: NavHintKey;
 }
 
 export interface NavZone {
-  /** Zone label; omitted for the top-level "use" zone. */
-  title?: string;
+  /** Zone label i18n key under nav:zones.*; omitted for the top-level "use" zone. */
+  titleKey?: NavZoneTitleKey;
   entries: NavEntry[];
 }
 
@@ -49,76 +60,76 @@ export const NAV_ZONES: NavZone[] = [
     entries: [
       {
         key: 'home',
-        label: 'Home',
+        labelKey: 'home',
         icon: Home,
         testId: 'nav-home',
-        hint: 'Gateway connection and Space overview',
+        hintKey: 'hints.home',
       },
       {
         key: 'dashboard',
-        label: 'Dashboard',
+        labelKey: 'dashboard',
         icon: LayoutDashboard,
         testId: 'nav-dashboard',
-        hint: 'Server health, recent activity, and stats at a glance',
+        hintKey: 'hints.dashboard',
       },
     ],
   },
   {
-    title: 'Library',
+    titleKey: 'zones.library',
     entries: [
       {
         key: 'servers',
-        label: 'Tools',
+        labelKey: 'tools',
         icon: Server,
         testId: 'nav-my-servers',
-        hint: 'MCP servers installed in this Space',
+        hintKey: 'hints.tools',
       },
       {
         key: 'builtin-servers',
-        label: 'Built-in',
+        labelKey: 'builtin',
         icon: Sparkles,
         testId: 'nav-builtin-servers',
-        hint: 'Capabilities McpMux itself provides — self-management now; memory & skills next',
+        hintKey: 'hints.builtin',
       },
       {
         key: 'registry',
-        label: 'Discover',
+        labelKey: 'discover',
         icon: Compass,
         testId: 'nav-discover',
-        hint: 'Browse and install servers from the registry',
+        hintKey: 'hints.discover',
       },
     ],
   },
   {
-    title: 'Control',
+    titleKey: 'zones.control',
     entries: [
       {
         key: 'clients',
-        label: 'Apps',
+        labelKey: 'apps',
         icon: Monitor,
         testId: 'nav-clients',
-        hint: 'AI apps connected through your gateway',
+        hintKey: 'hints.apps',
       },
       {
         key: 'workspaces',
-        label: 'Workspaces',
+        labelKey: 'workspaces',
         icon: FolderOpen,
         testId: 'nav-workspaces',
-        hint: 'Folder → tools mappings',
+        hintKey: 'hints.workspaces',
       },
       {
         key: 'featuresets',
-        label: 'FeatureSets',
+        labelKey: 'featuresets',
         icon: Wrench,
         testId: 'nav-featuresets',
-        hint: 'Curated tool bundles you can grant and map',
+        hintKey: 'hints.featuresets',
       },
       {
         key: 'spaces',
-        label: 'Spaces',
+        labelKey: 'spaces',
         icon: Globe,
         testId: 'nav-spaces',
-        hint: 'Isolated contexts — work, personal, per client',
+        hintKey: 'hints.spaces',
       },
     ],
   },
@@ -127,8 +138,8 @@ export const NAV_ZONES: NavZone[] = [
 /** Pinned to the sidebar footer, below the scrolling zones. */
 export const NAV_SETTINGS: NavEntry = {
   key: 'settings',
-  label: 'Settings',
+  labelKey: 'settings',
   icon: Settings,
   testId: 'nav-settings',
-  hint: 'Preferences, gateway, and updates',
+  hintKey: 'hints.settings',
 };

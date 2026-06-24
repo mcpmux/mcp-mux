@@ -39,6 +39,8 @@ export default defineConfig({
       '@tauri-apps/plugin-updater': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-updater'),
       '@tauri-apps/plugin-process': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-process'),
       '@tauri-apps/plugin-opener': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-opener'),
+      i18next: path.resolve(__dirname, '../../apps/desktop/node_modules/i18next'),
+      'react-i18next': path.resolve(__dirname, '../../apps/desktop/node_modules/react-i18next'),
     },
   },
 });

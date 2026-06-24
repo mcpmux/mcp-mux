@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Switch } from '@mcpmux/ui';
 
 interface ServerEnabledToggleProps {
@@ -18,12 +19,14 @@ export function ServerEnabledToggle({
   disabled = false,
   onToggle,
 }: ServerEnabledToggleProps) {
-  let label: string;
-  if (isLoading) {
-    label = enabled ? 'Disabling…' : 'Enabling…';
-  } else {
-    label = enabled ? 'Enabled' : 'Disabled';
-  }
+  const { t } = useTranslation('servers');
+  const label = isLoading
+    ? enabled
+      ? t('enabledToggle.disabling')
+      : t('enabledToggle.enabling')
+    : enabled
+      ? t('enabledToggle.enabled')
+      : t('enabledToggle.disabled');
 
   return (
     <div className="flex items-center gap-2">

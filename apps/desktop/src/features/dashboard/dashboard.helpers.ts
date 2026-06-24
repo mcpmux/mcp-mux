@@ -1,6 +1,8 @@
+import type { TFunction } from 'i18next';
 import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverManager';
 import type { InstalledServerState, ServerDefinition } from '@/types/registry';
 import { resolveInstalledDisplayName } from '@/features/servers/server-display-name.helpers';
+import i18n from '@/i18n';
 
 /** Aggregated counts shown in the dashboard stat cards. */
 export type DashboardStats = {
@@ -32,6 +34,13 @@ const ATTENTION_PRIORITY: Record<AttentionKind, number> = {
 const MAX_ATTENTION_SERVERS = 8;
 
 /**
+ * Resolve the dashboard namespace translator (hook call sites may pass their own `t`).
+ */
+function dashboardT(): TFunction<'dashboard'> {
+  return i18n.getFixedT('dashboard');
+}
+
+/**
  * Whether an installed server is missing values for required transport inputs.
  */
 export function hasMissingRequiredInputs(state: InstalledServerState): boolean {
@@ -55,14 +64,15 @@ export function hasMissingRequiredInputs(state: InstalledServerState): boolean {
  */
 export function attentionFromStatus(
   status: ConnectionStatus,
-  message: string | null
+  message: string | null,
+  t: TFunction<'dashboard'> = dashboardT()
 ): Pick<AttentionServer, 'kind' | 'detail'> | null {
   if (status === 'error') {
-    return { kind: 'error', detail: message ?? 'Connection error' };
+    return { kind: 'error', detail: message ?? t('health.details.connectionError') };
   }
 
   if (status === 'oauth_required') {
-    return { kind: 'auth_required', detail: 'Authentication required' };
+    return { kind: 'auth_required', detail: t('health.details.authRequired') };
   }
 
   return null;
@@ -73,7 +83,8 @@ export function attentionFromStatus(
  */
 export function buildAttentionServers(
   installed: InstalledServerState[],
-  statuses: Record<string, ServerStatusResponse>
+  statuses: Record<string, ServerStatusResponse>,
+  t: TFunction<'dashboard'> = dashboardT()
 ): AttentionServer[] {
   const items: AttentionServer[] = [];
 
@@ -90,13 +101,13 @@ export function buildAttentionServers(
         serverId: server.server_id,
         displayName,
         kind: 'needs_setup',
-        detail: 'Missing required configuration',
+        detail: t('health.details.missingConfig'),
       });
       continue;
     }
 
     if (runtime) {
-      const fromStatus = attentionFromStatus(runtime.status, runtime.message);
+      const fromStatus = attentionFromStatus(runtime.status, runtime.message, t);
       if (fromStatus) {
         items.push({
           serverId: server.server_id,

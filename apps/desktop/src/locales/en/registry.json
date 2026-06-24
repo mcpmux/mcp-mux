@@ -1,0 +1,121 @@
+{
+  "title": "Discover Servers",
+  "offline": "Offline",
+  "subtitleOnline": "Browse and install MCP servers from the registry",
+  "subtitleOffline": "Showing cached servers (no internet connection)",
+  "searchPlaceholder": "Search servers...",
+  "sort": "Sort:",
+  "clearFilters": "Clear filters",
+  "empty": {
+    "title": "No servers found",
+    "desc": "Try adjusting your search or filters"
+  },
+  "footer": {
+    "found_one": "{{count}} server found",
+    "found_other": "{{count}} servers found",
+    "installed_one": "{{count}} installed",
+    "installed_other": "{{count}} installed"
+  },
+  "toast": {
+    "installed": "Server installed",
+    "installedBody": "\"{{name}}\" has been installed",
+    "goToServers": "Go to My Servers to enable →",
+    "installFailed": "Install failed",
+    "installFailedBody": "Failed to install \"{{name}}\"",
+    "uninstalled": "Server uninstalled",
+    "uninstalledBody": "\"{{name}}\" has been uninstalled",
+    "uninstallFailed": "Uninstall failed",
+    "uninstallFailedBody": "Failed to uninstall \"{{name}}\"",
+    "fallbackServerName": "Server"
+  },
+  "card": {
+    "verifiedPublisher": "Verified Publisher",
+    "byPublisher": "by {{name}}",
+    "readOnly": "🛡️ Read-Only",
+    "install": "Install",
+    "uninstall": "Uninstall",
+    "auth": {
+      "none": "No Auth",
+      "apiKey": "API Key",
+      "optionalApiKey": "API Key (Optional)",
+      "oauth": "OAuth"
+    },
+    "hosting": {
+      "local": "Local",
+      "remote": "Cloud",
+      "hybrid": "Hybrid"
+    },
+    "badges": {
+      "official": "Official",
+      "verified": "✓ Verified",
+      "featured": "⭐ Featured",
+      "sponsored": "Sponsored",
+      "popular": "🔥 Popular"
+    }
+  },
+  "modal": {
+    "verifiedPublisher": "Verified Publisher",
+    "byPublisher": "by {{name}}",
+    "sponsoredBy": "Sponsored by ",
+    "sponsorAlt": "Sponsor",
+    "description": "Description",
+    "hosting": "Hosting",
+    "hostingLocal": "💻 Local Process",
+    "hostingRemote": "☁️ Remote Server",
+    "hostingHybrid": "🔄 Hybrid",
+    "authentication": "Authentication",
+    "authNone": "✅ No authentication required",
+    "authApiKey": "🔑 API Key Required",
+    "authOptionalApiKey": "🔑 API Key (Optional)",
+    "authOAuth": "🔐 OAuth Authentication",
+    "categories": "Categories",
+    "capabilities": "Capabilities",
+    "capTools": "🛠️ Tools",
+    "capResources": "📁 Resources",
+    "capPrompts": "💬 Prompts",
+    "capReadOnly": "🛡️ Read-Only (Safe)",
+    "installationInfo": "Installation Info",
+    "difficulty": "Difficulty:",
+    "time": "Time:",
+    "prerequisites": "Prerequisites:",
+    "license": "License",
+    "viewLicense": "View License →",
+    "screenshots": "Screenshots",
+    "screenshotAlt": "Screenshot {{index}}",
+    "watchDemo": "🎥 Watch Demo Video →",
+    "viewChangelog": "📝 View Changelog →",
+    "source": "Source",
+    "viewJson": "View JSON",
+    "close": "Close",
+    "install": "Install",
+    "uninstall": "Uninstall"
+  },
+  "installModal": {
+    "loading": "Looking up server...",
+    "error": {
+      "title": "Server Not Found",
+      "description": "Could not find the requested server",
+      "notFound": "Server \"{{serverId}}\" was not found in the registry."
+    },
+    "success": {
+      "title": "Installed!",
+      "body": "{{serverName}} has been added to your space."
+    },
+    "title": "Install Server",
+    "description": "Add this server to your space",
+    "transport": {
+      "local": "Local",
+      "remote": "Remote"
+    },
+    "auth": {
+      "oauth": "OAuth",
+      "apiKey": "API Key"
+    },
+    "alreadyInstalled": "This server is already installed in the selected space.",
+    "installToSpace": "Install to space",
+    "noSpaces": "No spaces available. Create a space first.",
+    "cancel": "Cancel",
+    "install": "Install",
+    "close": "Close"
+  }
+}

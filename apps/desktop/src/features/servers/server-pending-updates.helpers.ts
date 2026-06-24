@@ -16,7 +16,9 @@ export interface ServerPendingUpdate {
   latestVersion: string;
 }
 
-/** Resolve a server definition from cached install JSON or the discovery map. */
+/**
+ * Resolve a server definition from cached install JSON or the discovery map.
+ */
 function resolveServerDefinition(
   state: InstalledServerState,
   definitionById: Map<string, ServerDefinition>
@@ -83,9 +85,4 @@ export function buildPendingServerUpdates(
   }
 
   return pending.sort((left, right) => left.name.localeCompare(right.name));
-}
-
-/** Row key for per-server update-in-progress tracking. */
-export function pendingUpdateKey(update: ServerPendingUpdate): string {
-  return `${update.spaceId}:${update.serverId}`;
 }

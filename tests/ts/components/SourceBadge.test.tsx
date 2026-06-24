@@ -1,24 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import {
-  SourceBadge,
-} from '../../../apps/desktop/src/components/SourceBadge';
+import { screen } from '@testing-library/react';
+import i18n from '../../../apps/desktop/src/i18n';
+import { SourceBadge } from '../../../apps/desktop/src/components/SourceBadge';
 import {
   getUninstallLabel,
   getUninstallConfirmMessage,
 } from '../../../apps/desktop/src/components/source-badge.helpers';
 import type { InstallationSource } from '../../../apps/desktop/src/types/registry';
+import { renderWithI18n } from '../render-with-i18n.helpers';
+
+const tCommon = i18n.getFixedT('common');
 
 describe('SourceBadge', () => {
   describe('rendering', () => {
     it('should render null when source is undefined', () => {
-      const { container } = render(<SourceBadge source={undefined} />);
+      const { container } = renderWithI18n(<SourceBadge source={undefined} />);
       expect(container.firstChild).toBeNull();
     });
 
     it('should render registry badge', () => {
       const source: InstallationSource = { type: 'registry' };
-      render(<SourceBadge source={source} />);
+      renderWithI18n(<SourceBadge source={source} />);
 
       const badge = screen.getByText('Registry');
       expect(badge).toBeInTheDocument();
@@ -31,7 +33,7 @@ describe('SourceBadge', () => {
         type: 'user_config',
         file_path: '/path/to/config.json',
       };
-      render(<SourceBadge source={source} />);
+      renderWithI18n(<SourceBadge source={source} />);
 
       const badge = screen.getByText('Config File');
       expect(badge).toBeInTheDocument();
@@ -41,7 +43,7 @@ describe('SourceBadge', () => {
 
     it('should render manual entry badge', () => {
       const source: InstallationSource = { type: 'manual_entry' };
-      render(<SourceBadge source={source} />);
+      renderWithI18n(<SourceBadge source={source} />);
 
       const badge = screen.getByText('Manual');
       expect(badge).toBeInTheDocument();
@@ -51,7 +53,7 @@ describe('SourceBadge', () => {
 
     it('should apply custom className', () => {
       const source: InstallationSource = { type: 'registry' };
-      render(<SourceBadge source={source} className="custom-class" />);
+      renderWithI18n(<SourceBadge source={source} className="custom-class" />);
 
       const badge = screen.getByText('Registry');
       expect(badge).toHaveClass('custom-class');
@@ -61,12 +63,12 @@ describe('SourceBadge', () => {
 
 describe('getUninstallLabel', () => {
   it('should return "Uninstall" for undefined source', () => {
-    expect(getUninstallLabel(undefined)).toBe('Uninstall');
+    expect(getUninstallLabel(tCommon, undefined)).toBe('Uninstall');
   });
 
   it('should return "Uninstall" for registry source', () => {
     const source: InstallationSource = { type: 'registry' };
-    expect(getUninstallLabel(source)).toBe('Uninstall');
+    expect(getUninstallLabel(tCommon, source)).toBe('Uninstall');
   });
 
   it('should return "Remove from Config" for user_config source', () => {
@@ -74,19 +76,19 @@ describe('getUninstallLabel', () => {
       type: 'user_config',
       file_path: '/path/to/config.json',
     };
-    expect(getUninstallLabel(source)).toBe('Remove from Config');
+    expect(getUninstallLabel(tCommon, source)).toBe('Remove from Config');
   });
 
   it('should return "Remove" for manual_entry source', () => {
     const source: InstallationSource = { type: 'manual_entry' };
-    expect(getUninstallLabel(source)).toBe('Remove');
+    expect(getUninstallLabel(tCommon, source)).toBe('Remove');
   });
 });
 
 describe('getUninstallConfirmMessage', () => {
   it('should return standard message for registry source', () => {
     const source: InstallationSource = { type: 'registry' };
-    const message = getUninstallConfirmMessage('Test Server', source);
+    const message = getUninstallConfirmMessage(tCommon, 'Test Server', source);
 
     expect(message).toContain('Test Server');
     expect(message).toContain('reinstall it from the registry');
@@ -97,7 +99,7 @@ describe('getUninstallConfirmMessage', () => {
       type: 'user_config',
       file_path: '/path/to/config.json',
     };
-    const message = getUninstallConfirmMessage('Test Server', source);
+    const message = getUninstallConfirmMessage(tCommon, 'Test Server', source);
 
     expect(message).toContain('Test Server');
     expect(message).toContain('remove');
@@ -105,7 +107,7 @@ describe('getUninstallConfirmMessage', () => {
   });
 
   it('should return standard message for undefined source', () => {
-    const message = getUninstallConfirmMessage('Test Server', undefined);
+    const message = getUninstallConfirmMessage(tCommon, 'Test Server', undefined);
 
     expect(message).toContain('Test Server');
     expect(message).toContain('reinstall it from the registry');

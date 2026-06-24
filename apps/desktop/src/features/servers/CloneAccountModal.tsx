@@ -3,6 +3,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Copy, Loader2, X } from 'lucide-react';
 import type { ServerViewModel } from '@/types/registry';
 import {
@@ -34,6 +35,7 @@ export function CloneAccountModal({
   onClose,
   onCloned,
 }: CloneAccountModalProps) {
+  const { t } = useTranslation(['servers', 'common']);
   const [suffix, setSuffix] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [isChecking, setIsChecking] = useState(false);
@@ -45,8 +47,8 @@ export function CloneAccountModal({
   const trimmedSuffix = suffix.trim();
   const trimmedDisplayName = displayName.trim();
   const displayNamePlaceholder = trimmedSuffix
-    ? `${sourceServer.name} (${trimmedSuffix})`
-    : sourceServer.name;
+    ? t('cloneModal.displayNamePlaceholder', { name: sourceServer.name, suffix: trimmedSuffix })
+    : t('cloneModal.displayNamePlaceholderDefault', { name: sourceServer.name });
 
   const previewId = deriveCloneServerId(sourceServer.id, suffix);
   const previewAlias = deriveCloneAlias(suffix);
@@ -120,7 +122,9 @@ export function CloneAccountModal({
     };
   }, [open, spaceId, sourceServer.id, suffix, hasSuffix]);
 
-  /** Submit the clone request. */
+  /**
+   * Submit the clone request.
+   */
   const handleSubmit = useCallback(async () => {
     if (!hasSuffix || hasCollision || isChecking) {
       return;
@@ -179,17 +183,17 @@ export function CloneAccountModal({
             </div>
             <div>
               <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">
-                Add another account
+                {t('cloneModal.title')}
               </h3>
               <p className="text-sm text-[rgb(var(--muted))]">
-                Create a separate copy of <strong>{sourceServer.name}</strong>
+                {t('cloneModal.subtitle', { name: sourceServer.name })}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="rounded p-1 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
-            aria-label="Close"
+            aria-label={t('cloneModal.closeAria')}
             data-testid="clone-account-close-btn"
           >
             <X className="h-5 w-5" />
@@ -202,11 +206,9 @@ export function CloneAccountModal({
               htmlFor="clone-display-name"
               className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]"
             >
-              Display name
+              {t('cloneModal.displayName')}
             </label>
-            <p className="mb-2 text-xs text-[rgb(var(--muted))]">
-              The name shown in the server list. Leave blank to use the default.
-            </p>
+            <p className="mb-2 text-xs text-[rgb(var(--muted))]">{t('cloneModal.displayNameDesc')}</p>
             <input
               id="clone-display-name"
               type="text"
@@ -224,17 +226,15 @@ export function CloneAccountModal({
               htmlFor="clone-suffix"
               className="mb-1 block text-sm font-medium text-[rgb(var(--foreground))]"
             >
-              Account label
+              {t('cloneModal.accountLabel')}
             </label>
-            <p className="mb-2 text-xs text-[rgb(var(--muted))]">
-              A short tag appended to the server ID to distinguish this account.
-            </p>
+            <p className="mb-2 text-xs text-[rgb(var(--muted))]">{t('cloneModal.accountLabelDesc')}</p>
             <input
               id="clone-suffix"
               type="text"
               value={suffix}
               onChange={(e) => setSuffix(e.target.value)}
-              placeholder="e.g. work, personal, prod"
+              placeholder={t('cloneModal.accountLabelPlaceholder')}
               className={`input w-full ${hasCollision ? 'border-[rgb(var(--error))]' : ''}`}
               disabled={isLoadingSuggestion || isSubmitting}
               data-testid="clone-suffix-input"
@@ -244,13 +244,13 @@ export function CloneAccountModal({
                 className="mt-1 text-xs text-[rgb(var(--error))]"
                 data-testid="clone-collision-error"
               >
-                This account label is already taken in this space.
+                {t('cloneModal.collisionError')}
               </p>
             )}
           </div>
 
           <div>
-            <p className="mb-2 text-xs font-medium text-[rgb(var(--muted))]">Suggestions</p>
+            <p className="mb-2 text-xs font-medium text-[rgb(var(--muted))]">{t('cloneModal.suggestions')}</p>
             <div className="flex flex-wrap gap-2">
               {CLONE_SUFFIX_SUGGESTIONS.map((suggestion) => (
                 <button
@@ -273,13 +273,13 @@ export function CloneAccountModal({
           {hasSuffix && (
             <div className="space-y-2 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-dim))] p-3">
               <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="text-[rgb(var(--muted))]">Server ID</span>
+                <span className="text-[rgb(var(--muted))]">{t('cloneModal.serverId')}</span>
                 <code className="font-mono text-xs text-[rgb(var(--foreground))]">
                   {previewId || '—'}
                 </code>
               </div>
               <div className="flex items-center justify-between gap-2 text-sm">
-                <span className="text-[rgb(var(--muted))]">Tool prefix</span>
+                <span className="text-[rgb(var(--muted))]">{t('cloneModal.toolPrefix')}</span>
                 <code className="font-mono text-xs text-[rgb(var(--foreground))]">
                   {previewAlias ? `${previewAlias}_*` : '—'}
                 </code>
@@ -287,15 +287,13 @@ export function CloneAccountModal({
               {isChecking && (
                 <div className="flex items-center gap-2 text-xs text-[rgb(var(--muted))]">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Checking availability…
+                  {t('cloneModal.checkingAvailability')}
                 </div>
               )}
             </div>
           )}
 
-          <p className="text-xs text-[rgb(var(--muted))]">
-            The clone starts disabled. Configure its credentials before enabling.
-          </p>
+          <p className="text-xs text-[rgb(var(--muted))]">{t('cloneModal.footerNote')}</p>
 
           {submitError && (
             <p className="text-sm text-[rgb(var(--error))]" data-testid="clone-submit-error">
@@ -310,7 +308,7 @@ export function CloneAccountModal({
               disabled={isSubmitting}
               data-testid="clone-cancel-btn"
             >
-              Cancel
+              {t('common:actions.cancel')}
             </button>
             <button
               onClick={handleSubmit}
@@ -319,7 +317,7 @@ export function CloneAccountModal({
               data-testid="clone-submit-btn"
             >
               {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isSubmitting ? 'Creating…' : 'Add account'}
+              {isSubmitting ? t('cloneModal.creating') : t('cloneModal.createAccount')}
             </button>
           </div>
         </div>

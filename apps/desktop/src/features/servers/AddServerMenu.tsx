@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { ChevronDown, Compass, FileJson, Plus } from 'lucide-react';
 import {
   Button,
@@ -18,27 +19,29 @@ interface AddServerMenuProps {
  * Dropdown for the two ways to add MCP servers: registry discover vs custom JSON.
  */
 export function AddServerMenu({ onDiscover, onCustom }: AddServerMenuProps) {
+  const { t } = useTranslation('servers');
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger data-testid="add-server-menu-trigger">
         <Button variant="primary" size="md" type="button">
           <Plus className="h-4 w-4" />
-          Add Server
+          {t('addMenu.addServer')}
           <ChevronDown className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80 p-1.5" data-testid="add-server-menu">
         <DropdownMenuItem
           icon={Compass}
-          label="Discover"
-          description="Browse the MCP server registry to find and install servers"
+          label={t('addMenu.discover')}
+          description={t('addMenu.discoverDesc')}
           onSelect={onDiscover}
           data-testid="add-server-option-discover"
         />
         <DropdownMenuItem
           icon={FileJson}
-          label="Custom JSON"
-          description="Define a custom server via JSON configuration"
+          label={t('addMenu.custom')}
+          description={t('addMenu.customDesc')}
           onSelect={onCustom}
           data-testid="add-server-option-custom"
         />

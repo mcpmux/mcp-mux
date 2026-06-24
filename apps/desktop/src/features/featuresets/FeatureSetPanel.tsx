@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   X,
   Loader2,
@@ -18,10 +19,15 @@ import {
   Star,
   Shield,
   Save,
+  Monitor,
 } from 'lucide-react';
 import { Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
-import { isStarterFeatureSet, setFeatureSetMembers } from '@/lib/api/featureSets';
+import {
+  isStarterFeatureSet,
+  setFeatureSetMembers,
+  updateFeatureSet,
+} from '@/lib/api/featureSets';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeatures } from '@/lib/api/serverFeatures';
 
@@ -40,11 +46,18 @@ interface ServerGroup {
 }
 
 export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpdate }: FeatureSetPanelProps) {
+  const { t } = useTranslation(['featuresets', 'common']);
   const [allFeatures, setAllFeatures] = useState<ServerFeature[]>([]);
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<Set<string>>(new Set());
+  const [surfacedFeatureIds, setSurfacedFeatureIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingGeneral, setIsSavingGeneral] = useState(false);
+  const [displayName, setDisplayName] = useState(featureSet.name);
+  const [editName, setEditName] = useState(featureSet.name);
+  const [editDescription, setEditDescription] = useState(featureSet.description ?? '');
+  const [editIcon, setEditIcon] = useState(featureSet.icon ?? '');
   const [error, setError] = useState<string | null>(null);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const { toasts, success, error: showError, dismiss } = useToast();
@@ -58,11 +71,8 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
 
   // Both FS types are member-driven now.
   const isConfigurable = true;
-  // The auto-seeded "Starter" FS has editable membership like a Custom one
-  // (change which tools it includes, or empty it). What's locked is its
-  // identity + lifecycle: it's the default fallback for unmapped folders, so
-  // its name is fixed (the backend ignores name changes on builtin rows) and
-  // it can't be deleted — the Delete action below is gated to Custom sets.
+  // The auto-seeded "Starter" FS is treated identically to a Custom one
+  // — the type tag is a UI hint, not a routing flag.
   const isStarter = isStarterFeatureSet(featureSet);
   const isCustom = featureSet.feature_set_type === 'custom';
 
@@ -70,6 +80,13 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
 
   const isFeatureSelected = (featureId: string, _feature: ServerFeature) =>
     selectedFeatureIds.has(featureId);
+
+  useEffect(() => {
+    setDisplayName(featureSet.name);
+    setEditName(featureSet.name);
+    setEditDescription(featureSet.description ?? '');
+    setEditIcon(featureSet.icon ?? '');
+  }, [featureSet]);
 
   useEffect(() => {
     const loadFeatures = async () => {
@@ -80,13 +97,18 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         
         // Seed from the set's include-mode feature members.
         const currentIds = new Set<string>();
+        const surfacedIds = new Set<string>();
         featureSet.members?.forEach((m) => {
           if (m.member_type === 'feature' && m.mode === 'include') {
             currentIds.add(m.member_id);
+            if (m.surfaced) {
+              surfacedIds.add(m.member_id);
+            }
           }
         });
 
         setSelectedFeatureIds(currentIds);
+        setSurfacedFeatureIds(surfacedIds);
         
         // Start with all servers collapsed
         setExpandedServers(new Set());
@@ -133,6 +155,28 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
       const next = new Set(prev);
       if (next.has(featureId)) {
         next.delete(featureId);
+        setSurfacedFeatureIds((surfaced) => {
+          const nextSurfaced = new Set(surfaced);
+          nextSurfaced.delete(featureId);
+          return nextSurfaced;
+        });
+      } else {
+        next.add(featureId);
+      }
+      return next;
+    });
+  };
+
+  /**
+   * Toggle whether an included tool is promoted into client tools/list.
+   */
+  const toggleSurfaced = (featureId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!isConfigurable || !selectedFeatureIds.has(featureId)) return;
+    setSurfacedFeatureIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(featureId)) {
+        next.delete(featureId);
       } else {
         next.add(featureId);
       }
@@ -170,6 +214,63 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
     });
   };
 
+  /** Whether every feature in the space is currently selected. */
+  const areAllFeaturesSelected =
+    allFeatures.length > 0 && allFeatures.every((f) => selectedFeatureIds.has(f.id));
+
+  /**
+   * Select or deselect every feature in the space.
+   */
+  const toggleAllFeatures = () => {
+    if (!isConfigurable || allFeatures.length === 0) return;
+
+    if (areAllFeaturesSelected) {
+      setSelectedFeatureIds(new Set());
+      setSurfacedFeatureIds(new Set());
+      return;
+    }
+
+    setSelectedFeatureIds(new Set(allFeatures.map((f) => f.id)));
+  };
+
+  /**
+   * Save name, description, and icon from the General Information section.
+   */
+  const handleSaveGeneral = async () => {
+    const trimmedName = editName.trim();
+    if (!trimmedName) {
+      setError(t('panel.nameRequired'));
+      return;
+    }
+
+    setIsSavingGeneral(true);
+    setError(null);
+    try {
+      const updated = await updateFeatureSet(featureSet.id, {
+        name: trimmedName,
+        description: editDescription.trim() || undefined,
+        icon: editIcon.trim() || undefined,
+      });
+      setDisplayName(updated.name);
+      setEditName(updated.name);
+      setEditDescription(updated.description ?? '');
+      setEditIcon(updated.icon ?? '');
+      success(t('toast.updated'), t('toast.updatedBody', { name: updated.name }));
+      onUpdate?.();
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setError(errorMsg);
+      showError(t('toast.saveFailed'), errorMsg);
+    } finally {
+      setIsSavingGeneral(false);
+    }
+  };
+
+  const hasGeneralChanges =
+    editName.trim() !== featureSet.name ||
+    editDescription.trim() !== (featureSet.description ?? '') ||
+    editIcon.trim() !== (featureSet.icon ?? '');
+
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
@@ -179,16 +280,20 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         member_type: 'feature' as const,
         member_id: id,
         mode: 'include' as const,
+        surfaced: surfacedFeatureIds.has(id),
       }));
       
       await setFeatureSetMembers(featureSet.id, members);
 
-      success('Changes saved', `"${featureSet.name}" has been updated with ${members.length} feature${members.length !== 1 ? 's' : ''}`);
+      success(
+        t('toast.changesSaved'),
+        t('toast.changesSavedBody', { name: featureSet.name, count: members.length })
+      );
       onUpdate?.();
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);
       setError(errorMsg);
-      showError('Failed to save changes', errorMsg);
+      showError(t('toast.saveChangesFailed'), errorMsg);
     } finally {
       setIsSaving(false);
     }
@@ -254,15 +359,11 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-bold truncate flex items-center gap-2">
-                {featureSet.name}
+                {displayName}
               </h2>
               <div className="flex items-center gap-2 mt-0.5">
                 <span
-                  title={
-                    isStarter
-                      ? "Auto-created with this Space. The default set for folders you haven't mapped — edit which tools it includes; its name is fixed and it can't be deleted."
-                      : undefined
-                  }
+                  title={isStarter ? t('panel.starterTitle') : undefined}
                   className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${
                     isStarter
                       ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800'
@@ -271,7 +372,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                         : 'bg-gray-50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400 border-gray-200 dark:border-gray-800'
                   }`}
                 >
-                  {isStarter ? 'STARTER' : featureSet.feature_set_type.toUpperCase()}
+                  {isStarter ? t('panel.starter') : featureSet.feature_set_type.toUpperCase()}
                 </span>
                 <span className="text-xs text-[rgb(var(--muted))] truncate">
                   ID: {featureSet.id}
@@ -317,7 +418,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                 }`}>
                   <Settings className="h-5 w-5" />
                 </div>
-                <span className="font-semibold text-base">General Information</span>
+                <span className="font-semibold text-base">{t('panel.generalInfo')}</span>
               </div>
               {expandedSections.settings ? (
                 <ChevronDown className="h-5 w-5 text-[rgb(var(--muted))]" />
@@ -330,19 +431,68 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
               <div className="p-4 space-y-4 border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))]">
                 <div>
                   <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
-                    Description
+                    {t('panel.nameLabel')}
                   </label>
-                  <p className="text-sm">
-                    {featureSet.description || 'No description provided.'}
-                  </p>
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    data-testid="featureset-panel-name"
+                  />
                 </div>
+
                 
+                <div>
+                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
+                    {t('panel.descriptionLabel')}
+                  </label>
+                  <input
+                    type="text"
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder={t('panel.descriptionPlaceholder')}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    data-testid="featureset-panel-description"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
+                    {t('panel.iconLabel')}
+                  </label>
+                  <input
+                    type="text"
+                    value={editIcon}
+                    onChange={(e) => setEditIcon(e.target.value)}
+                    placeholder={t('panel.iconPlaceholder')}
+                    maxLength={2}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    data-testid="featureset-panel-icon"
+                  />
+                </div>
+
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void handleSaveGeneral()}
+                  disabled={isSavingGeneral || !editName.trim() || !hasGeneralChanges}
+                  data-testid="featureset-panel-save-general"
+                >
+                  {isSavingGeneral ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  {t('common:actions.save')}
+                </Button>
+
                 {isStarter && (
                   <div className="p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded-lg">
                     <div className="flex gap-2">
                       <Star className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
                       <div className="text-xs text-yellow-800 dark:text-yellow-200">
-                        <strong>Starter FeatureSet:</strong> auto-created with this Space and used as the <em>default</em> for folders you haven&apos;t explicitly mapped (and rootless sessions). Edit which tools it includes (or empty it) to change what they get. Its name is fixed and it <strong>can&apos;t be deleted</strong>, since the fallback always needs a stable target.
+                        <strong>{t('panel.starterNote')}</strong> {t('panel.starterNoteBody')}
                       </div>
                     </div>
                   </div>
@@ -371,7 +521,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-base">Included Features</span>
+                    <span className="font-semibold text-base">{t('panel.includedFeatures')}</span>
                     {/* Show count badge only for configurable feature sets */}
                     {isConfigurable && (
                       <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
@@ -379,7 +529,10 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                           ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700'
                           : 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400 border border-gray-300 dark:border-gray-700'
                       }`}>
-                        {getActualMemberCount()} / {allFeatures.length} selected
+                        {t('panel.selectedCount', {
+                          selected: getActualMemberCount(),
+                          total: allFeatures.length,
+                        })}
                       </span>
                     )}
                   </div>
@@ -408,17 +561,29 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
             {expandedSections.features && (
               <div className="border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))] flex flex-col h-[500px]">
                 {/* Search Bar inside panel */}
-                <div className="p-3 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
+                <div className="p-3 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))] space-y-2">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))]" />
                     <input
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search features..."
+                      placeholder={t('panel.searchPlaceholder')}
                       className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
                   </div>
+                  {isConfigurable && !isLoading && allFeatures.length > 0 && (
+                    <div className="flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleAllFeatures}
+                        data-testid="featureset-select-all"
+                      >
+                        {areAllFeaturesSelected ? t('panel.deselectAll') : t('panel.selectAll')}
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto">
@@ -429,7 +594,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                   ) : filteredGroups.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-[rgb(var(--muted))] p-4 text-center">
                       <Package className="h-8 w-8 mb-2 opacity-50" />
-                      <p className="text-sm">No features found matching your search</p>
+                      <p className="text-sm">{t('panel.noFeaturesMatch')}</p>
                     </div>
                   ) : (
                     <div className="divide-y divide-[rgb(var(--border))]">
@@ -496,7 +661,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                                     toggleAllInServer(group.serverId);
                                   }}
                                   className={`p-1.5 rounded-md transition-colors hover:bg-[rgb(var(--background))] flex-shrink-0`}
-                                  title={allSelected ? "Disable All" : "Enable All"}
+                                  title={allSelected ? t('panel.disableAll') : t('panel.enableAll')}
                                 >
                                   {allSelected ? (
                                     <ToggleRight className="h-5 w-5 text-primary-500" />
@@ -513,42 +678,76 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                               <div className="bg-[rgb(var(--background))] border-t border-[rgb(var(--border))]">
                                 {group.features.map((feature) => {
                                   const isSelected = isFeatureSelected(feature.id, feature);
-                                  
-                                  return (
-                                    <button
+                                      const isSurfaced = surfacedFeatureIds.has(feature.id);
+                                      const canSurface =
+                                        isConfigurable &&
+                                        isSelected &&
+                                        (feature.feature_type === 'tool' ||
+                                          feature.feature_type === 'resource' ||
+                                          feature.feature_type === 'prompt');
+
+                                      const surfaceTitle =
+                                        feature.feature_type === 'tool'
+                                          ? t('panel.surfaceToolTitle')
+                                          : feature.feature_type === 'resource'
+                                            ? t('panel.surfaceResourceTitle')
+                                            : t('panel.surfacePromptTitle');
+
+                                      return (
+                                    <div
                                       key={feature.id}
-                                      onClick={() => toggleFeature(feature.id)}
-                                      disabled={!isConfigurable}
-                                      className={`w-full flex items-center gap-3 px-4 py-2.5 pl-12 text-left border-b border-[rgb(var(--border))] last:border-b-0 transition-colors
-                                        ${isConfigurable ? 'hover:bg-[rgb(var(--surface-hover))]' : 'cursor-default'}
+                                      className={`flex items-center gap-2 border-b border-[rgb(var(--border))] last:border-b-0 transition-colors
                                         ${isSelected ? 'bg-primary-50 dark:bg-primary-900/10' : ''}`}
                                     >
-                                      <div className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                        isSelected 
-                                          ? 'bg-primary-500 border-primary-500' 
-                                          : 'border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--surface))]'
-                                      }`}>
-                                        {isSelected && <Check className="h-3 w-3 text-white" />}
-                                      </div>
-                                      
-                                      {getFeatureIcon(feature.feature_type)}
-                                      
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-medium text-sm truncate">
-                                            {feature.display_name || feature.feature_name}
-                                          </span>
-                                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${getTypeColor(feature.feature_type)}`}>
-                                            {feature.feature_type}
-                                          </span>
+                                      <button
+                                        onClick={() => toggleFeature(feature.id)}
+                                        disabled={!isConfigurable}
+                                        className={`flex-1 flex items-center gap-3 px-4 py-2.5 pl-12 text-left transition-colors
+                                          ${isConfigurable ? 'hover:bg-[rgb(var(--surface-hover))]' : 'cursor-default'}`}
+                                      >
+                                        <div className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                          isSelected
+                                            ? 'bg-primary-500 border-primary-500'
+                                            : 'border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--surface))]'
+                                        }`}>
+                                          {isSelected && <Check className="h-3 w-3 text-white" />}
                                         </div>
-                                        {feature.description && (
-                                          <p className="text-xs text-[rgb(var(--muted))] mt-0.5 line-clamp-1">
-                                            {feature.description}
-                                          </p>
-                                        )}
-                                      </div>
-                                    </button>
+
+                                        {getFeatureIcon(feature.feature_type)}
+
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-medium text-sm truncate">
+                                              {feature.display_name || feature.feature_name}
+                                            </span>
+                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${getTypeColor(feature.feature_type)}`}>
+                                              {feature.feature_type}
+                                            </span>
+                                          </div>
+                                          {feature.description && (
+                                            <p className="text-xs text-[rgb(var(--muted))] mt-0.5 line-clamp-1">
+                                              {feature.description}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </button>
+
+                                      {canSurface && (
+                                        <button
+                                          type="button"
+                                          onClick={(event) => toggleSurfaced(feature.id, event)}
+                                          className={`mr-3 flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors flex-shrink-0
+                                            ${isSurfaced
+                                              ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                                              : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))]'}`}
+                                          title={surfaceTitle}
+                                          data-testid={`surface-toggle-${feature.id}`}
+                                        >
+                                          <Monitor className="h-3.5 w-3.5" />
+                                          {t('panel.surface')}
+                                        </button>
+                                      )}
+                                    </div>
                                   );
                                 })}
                               </div>
@@ -573,18 +772,20 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
             size="sm"
             onClick={async () => {
               if (await confirm({
-                title: 'Delete feature set',
-                message: `Delete "${featureSet.name}"? This cannot be undone.`,
-                confirmLabel: 'Delete',
+                title: t('confirm.deleteTitle'),
+                message: t('confirm.deleteMessage', { name: featureSet.name }),
+                confirmLabel: t('confirm.deleteLabel'),
+                cancelLabel: t('common:actions.cancel'),
                 variant: 'danger',
               })) {
                 onDelete(featureSet.id);
               }
             }}
             className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 mr-auto"
+            data-testid="featureset-panel-delete"
           >
             <Trash2 className="h-4 w-4 mr-2" />
-            Delete
+            {t('common:actions.delete')}
           </Button>
         )}
         
@@ -593,11 +794,12 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
             onClick={handleSave}
             disabled={isSaving}
             className="w-full flex-1"
+            data-testid="featureset-panel-save-changes"
           >
             {isSaving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</>
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t('panel.saving')}</>
             ) : (
-              <><Save className="h-4 w-4 mr-2" /> Save Changes</>
+              <><Save className="h-4 w-4 mr-2" /> {t('panel.saveChanges')}</>
             )}
           </Button>
         )}

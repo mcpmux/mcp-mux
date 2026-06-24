@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
+import {
+  useServerStatusEvents,
+  useWorkspaceEventListener,
+  type WorkspaceEventChannel,
+} from '@/hooks';
+import { pickPath } from '@/lib/backend/shell';
 import {
   AlertCircle,
   Check,
   ChevronDown,
   ChevronRight,
   FileText,
-  Folder,
   FolderOpen,
   FolderSearch,
   Layers,
@@ -58,7 +63,6 @@ import {
   type FeatureSet,
 } from '@/lib/api/featureSets';
 import { ServerIcon } from '@/components/ServerIcon';
-import { pickPath } from '@/lib/backend/shell';
 import { useSpaces } from '@/stores';
 import type { Space } from '@/lib/api/spaces';
 
@@ -88,7 +92,15 @@ interface Entry {
 }
 type Selected = { mode: 'new' } | { mode: 'entry'; id: string };
 
+const WORKSPACE_TABLE_REFRESH_CHANNELS: WorkspaceEventChannel[] = [
+  'session-roots-changed',
+  'workspace-binding-changed',
+];
+
+const EFFECTIVE_FEATURES_REFRESH_CHANNELS: WorkspaceEventChannel[] = ['workspace-binding-changed'];
+
 export function WorkspacesPage() {
+  const { t } = useTranslation(['workspaces', 'common']);
   const spaces = useSpaces();
   const [bindings, setBindings] = useState<WorkspaceBinding[]>([]);
   const [appearances, setAppearances] = useState<WorkspaceAppearance[]>([]);
@@ -131,21 +143,15 @@ export function WorkspacesPage() {
 
   // Refresh whenever something the table reflects changes outside the page:
   //   • `session-roots-changed` — a connected client newly reported a root.
-  //   • `workspace-binding-changed` — a binding was created/updated/deleted
-  //     by another surface (e.g. the new-workspace popup or the meta-tool).
+  //   • `workspace-binding-changed` — binding or appearance write (same channel).
   // Without the binding listener, popup-driven saves leave this page showing
   // the stale "UNMAPPED" badge until the user navigates away and back.
-  useEffect(() => {
-    const reload = () => {
+  useWorkspaceEventListener(
+    useCallback(() => {
       void loadData();
-    };
-    const unRoots = listen('session-roots-changed', reload);
-    const unBinding = listen('workspace-binding-changed', reload);
-    return () => {
-      unRoots.then((fn) => fn());
-      unBinding.then((fn) => fn());
-    };
-  }, [loadData]);
+    }, [loadData]),
+    WORKSPACE_TABLE_REFRESH_CHANNELS
+  );
 
   const refresh = async () => {
     setIsRefreshing(true);
@@ -178,6 +184,22 @@ export function WorkspacesPage() {
     for (const s of spaces) m.set(s.id, s);
     return m;
   }, [spaces]);
+
+  /**
+   * The system's routing fallback: the `is_default` Space plus that Space's
+   * Default FeatureSet. Sessions whose reported root has no binding resolve
+   * here. We compute it once and pass it down so EntryCard can show the
+   * effective FS on every row, including unmapped ones.
+   */
+  const fallback = useMemo(() => {
+    const space = spaces.find((s) => s.is_default) ?? spaces[0] ?? null;
+    if (!space) return null;
+    const fs =
+      featureSets.find(
+        (f) => f.space_id === space.id && isStarterFeatureSet(f)
+      ) ?? null;
+    return { space, fs };
+  }, [spaces, featureSets]);
 
   /**
    * Unified list: live-reported roots come first (unmapped amber, then
@@ -235,8 +257,10 @@ export function WorkspacesPage() {
             .map((id) => fsById.get(id)?.name ?? '')
             .join(' ')
         : '';
+      const label = e.binding?.label?.toLowerCase() ?? '';
       return (
         e.root.toLowerCase().includes(q) ||
+        label.includes(q) ||
         spaceName.toLowerCase().includes(q) ||
         fsNames.toLowerCase().includes(q)
       );
@@ -260,10 +284,12 @@ export function WorkspacesPage() {
   const resolveEntryIcon = useCallback(
     (entry: Entry): string | null =>
       liveEntryIcons.get(entry.id) ??
+      entry.binding?.icon ??
       appearancesByRoot.get(entry.root.toLowerCase()) ??
       null,
     [appearancesByRoot, liveEntryIcons]
   );
+
   const selectedIsNew = selected?.mode === 'new';
   const panelOpen = selected !== null;
 
@@ -278,7 +304,7 @@ export function WorkspacesPage() {
     setBindings((prev) =>
       [...prev, created].sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
     );
-    success('Mapping saved', created.workspace_root);
+    success(t('toast.bindingSaved'), created.workspace_root);
     return created;
   };
 
@@ -289,14 +315,15 @@ export function WorkspacesPage() {
         .map((b) => (b.id === id ? updated : b))
         .sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
     );
-    success('Mapping updated', updated.workspace_root);
+    success(t('toast.bindingUpdated'), updated.workspace_root);
   };
 
   const handleDelete = async (binding: WorkspaceBinding) => {
     const ok = await confirm({
-      title: 'Remove mapping',
-      message: `Apps opening "${binding.workspace_root}" will stop receiving these tools. You can map the folder again anytime.`,
-      confirmLabel: 'Remove',
+      title: t('confirm.removeTitle'),
+      message: t('confirm.removeMessage', { path: binding.workspace_root }),
+      confirmLabel: t('confirm.removeLabel'),
+      cancelLabel: t('common:actions.cancel'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -304,37 +331,32 @@ export function WorkspacesPage() {
       await deleteWorkspaceBinding(binding.id);
       setBindings((prev) => prev.filter((b) => b.id !== binding.id));
       setSelected(null);
-      success('Mapping removed', binding.workspace_root);
+      success(t('toast.bindingRemoved'), binding.workspace_root);
     } catch (e) {
-      showError('Failed to remove mapping', e instanceof Error ? e.message : String(e));
+      showError(t('toast.failedToRemove'), e instanceof Error ? e.message : String(e));
     }
   };
 
-  // Bulk "clear" for the unmapped (amber) folders. These are live-reported
-  // roots with no binding — clearing drops them from the gateway's in-memory
-  // session-roots registry so this list empties in one action, and the
-  // "map this folder?" prompt is offered again next time those apps report a
-  // folder. Mapped folders are untouched.
   const handleClearUnmapped = async () => {
     const n = counts.unmapped;
     const ok = await confirm({
-      title: 'Clear unmapped folders',
-      message: `Remove ${n} unmapped folder${n === 1 ? '' : 's'} from this list. McpMux will offer to map ${n === 1 ? 'it' : 'them'} again the next time those apps report the folder.`,
-      confirmLabel: 'Clear all',
+      title: t('clearUnmapped.title'),
+      message: t('clearUnmapped.message', { count: n }),
+      confirmLabel: t('clearUnmapped.confirm'),
+      cancelLabel: t('common:actions.cancel'),
+      variant: 'danger',
     });
     if (!ok) return;
     try {
       const cleared = await clearUnmappedReportedRoots();
       await loadData();
       success(
-        cleared > 0
-          ? `Cleared ${cleared} unmapped folder${cleared === 1 ? '' : 's'}`
-          : 'Nothing to clear',
-        cleared > 0 ? "You'll be asked to map them again next time." : undefined
+        cleared > 0 ? t('clearUnmapped.success', { count: cleared }) : t('clearUnmapped.nothing'),
+        cleared > 0 ? t('clearUnmapped.successHint') : undefined
       );
     } catch (e) {
       showError(
-        'Could not clear unmapped folders',
+        t('clearUnmapped.errorTitle'),
         e instanceof Error ? e.message : String(e)
       );
     }
@@ -347,15 +369,10 @@ export function WorkspacesPage() {
           <div className="flex items-start justify-between gap-6 mb-6">
             <div className="min-w-0 flex-1">
               <h1 className="text-3xl font-bold" data-testid="workspaces-title">
-                Workspaces
+                {t('title')}
               </h1>
               <p className="text-base text-[rgb(var(--muted))] mt-2 max-w-2xl">
-                Map a folder to the tools it should get. When you open that
-                folder in a connected app — Cursor, VS Code, Claude — McpMux
-                serves exactly the tools you chose for it. Folders you
-                haven&apos;t mapped fall back to your default Starter set, so
-                they work out of the box — map one only when it should see
-                something different.
+                {t('subtitle')}
               </p>
             </div>
             <div className="flex-shrink-0 flex items-center gap-2">
@@ -367,7 +384,7 @@ export function WorkspacesPage() {
                 className="whitespace-nowrap"
               >
                 <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
+                {t('common:actions.refresh')}
               </Button>
               <Button
                 variant="primary"
@@ -377,7 +394,7 @@ export function WorkspacesPage() {
                 className="whitespace-nowrap"
               >
                 <Plus className="h-4 w-4 mr-2" />
-                New mapping
+                {t('actions.newBinding')}
               </Button>
             </div>
           </div>
@@ -387,7 +404,7 @@ export function WorkspacesPage() {
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-[rgb(var(--muted))]" />
               <input
                 type="text"
-                placeholder="Search by path, space, or feature set…"
+                placeholder={t('searchPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-12 pr-4 py-3 text-base bg-[rgb(var(--surface))] border border-[rgb(var(--border))] rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
@@ -398,10 +415,10 @@ export function WorkspacesPage() {
               value={filter}
               onChange={setFilter}
               options={[
-                { value: 'all', label: 'All', count: counts.all },
-                { value: 'live', label: 'Live', count: counts.live },
-                { value: 'mapped', label: 'Mapped', count: counts.mapped },
-                { value: 'unmapped', label: 'Unmapped', count: counts.unmapped },
+                { value: 'all', label: t('filter.all'), count: counts.all },
+                { value: 'live', label: t('filter.live'), count: counts.live },
+                { value: 'mapped', label: t('filter.mapped'), count: counts.mapped },
+                { value: 'unmapped', label: t('filter.unmapped'), count: counts.unmapped },
               ]}
             />
             {counts.unmapped > 0 && (
@@ -409,12 +426,12 @@ export function WorkspacesPage() {
                 variant="ghost"
                 size="md"
                 onClick={handleClearUnmapped}
-                title="Forget all unmapped folders. McpMux will offer to map them again next time those apps report a folder."
+                title={t('clearUnmapped.message', { count: counts.unmapped })}
                 className="whitespace-nowrap text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20"
                 data-testid="workspaces-clear-unmapped"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Clear unmapped
+                {t('clearUnmapped.button')}
               </Button>
             )}
           </div>
@@ -440,32 +457,36 @@ export function WorkspacesPage() {
               hasAny={entries.length > 0}
               hasFilter={searchQuery.length > 0 || filter !== 'all'}
               onCreate={() => setSelected({ mode: 'new' })}
+              t={t}
             />
           ) : (
             <div className="grid gap-5 auto-fill-cards">
               {filtered.map((entry) => {
                 const isSelected =
                   selected?.mode === 'entry' && selected.id === entry.id;
-                // Mapped entries show their bound Space + FeatureSet names.
-                // Unmapped entries read "Not mapped" — they fall back to the
-                // default Starter set rather than to an explicit binding.
+                // For mapped entries: trust the binding. For unmapped: fall
+                // back to the system's default Space + its Default FS so
+                // every card answers "what tools does this folder see?".
                 const resolvedSpaceName = entry.binding
                   ? spaceById.get(entry.binding.space_id)?.name
-                  : undefined;
-                const fsNames = entry.binding
-                  ? entry.binding.feature_set_ids.map(
-                      (id) => fsById.get(id)?.name ?? id
+                  : fallback?.space.name;
+                const resolvedFsName = entry.binding
+                  ? formatFsList(
+                      entry.binding.feature_set_ids.map(
+                        (id) => fsById.get(id)?.name ?? id
+                      )
                     )
-                  : [];
+                  : fallback?.fs?.name;
                 return (
                   <EntryCard
                     key={entry.id}
                     entry={entry}
                     icon={resolveEntryIcon(entry)}
                     spaceName={resolvedSpaceName}
-                    fsNames={fsNames}
+                    fsName={resolvedFsName}
                     selected={isSelected}
                     onClick={() => setSelected({ mode: 'entry', id: entry.id })}
+                    t={t}
                   />
                 );
               })}
@@ -486,7 +507,6 @@ export function WorkspacesPage() {
             isNew={selectedIsNew}
             spaces={spaces}
             featureSets={featureSets}
-            existingBindings={bindings}
             onClose={() => setSelected(null)}
             onSubmit={async (input) => {
               if (selectedEntry?.binding) {
@@ -500,6 +520,7 @@ export function WorkspacesPage() {
               if (selectedEntry?.binding) await handleDelete(selectedEntry.binding);
             }}
             resolvedIcon={selectedEntry ? resolveEntryIcon(selectedEntry) : null}
+            onError={(msg) => showError(t('toast.couldNotSave'), msg)}
             onIconChange={(icon) => {
               if (!selectedEntry) return;
               setLiveEntryIcons((prev) => {
@@ -512,7 +533,7 @@ export function WorkspacesPage() {
                 return next;
               });
             }}
-            onError={(msg) => showError('Could not save', msg)}
+            t={t}
           />
         </>
       )}
@@ -527,11 +548,6 @@ export function WorkspacesPage() {
 // Filter segmented control
 // ---------------------------------------------------------------------------
 
-function normalizeIcon(icon: string | null | undefined): string | null {
-  const trimmed = icon?.trim() ?? '';
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 /**
  * Render a list of FeatureSet names as a single string for display
  * surfaces (cards, badges, panel headers) where a multi-FS binding has
@@ -545,17 +561,50 @@ function formatFsList(names: string[]): string {
 }
 
 /**
- * Structural equality between two binding inputs. The edit form uses this
- * for its "dirty" check — Apply stays disabled until the current values
- * differ from what was loaded, so there's nothing to save on a no-op edit.
- * `feature_set_ids` order matters (it's the operator-chosen render order,
- * not just a set), so we compare positionally.
+ * Structural equality between two binding inputs. The autosave effect
+ * uses this to skip writes when the user re-toggled their way back to
+ * the last-saved state — avoids spamming `WorkspaceBindingChanged` for
+ * a no-op edit. `feature_set_ids` order matters (it's the operator-
+ * chosen render order, not just a set), so we compare positionally.
  */
+function normalizeLabel(label: string | null | undefined): string | null {
+  const trimmed = label?.trim() ?? '';
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeIcon(icon: string | null | undefined): string | null {
+  const trimmed = icon?.trim() ?? '';
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Primary title for a workspace entry — label when set, otherwise the path.
+ */
+function entryDisplayTitle(entry: Entry): string {
+  const label = entry.binding?.label?.trim();
+  if (label) return label;
+  return entry.root;
+}
+
+/** Compact OAuth client id for card badges. */
+function shortClientId(clientId: string): string {
+  if (clientId.length <= 14) return clientId;
+  return `${clientId.slice(0, 8)}…`;
+}
+
 function sameBindingInput(
   a: WorkspaceBindingInput,
-  b: { workspace_root: string; space_id: string; feature_set_ids: string[] }
+  b: {
+    workspace_root: string;
+    label?: string | null;
+    icon?: string | null;
+    space_id: string;
+    feature_set_ids: string[];
+  }
 ): boolean {
   if (a.workspace_root.trim() !== b.workspace_root.trim()) return false;
+  if (normalizeLabel(a.label) !== normalizeLabel(b.label)) return false;
+  if (normalizeIcon(a.icon) !== normalizeIcon(b.icon)) return false;
   if (a.space_id !== b.space_id) return false;
   if (a.feature_set_ids.length !== b.feature_set_ids.length) return false;
   return a.feature_set_ids.every((id, i) => id === b.feature_set_ids[i]);
@@ -608,66 +657,25 @@ function SegmentedFilter<T extends string>({
 }
 
 // ---------------------------------------------------------------------------
-// Entry card — a workspace folder and the tools it maps to. Matches the
-// Clients/Servers card template: flat surface icon box + subtle border,
-// w-14 icon, p-6, hover:scale. Folder name leads, full path beneath, and a
-// feature-set summary that collapses to "first + N more" so it stays tidy
-// no matter how many sets a folder maps to.
+// Entry card — matches Clients page card anatomy (56×56 icon, 3xl size, chips)
 // ---------------------------------------------------------------------------
-
-/** Last path segment — the folder's own name (`proj` from `/a/b/proj`). */
-function folderName(path: string): string {
-  const parts = path.split(/[/\\]/).filter(Boolean);
-  return parts[parts.length - 1] || path;
-}
-
-/**
- * Compact feature-set summary for the card footer. Lists up to two names,
- * then collapses to "first + N more" so a folder mapped to many sets doesn't
- * blow out the card. Full list is exposed via the `title` tooltip at the call
- * site.
- */
-function summarizeFeatureSets(names: string[]): string {
-  if (names.length === 0) return 'No tools';
-  if (names.length <= 2) return names.join(' + ');
-  return `${names[0]} + ${names.length - 1} more`;
-}
-
-/**
- * Per-status color. Soft flat tints (not heavy gradients) + a thin solid
- * accent strip — adds life and at-a-glance status while staying inside the
- * app's tinted-surface design language.
- */
-const CARD_TONES = {
-  emerald: {
-    strip: 'bg-emerald-500',
-    box: 'bg-emerald-50 text-emerald-600 ring-emerald-200/70 dark:bg-emerald-900/20 dark:text-emerald-400 dark:ring-emerald-800/50',
-  },
-  amber: {
-    strip: 'bg-amber-500',
-    box: 'bg-amber-50 text-amber-600 ring-amber-200/70 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-800/50',
-  },
-  neutral: {
-    strip: 'bg-slate-300 dark:bg-slate-600',
-    box: 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] ring-[rgb(var(--border-subtle))]',
-  },
-} as const;
 
 function EntryCard({
   entry,
   icon,
   spaceName,
-  fsNames,
+  fsName,
   selected,
   onClick,
+  t,
 }: {
   entry: Entry;
   icon: string | null;
   spaceName: string | undefined;
-  /** Resolved FeatureSet names for a mapped folder; empty when unmapped. */
-  fsNames: string[];
+  fsName: string | undefined;
   selected: boolean;
   onClick: () => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   const tone =
     entry.kind === 'unmapped-live'
@@ -675,89 +683,83 @@ function EntryCard({
       : entry.kind === 'mapped-live'
         ? 'emerald'
         : 'neutral';
-  const t = CARD_TONES[tone];
-  const name = folderName(entry.root);
 
   return (
     <Card
-      className={`relative cursor-pointer overflow-hidden transition-all hover:shadow-lg hover:scale-[1.01] ${
+      className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
         selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
       }`}
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
     >
-      {/* Status accent strip across the top — a splash of color per state. */}
-      <div className={`absolute inset-x-0 top-0 h-1 ${t.strip}`} />
       <CardContent className="p-6">
-        <div className="mb-4 flex items-start gap-4">
+        <div className="flex items-start gap-4 mb-4">
           <div className="relative flex-shrink-0">
             <div
-              className={`flex h-14 w-14 items-center justify-center rounded-xl ring-1 ring-inset ${t.box}`}
+              className={[
+                'w-14 h-14 flex items-center justify-center rounded-xl border',
+                tone === 'amber'
+                  ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200/80 dark:border-amber-800/50 text-amber-600 dark:text-amber-400'
+                  : tone === 'emerald'
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/80 dark:border-emerald-800/50 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))]',
+              ].join(' ')}
             >
               {icon ? (
                 <ServerIcon icon={icon} className="h-8 w-8 object-contain" fallback="📁" />
-              ) : entry.isLive ? (
-                <FolderOpen className="h-6 w-6" />
               ) : (
-                <Folder className="h-6 w-6" />
+                <FolderOpen className="h-6 w-6" />
               )}
             </div>
             {entry.isLive && (
               <span
-                className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]"
-                title="A client is active in this folder right now"
+                className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]"
+                title={t('card.liveTooltip')}
               />
             )}
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
-              {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
-              {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              {entry.kind === 'unmapped-live' && <Pill tone="amber">{t('card.unmapped')}</Pill>}
+              {entry.kind === 'mapped-offline' && <Pill tone="neutral">{t('card.offline')}</Pill>}
+              {entry.kind === 'mapped-live' && <Pill tone="emerald">{t('card.live')}</Pill>}
+              {entry.binding?.client_id && (
+                <Pill tone="neutral" title={entry.binding.client_id}>
+                  {shortClientId(entry.binding.client_id)}
+                </Pill>
+              )}
             </div>
-            <h3 className="truncate text-base font-semibold" title={entry.root}>
-              {name}
-            </h3>
             <p
-              className="truncate font-mono text-xs text-[rgb(var(--muted))]"
-              title={entry.root}
+              className={`text-sm text-[rgb(var(--foreground))] truncate ${
+                entry.binding?.label?.trim() ? 'font-semibold' : 'font-mono'
+              }`}
+              title={entryDisplayTitle(entry)}
             >
-              {entry.root}
+              {entryDisplayTitle(entry)}
             </p>
+            {entry.binding?.label?.trim() && (
+              <p className="font-mono text-xs text-[rgb(var(--muted))] truncate mt-0.5" title={entry.root}>
+                {entry.root}
+              </p>
+            )}
           </div>
         </div>
 
-        <div className="border-t border-[rgb(var(--border-subtle))] pt-4 text-xs">
-          {entry.binding ? (
-            <div className="flex items-center justify-between gap-3">
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <Layers className="h-3.5 w-3.5 flex-shrink-0 text-primary-500" />
-                <span
-                  className="truncate font-medium text-[rgb(var(--foreground))]"
-                  title={fsNames.join(', ')}
-                >
-                  {summarizeFeatureSets(fsNames)}
-                </span>
-                {fsNames.length > 1 && (
-                  <span
-                    className="flex-shrink-0 rounded-full bg-primary-500/10 px-1.5 text-[10px] font-bold tabular-nums text-primary-600 dark:text-primary-300"
-                    title={`${fsNames.length} feature sets`}
-                  >
-                    {fsNames.length}
-                  </span>
-                )}
+        <div className="pt-4 border-t border-[rgb(var(--border-subtle))] text-xs text-[rgb(var(--muted))]">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span>{t('card.routesTo')}</span>
+            <Chip tone="primary">{fsName ?? '—'}</Chip>
+            <span>{t('card.in')}</span>
+            <Chip tone="neutral">{spaceName ?? '—'}</Chip>
+            {!entry.binding && (
+              <span
+                className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase tracking-wider bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200/70 dark:border-amber-800/60"
+                title={t('card.unboundTooltip')}
+              >
+                {t('card.unbound')}
               </span>
-              <span className="inline-flex flex-shrink-0 items-center gap-1.5 text-[rgb(var(--muted))]">
-                <span>in</span>
-                <Chip tone="neutral">{spaceName ?? '—'}</Chip>
-              </span>
-            </div>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
-              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-              Not mapped — using your default Starter tools
-            </span>
-          )}
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -767,9 +769,11 @@ function EntryCard({
 function Pill({
   children,
   tone,
+  title,
 }: {
   children: React.ReactNode;
   tone: 'amber' | 'emerald' | 'neutral';
+  title?: string;
 }) {
   const cls =
     tone === 'amber'
@@ -780,6 +784,7 @@ function Pill({
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[10px] font-semibold uppercase tracking-wider ${cls}`}
+      title={title}
     >
       {children}
     </span>
@@ -871,7 +876,7 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const t = SECTION_TONES[tone] ?? SECTION_TONES.primary;
+  const toneSpec = SECTION_TONES[tone] ?? SECTION_TONES.primary;
 
   return (
     <div
@@ -884,7 +889,7 @@ function CollapsibleSection({
         className={[
           'w-full flex items-center justify-between p-4 transition-all',
           open
-            ? t.gradientOpen
+            ? toneSpec.gradientOpen
             : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]',
         ].join(' ')}
         aria-expanded={open}
@@ -893,7 +898,7 @@ function CollapsibleSection({
           <div
             className={[
               'p-2 rounded-lg flex-shrink-0 transition-colors duration-200',
-              open ? t.iconActive : t.iconQuiet,
+              open ? toneSpec.iconActive : toneSpec.iconQuiet,
             ].join(' ')}
           >
             {icon}
@@ -908,7 +913,7 @@ function CollapsibleSection({
                   className={[
                     'text-xs px-2 py-0.5 rounded-full font-bold tabular-nums',
                     open
-                      ? t.badgeOpen
+                      ? toneSpec.badgeOpen
                       : 'bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))] border border-[rgb(var(--border-subtle))]',
                   ].join(' ')}
                 >
@@ -956,25 +961,25 @@ function InspectorPanel({
   resolvedIcon,
   spaces,
   featureSets,
-  existingBindings,
   onClose,
   onSubmit,
   onDelete,
   onError,
   onIconChange,
+  t,
 }: {
   entry: Entry | null;
   isNew: boolean;
   resolvedIcon: string | null;
   spaces: Space[];
   featureSets: FeatureSet[];
-  existingBindings: WorkspaceBinding[];
   onClose: () => void;
   onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
   onDelete: () => Promise<void>;
   onError: (msg: string) => void;
-  /** Live icon edits from the binding form (before persistence lands in entry state). */
+  /** Live icon edits from the binding form (before autosave lands in entry state). */
   onIconChange?: (icon: string | null) => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   const [editedIcon, setEditedIcon] = useState<string | null | undefined>(undefined);
   const [prevResolvedIcon, setPrevResolvedIcon] = useState(resolvedIcon);
@@ -993,7 +998,6 @@ function InspectorPanel({
     },
     [onIconChange]
   );
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -1009,13 +1013,16 @@ function InspectorPanel({
       ? 'edit'
       : 'create-from-live';
   const title = isNew
-    ? 'New mapping'
+    ? t('panel.newBinding')
     : isMapped
-      ? 'Workspace mapping'
-      : 'Map this folder';
+      ? t('panel.binding')
+      : t('panel.configureWorkspace');
+  const displayTitle = entry ? entryDisplayTitle(entry) : '';
   const subtitle = isNew
-    ? 'Choose the tools a folder should get.'
-    : entry?.root ?? '';
+    ? t('panel.newSubtitle')
+    : displayTitle !== entry?.root
+      ? entry?.root ?? ''
+      : displayTitle;
 
   // Auto-save status drives the small pill in the Mapping section header.
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ kind: 'idle' });
@@ -1038,23 +1045,30 @@ function InspectorPanel({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                {!isNew && entry?.isLive && <Pill tone="emerald">Live</Pill>}
-                {!isNew && entry && !isMapped && <Pill tone="amber">Unmapped</Pill>}
-                {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">Offline</Pill>}
+                {!isNew && entry?.isLive && <Pill tone="emerald">{t('card.live')}</Pill>}
+                {!isNew && entry && !isMapped && <Pill tone="amber">{t('card.unmapped')}</Pill>}
+                {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">{t('card.offline')}</Pill>}
               </div>
-              <h2 className="text-lg font-bold truncate">{title}</h2>
-              <p
-                className={`text-xs text-[rgb(var(--muted))] truncate ${!isNew ? 'font-mono' : ''}`}
-                title={subtitle}
-              >
-                {subtitle}
-              </p>
+              <h2 className="text-lg font-bold truncate" title={displayTitle || title}>
+                {!isNew && entry ? displayTitle : title}
+              </h2>
+              {!isNew && entry && displayTitle !== entry.root && (
+                <p
+                  className="text-xs text-[rgb(var(--muted))] truncate font-mono"
+                  title={entry.root}
+                >
+                  {entry.root}
+                </p>
+              )}
+              {isNew && (
+                <p className="text-xs text-[rgb(var(--muted))] truncate">{subtitle}</p>
+              )}
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
-            aria-label="Close panel"
+            aria-label={t('panel.closeAria')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -1065,26 +1079,27 @@ function InspectorPanel({
         <CollapsibleSection
           icon={<FolderOpen className="h-5 w-5" />}
           tone="primary"
-          title="Mapping"
+          title={t('panel.mapping')}
           subtitle={
             mode === 'create'
-              ? 'Choose the folder and the tools it should get.'
+              ? t('panel.mappingSubtitleCreate')
               : mode === 'create-from-live'
-                ? 'This folder is open in an app and using your default Starter tools — map it to give it a specific set instead.'
+                ? t('panel.mappingSubtitleLive')
                 : isMapped && entry?.binding
-                  ? `Gives ${
-                      formatFsList(
-                        entry.binding!.feature_set_ids.map(
-                          (id) => featureSets.find((f) => f.id === id)?.name ?? id
-                        )
-                      ) || '—'
-                    } from ${
-                      spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—'
-                    }`
-                  : 'Edit what this folder sees, then press Apply.'
+                  ? t('panel.mappingSubtitleRoutes', {
+                      featureSets:
+                        formatFsList(
+                          entry.binding!.feature_set_ids.map(
+                            (id) => featureSets.find((f) => f.id === id)?.name ?? id
+                          )
+                        ) || '—',
+                      space:
+                        spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—',
+                    })
+                  : t('panel.mappingSubtitleAutosave')
           }
           defaultOpen={isNew || !isMapped}
-          headerExtra={<SaveStatusPill status={saveStatus} />}
+          headerExtra={mode === 'edit' ? <SaveStatusPill status={saveStatus} t={t} /> : null}
           testId="workspace-mapping-section"
         >
           <BindingForm
@@ -1094,12 +1109,12 @@ function InspectorPanel({
             initial={entry?.binding ?? null}
             prefillRoot={entry && !isMapped ? entry.root : undefined}
             initialUnmappedIcon={!isMapped ? resolvedIcon : null}
-            existingBindings={existingBindings}
             onCancel={onClose}
             onSubmit={onSubmit}
             onError={onError}
             onSaveStatusChange={setSaveStatus}
             onIconChange={handleIconChange}
+            t={t}
           />
         </CollapsibleSection>
 
@@ -1107,8 +1122,8 @@ function InspectorPanel({
           <CollapsibleSection
             icon={<Layers className="h-5 w-5" />}
             tone="purple"
-            title="Effective Features"
-            subtitle="Tools, prompts, and resources this folder currently sees"
+            title={t('panel.effectiveFeatures')}
+            subtitle={t('panel.effectiveFeaturesSubtitle')}
             defaultOpen={true}
             badge={effectiveTotal ?? undefined}
             testId="workspace-effective-features-section"
@@ -1116,9 +1131,11 @@ function InspectorPanel({
             <EffectiveFeaturesContent
               root={entry.root}
               onTotalChange={setEffectiveTotal}
+              t={t}
             />
           </CollapsibleSection>
         )}
+
       </div>
 
       {entry?.binding && (
@@ -1131,7 +1148,7 @@ function InspectorPanel({
             data-testid={`workspace-binding-delete-${entry.binding.id}`}
           >
             <Trash2 className="h-4 w-4 mr-2" />
-            Remove mapping
+            {t('actions.removeBinding')}
           </Button>
         </div>
       )}
@@ -1139,7 +1156,13 @@ function InspectorPanel({
   );
 }
 
-function SaveStatusPill({ status }: { status: SaveStatus }) {
+function SaveStatusPill({
+  status,
+  t,
+}: {
+  status: SaveStatus;
+  t: TFunction<['workspaces', 'common']>;
+}) {
   if (status.kind === 'idle') return null;
   const base =
     'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border';
@@ -1149,7 +1172,7 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
         className={`${base} bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))] border-[rgb(var(--border))]`}
       >
         <Loader2 className="h-2.5 w-2.5 animate-spin" />
-        Saving
+        {t('saveStatus.saving')}
       </span>
     );
   }
@@ -1159,7 +1182,7 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
         className={`${base} bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border-green-300/70 dark:border-green-700/70 animate-in fade-in duration-200`}
       >
         <Check className="h-2.5 w-2.5" strokeWidth={2.5} />
-        Saved
+        {t('saveStatus.saved')}
       </span>
     );
   }
@@ -1169,7 +1192,7 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
       title={status.message}
     >
       <AlertCircle className="h-2.5 w-2.5" />
-      Error
+      {t('saveStatus.error')}
     </span>
   );
 }
@@ -1249,9 +1272,11 @@ function buildServerGroups(data: WorkspaceEffectiveFeatures): ServerGroup[] {
 function EffectiveFeaturesContent({
   root,
   onTotalChange,
+  t,
 }: {
   root: string;
   onTotalChange?: (total: number | null) => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   const [data, setData] = useState<WorkspaceEffectiveFeatures | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1290,29 +1315,25 @@ function EffectiveFeaturesContent({
     };
   }, [root, onTotalChange]);
 
+  const reloadEffectiveFeatures = useCallback(() => {
+    void getWorkspaceEffectiveFeatures(root)
+      .then((d) => {
+        setData(d);
+        onTotalChange?.(d.tools.length + d.prompts.length + d.resources.length);
+      })
+      .catch(() => {
+        /* ignore — initial load already surfaced any error */
+      });
+  }, [root, onTotalChange]);
+
   // Re-fetch on binding / server-status changes so the panel stays honest
   // without the user reopening it.
-  useEffect(() => {
-    let cancelled = false;
-    const reload = () => {
-      void getWorkspaceEffectiveFeatures(root)
-        .then((d) => {
-          if (cancelled) return;
-          setData(d);
-          onTotalChange?.(d.tools.length + d.prompts.length + d.resources.length);
-        })
-        .catch(() => {
-          /* ignore — initial load already surfaced any error */
-        });
-    };
-    const unBinding = listen('workspace-binding-changed', reload);
-    const unServer = listen('server-status', reload);
-    return () => {
-      cancelled = true;
-      unBinding.then((fn) => fn());
-      unServer.then((fn) => fn());
-    };
-  }, [root, onTotalChange]);
+  useWorkspaceEventListener(
+    reloadEffectiveFeatures,
+    EFFECTIVE_FEATURES_REFRESH_CHANNELS
+  );
+
+  useServerStatusEvents(reloadEffectiveFeatures);
 
   // All hooks must run on every render — keep them above any early
   // returns so React's hook-order invariant holds.
@@ -1359,20 +1380,20 @@ function EffectiveFeaturesContent({
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 space-y-2.5">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[rgb(var(--muted))]">
-            Resolves to
+            {t('effective.resolvesTo')}
           </span>
           <span className="text-sm font-semibold text-[rgb(var(--foreground))] truncate">
             {formatFsList(data.feature_sets.map((fs) => fs.name)) || '—'}
           </span>
-          <span className="text-xs text-[rgb(var(--muted))]">in</span>
+          <span className="text-xs text-[rgb(var(--muted))]">{t('effective.in')}</span>
           <span className="text-sm font-medium text-[rgb(var(--foreground))]">
             {data.space_name}
           </span>
           <span
             title={
               data.source === 'binding'
-                ? 'A workspace binding matched this folder — live sessions reporting it route here.'
-                : 'No binding matches this folder, so it falls back to the default Starter set shown here. Map it to give this folder a different set.'
+                ? t('effective.sourceBindingTooltip')
+                : t('effective.sourceUnboundTooltip')
             }
             className={[
               'ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border',
@@ -1381,7 +1402,7 @@ function EffectiveFeaturesContent({
                 : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300/70 dark:border-amber-700/70',
             ].join(' ')}
           >
-            {data.source === 'binding' ? 'binding' : 'unbound'}
+            {data.source === 'binding' ? t('effective.sourceBinding') : t('effective.sourceUnbound')}
           </span>
         </div>
 
@@ -1390,10 +1411,7 @@ function EffectiveFeaturesContent({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
             <span className="text-[rgb(var(--muted))] tabular-nums">
-              <span className="font-semibold text-[rgb(var(--foreground))]">{availableCount}</span>
-              <span> of </span>
-              <span className="font-semibold text-[rgb(var(--foreground))]">{totalCount}</span>
-              <span> available</span>
+              <span>{t('effective.availableOf', { available: availableCount, total: totalCount })}</span>
             </span>
             {totalCount > 0 && (
               <span
@@ -1406,7 +1424,7 @@ function EffectiveFeaturesContent({
                       : 'text-[rgb(var(--muted))]',
                 ].join(' ')}
               >
-                {allAvailable ? 'All ready' : partialAvailable ? 'Partial' : 'Offline'}
+                {allAvailable ? t('effective.allReady') : partialAvailable ? t('effective.partial') : t('effective.offline')}
               </span>
             )}
           </div>
@@ -1434,7 +1452,7 @@ function EffectiveFeaturesContent({
       {groups.length === 0 ? (
         <div className="text-center py-8 text-[rgb(var(--muted))]">
           <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
-          <p className="text-sm">No features configured in this feature set yet.</p>
+          <p className="text-sm">{t('effective.noFeatures')}</p>
         </div>
       ) : (
         <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] overflow-hidden">
@@ -1445,6 +1463,7 @@ function EffectiveFeaturesContent({
                 group={g}
                 open={openServers.has(g.server_id)}
                 onToggle={() => toggleServer(g.server_id)}
+                t={t}
               />
             ))}
           </div>
@@ -1458,12 +1477,14 @@ function ServerGroupRow({
   group,
   open,
   onToggle,
+  t,
 }: {
   group: ServerGroup;
   open: boolean;
   onToggle: () => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
-  const issue = serverStatusIssue(group.server_status);
+  const issue = serverStatusIssue(group.server_status, t);
   const availableCount = group.mapped - group.unavailable_mapped;
   // Badge denominator is the server's *total* feature count in the Space,
   // not the mapped count — the user wants to see "3 of 10 cloudflare-docs
@@ -1562,9 +1583,9 @@ function ServerGroupRow({
 
       {open && (
         <div className="bg-[rgb(var(--background))] border-t border-[rgb(var(--border))]">
-          <FeatureSubGroup label="tool" items={group.tools} />
-          <FeatureSubGroup label="prompt" items={group.prompts} />
-          <FeatureSubGroup label="resource" items={group.resources} />
+          <FeatureSubGroup label="tool" items={group.tools} t={t} />
+          <FeatureSubGroup label="prompt" items={group.prompts} t={t} />
+          <FeatureSubGroup label="resource" items={group.resources} t={t} />
         </div>
       )}
     </div>
@@ -1579,9 +1600,11 @@ function ServerGroupRow({
 function FeatureSubGroup({
   label,
   items,
+  t,
 }: {
   label: 'tool' | 'prompt' | 'resource';
   items: EffectiveFeature[];
+  t: TFunction<['workspaces', 'common']>;
 }) {
   if (items.length === 0) return null;
   return (
@@ -1607,11 +1630,11 @@ function FeatureSubGroup({
                   getFeatureTypeColor(label),
                 ].join(' ')}
               >
-                {label}
+                {t(`effective.featureType.${label}`)}
               </span>
               {!item.available && (
                 <span className="text-[9px] uppercase tracking-wider font-bold text-[rgb(var(--muted))]">
-                  unavailable
+                  {t('effective.unavailable')}
                 </span>
               )}
             </div>
@@ -1655,26 +1678,27 @@ function getFeatureTypeColor(type: 'tool' | 'prompt' | 'resource'): string {
  * null so the row stays quiet.
  */
 function serverStatusIssue(
-  status: EffectiveFeature['server_status']
+  status: EffectiveFeature['server_status'],
+  t: TFunction<['workspaces', 'common']>
 ): { label: string; tone: 'red' | 'amber' | 'muted' } | null {
   switch (status) {
     case 'connected':
       return null;
     case 'connecting':
-      return { label: 'Connecting', tone: 'amber' };
+      return { label: t('serverStatus.connecting'), tone: 'amber' };
     case 'authenticating':
-      return { label: 'Authenticating', tone: 'amber' };
+      return { label: t('serverStatus.authenticating'), tone: 'amber' };
     case 'refreshing':
-      return { label: 'Refreshing', tone: 'amber' };
+      return { label: t('serverStatus.refreshing'), tone: 'amber' };
     case 'auth_required':
-      return { label: 'Auth needed', tone: 'amber' };
+      return { label: t('serverStatus.authNeeded'), tone: 'amber' };
     case 'error':
-      return { label: 'Error', tone: 'red' };
+      return { label: t('serverStatus.error'), tone: 'red' };
     case 'disconnected':
-      return { label: 'Disconnected', tone: 'muted' };
+      return { label: t('serverStatus.disconnected'), tone: 'muted' };
     case 'unknown':
     default:
-      return { label: 'Offline', tone: 'muted' };
+      return { label: t('serverStatus.offline'), tone: 'muted' };
   }
 }
 
@@ -1689,12 +1713,12 @@ function BindingForm({
   initial,
   prefillRoot,
   initialUnmappedIcon,
-  existingBindings,
   onCancel,
   onSubmit,
   onError,
   onSaveStatusChange,
   onIconChange,
+  t,
 }: {
   mode: 'create' | 'edit' | 'create-from-live';
   spaces: Space[];
@@ -1702,8 +1726,6 @@ function BindingForm({
   initial?: WorkspaceBinding | null;
   prefillRoot?: string;
   initialUnmappedIcon?: string | null;
-  /** Every saved mapping, used to flag a folder that's already mapped. */
-  existingBindings: WorkspaceBinding[];
   onCancel: () => void;
   onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
   onError: (message: string) => void;
@@ -1711,6 +1733,7 @@ function BindingForm({
   onSaveStatusChange?: (status: SaveStatus) => void;
   /** Propagate icon edits to the inspector header and card list. */
   onIconChange?: (icon: string | null) => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   const defaultSpaceId = useMemo(
     () => spaces.find((s) => s.is_default)?.id ?? spaces[0]?.id ?? '',
@@ -1719,7 +1742,8 @@ function BindingForm({
 
   const rootRef = useRef<HTMLInputElement | null>(null);
   const [root, setRoot] = useState(initial?.workspace_root ?? prefillRoot ?? '');
-  const [icon, setIcon] = useState(initialUnmappedIcon ?? '');
+  const [label, setLabel] = useState(initial?.label ?? '');
+  const [icon, setIcon] = useState(initial?.icon ?? initialUnmappedIcon ?? '');
   const [spaceId, setSpaceId] = useState<string>(initial?.space_id ?? defaultSpaceId);
   // Multi-FS: a binding may resolve to N FeatureSets (the resolver merges
   // their members into one allow set). Order is preserved so the operator
@@ -1728,15 +1752,6 @@ function BindingForm({
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isEdit = mode === 'edit';
-
-  // Holds the timer that clears the transient "Saved" pill after an
-  // explicit Apply. Cleared if another save starts or the panel unmounts.
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
-    };
-  }, []);
 
   // Live validation of the workspace_root field. Edit + create-from-live
   // modes already have a trusted root (edit: the persisted one; create-from-
@@ -1806,10 +1821,8 @@ function BindingForm({
   }, [availableFs, fsSearch]);
 
   // When the Space changes, drop selections that aren't in the new Space's
-  // FS list. In CREATE modes only, reseed an empty selection with the default
-  // FS so the operator doesn't have to click anything for the common case.
-  // In EDIT mode we never reseed — an intentionally-empty mapping ("no Space
-  // tools") must survive reopening.
+  // FS list. Reseed an empty selection with the default FS so the operator
+  // doesn't have to click anything for a "single-FS, default" binding.
   useEffect(() => {
     if (availableFs.length === 0) {
       if (fsIds.length > 0) setFsIds([]);
@@ -1817,12 +1830,11 @@ function BindingForm({
     }
     const validIds = new Set(availableFs.map((f) => f.id));
     const filtered = fsIds.filter((id) => validIds.has(id));
-    if (filtered.length !== fsIds.length) {
-      // Cross-space cleanup: drop ids that don't belong to this Space.
-      setFsIds(filtered);
-    } else if (filtered.length === 0 && !initial) {
+    if (filtered.length === 0) {
       const fallback = availableFs.find(isStarterFeatureSet) ?? availableFs[0];
       setFsIds([fallback.id]);
+    } else if (filtered.length !== fsIds.length) {
+      setFsIds(filtered);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableFs]);
@@ -1833,103 +1845,179 @@ function BindingForm({
     );
   };
 
-  const trimmedRoot = root.trim();
-  // The canonical form the server will store. We prefer the validator's
-  // normalized output (drive-letter case, slash direction, trailing slash
-  // all settled) so the duplicate check matches exactly what a save writes.
-  const effectiveRoot =
-    rootValidation.state === 'ok' ? rootValidation.normalized : trimmedRoot;
-
-  // Has this folder already been mapped? Compare against every saved mapping
-  // (case-insensitively, the app's notion of "same folder"), excluding the
-  // one we're editing. A match means a duplicate — block the save and tell
-  // the user to edit the existing mapping instead of stacking a second one.
-  const duplicate = useMemo(() => {
-    if (!effectiveRoot) return null;
-    const key = effectiveRoot.toLowerCase();
-    return (
-      existingBindings.find(
-        (b) => b.id !== initial?.id && b.workspace_root.toLowerCase() === key
-      ) ?? null
-    );
-  }, [existingBindings, effectiveRoot, initial?.id]);
-
-  // In edit mode, only enable Apply once something actually changed — there's
-  // nothing to save otherwise. Create modes are always "dirty".
-  const dirty = useMemo(() => {
-    if (!isEdit || !initial) return true;
-    return !sameBindingInput(
-      { workspace_root: trimmedRoot, space_id: spaceId, feature_set_ids: fsIds },
-      {
-        workspace_root: initial.workspace_root,
-        space_id: initial.space_id,
-        feature_set_ids: initial.feature_set_ids,
-      }
-    );
-  }, [isEdit, initial, trimmedRoot, spaceId, fsIds]);
-
-  // Note: an empty feature-set selection is a VALID mapping ("no Space tools";
-  // built-in servers still apply per Space), so it does not block Apply.
   const canSubmit =
     !submitting &&
     !!spaceId &&
-    (rootValidation.state === 'ok' || !rootEditable) &&
-    !duplicate &&
-    dirty;
+    fsIds.length > 0 &&
+    (rootValidation.state === 'ok' || !rootEditable);
 
   const handleSubmit = async () => {
     if (!root.trim()) {
-      onError('Pick a folder first.');
+      onError(t('form.errors.rootRequired'));
       return;
     }
     if (rootValidation.state === 'error') {
       onError(rootValidation.reason);
       return;
     }
-    if (duplicate) {
-      onError(`That folder is already mapped. Open the existing mapping to change it.`);
-      return;
-    }
     if (!spaceId) {
-      onError('Pick a Space.');
+      onError(t('form.errors.pickSpace'));
       return;
     }
-    if (savedTimerRef.current) {
-      clearTimeout(savedTimerRef.current);
-      savedTimerRef.current = null;
+    if (fsIds.length === 0) {
+      onError(t('form.errors.pickFeatureSet'));
+      return;
     }
     setSubmitting(true);
-    onSaveStatusChange?.({ kind: 'saving' });
     try {
       await onSubmit({
         workspace_root: root.trim(),
+        label: label.trim() || null,
+        icon: icon.trim() || null,
         space_id: spaceId,
         feature_set_ids: fsIds,
       });
-      onSaveStatusChange?.({ kind: 'saved' });
-      savedTimerRef.current = setTimeout(() => {
-        onSaveStatusChange?.({ kind: 'idle' });
-      }, 1800);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      onSaveStatusChange?.({ kind: 'error', message: msg });
-      onError(msg);
+      onError(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Saving is now explicit: nothing is written until the user presses
-  // Apply (see `handleSubmit`). The old debounced autosave + flush-on-close
-  // was removed — it fired writes while the user was still deciding and
-  // needed extra reconciliation work to stay correct. Closing the panel now
-  // simply discards unsaved edits.
+  // ---------- Autosave (edit mode) -----------------------------------------
+  //
+  // Debounced (1500 ms) so a burst of FS-toggle clicks coalesces into one
+  // save instead of firing N WorkspaceBindingChanged events back-to-back.
+  // Dedupe is against the **last successfully-saved** payload, not just
+  // `initial` — so re-toggling A → B → A is a no-op (back to last saved),
+  // and once a save lands the next idle window doesn't re-save the same
+  // values.
+  //
+  // Critical: the debounce timer is cleared on dependency change but the
+  // **pending payload survives panel close**. If the user edits then
+  // closes before the debounce fires, the unmount handler flushes the
+  // save synchronously to Tauri — the IPC goes out before React tears
+  // the component down, and the save completes in the background.
+  const saveSeqRef = useRef(0);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Snapshot of the last payload we successfully wrote. `null` means
+  // "never saved during this panel session" — fall back to `initial` for
+  // dedupe in that case.
+  const lastSavedRef = useRef<WorkspaceBindingInput | null>(null);
+  // The most recent payload the user produced that has NOT yet been
+  // committed. Cleared on successful save. The unmount handler reads
+  // this to decide whether to flush.
+  const pendingPayloadRef = useRef<WorkspaceBindingInput | null>(null);
+  // Latest closures via ref so the unmount-only effect's empty-deps
+  // cleanup can still call the freshest handlers — closing the panel
+  // mid-edit must use the parent's *current* `onSubmit`, not whatever it
+  // captured on first mount.
+  const onSubmitRef = useRef(onSubmit);
+  const onSaveStatusChangeRef = useRef(onSaveStatusChange);
+  useEffect(() => {
+    onSubmitRef.current = onSubmit;
+    onSaveStatusChangeRef.current = onSaveStatusChange;
+  }, [onSubmit, onSaveStatusChange]);
 
-  const submitLabel = isEdit
-    ? 'Apply changes'
-    : mode === 'create-from-live'
-      ? 'Save mapping'
-      : 'Create mapping';
+  useEffect(() => {
+    if (!isEdit || !initial) return;
+    if (!canSubmit) return;
+
+    const candidate: WorkspaceBindingInput = {
+      workspace_root: root.trim(),
+      label: label.trim() || null,
+      icon: icon.trim() || null,
+      space_id: spaceId,
+      feature_set_ids: fsIds,
+    };
+
+    // Dedupe baseline: last-saved if we've saved during this session,
+    // otherwise the initial payload from when the panel opened.
+    const baseline = lastSavedRef.current ?? {
+      workspace_root: initial.workspace_root,
+      label: initial.label,
+      icon: initial.icon,
+      space_id: initial.space_id,
+      feature_set_ids: initial.feature_set_ids,
+    };
+    if (sameBindingInput(candidate, baseline)) {
+      pendingPayloadRef.current = null;
+      return;
+    }
+
+    pendingPayloadRef.current = candidate;
+    const seq = ++saveSeqRef.current;
+    onSaveStatusChange?.({ kind: 'idle' });
+    const handle = setTimeout(async () => {
+      if (saveSeqRef.current !== seq) return;
+      onSaveStatusChange?.({ kind: 'saving' });
+      setSubmitting(true);
+      try {
+        await onSubmit(candidate);
+        if (saveSeqRef.current !== seq) return;
+        lastSavedRef.current = candidate;
+        pendingPayloadRef.current = null;
+        onSaveStatusChange?.({ kind: 'saved' });
+        if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = setTimeout(() => {
+          onSaveStatusChange?.({ kind: 'idle' });
+        }, 1800);
+      } catch (e) {
+        if (saveSeqRef.current !== seq) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        onSaveStatusChange?.({ kind: 'error', message: msg });
+        onError(msg);
+      } finally {
+        setSubmitting(false);
+      }
+    }, 1500);
+    return () => clearTimeout(handle);
+  }, [
+    isEdit,
+    initial,
+    root,
+    label,
+    icon,
+    spaceId,
+    fsIds,
+    canSubmit,
+    onSubmit,
+    onError,
+    onSaveStatusChange,
+  ]);
+
+  // Unmount-only flush. If a save was scheduled but the timer hasn't
+  // fired by the time the user closes the panel, fire it now so their
+  // edits aren't silently dropped. Empty-deps so this only runs on
+  // unmount, not on every dep change of the autosave effect above.
+  useEffect(() => {
+    return () => {
+      const pending = pendingPayloadRef.current;
+      if (!pending) return;
+      // Fire-and-forget. Tauri's `invoke` posts the IPC message to the
+      // Rust side immediately; the React tree can unmount in parallel
+      // and the save still completes. Bump the seq so any in-flight
+      // debounced save from before the close is discarded if it lands.
+      saveSeqRef.current += 1;
+      onSaveStatusChangeRef.current?.({ kind: 'saving' });
+      onSubmitRef
+        .current(pending)
+        .then(() => {
+          onSaveStatusChangeRef.current?.({ kind: 'saved' });
+        })
+        .catch((e) => {
+          // Parent's toast bridge is gone with the panel — fall back to
+          // the console so the failure isn't silent in dev.
+          console.warn(
+            '[workspace-binding] flush-on-close save failed:',
+            e instanceof Error ? e.message : String(e)
+          );
+        });
+    };
+  }, []);
+
+  const submitLabel =
+    mode === 'create-from-live' ? t('form.saveBinding') : t('form.createBinding');
 
   const lastSavedAppearanceRef = useRef<string | null>(
     mode === 'create-from-live' ? normalizeIcon(initialUnmappedIcon) : null
@@ -1937,22 +2025,38 @@ function BindingForm({
 
   /**
    * Persist icon immediately after upload so the card updates without waiting
-   * for the debounced appearance save.
+   * for the debounced autosave or a panel close flush.
    */
   const persistIconNow = async (nextIcon: string) => {
     const workspaceRoot = root.trim();
-    if (!workspaceRoot || mode !== 'create-from-live') return;
+    if (!workspaceRoot) return;
     const normalizedIcon = normalizeIcon(nextIcon);
 
-    if (normalizedIcon) {
-      await upsertWorkspaceAppearance({
+    if (mode === 'edit' && initial && canSubmit) {
+      const payload: WorkspaceBindingInput = {
         workspace_root: workspaceRoot,
+        label: label.trim() || null,
         icon: normalizedIcon,
-      });
-      lastSavedAppearanceRef.current = normalizedIcon;
-    } else {
-      await deleteWorkspaceAppearance(workspaceRoot);
-      lastSavedAppearanceRef.current = null;
+        space_id: spaceId,
+        feature_set_ids: fsIds,
+      };
+      lastSavedRef.current = payload;
+      pendingPayloadRef.current = null;
+      await onSubmit(payload);
+      return;
+    }
+
+    if (mode === 'create-from-live') {
+      if (normalizedIcon) {
+        await upsertWorkspaceAppearance({
+          workspace_root: workspaceRoot,
+          icon: normalizedIcon,
+        });
+        lastSavedAppearanceRef.current = normalizedIcon;
+      } else {
+        await deleteWorkspaceAppearance(workspaceRoot);
+        lastSavedAppearanceRef.current = null;
+      }
     }
   };
 
@@ -1986,31 +2090,28 @@ function BindingForm({
 
   return (
     <div className="space-y-5">
-      {/* Plain-language primer for anyone who's never seen McpMux. Explains
-          the whole flow in two sentences before the fields. */}
-      <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-3.5 py-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
-        <span className="font-semibold text-[rgb(var(--foreground))]">
-          What is a mapping?
-        </span>{' '}
-        Pick a folder, then choose the tools it should get. Whenever you open
-        that folder in a connected app — Cursor, VS Code, Claude — McpMux hands
-        it exactly the tools you choose here, and nothing else.
-      </div>
+      <FormField label={t('form.label')} hint={t('form.labelHint')}>
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder={t('form.labelPlaceholder')}
+          className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+          data-testid="workspace-binding-label-input"
+        />
+      </FormField>
 
-      <FormField
-        label="Icon"
-        hint="Optional emoji, image URL, or uploaded file shown on the workspace card."
-      >
+      <FormField label={t('form.icon')} hint={t('form.iconHint')}>
         <div className="space-y-2.5">
           <div className="flex items-start gap-3">
-            <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))]">
+            <div className="w-14 h-14 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] flex items-center justify-center flex-shrink-0">
               {icon.trim() ? (
                 <ServerIcon icon={icon.trim()} className="h-9 w-9 object-contain" fallback="📁" />
               ) : (
                 <FolderOpen className="h-6 w-6 text-[rgb(var(--muted))]" />
               )}
             </div>
-            <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex-1 min-w-0 space-y-2">
               <input
                 type="text"
                 value={icon}
@@ -2019,8 +2120,8 @@ function BindingForm({
                   setIcon(next);
                   onIconChange?.(normalizeIcon(next));
                 }}
-                placeholder="Emoji, URL, or upload an image"
-                className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                placeholder={t('form.iconPlaceholder')}
+                className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
                 data-testid="workspace-binding-icon-input"
               />
               <div className="flex items-center gap-2">
@@ -2032,10 +2133,10 @@ function BindingForm({
                       const picked = await pickPath({
                         directory: false,
                         multiple: false,
-                        title: 'Pick a workspace icon',
+                        title: t('form.pickIconTitle'),
                         filters: [
                           {
-                            name: 'Images',
+                            name: t('form.imagesFilter'),
                             extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
                           },
                         ],
@@ -2051,7 +2152,7 @@ function BindingForm({
                   }}
                   data-testid="workspace-binding-icon-upload"
                 >
-                  Upload
+                  {t('form.upload')}
                 </Button>
                 <Button
                   variant="ghost"
@@ -2066,7 +2167,7 @@ function BindingForm({
                   disabled={!icon.trim()}
                   data-testid="workspace-binding-icon-clear"
                 >
-                  Clear
+                  {t('form.clear')}
                 </Button>
               </div>
             </div>
@@ -2074,7 +2175,7 @@ function BindingForm({
         </div>
       </FormField>
 
-      <FormField label="Workspace folder">
+      <FormField label={t('form.workspaceRoot')}>
         <div className="flex gap-2">
           <input
             ref={rootRef}
@@ -2082,7 +2183,7 @@ function BindingForm({
             value={root}
             onChange={(e) => setRoot(e.target.value)}
             readOnly={!rootEditable}
-            placeholder="Browse for a folder, or paste an absolute path"
+            placeholder={t('form.rootPlaceholder')}
             className={[
               'flex-1 min-w-0 px-3 py-2 rounded-lg text-sm font-mono focus:outline-none focus:ring-2',
               !rootEditable
@@ -2102,10 +2203,10 @@ function BindingForm({
                 // Linux). The selected path is absolute already, so we
                 // just hand it off and let the live validator normalize.
                 try {
-                  const picked = await openDialog({
+                  const picked = await pickPath({
                     directory: true,
                     multiple: false,
-                    title: 'Pick a workspace folder',
+                    title: t('form.pickFolderTitle'),
                   });
                   if (typeof picked === 'string' && picked.length > 0) {
                     setRoot(picked);
@@ -2115,45 +2216,25 @@ function BindingForm({
                 }
               }}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] hover:bg-[rgb(var(--surface-hover))] text-sm font-medium text-[rgb(var(--foreground))] transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 flex-shrink-0"
-              title="Pick a folder"
+              title={t('form.pickFolder')}
               data-testid="workspace-binding-browse"
             >
               <FolderSearch className="h-4 w-4" />
-              <span className="hidden sm:inline">Browse</span>
+              <span className="hidden sm:inline">{t('form.browse')}</span>
             </button>
           )}
         </div>
-        {duplicate ? (
-          <p
-            className="mt-1.5 text-[11px] text-red-600 dark:text-red-400 flex items-start gap-1.5"
-            data-testid="workspace-binding-duplicate-error"
-          >
-            <AlertCircle className="h-3 w-3 flex-shrink-0 mt-px" />
-            <span>
-              This folder is already mapped. Open its existing mapping to change
-              what it sees instead of adding a second one.
-            </span>
-          </p>
-        ) : (
-          <RootValidationHint
-            state={rootValidation}
-            editable={rootEditable}
-            originalValue={root}
-          />
-        )}
+        <RootValidationHint state={rootValidation} editable={rootEditable} originalValue={root} t={t} />
       </FormField>
 
-      <FormField
-        label="Space"
-        hint="A Space is a profile that groups MCP servers. Choose which one this folder draws its tools from."
-      >
+      <FormField label={t('form.space')} hint={t('form.spaceHint')}>
         <Picker
           value={spaceId}
           onChange={setSpaceId}
-          placeholder="Pick a Space"
+          placeholder={t('form.pickSpace')}
           options={spaces.map((s) => ({
             value: s.id,
-            label: s.is_default ? `${s.name} · default` : s.name,
+            label: s.is_default ? `${s.name}${t('form.defaultSuffix')}` : s.name,
             icon: s.icon ?? undefined,
           }))}
           testId="workspace-binding-space"
@@ -2163,18 +2244,18 @@ function BindingForm({
       <FormField
         label={
           fsIds.length > 1
-            ? `Feature set (${fsIds.length} selected)`
-            : 'Feature set'
+            ? t('form.featureSetsSelected', { count: fsIds.length })
+            : t('form.featureSet')
         }
-        hint="A feature set is a curated list of tools, prompts, and resources from that Space — exactly what this folder is allowed to use. Pick one, or combine several into a single set."
+        hint={t('form.featureSetHint')}
       >
         {!spaceId ? (
           <p className="text-xs text-[rgb(var(--muted))] italic px-3 py-2">
-            Pick a Space first.
+            {t('form.pickSpaceFirst')}
           </p>
         ) : availableFs.length === 0 ? (
           <p className="text-xs text-[rgb(var(--muted))] italic px-3 py-2">
-            No feature sets in that Space yet.
+            {t('form.noFeatureSets')}
           </p>
         ) : (
           <div
@@ -2186,7 +2267,7 @@ function BindingForm({
                 type="text"
                 value={fsSearch}
                 onChange={(e) => setFsSearch(e.target.value)}
-                placeholder={`Search ${availableFs.length} feature set${availableFs.length === 1 ? '' : 's'}…`}
+                placeholder={t('form.searchFeatureSets', { count: availableFs.length })}
                 className="w-full px-2.5 py-1.5 text-xs bg-[rgb(var(--surface))] border border-[rgb(var(--border-subtle))] rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
                 data-testid="workspace-binding-fs-search"
               />
@@ -2194,7 +2275,7 @@ function BindingForm({
             <div className="max-h-56 overflow-y-auto p-1.5 space-y-1">
               {filteredFs.length === 0 ? (
                 <p className="text-xs text-[rgb(var(--muted))] italic px-2 py-3 text-center">
-                  No feature sets match &ldquo;{fsSearch}&rdquo;.
+                  {t('form.noMatch', { query: fsSearch })}
                 </p>
               ) : (
                 filteredFs.map((f) => {
@@ -2239,9 +2320,9 @@ function BindingForm({
                           {isStarterFeatureSet(f) && (
                             <span
                               className="text-[9px] uppercase tracking-wide text-[rgb(var(--muted))] bg-[rgb(var(--surface))] px-1 py-0.5 rounded flex-shrink-0"
-                              title="Auto-seeded with this Space."
+                              title={t('form.starterTooltip')}
                             >
-                              starter
+                              {t('form.starter')}
                             </span>
                           )}
                         </div>
@@ -2254,7 +2335,7 @@ function BindingForm({
                       {order !== null && fsIds.length > 1 && (
                         <span
                           className="text-[10px] font-bold text-primary-600 dark:text-primary-300 bg-primary-500/15 rounded-full h-5 w-5 flex items-center justify-center flex-shrink-0"
-                          title="Render order — first FS rendered first; resolver merges all into one set."
+                          title={t('form.renderOrderTooltip')}
                         >
                           {order}
                         </span>
@@ -2266,33 +2347,15 @@ function BindingForm({
             </div>
             {fsSearch && filteredFs.length > 0 && filteredFs.length < availableFs.length && (
               <div className="px-3 py-1.5 text-[11px] text-[rgb(var(--muted))] border-t border-[rgb(var(--border-subtle))]">
-                {filteredFs.length} of {availableFs.length} shown
+                {t('form.shownCount', { shown: filteredFs.length, total: availableFs.length })}
               </div>
             )}
           </div>
         )}
       </FormField>
 
-      {/* Saving is explicit in every mode now — nothing is written until
-          Apply is pressed, so the user can keep deciding without half-saved
-          state. In edit mode the button stays disabled until something
-          actually changes. An empty feature-set selection is valid and
-          savable. */}
-      <div className="pt-1 space-y-2">
-        {spaceId && fsIds.length === 0 && (
-          // Empty is allowed — explain what it means rather than blocking.
-          <p className="text-[11px] text-[rgb(var(--muted))]">
-            No feature sets selected — this folder gets <strong>no tools</strong>{' '}
-            from this Space. Built-in servers still apply per Space (see Built-in
-            Servers).
-          </p>
-        )}
-        {isEdit && dirty && !duplicate && (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
-            Unsaved changes — press <strong>Apply changes</strong> to save.
-          </p>
-        )}
-        <div className="flex items-center gap-2">
+      {!isEdit && (
+        <div className="flex items-center gap-2 pt-1">
           <Button
             variant="primary"
             size="md"
@@ -2309,10 +2372,10 @@ function BindingForm({
             {submitLabel}
           </Button>
           <Button variant="secondary" size="md" onClick={onCancel} disabled={submitting}>
-            {isEdit ? 'Close' : 'Cancel'}
+            {t('common:actions.cancel')}
           </Button>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -2331,6 +2394,7 @@ function RootValidationHint({
   state,
   editable,
   originalValue,
+  t,
 }: {
   state:
     | { state: 'idle' }
@@ -2339,20 +2403,19 @@ function RootValidationHint({
     | { state: 'error'; reason: string };
   editable: boolean;
   originalValue: string;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   if (!editable) {
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        This folder was reported by the app that&apos;s open in it, so the path
-        is fixed — just choose its tools below.
+        {t('form.rootHint.reportedByClient')}
       </p>
     );
   }
   if (state.state === 'idle') {
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        Click <strong>Browse</strong> to pick a folder, or paste an absolute path. Accepts{' '}
-        <code>/unix</code>, <code>C:\windows</code>, and <code>file://</code> forms.
+        {t('form.rootHint.idle')}
       </p>
     );
   }
@@ -2360,7 +2423,7 @@ function RootValidationHint({
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))] inline-flex items-center gap-1.5">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Checking…
+        {t('form.rootHint.checking')}
       </p>
     );
   }
@@ -2371,22 +2434,17 @@ function RootValidationHint({
       </p>
     );
   }
-  // ok
   const changed = state.normalized !== originalValue.trim();
   if (!changed) {
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        Ready to save.
+        {t('form.rootHint.ready')}
       </p>
     );
   }
   return (
     <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-      Will be saved as{' '}
-      <code className="font-mono text-[rgb(var(--foreground))]">
-        {state.normalized}
-      </code>
-      .
+      {t('form.rootHint.willSaveAs', { path: state.normalized })}
     </p>
   );
 }
@@ -2456,19 +2514,21 @@ function EmptyState({
   hasAny,
   hasFilter,
   onCreate,
+  t,
 }: {
   hasAny: boolean;
   hasFilter: boolean;
   onCreate: () => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   if (hasFilter && hasAny) {
     return (
       <Card className="max-w-2xl mx-auto">
         <CardContent className="flex flex-col items-center justify-center py-16">
           <Search className="h-16 w-16 text-[rgb(var(--muted))] mb-4" />
-          <h3 className="text-lg font-medium mb-2">No workspaces match</h3>
+          <h3 className="text-lg font-medium mb-2">{t('empty.noMatchTitle')}</h3>
           <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md">
-            Try adjusting the search or filter.
+            {t('empty.noMatchSubtitle')}
           </p>
         </CardContent>
       </Card>
@@ -2480,15 +2540,13 @@ function EmptyState({
         <div className="h-16 w-16 rounded-full bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center mb-4">
           <Radio className="h-8 w-8 text-primary-500" />
         </div>
-        <h3 className="text-lg font-medium mb-2">No folders mapped yet</h3>
+        <h3 className="text-lg font-medium mb-2">{t('empty.nothingTitle')}</h3>
         <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md mb-6">
-          When you open a folder in a connected app, it shows up here so you can
-          choose its tools. You can also map a folder ahead of time — add one
-          now to get started.
+          {t('empty.nothingSubtitle')}
         </p>
         <Button variant="primary" onClick={onCreate}>
           <Plus className="h-4 w-4 mr-2" />
-          Add a mapping
+          {t('empty.addBinding')}
         </Button>
       </CardContent>
     </Card>

@@ -41,10 +41,18 @@ vi.mock('@/lib/api/featureSets', () => ({
   isStarterFeatureSet: vi.fn(() => false),
 }));
 
+vi.mock('@/lib/api/workspaceAppearances', () => ({
+  listWorkspaceAppearances: vi.fn().mockResolvedValue([]),
+  deleteWorkspaceAppearance: vi.fn(),
+  upsertWorkspaceAppearance: vi.fn(),
+  uploadWorkspaceIcon: vi.fn(),
+}));
+
 vi.mock('@/stores', () => ({
   useSpaces: () => [],
 }));
 
+import { renderWithI18n } from '../render-with-i18n.helpers';
 import { WorkspacesPage } from '@/features/workspaces/WorkspacesPage';
 
 describe('WorkspacesPage – clear unmapped', () => {
@@ -55,7 +63,7 @@ describe('WorkspacesPage – clear unmapped', () => {
   });
 
   it('hides the "Clear unmapped" button when nothing is unmapped', async () => {
-    render(<WorkspacesPage />);
+    renderWithI18n(<WorkspacesPage />);
     await waitFor(() => expect(listReportedWorkspaceRootsMock).toHaveBeenCalled());
     expect(screen.queryByTestId('workspaces-clear-unmapped')).toBeNull();
   });
@@ -65,7 +73,7 @@ describe('WorkspacesPage – clear unmapped', () => {
     clearUnmappedReportedRootsMock.mockResolvedValue(1);
     const user = userEvent.setup();
 
-    render(<WorkspacesPage />);
+    renderWithI18n(<WorkspacesPage />);
 
     // Button shows because one live-reported root has no binding.
     const clearBtn = await screen.findByTestId('workspaces-clear-unmapped');

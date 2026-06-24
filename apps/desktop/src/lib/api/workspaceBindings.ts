@@ -10,6 +10,12 @@ import { invoke } from '@tauri-apps/api/core';
 export interface WorkspaceBinding {
   id: string;
   workspace_root: string;
+  /** When set, binding applies only to this OAuth client. */
+  client_id?: string | null;
+  /** Friendly display name shown instead of the folder path when set. */
+  label: string | null;
+  /** Optional icon: emoji, URL, or local:workspace-icons ref. */
+  icon: string | null;
   space_id: string;
   /**
    * Non-empty by construction. Order is the operator-chosen rendering
@@ -24,8 +30,12 @@ export interface WorkspaceBinding {
 /** Input payload for create / update. `feature_set_ids` must be non-empty. */
 export interface WorkspaceBindingInput {
   workspace_root: string;
+  label?: string | null;
+  icon?: string | null;
   space_id: string;
   feature_set_ids: string[];
+  /** When set, creates a client-scoped binding. */
+  client_id?: string | null;
 }
 
 /** List every binding (sorted by workspace_root). */
@@ -102,8 +112,11 @@ export async function deleteWorkspaceBinding(id: string): Promise<void> {
 export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
   return {
     workspace_root: b.workspace_root,
+    label: b.label,
+    icon: b.icon,
     space_id: b.space_id,
     feature_set_ids: b.feature_set_ids,
+    client_id: b.client_id,
   };
 }
 

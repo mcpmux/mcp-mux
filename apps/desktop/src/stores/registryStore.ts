@@ -62,8 +62,6 @@ interface RegistryActions {
   clearFilters: () => void;
   /** Install server (create DB record) */
   installServer: (id: string, spaceId?: string) => Promise<void>;
-  /** Enable/Disable server */
-  toggleServer: (id: string, enabled: boolean) => Promise<void>;
   /** Uninstall server */
   uninstallServer: (id: string) => Promise<void>;
   /** Set active view space */
@@ -186,19 +184,6 @@ export const useRegistryStore = create<RegistryState & RegistryActions>((set, ge
       });
     } catch (error) {
       set({ error: String(error) });
-    }
-  },
-
-  toggleServer: async (id: string, enabled: boolean) => {
-    const { spaceId } = get();
-    if (!spaceId) return;
-
-    set({ isLoading: true, error: null });
-    try {
-      await api.setServerEnabled(id, enabled, spaceId);
-      await get().loadRegistry(spaceId);
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
     }
   },
 

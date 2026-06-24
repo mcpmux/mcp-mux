@@ -8,14 +8,22 @@ import {
   Settings,
   ShoppingBasket,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
 import { useNavigateTo } from '@/stores';
 import type { NavItem } from '@/stores/types';
 
 type QuickLinkConfig = {
   nav: NavItem;
-  label: string;
-  description: string;
+  labelKey: 'tools' | 'discover' | 'spaces' | 'featuresets' | 'workspaces' | 'apps' | 'settings';
+  descriptionKey:
+    | 'quickLinks.descriptions.servers'
+    | 'quickLinks.descriptions.registry'
+    | 'quickLinks.descriptions.spaces'
+    | 'quickLinks.descriptions.featuresets'
+    | 'quickLinks.descriptions.workspaces'
+    | 'quickLinks.descriptions.clients'
+    | 'quickLinks.descriptions.settings';
   icon: ReactNode;
   testId: string;
 };
@@ -23,50 +31,50 @@ type QuickLinkConfig = {
 const QUICK_LINK_CONFIG: QuickLinkConfig[] = [
   {
     nav: 'servers',
-    label: 'My Servers',
-    description: 'Manage your installed MCP servers',
+    labelKey: 'tools',
+    descriptionKey: 'quickLinks.descriptions.servers',
     icon: <Server className="h-4 w-4" />,
     testId: 'quick-link-servers',
   },
   {
     nav: 'registry',
-    label: 'Discover',
-    description: 'Browse the MCP server registry',
+    labelKey: 'discover',
+    descriptionKey: 'quickLinks.descriptions.registry',
     icon: <Search className="h-4 w-4" />,
     testId: 'quick-link-discover',
   },
   {
     nav: 'spaces',
-    label: 'Spaces',
-    description: 'Manage your connected AI client spaces',
+    labelKey: 'spaces',
+    descriptionKey: 'quickLinks.descriptions.spaces',
     icon: <Globe className="h-4 w-4" />,
     testId: 'quick-link-spaces',
   },
   {
     nav: 'featuresets',
-    label: 'Bundles',
-    description: 'Curated tool sets for specific workflows',
+    labelKey: 'featuresets',
+    descriptionKey: 'quickLinks.descriptions.featuresets',
     icon: <ShoppingBasket className="h-4 w-4" />,
     testId: 'quick-link-featuresets',
   },
   {
     nav: 'workspaces',
-    label: 'Projects',
-    description: 'Bind workspace roots to Spaces',
+    labelKey: 'workspaces',
+    descriptionKey: 'quickLinks.descriptions.workspaces',
     icon: <FolderOpen className="h-4 w-4" />,
     testId: 'quick-link-workspaces',
   },
   {
     nav: 'clients',
-    label: 'Clients',
-    description: 'Manage connected AI clients',
+    labelKey: 'apps',
+    descriptionKey: 'quickLinks.descriptions.clients',
     icon: <Monitor className="h-4 w-4" />,
     testId: 'quick-link-clients',
   },
   {
     nav: 'settings',
-    label: 'Settings',
-    description: 'Configure McpMux preferences',
+    labelKey: 'settings',
+    descriptionKey: 'quickLinks.descriptions.settings',
     icon: <Settings className="h-4 w-4" />,
     testId: 'quick-link-settings',
   },
@@ -77,12 +85,14 @@ const QUICK_LINK_CONFIG: QuickLinkConfig[] = [
  */
 export function DashboardQuickLinks() {
   const navigateTo = useNavigateTo();
+  const { t: tNav } = useTranslation('nav');
+  const { t: tDashboard } = useTranslation('dashboard');
 
   return (
     <Card data-testid="dashboard-quick-links">
       <CardHeader>
-        <CardTitle className="text-base">Quick Links</CardTitle>
-        <CardDescription>Jump to any section</CardDescription>
+        <CardTitle className="text-base">{tDashboard('quickLinks.title')}</CardTitle>
+        <CardDescription>{tDashboard('quickLinks.description')}</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 gap-2">
@@ -96,9 +106,9 @@ export function DashboardQuickLinks() {
             >
               <span className="mt-0.5 text-[rgb(var(--primary))]">{link.icon}</span>
               <span className="min-w-0">
-                <span className="block text-sm font-medium">{link.label}</span>
+                <span className="block text-sm font-medium">{tNav(link.labelKey)}</span>
                 <span className="block truncate text-xs text-[rgb(var(--muted))]">
-                  {link.description}
+                  {tDashboard(link.descriptionKey)}
                 </span>
               </span>
             </button>

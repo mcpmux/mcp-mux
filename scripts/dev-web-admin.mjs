@@ -27,7 +27,7 @@ function sleep(ms) {
 }
 
 /**
- * Run dev-env prep (free ports, stop orphans).
+ * Fail fast when the admin API is not reachable (after any backend auto-start).
  */
 function runPrep() {
   const node = process.execPath;
@@ -115,8 +115,6 @@ async function main() {
     process.exit(1);
   }
 
-  runPrep();
-
   if (!(await adminHealthOk())) {
     startBackendDetached();
     console.log(`[dev-web-admin] Waiting for admin API at ${HEALTH_URL} …`);
@@ -130,6 +128,8 @@ async function main() {
       process.exit(1);
     }
   }
+
+  runPrep();
 
   console.log('[dev-web-admin] Admin API ready. Starting Vite (http://127.0.0.1:1420, /api → admin).');
   runVite();

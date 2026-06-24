@@ -464,7 +464,13 @@ export function WorkspacesPage() {
               reportedRoots={reportedRoots}
               existingBindings={bindings}
               onClose={() => setSelected(null)}
-              onCreate={handleCreate}
+              onCreate={async (input) => {
+                const created = await handleCreate(input);
+                // Land on the new mapping's inspector so its effective features
+                // are shown right after creation.
+                setSelected({ mode: 'entry', id: created.id });
+                return created;
+              }}
               onError={(msg) => showError('Could not save', msg)}
             />
           ) : (

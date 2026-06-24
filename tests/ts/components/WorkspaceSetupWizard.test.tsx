@@ -82,7 +82,9 @@ describe('WorkspaceSetupWizard', () => {
       space_id: 's1',
       feature_set_ids: ['fs_starter'],
     });
-    await waitFor(() => expect(p.onClose).toHaveBeenCalled());
+    // The parent navigates to the new mapping's inspector (effective features);
+    // the wizard itself does not close.
+    expect(p.onClose).not.toHaveBeenCalled();
   });
 
   it('lets you go Back from a later step', async () => {

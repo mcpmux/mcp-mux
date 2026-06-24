@@ -121,7 +121,8 @@ export function WorkspaceSetupWizard({
         space_id: spaceId,
         feature_set_ids: Array.from(fsIds),
       });
-      onClose();
+      // The parent transitions to the new mapping's inspector (which shows its
+      // effective features) — don't close here, or that view would be lost.
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
       setSaving(false);

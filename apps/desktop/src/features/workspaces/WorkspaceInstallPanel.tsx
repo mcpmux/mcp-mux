@@ -164,11 +164,12 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
           <ShieldOff className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
           <div className="min-w-0 flex-1">
             <p className="font-medium text-amber-800 dark:text-amber-300">
-              Apps will need an access key to connect.
+              You&apos;ll enable and authenticate this app once for it to work.
             </p>
             <p className="mt-0.5 text-amber-700 dark:text-amber-400">
-              Authentication is an application-wide setting. For zero-config setup, turn it off in
-              Settings → Security — apps then connect with just the URL and this workspace header.
+              With authentication on, you approve and sign the app in a single time, then it
+              connects. The client authentication requirement can be disabled in Settings → Security
+              — apps then connect with just the URL and this workspace header.
             </p>
             <Button
               variant="secondary"

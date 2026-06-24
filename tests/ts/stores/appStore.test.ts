@@ -8,7 +8,7 @@ describe('appStore', () => {
     useAppStore.setState({
       spaces: [],
       viewSpaceId: null,
-      activeNav: 'home',
+      activeNav: 'dashboard',
       pendingClientId: null,
       sidebarCollapsed: false,
       theme: 'system',
@@ -209,7 +209,7 @@ describe('appStore', () => {
 
   describe('navigateTo', () => {
     it('should set activeNav', () => {
-      expect(useAppStore.getState().activeNav).toBe('home');
+      expect(useAppStore.getState().activeNav).toBe('dashboard');
 
       useAppStore.getState().navigateTo('servers');
       expect(useAppStore.getState().activeNav).toBe('servers');
@@ -222,8 +222,8 @@ describe('appStore', () => {
       useAppStore.getState().navigateTo('clients');
       expect(useAppStore.getState().activeNav).toBe('clients');
 
-      useAppStore.getState().navigateTo('home');
-      expect(useAppStore.getState().activeNav).toBe('home');
+      useAppStore.getState().navigateTo('dashboard');
+      expect(useAppStore.getState().activeNav).toBe('dashboard');
     });
   });
 

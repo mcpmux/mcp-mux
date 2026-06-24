@@ -1,22 +1,22 @@
 /**
  * Dashboard stat tiles must reflect changes made anywhere — including a
  * FeatureSet composed by an MCP client via `mcpmux_manage_feature_set`, which
- * arrives as a `feature-set-changed` domain event. Guards the fix for
- * "created a FeatureSet via the tool but the count didn't update live".
+ * arrives as a `feature-set-changed` domain event.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 
-const { handlers, mockListClients, mockListFS, mockGatewayStatus, mockListInstalled } = vi.hoisted(
-  () => ({
+const { handlers, mockListClients, mockListFS, mockGatewayStatus, mockListInstalled, mockListBindings, mockServerStatuses } =
+  vi.hoisted(() => ({
     handlers: new Map<string, ((e: { payload: unknown }) => void)[]>(),
     mockListClients: vi.fn(),
     mockListFS: vi.fn(),
     mockGatewayStatus: vi.fn(),
     mockListInstalled: vi.fn(),
-  })
-);
+    mockListBindings: vi.fn(),
+    mockServerStatuses: vi.fn(),
+  }));
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((name: string, cb: (e: { payload: unknown }) => void) => {
@@ -33,14 +33,20 @@ vi.mock('@/lib/api/featureSets', () => ({
 }));
 vi.mock('@/lib/api/gateway', () => ({ getGatewayStatus: mockGatewayStatus }));
 vi.mock('@/lib/api/registry', () => ({ listInstalledServers: mockListInstalled }));
+vi.mock('@/lib/api/workspaceBindings', () => ({ listWorkspaceBindings: mockListBindings }));
+vi.mock('@/lib/api/serverManager', () => ({ getServerStatuses: mockServerStatuses }));
 vi.mock('@/stores', () => ({
   useViewSpace: () => ({ id: 'space-1', name: 'My Space' }),
   useNavigateTo: () => () => {},
   useSetPendingWorkspaceNew: () => () => {},
+  useSpaces: () => [{ id: 'space-1' }],
+  useIsLoading: () => false,
+  useSetPendingServersFilter: () => () => {},
 }));
 vi.mock('@/components/ConnectionCard', () => ({ ConnectionCard: () => null }));
+vi.mock('@/hooks/useMetaToolEvents', () => ({ useMetaToolEventListener: () => {} }));
 
-import { HomePage } from '@/features/home/HomePage';
+import { DashboardPage } from '@/features/dashboard/DashboardPage';
 
 function emit(channel: string, payload: unknown) {
   act(() => {
@@ -48,20 +54,21 @@ function emit(channel: string, payload: unknown) {
   });
 }
 
-describe('HomePage dashboard stats', () => {
+describe('DashboardPage stats', () => {
   beforeEach(() => {
     handlers.clear();
     mockListClients.mockReset().mockResolvedValue([]);
     mockGatewayStatus.mockReset().mockResolvedValue({ connected_backends: 0 });
-    mockListInstalled.mockReset().mockResolvedValue([{}]); // 1 server → skip onboarding strip
+    mockListInstalled.mockReset().mockResolvedValue([{}]);
+    mockListBindings.mockReset().mockResolvedValue([]);
+    mockServerStatuses.mockReset().mockResolvedValue([]);
     mockListFS.mockReset();
   });
 
   it('refreshes the FeatureSets count when a feature-set-changed event arrives', async () => {
-    // First load → 1 FeatureSet; after the event → 2.
     mockListFS.mockResolvedValueOnce([{}]).mockResolvedValue([{}, {}]);
 
-    render(<HomePage />);
+    render(<DashboardPage />);
     await waitFor(() =>
       expect(screen.getByTestId('stat-featuresets-value')).toHaveTextContent('1')
     );

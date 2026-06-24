@@ -1,7 +1,6 @@
 import { Space } from '@/lib/api/spaces';
 
 export type NavItem =
-  | 'home'
   | 'dashboard'
   | 'registry'
   | 'servers'

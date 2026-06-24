@@ -18,7 +18,7 @@ export class SidebarNav {
   constructor(page: Page) {
     this.page = page;
     // Use exact matching and filter by text content in sidebar items
-    this.dashboard = page.getByRole('button', { name: 'Home', exact: true });
+    this.dashboard = page.getByRole('button', { name: 'Dashboard', exact: true });
     this.myServers = page.getByRole('button', { name: 'Tools', exact: true });
     this.discover = page.getByRole('button', { name: 'Discover', exact: true });
     this.spaces = page.getByRole('button', { name: 'Spaces', exact: true }).last();

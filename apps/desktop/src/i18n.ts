@@ -6,7 +6,6 @@ import common from './locales/en/common.json';
 import dashboard from './locales/en/dashboard.json';
 import metatools from './locales/en/metatools.json';
 import featuresets from './locales/en/featuresets.json';
-import home from './locales/en/home.json';
 import nav from './locales/en/nav.json';
 import registry from './locales/en/registry.json';
 import servers from './locales/en/servers.json';
@@ -26,7 +25,6 @@ const namespaces = [
   'spaces',
   'registry',
   'metatools',
-  'home',
 ] as const;
 
 /**
@@ -52,7 +50,6 @@ i18n.use(initReactI18next).init({
       spaces,
       registry,
       metatools,
-      home,
     },
   },
 });

@@ -2,7 +2,7 @@
  * Navigation model — the single source of truth for the sidebar.
  *
  * The app's IA follows the superapp plan (mcpmux.space/superapp/03-experience-design.md):
- * a "use" zone on top (today just Home; Chat and Agents land here later), a
+ * a "use" zone on top (today just Dashboard; Chat and Agents land here later), a
  * "Library" zone for capabilities (Tools, Context, Discover; Models lands here
  * later), and a "Control" zone for routing & access (Apps, Workspaces,
  * FeatureSets, Spaces). Settings is pinned to the sidebar footer.
@@ -16,7 +16,6 @@
  */
 import type { LucideIcon } from 'lucide-react';
 import {
-  Home,
   LayoutDashboard,
   Server,
   Sparkles,
@@ -58,13 +57,6 @@ export interface NavZone {
 export const NAV_ZONES: NavZone[] = [
   {
     entries: [
-      {
-        key: 'home',
-        labelKey: 'home',
-        icon: Home,
-        testId: 'nav-home',
-        hintKey: 'hints.home',
-      },
       {
         key: 'dashboard',
         labelKey: 'dashboard',

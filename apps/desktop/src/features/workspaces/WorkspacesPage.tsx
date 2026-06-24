@@ -66,7 +66,6 @@ import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
 import { WorkspaceSetupWizard } from './WorkspaceSetupWizard';
 import { useSpaces, usePendingWorkspaceNew, useSetPendingWorkspaceNew } from '@/stores';
 import { ServerIcon } from '@/components/ServerIcon';
-import { pickPath } from '@/lib/backend/shell';
 import type { Space } from '@/lib/api/spaces';
 
 /**

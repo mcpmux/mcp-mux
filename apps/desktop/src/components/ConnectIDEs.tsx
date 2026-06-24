@@ -21,6 +21,7 @@ type IdeId =
   | 'cursor'
   | 'windsurf'
   | 'claude-code'
+  | 'opencode'
   | 'jetbrains'
   | 'android-studio'
   | 'copy-config';
@@ -79,16 +80,10 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
     },
     {
       id: 'opencode',
-      name: 'opencode',
-      label: 'opencode',
       icon: opencodeIcon,
       iconDark: opencodeIconDark,
       action: 'copy_config',
       handler: `"mcpmux": {\n  "type": "remote",\n  "url": "${mcpUrl}"\n}`,
-      nextStep:
-        'Copies a JSON snippet. In opencode, paste it under "mcp" in opencode.json ' +
-        '(project) or ~/.config/opencode/opencode.json (global), then restart ' +
-        'opencode. Approve on this page when it connects.',
     },
     {
       id: 'jetbrains',

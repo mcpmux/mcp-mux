@@ -69,6 +69,11 @@
         "label": "Claude",
         "nextStep": "Copies a `claude mcp add` command. Run it in your shell — Claude Code loads mcpmux on the next `claude` invocation (existing sessions need /restart). Approve on this page when it connects."
       },
+      "opencode": {
+        "name": "opencode",
+        "label": "opencode",
+        "nextStep": "Copies a JSON snippet. In opencode, paste it under \"mcp\" in opencode.json (project) or ~/.config/opencode/opencode.json (global), then restart opencode. Approve on this page when it connects."
+      },
       "jetbrains": {
         "name": "JetBrains IDEs",
         "label": "JetBrains",

@@ -6,7 +6,7 @@ import { AppStore, AppState } from './types';
 const initialState: AppState = {
   spaces: [],
   viewSpaceId: null,
-  activeNav: 'home',
+  activeNav: 'dashboard',
   pendingClientId: null,
   pendingSettingsSection: null,
   pendingWorkspaceNew: false,

@@ -25,7 +25,7 @@ test.describe('Complete User Flows', () => {
     await expect(page.locator('h1:has-text("Settings")')).toBeVisible();
     
     // 5. Return to dashboard
-    await page.locator('nav button:has-text("Home")').click();
+    await page.locator('nav button:has-text("Dashboard")').click();
     await expect(dashboard.heading).toBeVisible();
   });
 
@@ -75,7 +75,7 @@ test.describe('Complete User Flows', () => {
     await expect(page.locator('html')).toHaveClass(/dark/);
     
     // Navigate away and back
-    await page.locator('nav button:has-text("Home")').click();
+    await page.locator('nav button:has-text("Dashboard")').click();
     await page.locator('nav button:has-text("Settings")').click();
     
     // Dark theme should still be active

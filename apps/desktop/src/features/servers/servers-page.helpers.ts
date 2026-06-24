@@ -11,7 +11,8 @@ export type ServerActionKey =
   | 'auth_required'
   | 'running'
   | 'error'
-  | 'connected_auto';
+  | 'connected_auto'
+  | 'disconnected';
 
 /** Transport filter for installed servers. */
 export type TransportFilter = 'all' | 'stdio' | 'http';

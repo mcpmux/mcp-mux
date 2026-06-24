@@ -55,7 +55,6 @@ import {
   openLogsFolder,
   resetGatewayPort,
   setGatewayPort,
-  setGatewayPublicUrl,
   updateAdminWebSettings,
   updateStartupSettings,
   type AdminWebSettings,
@@ -311,22 +310,6 @@ export function SettingsPage() {
       error(t('toast.failedSavePort'), msg);
     } finally {
       setSavingPort(false);
-    }
-  };
-
-  const handleSavePublicUrl = async () => {
-    setSavingPublicUrl(true);
-    try {
-      await setGatewayPublicUrl(publicUrlDraft);
-      await loadPortSettings();
-      setPublicUrlError(null);
-      success(t('toast.publicUrlSaved'), t('toast.publicUrlHint'));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setPublicUrlError(msg);
-      error(t('toast.failedSavePublicUrl'), msg);
-    } finally {
-      setSavingPublicUrl(false);
     }
   };
 
@@ -1071,6 +1054,148 @@ export function SettingsPage() {
                     >
                       Restart gateway
                     </Button>
+                  </div>
+                ) : null}
+
+                {isTauri() ? (
+                  <div
+                    className="mt-2 border-t border-[rgb(var(--border))] pt-4"
+                    data-testid="settings-web-admin-section"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Globe className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                      <div className="min-w-0 flex-1 space-y-4">
+                        <div>
+                          <p className="text-sm font-medium">{t('gateway.webAdminTitle')}</p>
+                          <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                            {t('gateway.webAdminDesc', { port: adminPortDraft })}
+                          </p>
+                        </div>
+
+                        {loadingAdminWeb || adminWeb === null ? (
+                          <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            {t('loading')}
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between gap-4">
+                              <div>
+                                <p className="text-sm font-medium">
+                                  {t('gateway.enableWebAdmin')}
+                                </p>
+                                <p className="text-xs text-[rgb(var(--muted))]">
+                                  {t('gateway.enableWebAdminDesc')}
+                                </p>
+                              </div>
+                              <Switch
+                                checked={adminWeb.enabled}
+                                disabled={savingAdminWeb}
+                                onCheckedChange={(enabled) =>
+                                  persistAdminWeb({ ...adminWeb, enabled })
+                                }
+                                data-testid="settings-admin-enabled-switch"
+                              />
+                            </div>
+
+                            <div>
+                              <label htmlFor="admin-port-input" className="text-sm font-medium">
+                                {t('gateway.adminPort')}
+                              </label>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <input
+                                  id="admin-port-input"
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={1024}
+                                  max={65535}
+                                  value={adminPortDraft}
+                                  onChange={(e) => setAdminPortDraft(e.target.value)}
+                                  disabled={savingAdminWeb || !adminWeb.enabled}
+                                  className="w-28 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm"
+                                  data-testid="settings-admin-port-input"
+                                />
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={handleSaveAdminPort}
+                                  disabled={
+                                    savingAdminWeb ||
+                                    !adminWeb.enabled ||
+                                    adminPortDraft.trim() === String(adminWeb.port)
+                                  }
+                                  data-testid="settings-admin-port-save-btn"
+                                >
+                                  {t('gateway.savePort')}
+                                </Button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-4">
+                              <div>
+                                <p className="text-sm font-medium">
+                                  {t('gateway.trustCfAccess')}
+                                </p>
+                                <p className="text-xs text-[rgb(var(--muted))]">
+                                  {t('gateway.trustCfAccessDesc')}
+                                </p>
+                              </div>
+                              <Switch
+                                checked={adminWeb.trustCfAccess}
+                                disabled={savingAdminWeb || !adminWeb.enabled}
+                                onCheckedChange={(trustCfAccess) =>
+                                  persistAdminWeb({ ...adminWeb, trustCfAccess })
+                                }
+                                data-testid="settings-admin-cf-access-switch"
+                              />
+                            </div>
+
+                            {adminWeb.enabled ? (
+                              <div>
+                                <label
+                                  htmlFor="admin-cf-domain-input"
+                                  className="text-sm font-medium"
+                                >
+                                  {t('gateway.cfTeamDomain')}
+                                </label>
+                                <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                                  {t('gateway.cfTeamDomainDesc')}
+                                </p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <input
+                                    id="admin-cf-domain-input"
+                                    type="text"
+                                    placeholder={t('gateway.cfTeamDomainPlaceholder')}
+                                    value={adminCfDomainDraft}
+                                    onChange={(e) => setAdminCfDomainDraft(e.target.value)}
+                                    disabled={savingAdminWeb || !adminWeb.enabled}
+                                    className="min-w-[12rem] flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm"
+                                    data-testid="settings-admin-cf-domain-input"
+                                  />
+                                  <Button
+                                    variant="primary"
+                                    size="sm"
+                                    onClick={() =>
+                                      persistAdminWeb({
+                                        ...adminWeb,
+                                        cfTeamDomain: adminCfDomainDraft.trim(),
+                                      })
+                                    }
+                                    disabled={
+                                      savingAdminWeb ||
+                                      !adminWeb.enabled ||
+                                      adminCfDomainDraft.trim() === adminWeb.cfTeamDomain
+                                    }
+                                  >
+                                    {t('gateway.saveDomain')}
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
               </div>

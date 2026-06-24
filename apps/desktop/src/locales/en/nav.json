@@ -1,5 +1,4 @@
 {
-  "home": "Home",
   "dashboard": "Dashboard",
   "tools": "Tools",
   "builtin": "Built-in",
@@ -14,8 +13,7 @@
     "control": "Control"
   },
   "hints": {
-    "home": "Gateway connection and Space overview",
-    "dashboard": "Server health, recent activity, and stats at a glance",
+    "dashboard": "Gateway connection, server health, and stats at a glance",
     "tools": "MCP servers installed in this Space",
     "builtin": "Capabilities McpMux itself provides — self-management now; memory & skills next",
     "discover": "Browse and install servers from the registry",

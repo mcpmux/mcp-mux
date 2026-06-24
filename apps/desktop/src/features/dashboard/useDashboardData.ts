@@ -5,7 +5,7 @@ import { getGatewayStatus } from '@/lib/api/gateway';
 import { listInstalledServers } from '@/lib/api/registry';
 import { getServerStatuses } from '@/lib/api/serverManager';
 import { listWorkspaceBindings } from '@/lib/api/workspaceBindings';
-import { useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
+import { useDomainEvents, useGatewayEvents, useServerStatusEvents } from '@/hooks/useDomainEvents';
 import { useIsLoading, useSpaces, useViewSpace } from '@/stores';
 import {
   buildAttentionServers,
@@ -93,6 +93,16 @@ export function useDashboardData() {
       reload();
     }
   });
+
+  const { subscribe } = useDomainEvents();
+  useEffect(() => {
+    const unsubs = [
+      subscribe('feature-set-changed', () => void reload()),
+      subscribe('client-changed', () => void reload()),
+      subscribe('server-changed', () => void reload()),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, [subscribe, reload]);
 
   return { stats, attentionServers, isLoading, reload };
 }

@@ -7,7 +7,7 @@ test.describe('Navigation', () => {
     await dashboard.navigate();
 
     await expect(dashboard.heading).toBeVisible();
-    await expect(page.locator('text=Your AI control plane')).toBeVisible();
+    await expect(page.locator('text=Welcome to McpMux')).toBeVisible();
   });
 
   test('should navigate to settings page', async ({ page }) => {
@@ -47,7 +47,7 @@ test.describe('Navigation', () => {
     await expect(page.locator('h1:has-text("Settings")')).toBeVisible();
 
     // Back to Dashboard
-    await page.locator('nav button:has-text("Home")').click({ force: true });
+    await page.locator('nav button:has-text("Dashboard")').click({ force: true });
     await expect(dashboard.heading).toBeVisible();
   });
 });

@@ -1,13 +1,16 @@
 import { useTranslation } from 'react-i18next';
+import { PageHeader } from '@mcpmux/ui';
 import { ConnectionCard } from '@/components/ConnectionCard';
 import { DashboardQuickLinks } from './DashboardQuickLinks';
 import { DashboardRecentActivity } from './DashboardRecentActivity';
 import { DashboardServerHealth } from './DashboardServerHealth';
 import { DashboardStatCards } from './DashboardStatCards';
+import { GetStartedStrip } from './GetStartedStrip';
+import { SetUpFolderCard } from './SetUpFolderCard';
 import { useDashboardData } from './useDashboardData';
 
 /**
- * Home dashboard — gateway connection, stat cards, server health, and quick navigation.
+ * Landing dashboard — gateway connection, stat cards, server health, and quick navigation.
  */
 export function DashboardPage() {
   const { t } = useTranslation('dashboard');
@@ -15,16 +18,18 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6" data-testid="dashboard-page">
-      <div>
-        <h1 className="text-2xl font-bold" data-testid="dashboard-title">
-          {t('page.title')}
-        </h1>
-        <p className="text-[rgb(var(--muted))]" data-testid="dashboard-welcome">
-          {t('page.welcome')}
-        </p>
-      </div>
+      <PageHeader
+        className="mb-0"
+        title={t('page.title')}
+        titleTestId="dashboard-title"
+        subtitle={<span data-testid="dashboard-welcome">{t('page.welcome')}</span>}
+      />
+
+      {!isLoading && stats.installedServers === 0 && <GetStartedStrip />}
 
       <ConnectionCard />
+
+      <SetUpFolderCard />
 
       <DashboardStatCards stats={stats} />
 

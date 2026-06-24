@@ -565,7 +565,10 @@ function SidePanel({
               <p className="text-sm font-semibold">Routing is workspace-driven</p>
               <p className="mt-1 text-xs text-[rgb(var(--muted))]">
                 When this client reports a folder as an MCP root, mcpmux uses the matching Workspace
-                binding to pick the Space and FeatureSet.
+                binding to pick the Space and FeatureSet. If it doesn&apos;t report the folder
+                reliably (e.g. Cursor), open the folder in Workspaces and{' '}
+                <span className="font-medium text-[rgb(var(--foreground))]">Connect apps to this folder</span>{' '}
+                to auto-write its config with a workspace header.
               </p>
               <button
                 onClick={onOpenWorkspaces}

@@ -245,6 +245,15 @@ export function WorkspaceBindingSheet() {
               </div>
             </div>
           </div>
+
+          {/* Self-intro: point at the per-workspace installer so apps that
+              don't report this folder (e.g. Cursor) still route here. */}
+          <p className="mt-3 text-xs text-[rgb(var(--muted))]" data-testid="binding-sheet-install-hint">
+            Tip: app not routing here? In the Workspaces tab, open this folder and{' '}
+            <span className="font-medium text-[rgb(var(--foreground))]">Connect apps to this folder</span>{' '}
+            to write its config with a workspace header — it works even when the app doesn&apos;t
+            report the folder.
+          </p>
         </div>
 
         <div className="flex-1 overflow-y-auto px-8 pb-6 space-y-6">

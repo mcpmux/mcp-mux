@@ -1091,7 +1091,8 @@ pub async fn export_config_to_file(
 
     let path = PathBuf::from(path);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|err| anyhow!("Failed to create parent dir: {err}"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|err| anyhow!("Failed to create parent dir: {err}"))?;
     }
     std::fs::write(&path, &content).map_err(|err| anyhow!("Failed to write config: {err}"))?;
     as_json(path.to_string_lossy().to_string())

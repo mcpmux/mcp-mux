@@ -26,6 +26,8 @@ export interface AppState {
   activeNav: NavItem;
   /** Client ID to auto-select when navigating to Clients page */
   pendingClientId: string | null;
+  /** Section to scroll to + flash when navigating to Settings (e.g. 'security'). */
+  pendingSettingsSection: string | null;
 
   // UI state
   sidebarCollapsed: boolean;
@@ -50,6 +52,7 @@ export interface AppActions {
   // Navigation
   navigateTo: (nav: NavItem) => void;
   setPendingClientId: (id: string | null) => void;
+  setPendingSettingsSection: (section: string | null) => void;
 
   // UI
   toggleSidebar: () => void;

@@ -21,6 +21,7 @@ const {
   getAuthMock,
   gatewayStatusMock,
   navigateMock,
+  setSectionMock,
 } = vi.hoisted(() => ({
   listClientsMock: vi.fn(),
   installMock: vi.fn(),
@@ -28,6 +29,7 @@ const {
   getAuthMock: vi.fn(),
   gatewayStatusMock: vi.fn(),
   navigateMock: vi.fn(),
+  setSectionMock: vi.fn(),
 }));
 
 vi.mock('@/lib/api/workspaceInstall', () => ({
@@ -43,6 +45,7 @@ vi.mock('@/lib/api/gateway', () => ({
 
 vi.mock('@/stores', () => ({
   useNavigateTo: () => navigateMock,
+  useSetPendingSettingsSection: () => setSectionMock,
 }));
 
 import { WorkspaceInstallPanel } from '@/features/workspaces/WorkspaceInstallPanel';
@@ -65,6 +68,7 @@ describe('WorkspaceInstallPanel', () => {
     snippetMock.mockReset();
     getAuthMock.mockReset().mockResolvedValue(true);
     navigateMock.mockReset();
+    setSectionMock.mockReset();
     gatewayStatusMock
       .mockReset()
       .mockResolvedValue({ running: true, url: 'http://localhost:45818' });
@@ -134,6 +138,7 @@ describe('WorkspaceInstallPanel', () => {
     // flipping it inline.
     const openSettings = await screen.findByTestId('workspace-install-open-auth-settings');
     await user.click(openSettings);
+    expect(setSectionMock).toHaveBeenCalledWith('security');
     expect(navigateMock).toHaveBeenCalledWith('settings');
   });
 

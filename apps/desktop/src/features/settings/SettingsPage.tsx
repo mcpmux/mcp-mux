@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Card,
@@ -33,7 +33,13 @@ import {
   AlertCircle,
   ShieldOff,
 } from 'lucide-react';
-import { useAppStore, useTheme, useAnalyticsEnabled } from '@/stores';
+import {
+  useAppStore,
+  useTheme,
+  useAnalyticsEnabled,
+  usePendingSettingsSection,
+  useSetPendingSettingsSection,
+} from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
@@ -59,6 +65,22 @@ export function SettingsPage() {
   const [openingLogs, setOpeningLogs] = useState(false);
   const { toasts, success, error } = useToast();
   const gatewayControl = useGatewayControl();
+
+  // Deep-link: when another surface routes here for a specific section, scroll
+  // it into view and briefly flash it so the user lands on the right control.
+  const pendingSection = usePendingSettingsSection();
+  const clearPendingSection = useSetPendingSettingsSection();
+  const securityRef = useRef<HTMLDivElement>(null);
+  const [flashSecurity, setFlashSecurity] = useState(false);
+
+  useEffect(() => {
+    if (pendingSection !== 'security' || !securityRef.current) return;
+    securityRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFlashSecurity(true);
+    clearPendingSection(null);
+    const t = setTimeout(() => setFlashSecurity(false), 2200);
+    return () => clearTimeout(t);
+  }, [pendingSection, clearPendingSection]);
 
   // Startup settings state
   const [startupSettings, setStartupSettings] = useState<StartupSettings>({
@@ -626,6 +648,15 @@ export function SettingsPage() {
         </Card>
 
         {/* Security Section */}
+        <div
+          ref={securityRef}
+          id="settings-security"
+          className={
+            flashSecurity
+              ? 'rounded-xl ring-2 ring-primary-500 ring-offset-2 ring-offset-[rgb(var(--background))] transition-shadow duration-500'
+              : 'rounded-xl ring-0 transition-shadow duration-500'
+          }
+        >
         <Card data-testid="settings-security-section">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -643,10 +674,8 @@ export function SettingsPage() {
                 <div>
                   <label className="text-sm font-medium">Disable authentication</label>
                   <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                    Let local apps connect to the gateway with no access key — just the URL and a
-                    workspace header. Makes one-click per-workspace setup trivial. The gateway only
-                    listens on localhost, but any app on this machine can then reach it. Leave on
-                    unless you want the simplest setup.
+                    Let local apps connect with no access key — just the URL and a workspace header.
+                    Quickest setup, but any app on this machine can then reach the gateway.
                   </p>
                 </div>
               </div>
@@ -659,6 +688,7 @@ export function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+        </div>
 
         {/* Appearance Section */}
         <Card>

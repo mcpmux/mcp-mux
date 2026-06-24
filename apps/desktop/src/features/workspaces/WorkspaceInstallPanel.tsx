@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Download, Loader2, ShieldCheck, ShieldOff, AlertCircle } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
 import { getGatewayStatus } from '@/lib/api/gateway';
-import { useNavigateTo } from '@/stores';
+import { useNavigateTo, useSetPendingSettingsSection } from '@/stores';
 import {
   generateWorkspaceConfigSnippet,
   getGatewayAuthDisabled,
@@ -63,6 +63,7 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const navigateTo = useNavigateTo();
+  const setPendingSettingsSection = useSetPendingSettingsSection();
 
   useEffect(() => {
     let cancelled = false;
@@ -171,7 +172,10 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
               variant="secondary"
               size="sm"
               className="mt-2 h-7 text-xs"
-              onClick={() => navigateTo('settings')}
+              onClick={() => {
+                setPendingSettingsSection('security');
+                navigateTo('settings');
+              }}
               data-testid="workspace-install-open-auth-settings"
             >
               <ShieldOff className="mr-1.5 h-3 w-3" />

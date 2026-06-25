@@ -300,11 +300,27 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
             anyhow::bail!("Cannot delete builtin FeatureSet: {}", id);
         }
 
-        // Soft delete
-        conn.execute(
+        // Soft delete, and drop every reference to it in the same transaction.
+        // FeatureSets are soft-deleted (`is_deleted = 1`), so the FK
+        // `ON DELETE CASCADE` on the junction / grants never fires — a
+        // workspace binding or client grant would keep pointing at a
+        // FeatureSet that `get()` now reports as missing ("Feature set not
+        // found"). Prune those references explicitly so the deletion is fully
+        // reflected.
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "UPDATE feature_sets SET is_deleted = 1, updated_at = datetime('now') WHERE id = ?",
             params![id],
         )?;
+        tx.execute(
+            "DELETE FROM workspace_binding_feature_sets WHERE feature_set_id = ?",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM client_grants WHERE feature_set_id = ?",
+            params![id],
+        )?;
+        tx.commit()?;
 
         Ok(())
     }

@@ -69,10 +69,17 @@ pub struct OAuthServerMetadata {
 /// OAuth metadata endpoint (RFC 8414)
 pub async fn oauth_metadata(
     axum::extract::State(app_state): axum::extract::State<AppState>,
-) -> Json<OAuthServerMetadata> {
+) -> Result<Json<OAuthServerMetadata>, StatusCode> {
+    // When inbound auth is disabled, don't advertise an authorization server —
+    // otherwise MCP clients that probe discovery start an OAuth flow even
+    // though `/mcp` accepts them without a token. 404 makes them connect
+    // tokenlessly.
+    if app_state.gateway_state.read().await.auth_disabled() {
+        return Err(StatusCode::NOT_FOUND);
+    }
     info!("[Gateway] OAuth metadata request - serving authorization server metadata");
     let base = &app_state.base_url;
-    Json(OAuthServerMetadata {
+    Ok(Json(OAuthServerMetadata {
         issuer: base.to_string(),
         authorization_endpoint: format!("{}/oauth/authorize", base),
         token_endpoint: format!("{}/oauth/token", base),
@@ -88,7 +95,7 @@ pub async fn oauth_metadata(
 
         // MCP spec 2025-11-25: Advertise CIMD support
         client_id_metadata_document_supported: Some(true),
-    })
+    }))
 }
 
 /// OAuth Protected Resource Metadata (RFC 9728)
@@ -104,14 +111,19 @@ pub struct ProtectedResourceMetadata {
 /// This tells MCP clients where to find the authorization server
 pub async fn resource_metadata(
     axum::extract::State(app_state): axum::extract::State<AppState>,
-) -> Json<ProtectedResourceMetadata> {
+) -> Result<Json<ProtectedResourceMetadata>, StatusCode> {
+    // See `oauth_metadata`: stay silent about auth when it's disabled so clients
+    // don't kick off OAuth against a gateway that accepts them tokenlessly.
+    if app_state.gateway_state.read().await.auth_disabled() {
+        return Err(StatusCode::NOT_FOUND);
+    }
     info!("[Gateway] Protected resource metadata request");
     let base = &app_state.base_url;
-    Json(ProtectedResourceMetadata {
+    Ok(Json(ProtectedResourceMetadata {
         resource: format!("{}/mcp", base),
         authorization_servers: vec![base.to_string()],
         scopes_supported: Some(vec!["mcp".to_string(), "offline_access".to_string()]),
-    })
+    }))
 }
 
 /// OAuth authorization query params

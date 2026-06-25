@@ -12,7 +12,10 @@ mod service_container;
 mod startup;
 mod state;
 
-use handlers::AppState; // Import AppState
+// Exposed for integration tests that mount these routes against a real
+// ServiceContainer (e.g. asserting the OAuth-discovery endpoints 404 when
+// inbound auth is disabled). AppState is also used throughout this module.
+pub use handlers::{oauth_metadata, resource_metadata, AppState};
 
 pub use dependencies::{DependenciesBuilder, GatewayDependencies};
 pub use handlers::PendingAuthorization;

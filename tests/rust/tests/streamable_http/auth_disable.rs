@@ -13,13 +13,16 @@ use axum::{
     http::{Request, StatusCode},
     middleware,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use mcpmux_core::{DomainEvent, ServerDiscoveryService, ServerLogManager};
 use mcpmux_gateway::{
     mcp::mcp_oauth_middleware,
-    server::{DependenciesBuilder, GatewayDependencies, GatewayState, ServiceContainer},
+    server::{
+        oauth_metadata, resource_metadata, AppState, DependenciesBuilder, GatewayDependencies,
+        GatewayState, ServiceContainer,
+    },
 };
 use mcpmux_storage::SqliteSpaceRepository;
 use std::sync::Arc;
@@ -44,6 +47,7 @@ async fn echo_client_id(req: Request<Body>) -> Response {
 
 struct Harness {
     url: String,
+    base: String,
     ct: CancellationToken,
 }
 
@@ -112,9 +116,29 @@ impl Harness {
             gateway_state,
         ));
 
-        let router = Router::new().route("/mcp", post(echo_client_id)).layer(
+        let mcp_router = Router::new().route("/mcp", post(echo_client_id)).layer(
             middleware::from_fn_with_state(services.clone(), mcp_oauth_middleware),
         );
+
+        // Mount the OAuth-discovery endpoints so we can assert they 404 when
+        // inbound auth is disabled (don't advertise auth the gateway won't ask
+        // for).
+        let app_state = AppState {
+            gateway_state: services.gateway_state.clone(),
+            services: services.clone(),
+            base_url: "http://127.0.0.1:0".to_string(),
+        };
+        let discovery_router = Router::new()
+            .route(
+                "/.well-known/oauth-protected-resource",
+                get(resource_metadata),
+            )
+            .route(
+                "/.well-known/oauth-authorization-server",
+                get(oauth_metadata),
+            )
+            .with_state(app_state);
+        let router = mcp_router.merge(discovery_router);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -131,6 +155,7 @@ impl Harness {
 
         Self {
             url: format!("http://127.0.0.1:{port}/mcp"),
+            base: format!("http://127.0.0.1:{port}"),
             ct,
         }
     }
@@ -177,4 +202,40 @@ async fn auth_required_gateway_rejects_request_without_token() {
         reqwest::StatusCode::UNAUTHORIZED,
         "default gateway must reject a tokenless request"
     );
+}
+
+#[tokio::test]
+async fn authless_gateway_does_not_advertise_oauth_discovery() {
+    // With inbound auth disabled, the OAuth-discovery endpoints must 404 so MCP
+    // clients don't start an OAuth flow against a gateway that accepts them
+    // without a token.
+    let h = Harness::start(true).await;
+    let client = reqwest::Client::new();
+    for path in [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-authorization-server",
+    ] {
+        let resp = client
+            .get(format!("{}{path}", h.base))
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "{path} must 404 when auth is disabled"
+        );
+    }
+}
+
+#[tokio::test]
+async fn auth_required_gateway_advertises_oauth_discovery() {
+    // The default (auth required) still serves discovery so real OAuth works.
+    let h = Harness::start(false).await;
+    let resp = reqwest::Client::new()
+        .get(format!("{}/.well-known/oauth-protected-resource", h.base))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
 }

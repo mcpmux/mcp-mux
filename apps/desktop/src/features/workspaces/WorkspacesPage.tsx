@@ -28,6 +28,7 @@ import {
   Trash2,
   Wrench,
   X,
+  Monitor,
 } from 'lucide-react';
 import {
   Button,
@@ -51,7 +52,14 @@ import {
   type WorkspaceBindingInput,
   type WorkspaceEffectiveFeatures,
 } from '@/lib/api/workspaceBindings';
-import { getLocalMachineId, listMachines, type Machine } from '@/lib/api/machines';
+import {
+  createMachine,
+  getHostname,
+  getLocalMachineId,
+  listMachines,
+  setLocalMachineId as persistLocalMachineId,
+  type Machine,
+} from '@/lib/api/machines';
 import {
   deleteWorkspaceAppearance,
   listWorkspaceAppearances,
@@ -123,6 +131,9 @@ export function WorkspacesPage() {
   const [selected, setSelected] = useState<Selected | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'live' | 'mapped' | 'unmapped'>('all');
+  const [machineFilter, setMachineFilter] = useState<string>('all');
+  const [identityBannerDismissed, setIdentityBannerDismissed] = useState(false);
+  const [showIdentityModal, setShowIdentityModal] = useState(false);
   /** Optimistic icon overrides while the inspector panel is open. */
   const [liveEntryIcons, setLiveEntryIcons] = useState<Map<string, string>>(new Map());
 
@@ -204,6 +215,20 @@ export function WorkspacesPage() {
     for (const s of spaces) m.set(s.id, s);
     return m;
   }, [spaces]);
+  const machinesById = useMemo(() => {
+    const m = new Map<string, Machine>();
+    for (const machine of machines) m.set(machine.id, machine);
+    return m;
+  }, [machines]);
+  const machinesWithBindings = useMemo(() => {
+    const ids = new Set<string>();
+    for (const b of bindings) {
+      if (b.machine_id) ids.add(b.machine_id);
+    }
+    return machines
+      .filter((machine) => ids.has(machine.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [bindings, machines]);
 
   /**
    * The system's routing fallback: the `is_default` Space plus that Space's
@@ -270,6 +295,7 @@ export function WorkspacesPage() {
       if (filter === 'live' && !e.isLive) return false;
       if (filter === 'mapped' && !e.binding) return false;
       if (filter === 'unmapped' && e.kind !== 'unmapped-live') return false;
+      if (machineFilter !== 'all' && e.binding?.machine_id !== machineFilter) return false;
       if (!q) return true;
       const spaceName = e.binding ? spaceById.get(e.binding.space_id)?.name ?? '' : '';
       const fsNames = e.binding
@@ -285,7 +311,10 @@ export function WorkspacesPage() {
         fsNames.toLowerCase().includes(q)
       );
     });
-  }, [entries, searchQuery, filter, spaceById, fsById]);
+  }, [entries, searchQuery, filter, machineFilter, spaceById, fsById]);
+
+  const showIdentityBanner =
+    !localMachineId && bindings.length > 0 && !identityBannerDismissed;
 
   const counts = useMemo(() => {
     let live = 0;
@@ -355,6 +384,20 @@ export function WorkspacesPage() {
     } catch (e) {
       showError(t('toast.failedToRemove'), e instanceof Error ? e.message : String(e));
     }
+  };
+
+  const handleRegisterMachine = async (input: {
+    name: string;
+    icon: string | null;
+    hostname: string | null;
+  }) => {
+    const created = await createMachine(input);
+    await persistLocalMachineId(created.id);
+    setMachines((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+    setLocalMachineId(created.id);
+    setShowIdentityModal(false);
+    setIdentityBannerDismissed(true);
+    success(t('machineIdentity.success'), created.name);
   };
 
   const handleClearUnmapped = async () => {
@@ -441,6 +484,26 @@ export function WorkspacesPage() {
                 { value: 'unmapped', label: t('filter.unmapped'), count: counts.unmapped },
               ]}
             />
+            {machinesWithBindings.length > 0 ? (
+              <div className="relative min-w-[160px]">
+                <select
+                  value={machineFilter}
+                  onChange={(e) => setMachineFilter(e.target.value)}
+                  className="w-full appearance-none px-3 py-2 pr-9 bg-[rgb(var(--surface))] border border-[rgb(var(--border))] rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  data-testid="workspace-machine-filter"
+                  aria-label={t('filter.machine')}
+                >
+                  <option value="all">{t('filter.allMachines')}</option>
+                  {machinesWithBindings.map((machine) => (
+                    <option key={machine.id} value={machine.id}>
+                      {machine.icon ? `${machine.icon}  ` : ''}
+                      {machine.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))] pointer-events-none" />
+              </div>
+            ) : null}
             {counts.unmapped > 0 && (
               <Button
                 variant="ghost"
@@ -468,6 +531,39 @@ export function WorkspacesPage() {
 
       <div className="flex-1 overflow-auto px-8 py-8">
         <div className="max-w-[2000px] mx-auto">
+          {showIdentityBanner ? (
+            <div
+              className="mb-6 flex items-start justify-between gap-3 p-4 rounded-xl border border-primary-200/80 dark:border-primary-800/60 bg-primary-50 dark:bg-primary-900/20"
+              data-testid="machine-identity-banner"
+              role="alert"
+            >
+              <div className="flex items-start gap-3 min-w-0">
+                <Monitor className="h-5 w-5 text-primary-600 dark:text-primary-400 mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-primary-800 dark:text-primary-200">
+                  {t('machineIdentity.bannerMessage')}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setShowIdentityModal(true)}
+                  data-testid="machine-identity-setup-btn"
+                >
+                  {t('machineIdentity.bannerSetup')}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setIdentityBannerDismissed(true)}
+                  className="p-1.5 rounded-lg text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                  aria-label={t('machineIdentity.bannerDismissAria')}
+                  data-testid="machine-identity-banner-dismiss"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : null}
           {isLoading ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
@@ -475,7 +571,7 @@ export function WorkspacesPage() {
           ) : filtered.length === 0 ? (
             <EmptyState
               hasAny={entries.length > 0}
-              hasFilter={searchQuery.length > 0 || filter !== 'all'}
+              hasFilter={searchQuery.length > 0 || filter !== 'all' || machineFilter !== 'all'}
               onCreate={() => setSelected({ mode: 'new' })}
               t={t}
             />
@@ -504,6 +600,11 @@ export function WorkspacesPage() {
                     icon={resolveEntryIcon(entry)}
                     spaceName={resolvedSpaceName}
                     fsName={resolvedFsName}
+                    machineName={
+                      entry.binding?.machine_id
+                        ? machinesById.get(entry.binding.machine_id)?.name
+                        : undefined
+                    }
                     selected={isSelected}
                     onClick={() => setSelected({ mode: 'entry', id: entry.id })}
                     t={t}
@@ -580,6 +681,13 @@ export function WorkspacesPage() {
 
       <ToastContainer toasts={toasts} onClose={dismiss} />
       {ConfirmDialogElement}
+      <MachineRegistrationModal
+        open={showIdentityModal}
+        onClose={() => setShowIdentityModal(false)}
+        onSubmit={handleRegisterMachine}
+        onError={(msg) => showError(t('machineIdentity.error'), msg)}
+        t={t}
+      />
     </div>
   );
 }
@@ -707,6 +815,7 @@ function EntryCard({
   icon,
   spaceName,
   fsName,
+  machineName,
   selected,
   onClick,
   t,
@@ -715,6 +824,7 @@ function EntryCard({
   icon: string | null;
   spaceName: string | undefined;
   fsName: string | undefined;
+  machineName?: string;
   selected: boolean;
   onClick: () => void;
   t: TFunction<['workspaces', 'common']>;
@@ -812,6 +922,14 @@ function EntryCard({
                 {t('card.unbound')}
               </span>
             )}
+            {machineName ? (
+              <>
+                <span className="shrink-0">{t('card.machine')}</span>
+                <Chip tone="neutral" title={machineName}>
+                  {machineName}
+                </Chip>
+              </>
+            ) : null}
           </div>
         </div>
       </CardContent>
@@ -2298,12 +2416,12 @@ function BindingForm({
         </div>
       </FormField>
 
-      <FormField label="Machine" hint="Scope this binding to one machine, or leave global.">
+      <FormField label={t('form.machine')} hint={t('form.machineHint')}>
         <Picker
           value={machineId}
           onChange={setMachineId}
           options={machineOptions}
-          placeholder="No machine"
+          placeholder={t('form.noMachine')}
           testId="workspace-binding-machine-select"
         />
       </FormField>
@@ -2632,6 +2750,173 @@ function Picker({
       </select>
       <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))] pointer-events-none" />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Machine registration modal (first-time identity prompt)
+// ---------------------------------------------------------------------------
+
+/**
+ * Small modal for registering this McpMux install as a named machine.
+ */
+function MachineRegistrationModal({
+  open,
+  onClose,
+  onSubmit,
+  onError,
+  t,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (input: {
+    name: string;
+    icon: string | null;
+    hostname: string | null;
+  }) => Promise<void>;
+  onError: (message: string) => void;
+  t: TFunction<['workspaces', 'common']>;
+}) {
+  const [name, setName] = useState('');
+  const [icon, setIcon] = useState('');
+  const [hostname, setHostname] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const nameRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setName('');
+    setIcon('');
+    setSubmitting(false);
+    void getHostname()
+      .then((h) => setHostname(h))
+      .catch(() => setHostname(''));
+    const handle = setTimeout(() => nameRef.current?.focus(), 50);
+    return () => clearTimeout(handle);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  const handleConfirm = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      onError(t('machineIdentity.nameRequired'));
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        name: trimmedName,
+        icon: icon.trim() || null,
+        hostname: hostname.trim() || null,
+      });
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4"
+        data-testid="machine-identity-modal-overlay"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <Card
+          className="animate-in fade-in zoom-in-95 w-full max-w-md shadow-2xl duration-200"
+          data-testid="machine-identity-modal"
+        >
+          <CardContent className="p-6 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">{t('machineIdentity.modalTitle')}</h2>
+                <p className="text-sm text-[rgb(var(--muted))] mt-1">
+                  {t('machineIdentity.modalSubtitle')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                aria-label={t('panel.closeAria')}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <FormField label={t('machineIdentity.nameLabel')}>
+              <input
+                ref={nameRef}
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('machineIdentity.namePlaceholder')}
+                className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                data-testid="machine-identity-name-input"
+              />
+            </FormField>
+
+            <FormField label={t('machineIdentity.iconLabel')}>
+              <input
+                type="text"
+                value={icon}
+                onChange={(e) => setIcon(e.target.value)}
+                placeholder={t('machineIdentity.iconPlaceholder')}
+                className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                data-testid="machine-identity-icon-input"
+              />
+            </FormField>
+
+            <FormField
+              label={t('machineIdentity.hostnameLabel')}
+              hint={t('machineIdentity.hostnameHint')}
+            >
+              <input
+                type="text"
+                value={hostname}
+                onChange={(e) => setHostname(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-sm font-mono bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                data-testid="machine-identity-hostname-input"
+              />
+            </FormField>
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => void handleConfirm()}
+                disabled={submitting || !name.trim()}
+                className="flex-1"
+                data-testid="machine-identity-confirm-btn"
+              >
+                {submitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                ) : (
+                  <Check className="h-4 w-4 mr-1.5" />
+                )}
+                {t('machineIdentity.confirm')}
+              </Button>
+              <Button variant="secondary" size="md" onClick={onClose} disabled={submitting}>
+                {t('common:actions.cancel')}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </>
   );
 }
 

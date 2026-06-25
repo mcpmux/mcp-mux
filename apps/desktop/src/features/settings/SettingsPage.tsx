@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import {
   Card,
   CardHeader,
@@ -11,6 +12,7 @@ import {
   Switch,
   useToast,
   ToastContainer,
+  useConfirm,
 } from '@mcpmux/ui';
 import {
   Sun,
@@ -35,6 +37,8 @@ import {
   RotateCcw,
   AlertCircle,
   ShieldOff,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import {
   useAppStore,
@@ -66,6 +70,17 @@ import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
 import { isTauri } from '@/lib/api/transport';
+import {
+  createMachine,
+  deleteMachine,
+  getHostname,
+  getLocalMachineId,
+  listMachines,
+  setLocalMachineId,
+  updateMachine,
+  type Machine,
+} from '@/lib/api/machines';
+import { ServerIcon } from '@/components/ServerIcon';
 
 interface GatewayPublicUrlSettings {
   configuredPublicBaseUrl: string | null;
@@ -82,6 +97,7 @@ export function SettingsPage() {
   const [logsPath, setLogsPath] = useState<string>('');
   const [openingLogs, setOpeningLogs] = useState(false);
   const { toasts, success, error, info } = useToast();
+  const { confirm, ConfirmDialogElement: machineConfirmDialog } = useConfirm();
   const gatewayControl = useGatewayControl();
 
   // Deep-link: when another surface routes here for a specific section, scroll
@@ -606,6 +622,7 @@ export function SettingsPage() {
     <>
       <ToastContainer toasts={toasts} onClose={(id) => toasts.find(t => t.id === id)?.onClose(id)} />
       {gatewayControl.ConfirmDialogElement}
+      {machineConfirmDialog}
       <div className="space-y-6" data-testid="settings-page">
         <div>
           <h1 className="text-2xl font-bold" data-testid="settings-title">
@@ -1280,6 +1297,13 @@ export function SettingsPage() {
         </Card>
       </div>
 
+      <MachineIdentitySection
+        onSuccess={success}
+        onError={error}
+        confirm={confirm}
+        t={t}
+      />
+
       {/* Appearance Section */}
       <Card data-testid="settings-appearance-section">
         <CardHeader>
@@ -1496,6 +1520,471 @@ export function SettingsPage() {
       </Card>
     </div>
     </>
+  );
+}
+
+/**
+ * Settings card for this install's machine identity and catalog management.
+ */
+function MachineIdentitySection({
+  onSuccess,
+  onError,
+  confirm,
+  t,
+}: {
+  onSuccess: (title: string, message?: string) => void;
+  onError: (title: string, message?: string) => void;
+  confirm: (options: {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel: string;
+    variant?: 'danger' | 'default';
+  }) => Promise<boolean>;
+  t: TFunction<['settings', 'common']>;
+}) {
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [localMachineId, setLocalMachineIdState] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [savingLocal, setSavingLocal] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [iconDraft, setIconDraft] = useState('');
+  const [hostnameDraft, setHostnameDraft] = useState('');
+  const [registerName, setRegisterName] = useState('');
+  const [registerIcon, setRegisterIcon] = useState('');
+  const [registerHostname, setRegisterHostname] = useState('');
+  const [rowDrafts, setRowDrafts] = useState<
+    Record<string, { name: string; icon: string; hostname: string }>
+  >({});
+  const [savingRowId, setSavingRowId] = useState<string | null>(null);
+  const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+
+  const localMachine = localMachineId
+    ? machines.find((machine) => machine.id === localMachineId) ?? null
+    : null;
+
+  const loadMachines = async () => {
+    try {
+      const [list, localId] = await Promise.all([listMachines(), getLocalMachineId()]);
+      setMachines(list);
+      setLocalMachineIdState(localId);
+      const current = localId ? list.find((machine) => machine.id === localId) : null;
+      if (current) {
+        setNameDraft(current.name);
+        setIconDraft(current.icon ?? '');
+        setHostnameDraft(current.hostname ?? '');
+      }
+      const drafts: Record<string, { name: string; icon: string; hostname: string }> = {};
+      for (const machine of list) {
+        drafts[machine.id] = {
+          name: machine.name,
+          icon: machine.icon ?? '',
+          hostname: machine.hostname ?? '',
+        };
+      }
+      setRowDrafts(drafts);
+    } catch (err) {
+      console.error('Failed to load machines:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadMachines();
+  }, []);
+
+  useEffect(() => {
+    if (localMachine) {
+      setNameDraft(localMachine.name);
+      setIconDraft(localMachine.icon ?? '');
+      setHostnameDraft(localMachine.hostname ?? '');
+    }
+  }, [localMachine]);
+
+  const handleSaveLocal = async () => {
+    if (!localMachine) return;
+    const trimmedName = nameDraft.trim();
+    if (!trimmedName) return;
+    setSavingLocal(true);
+    try {
+      const updated = await updateMachine(localMachine.id, {
+        name: trimmedName,
+        icon: iconDraft.trim() || null,
+        hostname: hostnameDraft.trim() || null,
+      });
+      setMachines((prev) =>
+        prev.map((machine) => (machine.id === updated.id ? updated : machine))
+      );
+      onSuccess(t('machineIdentity.toast.saved'), updated.name);
+    } catch (err) {
+      onError(
+        t('machineIdentity.toast.failedSave'),
+        err instanceof Error ? err.message : String(err)
+      );
+    } finally {
+      setSavingLocal(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    const trimmedName = registerName.trim();
+    if (!trimmedName) return;
+    setRegistering(true);
+    try {
+      const created = await createMachine({
+        name: trimmedName,
+        icon: registerIcon.trim() || null,
+        hostname: registerHostname.trim() || null,
+      });
+      await setLocalMachineId(created.id);
+      setMachines((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setLocalMachineIdState(created.id);
+      setRegisterName('');
+      setRegisterIcon('');
+      setRegisterHostname('');
+      onSuccess(t('machineIdentity.toast.registered'), created.name);
+    } catch (err) {
+      onError(
+        t('machineIdentity.toast.failedRegister'),
+        err instanceof Error ? err.message : String(err)
+      );
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  const handlePrefillRegisterHostname = async () => {
+    try {
+      const hostname = await getHostname();
+      setRegisterHostname(hostname);
+    } catch {
+      /* hostname hint is optional */
+    }
+  };
+
+  const handleSaveRow = async (machine: Machine) => {
+    const draft = rowDrafts[machine.id];
+    if (!draft) return;
+    const trimmedName = draft.name.trim();
+    if (!trimmedName) return;
+    setSavingRowId(machine.id);
+    try {
+      const updated = await updateMachine(machine.id, {
+        name: trimmedName,
+        icon: draft.icon.trim() || null,
+        hostname: draft.hostname.trim() || null,
+      });
+      setMachines((prev) =>
+        prev.map((row) => (row.id === updated.id ? updated : row))
+      );
+      if (localMachineId === updated.id) {
+        setNameDraft(updated.name);
+        setIconDraft(updated.icon ?? '');
+        setHostnameDraft(updated.hostname ?? '');
+      }
+      onSuccess(t('machineIdentity.toast.saved'), updated.name);
+    } catch (err) {
+      onError(
+        t('machineIdentity.toast.failedSave'),
+        err instanceof Error ? err.message : String(err)
+      );
+    } finally {
+      setSavingRowId(null);
+    }
+  };
+
+  const handleDeleteRow = async (machine: Machine) => {
+    const ok = await confirm({
+      title: t('machineIdentity.confirmDeleteTitle'),
+      message: t('machineIdentity.confirmDeleteMessage', { name: machine.name }),
+      confirmLabel: t('machineIdentity.deleteMachine'),
+      cancelLabel: t('common:actions.cancel'),
+      variant: 'danger',
+    });
+    if (!ok) return;
+    setDeletingRowId(machine.id);
+    try {
+      await deleteMachine(machine.id);
+      setMachines((prev) => prev.filter((row) => row.id !== machine.id));
+      if (localMachineId === machine.id) {
+        setLocalMachineIdState(null);
+        setNameDraft('');
+        setIconDraft('');
+        setHostnameDraft('');
+      }
+      setRowDrafts((prev) => {
+        const next = { ...prev };
+        delete next[machine.id];
+        return next;
+      });
+      onSuccess(t('machineIdentity.toast.deleted'), machine.name);
+    } catch (err) {
+      onError(
+        t('machineIdentity.toast.failedDelete'),
+        err instanceof Error ? err.message : String(err)
+      );
+    } finally {
+      setDeletingRowId(null);
+    }
+  };
+
+  const localDirty =
+    localMachine &&
+    (nameDraft.trim() !== localMachine.name ||
+      (iconDraft.trim() || null) !== localMachine.icon ||
+      (hostnameDraft.trim() || null) !== localMachine.hostname);
+
+  return (
+    <Card data-testid="settings-machine-identity-section">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Monitor className="h-5 w-5" />
+          {t('machineIdentity.title')}
+        </CardTitle>
+        <CardDescription>{t('machineIdentity.description')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t('loading')}
+          </div>
+        ) : localMachine ? (
+          <div className="space-y-4">
+            <p className="text-sm font-medium">{t('machineIdentity.thisInstall')}</p>
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] flex items-center justify-center flex-shrink-0">
+                {iconDraft.trim() ? (
+                  <ServerIcon icon={iconDraft.trim()} className="h-7 w-7 object-contain" fallback="🖥️" />
+                ) : (
+                  <Monitor className="h-5 w-5 text-[rgb(var(--muted))]" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0 space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-[rgb(var(--muted))]">
+                    {t('machineIdentity.nameLabel')}
+                  </label>
+                  <input
+                    type="text"
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    className="mt-1 w-full px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                    data-testid="machine-identity-local-name"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[rgb(var(--muted))]">
+                    {t('machineIdentity.iconLabel')}
+                  </label>
+                  <input
+                    type="text"
+                    value={iconDraft}
+                    onChange={(e) => setIconDraft(e.target.value)}
+                    placeholder="🖥️"
+                    className="mt-1 w-full px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                    data-testid="machine-identity-local-icon"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[rgb(var(--muted))]">
+                    {t('machineIdentity.hostnameLabel')}
+                  </label>
+                  <input
+                    type="text"
+                    value={hostnameDraft}
+                    onChange={(e) => setHostnameDraft(e.target.value)}
+                    className="mt-1 w-full px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                    data-testid="machine-identity-local-hostname"
+                  />
+                </div>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void handleSaveLocal()}
+                  disabled={savingLocal || !localDirty || !nameDraft.trim()}
+                  data-testid="machine-identity-local-save"
+                >
+                  {savingLocal ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                  {t('machineIdentity.save')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-[rgb(var(--muted))]">{t('machineIdentity.notRegistered')}</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <input
+                type="text"
+                value={registerName}
+                onChange={(e) => setRegisterName(e.target.value)}
+                placeholder={t('machineIdentity.nameLabel')}
+                className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                data-testid="machine-identity-register-name"
+              />
+              <input
+                type="text"
+                value={registerIcon}
+                onChange={(e) => setRegisterIcon(e.target.value)}
+                placeholder={t('machineIdentity.iconLabel')}
+                className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                data-testid="machine-identity-register-icon"
+              />
+              <input
+                type="text"
+                value={registerHostname}
+                onChange={(e) => setRegisterHostname(e.target.value)}
+                onFocus={() => {
+                  if (!registerHostname) void handlePrefillRegisterHostname();
+                }}
+                placeholder={t('machineIdentity.hostnameLabel')}
+                className="px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
+                data-testid="machine-identity-register-hostname"
+              />
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void handleRegister()}
+              disabled={registering || !registerName.trim()}
+              data-testid="machine-identity-register-btn"
+            >
+              {registering ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              {t('machineIdentity.createMachine')}
+            </Button>
+          </div>
+        )}
+
+        <div className="border-t border-[rgb(var(--border))] pt-4">
+          <button
+            type="button"
+            onClick={() => setManageOpen((open) => !open)}
+            className="w-full flex items-center justify-between gap-3 text-left"
+            data-testid="machine-identity-manage-toggle"
+          >
+            <div>
+              <p className="text-sm font-medium">{t('machineIdentity.manageAll')}</p>
+              <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
+                {t('machineIdentity.manageAllDesc')}
+              </p>
+            </div>
+            {manageOpen ? (
+              <ChevronDown className="h-5 w-5 text-[rgb(var(--muted))] flex-shrink-0" />
+            ) : (
+              <ChevronRight className="h-5 w-5 text-[rgb(var(--muted))] flex-shrink-0" />
+            )}
+          </button>
+
+          {manageOpen ? (
+            <div className="mt-4 space-y-3">
+              {machines.length === 0 ? (
+                <p className="text-sm text-[rgb(var(--muted))] italic">
+                  {t('machineIdentity.noMachines')}
+                </p>
+              ) : (
+                machines.map((machine) => {
+                  const draft = rowDrafts[machine.id] ?? {
+                    name: machine.name,
+                    icon: machine.icon ?? '',
+                    hostname: machine.hostname ?? '',
+                  };
+                  const dirty =
+                    draft.name.trim() !== machine.name ||
+                    (draft.icon.trim() || null) !== machine.icon ||
+                    (draft.hostname.trim() || null) !== machine.hostname;
+                  return (
+                    <div
+                      key={machine.id}
+                      className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-3 space-y-2"
+                      data-testid={`machine-identity-row-${machine.id}`}
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
+                          {machine.id === localMachineId ? t('machineIdentity.thisInstall') : machine.name}
+                        </span>
+                        {machine.id === localMachineId ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 border border-primary-200 dark:border-primary-800">
+                            local
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <input
+                          type="text"
+                          value={draft.name}
+                          onChange={(e) =>
+                            setRowDrafts((prev) => ({
+                              ...prev,
+                              [machine.id]: { ...draft, name: e.target.value },
+                            }))
+                          }
+                          className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
+                        />
+                        <input
+                          type="text"
+                          value={draft.icon}
+                          onChange={(e) =>
+                            setRowDrafts((prev) => ({
+                              ...prev,
+                              [machine.id]: { ...draft, icon: e.target.value },
+                            }))
+                          }
+                          placeholder={t('machineIdentity.iconLabel')}
+                          className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
+                        />
+                        <input
+                          type="text"
+                          value={draft.hostname}
+                          onChange={(e) =>
+                            setRowDrafts((prev) => ({
+                              ...prev,
+                              [machine.id]: { ...draft, hostname: e.target.value },
+                            }))
+                          }
+                          placeholder={t('machineIdentity.hostnameLabel')}
+                          className="px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleSaveRow(machine)}
+                          disabled={savingRowId === machine.id || !dirty || !draft.name.trim()}
+                        >
+                          {savingRowId === machine.id ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : null}
+                          {t('machineIdentity.save')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleDeleteRow(machine)}
+                          disabled={deletingRowId === machine.id}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                        >
+                          {deletingRowId === machine.id ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4 mr-2" />
+                          )}
+                          {t('machineIdentity.deleteMachine')}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

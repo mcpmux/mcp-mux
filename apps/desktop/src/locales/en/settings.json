@@ -85,6 +85,31 @@
     "cfTeamDomainPlaceholder": "your-team.cloudflareaccess.com",
     "saveDomain": "Save domain"
   },
+  "machineIdentity": {
+    "title": "Machine Identity",
+    "description": "Identify this McpMux install among your homelab boxes and cloud agents.",
+    "notRegistered": "This install has no machine identity yet. Register one on the Projects page, or create one below.",
+    "thisInstall": "This install",
+    "nameLabel": "Name",
+    "iconLabel": "Icon",
+    "hostnameLabel": "Hostname",
+    "save": "Save changes",
+    "manageAll": "Manage all machines",
+    "manageAllDesc": "Rename or remove registered machines.",
+    "noMachines": "No machines registered yet.",
+    "createMachine": "Register this install",
+    "deleteMachine": "Delete",
+    "confirmDeleteTitle": "Delete machine",
+    "confirmDeleteMessage": "Remove \"{{name}}\"? Bindings scoped to this machine will become global.",
+    "toast": {
+      "saved": "Machine updated",
+      "deleted": "Machine deleted",
+      "registered": "Machine registered",
+      "failedSave": "Failed to save machine",
+      "failedDelete": "Failed to delete machine",
+      "failedRegister": "Failed to register machine"
+    }
+  },
   "appearance": {
     "title": "Appearance",
     "description": "Customize the look and feel of McpMux.",

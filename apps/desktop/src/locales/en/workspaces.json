@@ -6,7 +6,9 @@
     "all": "All",
     "live": "Live",
     "mapped": "Mapped",
-    "unmapped": "Unmapped"
+    "unmapped": "Unmapped",
+    "machine": "Machine",
+    "allMachines": "All machines"
   },
   "clearUnmapped": {
     "title": "Clear unmapped folders",
@@ -44,7 +46,25 @@
     "routesTo": "Routes to",
     "in": "in",
     "unbound": "unbound",
-    "unboundTooltip": "No binding matches this folder yet — a live session would be denied. Click to bind it to a FeatureSet."
+    "unboundTooltip": "No binding matches this folder yet — a live session would be denied. Click to bind it to a FeatureSet.",
+    "machine": "Machine"
+  },
+  "machineIdentity": {
+    "bannerMessage": "This McpMux install has no machine identity. Name it to organize and filter your projects by machine.",
+    "bannerSetup": "Set up machine identity",
+    "bannerDismissAria": "Dismiss",
+    "modalTitle": "Register this install",
+    "modalSubtitle": "Give this McpMux instance a name so you can filter projects by machine.",
+    "nameLabel": "Machine name",
+    "namePlaceholder": "e.g., Gondor (Box 1)",
+    "nameRequired": "Machine name is required.",
+    "iconLabel": "Icon",
+    "iconPlaceholder": "Optional emoji",
+    "hostnameLabel": "Hostname",
+    "hostnameHint": "Optional hint for identifying this box on the network.",
+    "confirm": "Register",
+    "success": "Machine identity saved",
+    "error": "Could not register machine"
   },
   "panel": {
     "closeAria": "Close panel",
@@ -101,6 +121,9 @@
     "icon": "Icon",
     "iconHint": "Set an emoji, or upload an image. Applies immediately for unmapped workspaces.",
     "iconPlaceholder": "Emoji, URL, or local: ref",
+    "machine": "Machine",
+    "machineHint": "Scope this binding to one machine, or leave global.",
+    "noMachine": "No machine",
     "upload": "Upload",
     "clear": "Clear",
     "pickIconTitle": "Pick an icon image",

@@ -67,12 +67,24 @@ pub(crate) fn to_workspace_binding_response(binding: mcpmux_core::WorkspaceBindi
         "id": binding.id.to_string(),
         "workspace_root": binding.workspace_root,
         "client_id": binding.client_id,
+        "machine_id": binding.machine_id.map(|id| id.to_string()),
         "label": binding.label,
         "icon": binding.icon,
         "space_id": binding.space_id.to_string(),
         "feature_set_ids": binding.feature_set_ids,
         "created_at": binding.created_at.to_rfc3339(),
         "updated_at": binding.updated_at.to_rfc3339(),
+    })
+}
+
+pub(crate) fn to_machine_response(machine: mcpmux_core::Machine) -> Value {
+    json!({
+        "id": machine.id.to_string(),
+        "name": machine.name,
+        "icon": machine.icon,
+        "hostname": machine.hostname,
+        "created_at": machine.created_at.to_rfc3339(),
+        "updated_at": machine.updated_at.to_rfc3339(),
     })
 }
 
@@ -257,6 +269,30 @@ pub async fn list_clients(ctx: &AdminBridgeCtx) -> Result<Value> {
             .map(to_client_response)
             .collect::<Vec<_>>(),
     ))
+}
+
+pub async fn list_machines(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let machines = ctx.machine_repository.list().await?;
+    Ok(Value::Array(
+        machines
+            .into_iter()
+            .map(to_machine_response)
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub async fn get_local_machine_id(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let settings = AppSettingsService::new(ctx.settings_repository.clone());
+    Ok(settings
+        .get_local_machine_id()
+        .await
+        .map(|id| json!(id.to_string()))
+        .unwrap_or(Value::Null))
+}
+
+pub fn get_hostname() -> Result<Value> {
+    let name = hostname::get()?.to_string_lossy().into_owned();
+    Ok(json!(name))
 }
 
 pub async fn get_client(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {

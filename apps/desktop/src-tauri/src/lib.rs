@@ -962,6 +962,14 @@ pub fn run() {
             commands::create_client,
             commands::delete_client,
             commands::init_preset_clients,
+            // Machine catalog + local install identity
+            commands::list_machines,
+            commands::create_machine,
+            commands::update_machine,
+            commands::delete_machine,
+            commands::get_local_machine_id,
+            commands::set_local_machine_id,
+            commands::get_hostname,
             // Workspace binding commands (resolver v2)
             commands::list_workspace_bindings,
             commands::list_workspace_bindings_for_space,

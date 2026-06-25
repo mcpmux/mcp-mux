@@ -12,6 +12,7 @@ use mcpmux_core::service::app_settings_service::keys;
 use mcpmux_core::service::is_port_available;
 use mcpmux_core::{AppSettingsService, ApplicationServices, EventBus};
 use mcpmux_gateway::admin::event_hub::AdminEventHub;
+use mcpmux_storage::SqliteMachineRepository;
 use mcpmux_gateway::admin::runtime::GatewayRuntime;
 use mcpmux_gateway::admin::ui_events::AdminUiEventBus;
 use mcpmux_gateway::admin::{AdminBridgeCtx, BackendBuildStamp};
@@ -498,6 +499,7 @@ pub async fn start_admin_server_if_enabled(
         server_discovery: app_state.server_discovery.clone(),
         settings_repository: app_state.settings_repository.clone(),
         workspace_binding_repository: app_state.workspace_binding_repository.clone(),
+        machine_repository: Arc::new(SqliteMachineRepository::new(app_state.database())),
         workspace_appearance_repository: app_state.workspace_appearance_repository.clone(),
         server_feature_repository: app_state.server_feature_repository_core.clone(),
         server_log_manager: app_state.server_log_manager.clone(),

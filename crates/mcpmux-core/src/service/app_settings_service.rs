@@ -7,6 +7,7 @@
 use serde::{de::DeserializeOwned, Serialize};
 use std::sync::Arc;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::AppSettingsRepository;
 
@@ -30,6 +31,8 @@ pub mod keys {
         pub const ADMIN_TRUST_CF_ACCESS: &str = "gateway.admin_trust_cf_access";
         /// Cloudflare team domain for JWT issuer verification
         pub const ADMIN_CF_TEAM_DOMAIN: &str = "gateway.admin_cf_team_domain";
+        /// UUID of the [`Machine`](crate::domain::Machine) this install identifies as.
+        pub const LOCAL_MACHINE_ID: &str = "gateway.local_machine_id";
     }
 
     /// OAuth callback settings namespace
@@ -270,6 +273,33 @@ impl AppSettingsService {
         self.repository
             .set(keys::gateway::ADMIN_CF_TEAM_DOMAIN, value)
             .await
+    }
+
+    // =========================================================================
+    // Machine identity
+    // =========================================================================
+
+    /// Get the machine id this install is registered as, if any.
+    pub async fn get_local_machine_id(&self) -> Option<Uuid> {
+        self.get_string(keys::gateway::LOCAL_MACHINE_ID)
+            .await
+            .and_then(|value| Uuid::parse_str(&value).ok())
+    }
+
+    /// Set or clear the machine id for this install.
+    pub async fn set_local_machine_id(&self, id: Option<Uuid>) -> anyhow::Result<()> {
+        match id {
+            Some(uuid) => {
+                info!("[Settings] Setting local_machine_id to {}", uuid);
+                self.repository
+                    .set(keys::gateway::LOCAL_MACHINE_ID, &uuid.to_string())
+                    .await
+            }
+            None => {
+                info!("[Settings] Clearing local_machine_id");
+                self.repository.delete(keys::gateway::LOCAL_MACHINE_ID).await
+            }
+        }
     }
 
     // =========================================================================

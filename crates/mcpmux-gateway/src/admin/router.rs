@@ -201,6 +201,19 @@ pub fn build_admin_router(state: AdminState) -> Router {
             get(read::get_client).delete(write::delete_client),
         )
         .route(
+            "/api/v1/machines",
+            get(read::list_machines).post(write::create_machine),
+        )
+        .route(
+            "/api/v1/machines/local",
+            get(read::get_local_machine_id).put(write::set_local_machine_id),
+        )
+        .route("/api/v1/machines/hostname", get(read::get_hostname))
+        .route(
+            "/api/v1/machines/{id}",
+            put(write::update_machine).delete(write::delete_machine),
+        )
+        .route(
             "/api/v1/clients/init-presets",
             post(write::init_preset_clients),
         )

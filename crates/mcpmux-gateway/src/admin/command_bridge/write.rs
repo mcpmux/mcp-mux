@@ -7,8 +7,8 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use mcpmux_core::{
     normalize_optional_metadata, validate_workspace_root as validate_workspace_root_path,
-    AppSettingsService, Client, FeatureSet, FeatureSetMember, MemberMode, MemberType, ServerSource,
-    UpdatePolicy, WorkspaceAppearance, WorkspaceBinding, WorkspaceRootValidation,
+    AppSettingsService, Client, FeatureSet, FeatureSetMember, Machine, MemberMode, MemberType,
+    ServerSource, UpdatePolicy, WorkspaceAppearance, WorkspaceBinding, WorkspaceRootValidation,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::admin::bridge_context::AdminBridgeCtx;
 use crate::admin::command_bridge::read::{
-    as_json, space_ctx, to_client_response, to_feature_set_response,
+    as_json, space_ctx, to_client_response, to_feature_set_response, to_machine_response,
     to_workspace_appearance_response, to_workspace_binding_response,
 };
 use crate::admin::command_bridge::space::{self, UpdateSpaceInput};
@@ -78,6 +78,26 @@ pub struct WorkspaceBindingBody {
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
     pub client_id: Option<String>,
+    pub machine_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMachineBody {
+    pub name: String,
+    pub icon: Option<String>,
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMachineBody {
+    pub name: Option<String>,
+    pub icon: Option<String>,
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetLocalMachineIdBody {
+    pub machine_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -534,6 +554,67 @@ pub async fn delete_client(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {
     Ok(json!({ "ok": true }))
 }
 
+pub async fn create_machine(ctx: &AdminBridgeCtx, body: CreateMachineBody) -> Result<Value> {
+    let mut machine = Machine::new(body.name);
+    machine.icon = body.icon;
+    machine.hostname = body.hostname;
+    ctx.machine_repository.create(&machine).await?;
+    Ok(to_machine_response(machine))
+}
+
+pub async fn update_machine(
+    ctx: &AdminBridgeCtx,
+    id: String,
+    body: UpdateMachineBody,
+) -> Result<Value> {
+    let id_uuid = Uuid::parse_str(&id)?;
+    let mut machine = ctx
+        .machine_repository
+        .get(&id_uuid)
+        .await?
+        .ok_or_else(|| anyhow!("machine not found: {id}"))?;
+
+    if let Some(name) = body.name {
+        machine.name = name;
+    }
+    if body.icon.is_some() {
+        machine.icon = body.icon;
+    }
+    if body.hostname.is_some() {
+        machine.hostname = body.hostname;
+    }
+    machine.updated_at = Utc::now();
+    ctx.machine_repository.update(&machine).await?;
+    Ok(to_machine_response(machine))
+}
+
+pub async fn delete_machine(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {
+    let id_uuid = Uuid::parse_str(&id)?;
+    ctx.machine_repository.delete(&id_uuid).await?;
+    Ok(json!({ "ok": true }))
+}
+
+pub async fn set_local_machine_id(
+    ctx: &AdminBridgeCtx,
+    body: SetLocalMachineIdBody,
+) -> Result<Value> {
+    let parsed = match body.machine_id {
+        None => None,
+        Some(value) => Some(Uuid::parse_str(&value)?),
+    };
+
+    if let Some(id) = parsed {
+        let exists = ctx.machine_repository.get(&id).await?.is_some();
+        if !exists {
+            anyhow::bail!("machine not found: {id}");
+        }
+    }
+
+    let settings = AppSettingsService::new(ctx.settings_repository.clone());
+    settings.set_local_machine_id(parsed).await?;
+    Ok(json!({ "ok": true }))
+}
+
 pub async fn init_preset_clients(ctx: &AdminBridgeCtx) -> Result<Value> {
     let existing = ctx.services.client().list().await?;
     if !existing.iter().any(|c| c.client_type == "cursor") {
@@ -562,6 +643,14 @@ pub async fn init_preset_clients(ctx: &AdminBridgeCtx) -> Result<Value> {
 
 // --- Workspace bindings ---
 
+fn parse_optional_machine_id(value: Option<&str>) -> Result<Option<Uuid>> {
+    match value {
+        None => Ok(None),
+        Some("") => Ok(None),
+        Some(raw) => Ok(Some(Uuid::parse_str(raw)?)),
+    }
+}
+
 pub async fn create_workspace_binding(
     ctx: &AdminBridgeCtx,
     body: WorkspaceBindingBody,
@@ -574,6 +663,7 @@ pub async fn create_workspace_binding(
     binding.label = normalize_label(&body.label);
     binding.icon = resolve_binding_icon(ctx, &normalized, &body.icon, None).await?;
     binding.client_id = body.client_id.clone();
+    binding.machine_id = parse_optional_machine_id(body.machine_id.as_deref())?;
 
     ctx.workspace_binding_repository.create(&binding).await?;
     clear_appearance_for_bound_root(ctx, &normalized).await?;
@@ -606,11 +696,17 @@ pub async fn update_workspace_binding(
     let previous_icon = existing.icon.clone();
     let icon = resolve_binding_icon(ctx, &normalized, &body.icon, existing.icon.clone()).await?;
 
+    let machine_id = if body.machine_id.is_some() {
+        parse_optional_machine_id(body.machine_id.as_deref())?
+    } else {
+        existing.machine_id
+    };
+
     let updated = WorkspaceBinding {
         id: existing.id,
         workspace_root: normalized.clone(),
         client_id: body.client_id.or(existing.client_id),
-        machine_id: existing.machine_id,
+        machine_id,
         label,
         icon,
         space_id,

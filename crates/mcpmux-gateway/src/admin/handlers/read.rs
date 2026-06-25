@@ -274,6 +274,26 @@ pub async fn list_clients(State(state): State<AdminState>) -> Result<Json<Value>
         .map_err(ApiError::from_bridge)
 }
 
+pub async fn list_machines(State(state): State<AdminState>) -> Result<Json<Value>, ApiError> {
+    bridge::list_machines(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_local_machine_id(
+    State(state): State<AdminState>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::get_local_machine_id(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_hostname() -> Result<Json<Value>, ApiError> {
+    bridge::get_hostname().map(ok).map_err(ApiError::from_bridge)
+}
+
 pub async fn get_client(
     State(state): State<AdminState>,
     Path(id): Path<String>,

@@ -13,6 +13,8 @@ export interface WorkspaceBinding {
   workspace_root: string;
   /** When set, binding applies only to this OAuth client. */
   client_id?: string | null;
+  /** When set, binding applies only on this machine; null = global canonical. */
+  machine_id: string | null;
   /** Friendly display name shown instead of the folder path when set. */
   label: string | null;
   /** Optional icon: emoji, URL, or local:workspace-icons ref. */
@@ -37,6 +39,8 @@ export interface WorkspaceBindingInput {
   feature_set_ids: string[];
   /** When set, creates a client-scoped binding. */
   client_id?: string | null;
+  /** When set, scopes the binding to this machine; null = global canonical. */
+  machine_id?: string | null;
 }
 
 /** List every binding (sorted by workspace_root). */
@@ -118,6 +122,7 @@ export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
     space_id: b.space_id,
     feature_set_ids: b.feature_set_ids,
     client_id: b.client_id,
+    machine_id: b.machine_id,
   };
 }
 

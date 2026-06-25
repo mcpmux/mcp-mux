@@ -696,11 +696,7 @@ pub async fn update_workspace_binding(
     let previous_icon = existing.icon.clone();
     let icon = resolve_binding_icon(ctx, &normalized, &body.icon, existing.icon.clone()).await?;
 
-    let machine_id = if body.machine_id.is_some() {
-        parse_optional_machine_id(body.machine_id.as_deref())?
-    } else {
-        existing.machine_id
-    };
+    let machine_id = parse_optional_machine_id(body.machine_id.as_deref())?;
 
     let updated = WorkspaceBinding {
         id: existing.id,

@@ -51,6 +51,7 @@ import {
   type WorkspaceBindingInput,
   type WorkspaceEffectiveFeatures,
 } from '@/lib/api/workspaceBindings';
+import { getLocalMachineId, listMachines, type Machine } from '@/lib/api/machines';
 import {
   deleteWorkspaceAppearance,
   listWorkspaceAppearances,
@@ -111,6 +112,8 @@ export function WorkspacesPage() {
   const [appearances, setAppearances] = useState<WorkspaceAppearance[]>([]);
   const [reportedRoots, setReportedRoots] = useState<string[]>([]);
   const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [localMachineId, setLocalMachineId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,16 +129,20 @@ export function WorkspacesPage() {
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [b, fs, roots, ap] = await Promise.all([
+      const [b, fs, roots, ap, machineList, localId] = await Promise.all([
         listWorkspaceBindings(),
         listFeatureSets(),
         listReportedWorkspaceRoots().catch(() => [] as string[]),
         listWorkspaceAppearances().catch(() => [] as WorkspaceAppearance[]),
+        listMachines().catch(() => [] as Machine[]),
+        getLocalMachineId().catch(() => null),
       ]);
       setBindings(b);
       setFeatureSets(fs);
       setReportedRoots(roots);
       setAppearances(ap);
+      setMachines(machineList);
+      setLocalMachineId(localId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -538,6 +545,8 @@ export function WorkspacesPage() {
               resolvedIcon={selectedEntry ? resolveEntryIcon(selectedEntry) : null}
               spaces={spaces}
               featureSets={featureSets}
+              machines={machines}
+              localMachineId={localMachineId}
               onClose={() => setSelected(null)}
               onSubmit={async (input) => {
                 if (selectedEntry?.binding) {
@@ -631,12 +640,14 @@ function sameBindingInput(
     icon?: string | null;
     space_id: string;
     feature_set_ids: string[];
+    machine_id?: string | null;
   }
 ): boolean {
   if (a.workspace_root.trim() !== b.workspace_root.trim()) return false;
   if (normalizeLabel(a.label) !== normalizeLabel(b.label)) return false;
   if (normalizeIcon(a.icon) !== normalizeIcon(b.icon)) return false;
   if (a.space_id !== b.space_id) return false;
+  if ((a.machine_id ?? null) !== (b.machine_id ?? null)) return false;
   if (a.feature_set_ids.length !== b.feature_set_ids.length) return false;
   return a.feature_set_ids.every((id, i) => id === b.feature_set_ids[i]);
 }
@@ -1006,6 +1017,8 @@ function InspectorPanel({
   resolvedIcon,
   spaces,
   featureSets,
+  machines,
+  localMachineId,
   onClose,
   onSubmit,
   onDelete,
@@ -1018,6 +1031,8 @@ function InspectorPanel({
   resolvedIcon: string | null;
   spaces: Space[];
   featureSets: FeatureSet[];
+  machines: Machine[];
+  localMachineId: string | null;
   onClose: () => void;
   onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
   onDelete: () => Promise<void>;
@@ -1144,6 +1159,8 @@ function InspectorPanel({
             mode={mode}
             spaces={spaces}
             featureSets={featureSets}
+            machines={machines}
+            localMachineId={localMachineId}
             initial={entry?.binding ?? null}
             prefillRoot={entry && !isMapped ? entry.root : undefined}
             initialUnmappedIcon={!isMapped ? resolvedIcon : null}
@@ -1761,6 +1778,8 @@ function BindingForm({
   mode,
   spaces,
   featureSets,
+  machines,
+  localMachineId,
   initial,
   prefillRoot,
   initialUnmappedIcon,
@@ -1774,6 +1793,8 @@ function BindingForm({
   mode: 'create' | 'edit' | 'create-from-live';
   spaces: Space[];
   featureSets: FeatureSet[];
+  machines: Machine[];
+  localMachineId: string | null;
   initial?: WorkspaceBinding | null;
   prefillRoot?: string;
   initialUnmappedIcon?: string | null;
@@ -1800,6 +1821,10 @@ function BindingForm({
   // their members into one allow set). Order is preserved so the operator
   // can rank a "primary" FS first; the resolver itself doesn't care.
   const [fsIds, setFsIds] = useState<string[]>(initial?.feature_set_ids ?? []);
+  const [machineId, setMachineId] = useState<string>(
+    initial?.machine_id ??
+      (mode === 'create' || mode === 'create-from-live' ? (localMachineId ?? '') : '')
+  );
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [iconFilePath, setIconFilePath] = useState('');
@@ -1903,6 +1928,13 @@ function BindingForm({
     fsIds.length > 0 &&
     (rootValidation.state === 'ok' || !rootEditable);
 
+  const machineOptions = useMemo(
+    () => machines.map((m) => ({ value: m.id, label: m.name, icon: m.icon ?? undefined })),
+    [machines]
+  );
+
+  const bindingMachineId = (value: string): string | null => (value.trim() ? value : null);
+
   const handleSubmit = async () => {
     if (!root.trim()) {
       onError(t('form.errors.rootRequired'));
@@ -1928,6 +1960,7 @@ function BindingForm({
         icon: icon.trim() || null,
         space_id: spaceId,
         feature_set_ids: fsIds,
+        machine_id: bindingMachineId(machineId),
       });
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -1981,6 +2014,7 @@ function BindingForm({
       icon: icon.trim() || null,
       space_id: spaceId,
       feature_set_ids: fsIds,
+      machine_id: bindingMachineId(machineId),
     };
 
     // Dedupe baseline: last-saved if we've saved during this session,
@@ -1991,6 +2025,7 @@ function BindingForm({
       icon: initial.icon,
       space_id: initial.space_id,
       feature_set_ids: initial.feature_set_ids,
+      machine_id: initial.machine_id,
     };
     if (sameBindingInput(candidate, baseline)) {
       pendingPayloadRef.current = null;
@@ -2032,6 +2067,7 @@ function BindingForm({
     icon,
     spaceId,
     fsIds,
+    machineId,
     canSubmit,
     onSubmit,
     onError,
@@ -2091,6 +2127,7 @@ function BindingForm({
         icon: normalizedIcon,
         space_id: spaceId,
         feature_set_ids: fsIds,
+        machine_id: bindingMachineId(machineId),
       };
       lastSavedRef.current = payload;
       pendingPayloadRef.current = null;
@@ -2259,6 +2296,16 @@ function BindingForm({
             </div>
           </div>
         </div>
+      </FormField>
+
+      <FormField label="Machine" hint="Scope this binding to one machine, or leave global.">
+        <Picker
+          value={machineId}
+          onChange={setMachineId}
+          options={machineOptions}
+          placeholder="No machine"
+          testId="workspace-binding-machine-select"
+        />
       </FormField>
 
       <FormField label={t('form.workspaceRoot')}>

@@ -6,6 +6,9 @@ import claudeIcon from '@/assets/client-icons/claude.svg';
 import windsurfIcon from '@/assets/client-icons/windsurf.svg';
 import jetbrainsIcon from '@/assets/client-icons/jetbrains.svg';
 import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
+import opencodeIcon from '@/assets/client-icons/opencode.svg';
+import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
+import { ClientBrandIcon } from '@/components/ClientBrandIcon';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
 import {
   Laptop,
@@ -65,6 +68,18 @@ const CLIENT_ICON_ASSETS: Record<string, string> = {
 
 function ClientIcon({ logo_uri, client_name }: { logo_uri?: string | null; client_name: string }) {
   const knownKey = resolveKnownClientKey(client_name);
+  // opencode ships theme-specific marks; render our bundled official logo
+  // (overriding any outdated self-reported logo_uri).
+  if (knownKey === 'opencode') {
+    return (
+      <ClientBrandIcon
+        light={opencodeIcon}
+        dark={opencodeIconDark}
+        alt={client_name}
+        className="h-full w-full rounded object-contain"
+      />
+    );
+  }
   const iconUrl = (knownKey && CLIENT_ICON_ASSETS[knownKey]) || logo_uri;
   if (iconUrl) {
     return (

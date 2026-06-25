@@ -38,6 +38,14 @@ describe('resolveKnownClientKey', () => {
     it('should resolve "codeium" to windsurf', () => {
       expect(resolveKnownClientKey('codeium')).toBe('windsurf');
     });
+
+    it('should resolve "opencode" to opencode', () => {
+      expect(resolveKnownClientKey('opencode')).toBe('opencode');
+    });
+
+    it('should resolve "opencode (mcpmux)" to opencode', () => {
+      expect(resolveKnownClientKey('opencode (mcpmux)')).toBe('opencode');
+    });
   });
 
   describe('prefix matches with parenthesised suffix', () => {

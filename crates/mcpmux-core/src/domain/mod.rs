@@ -12,6 +12,7 @@ mod credential;
 mod event;
 mod feature_set;
 mod installed_server;
+mod machine;
 mod outbound_oauth_registration;
 mod server;
 mod server_feature;
@@ -35,6 +36,7 @@ pub use feature_set::*;
 pub use installed_server::{
     DefaultParamsStrategy, InstallationSource, InstalledServer, UpdatePolicy,
 };
+pub use machine::Machine;
 pub use outbound_oauth_registration::*;
 pub use server::*;
 pub use server_feature::*;

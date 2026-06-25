@@ -610,6 +610,7 @@ pub async fn update_workspace_binding(
         id: existing.id,
         workspace_root: normalized.clone(),
         client_id: body.client_id.or(existing.client_id),
+        machine_id: existing.machine_id,
         label,
         icon,
         space_id,

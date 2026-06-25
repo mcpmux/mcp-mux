@@ -39,6 +39,10 @@ pub struct WorkspaceBinding {
     /// not affect resolution yet.
     #[serde(default)]
     pub client_id: Option<String>,
+    /// Optional machine scope. `None` is a global canonical binding shared
+    /// across all machines; `Some(id)` restricts the binding to that host.
+    #[serde(default)]
+    pub machine_id: Option<Uuid>,
     /// Optional friendly display label shown in the UI instead of the path.
     #[serde(default)]
     pub label: Option<String>,
@@ -88,6 +92,7 @@ impl WorkspaceBinding {
             id: Uuid::new_v4(),
             workspace_root: workspace_root.into(),
             client_id,
+            machine_id: None,
             label: None,
             icon: None,
             space_id,

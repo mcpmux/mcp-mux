@@ -193,6 +193,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "workspace_icon_backfill",
         sql: include_str!("migrations/032_workspace_icon_backfill.sql"),
     },
+    Migration {
+        version: 33,
+        name: "machines",
+        sql: include_str!("migrations/033_machines.sql"),
+    },
+    Migration {
+        version: 34,
+        name: "workspace_binding_machine_scope",
+        sql: include_str!("migrations/034_workspace_binding_machine_scope.sql"),
+    },
 ];
 
 /// SQLite database wrapper.
@@ -460,7 +470,13 @@ impl Database {
         self.conn
             .execute("DELETE FROM schema_migrations WHERE version >= 16", [])?;
 
-        for migration in MIGRATIONS.iter().filter(|m| m.version >= 16) {
+        // Fork dev/i18n only ever stamped through port v32; newer migrations
+        // must run via the normal loop after reconcile rewrites the ledger.
+        const FORK_RECONCILE_LEDGER_CAP: i64 = 32;
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|m| (16..=FORK_RECONCILE_LEDGER_CAP).contains(&m.version))
+        {
             self.conn.execute(
                 "INSERT INTO schema_migrations (version, name, applied_at) \
                  VALUES (?1, ?2, datetime('now'))",
@@ -727,7 +743,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
 
         let v16_name: String = db
             .conn
@@ -780,7 +796,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
 
         let v16_name: String = db
             .conn

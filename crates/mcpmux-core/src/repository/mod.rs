@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     path_is_within, Client, Credential, CredentialType, FeatureSet, FeatureSetMember,
-    InstalledServer, MemberMode, OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir,
-    WorkspaceAppearance, WorkspaceBinding,
+    InstalledServer, Machine, MemberMode, OutboundOAuthRegistration, ServerFeature, Space,
+    SpaceBaseDir, WorkspaceAppearance, WorkspaceBinding,
 };
 
 /// Result type for repository operations
@@ -251,6 +251,25 @@ pub trait InboundMcpClientRepository: Send + Sync {
     async fn update(&self, client: &Client) -> RepoResult<()>;
 
     /// Delete a client
+    async fn delete(&self, id: &Uuid) -> RepoResult<()>;
+}
+
+/// Machine repository trait — catalog of hosts that report workspace roots.
+#[async_trait]
+pub trait MachineRepository: Send + Sync {
+    /// List all registered machines.
+    async fn list(&self) -> RepoResult<Vec<Machine>>;
+
+    /// Get a machine by id.
+    async fn get(&self, id: &Uuid) -> RepoResult<Option<Machine>>;
+
+    /// Insert a new machine.
+    async fn create(&self, machine: &Machine) -> RepoResult<()>;
+
+    /// Update an existing machine.
+    async fn update(&self, machine: &Machine) -> RepoResult<()>;
+
+    /// Delete a machine by id.
     async fn delete(&self, id: &Uuid) -> RepoResult<()>;
 }
 

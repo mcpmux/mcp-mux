@@ -303,16 +303,16 @@ function AppContent() {
   );
 
   const titleBar = (
-    <div className="flex items-center gap-1.5 pl-3">
+    <div className="flex h-full items-center gap-1.5 pl-3" data-tauri-drag-region>
       <McpMuxGlyph className="h-4 w-4 shrink-0" />
-      <span className="select-none text-sm font-bold tracking-tight">
+      <span className="select-none text-sm font-bold tracking-tight" data-tauri-drag-region>
         <span style={{ color: 'var(--brand-light)' }}>Mcp</span>
         <span style={{ color: 'var(--brand-dark)' }}>Mux</span>
       </span>
-      <div className="mx-2 h-4 w-px bg-[rgb(var(--border))]" />
+      <div className="mx-2 h-4 w-px bg-[rgb(var(--border))]" data-tauri-drag-region />
       <button
         onClick={toggleDarkMode}
-        className="rounded-md p-1 transition-colors hover:bg-[rgb(var(--surface-hover))]"
+        className="no-drag rounded-md p-1 transition-colors hover:bg-[rgb(var(--surface-hover))]"
         title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
       >
         {theme === 'dark' ? (
@@ -330,7 +330,7 @@ function AppContent() {
       statusBar={statusBar}
       titleBar={titleBar}
       windowControls={
-        <div className="flex items-center">
+        <div className="no-drag flex h-full items-center">
           <WindowButton action="minimize" />
           <WindowButton action="maximize" />
           <WindowButton action="close" />
@@ -416,7 +416,7 @@ function WindowButton({ action }: { action: 'minimize' | 'maximize' | 'close' })
   return (
     <button
       onClick={handleClick}
-      className={`flex h-9 w-11 items-center justify-center transition-colors ${
+      className={`no-drag flex h-9 w-11 items-center justify-center transition-colors ${
         action === 'close'
           ? 'hover:bg-red-500 hover:text-white'
           : 'hover:bg-[rgb(var(--surface-hover))]'

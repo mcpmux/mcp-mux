@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.0](https://github.com/mcpmux/mcp-mux/compare/v0.4.0...v0.5.0) (2026-06-25)
+
+
+### Features
+
+* per-workspace routing via X-Mcpmux-Workspace header + guided folder setup ([#182](https://github.com/mcpmux/mcp-mux/issues/182)) ([e2ec055](https://github.com/mcpmux/mcp-mux/commit/e2ec0558eada73407addc57902d9f13763cc8aec))
+* **ui:** opencode global connect + client icons ([#184](https://github.com/mcpmux/mcp-mux/issues/184)) ([669e99f](https://github.com/mcpmux/mcp-mux/commit/669e99f2df3d85bbdd33427f0a96bd8e0048c7c3))
+
+
+### Bug Fixes
+
+* **gateway:** truly no-auth when inbound auth is disabled (no OAuth advertising) ([#187](https://github.com/mcpmux/mcp-mux/issues/187)) ([3e617fd](https://github.com/mcpmux/mcp-mux/commit/3e617fd876360f097fbffa96e21ce1fb90013fea))
+* **oauth:** de-duplicate deep-link handling + quiet status-poll log ([#189](https://github.com/mcpmux/mcp-mux/issues/189)) ([9dd7b58](https://github.com/mcpmux/mcp-mux/commit/9dd7b58a23cef1f7f6a5ce53cab20750270c1a26))
+* **storage:** drop a deleted FeatureSet from workspace bindings ([#186](https://github.com/mcpmux/mcp-mux/issues/186)) ([5598451](https://github.com/mcpmux/mcp-mux/commit/559845193aae3bc5bffff1e41758ffce1c083625))
+* **ui:** scroll-to + flash the target Settings section on every redirect ([#190](https://github.com/mcpmux/mcp-mux/issues/190)) ([e032c9b](https://github.com/mcpmux/mcp-mux/commit/e032c9bc2e5a99ea64df4a4af215c5a29153af52))
+* **ui:** show official opencode logo in the Apps tab ([#185](https://github.com/mcpmux/mcp-mux/issues/185)) ([608a841](https://github.com/mcpmux/mcp-mux/commit/608a841b1b0d058e055ff2ff0ba6cc37ed921a33))
+
 ## [0.4.0](https://github.com/mcpmux/mcp-mux/compare/v0.3.0...v0.4.0) (2026-06-19)
 
 

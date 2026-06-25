@@ -10,7 +10,7 @@ import {
   Sliders,
 } from 'lucide-react';
 import { Card, Button } from '@mcpmux/ui';
-import { useViewSpace, useNavigateTo } from '@/stores';
+import { useViewSpace, useNavigateTo, useSetPendingSettingsSection } from '@/stores';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { useGatewayEvents } from '@/hooks/useDomainEvents';
 import {
@@ -40,6 +40,7 @@ function extractPort(url: string | null): string {
 export function ConnectionCard() {
   const viewSpace = useViewSpace();
   const navigateTo = useNavigateTo();
+  const setPendingSettingsSection = useSetPendingSettingsSection();
   const gatewayControl = useGatewayControl();
 
   const [status, setStatus] = useState<{ running: boolean; url: string | null }>({
@@ -183,7 +184,11 @@ export function ConnectionCard() {
             </label>
             <button
               type="button"
-              onClick={() => navigateTo('settings')}
+              onClick={() => {
+                // Land on (and flash) the Gateway section where the port lives.
+                setPendingSettingsSection('gateway');
+                navigateTo('settings');
+              }}
               className="group inline-flex items-center gap-1 text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
               data-testid="connection-port-settings-link"
             >

@@ -17,6 +17,7 @@ import {
   useAnalyticsEnabled,
   useActiveNav,
   useNavigateTo,
+  useSetPendingSettingsSection,
 } from '@/stores';
 import { NAV_ZONES, NAV_SETTINGS } from '@/lib/navigation';
 import { spaceAccentColor } from '@/lib/spaceAccent';
@@ -97,6 +98,7 @@ function AppContent() {
 
   const activeNav = useActiveNav();
   const navigateTo = useNavigateTo();
+  const setPendingSettingsSection = useSetPendingSettingsSection();
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string } | null>(null);
 
   // Auto-check for updates on startup (silent check after 5 seconds).
@@ -348,6 +350,8 @@ function AppContent() {
               </span>
               <button
                 onClick={() => {
+                  // Land on (and flash) the Updates section, not the top of Settings.
+                  setPendingSettingsSection('updates');
                   navigateTo('settings');
                   setAvailableUpdate(null);
                 }}

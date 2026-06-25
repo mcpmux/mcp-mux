@@ -68,17 +68,36 @@ export function SettingsPage() {
 
   // Deep-link: when another surface routes here for a specific section, scroll
   // it into view and briefly flash it so the user lands on the right control.
+  // Generic over section keys — any surface can target a section by calling
+  // `setPendingSettingsSection('<key>')` before `navigateTo('settings')`. A
+  // section becomes targetable by wrapping its card with `registerSection` +
+  // `sectionFlashClass` (see `<SECTION_KEYS>` below).
   const pendingSection = usePendingSettingsSection();
   const clearPendingSection = useSetPendingSettingsSection();
-  const securityRef = useRef<HTMLDivElement>(null);
-  const [flashSecurity, setFlashSecurity] = useState(false);
+  const sectionEls = useRef<Record<string, HTMLDivElement | null>>({});
+  const [flashedSection, setFlashedSection] = useState<string | null>(null);
+
+  const registerSection = (key: string) => (el: HTMLDivElement | null) => {
+    sectionEls.current[key] = el;
+  };
+  const sectionFlashClass = (key: string) =>
+    flashedSection === key
+      ? 'rounded-xl ring-2 ring-primary-500 ring-offset-2 ring-offset-[rgb(var(--background))] transition-shadow duration-500'
+      : 'rounded-xl ring-0 transition-shadow duration-500';
 
   useEffect(() => {
-    if (pendingSection !== 'security' || !securityRef.current) return;
-    securityRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setFlashSecurity(true);
+    if (!pendingSection) return;
+    const el = sectionEls.current[pendingSection];
+    // Unknown or not-yet-mounted section: drop the request so a stale value
+    // doesn't fire the flash on a later, unrelated render.
+    if (!el) {
+      clearPendingSection(null);
+      return;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFlashedSection(pendingSection);
     clearPendingSection(null);
-    const t = setTimeout(() => setFlashSecurity(false), 2200);
+    const t = setTimeout(() => setFlashedSection(null), 2200);
     return () => clearTimeout(t);
   }, [pendingSection, clearPendingSection]);
 
@@ -378,7 +397,9 @@ export function SettingsPage() {
         </div>
 
         {/* Updates Section */}
-        <UpdateChecker />
+        <div ref={registerSection('updates')} className={sectionFlashClass('updates')}>
+          <UpdateChecker />
+        </div>
 
         {/* Startup & System Tray Section - always show toggles so e2e and slow backends see the section */}
         <Card data-testid="settings-startup-section">
@@ -474,6 +495,7 @@ export function SettingsPage() {
         </Card>
 
         {/* Gateway Section — port override + reset to default */}
+        <div ref={registerSection('gateway')} className={sectionFlashClass('gateway')}>
         <Card data-testid="settings-gateway-section">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -612,8 +634,10 @@ export function SettingsPage() {
             )}
           </CardContent>
         </Card>
+        </div>
 
         {/* Workspaces Section */}
+        <div ref={registerSection('workspaces')} className={sectionFlashClass('workspaces')}>
         <Card data-testid="settings-workspaces-section">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -646,16 +670,13 @@ export function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+        </div>
 
         {/* Security Section */}
         <div
-          ref={securityRef}
+          ref={registerSection('security')}
           id="settings-security"
-          className={
-            flashSecurity
-              ? 'rounded-xl ring-2 ring-primary-500 ring-offset-2 ring-offset-[rgb(var(--background))] transition-shadow duration-500'
-              : 'rounded-xl ring-0 transition-shadow duration-500'
-          }
+          className={sectionFlashClass('security')}
         >
         <Card data-testid="settings-security-section">
           <CardHeader>

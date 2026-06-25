@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useAppStore } from '@/stores';
 
 // ---------- Hoisted mock functions (available before vi.mock factories run) ----------
 
@@ -400,5 +401,8 @@ describe('App – update banner', () => {
       // Settings page should be rendered
       expect(screen.getByTestId('settings-page')).toBeInTheDocument();
     });
+    // ...and it targets the Updates section so SettingsPage scrolls/flashes
+    // there rather than dumping the user at the top of the page.
+    expect(useAppStore.getState().pendingSettingsSection).toBe('updates');
   });
 });

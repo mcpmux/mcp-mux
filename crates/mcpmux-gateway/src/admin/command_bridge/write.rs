@@ -6,9 +6,9 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use mcpmux_core::{
-    validate_workspace_root as validate_workspace_root_path, AppSettingsService, Client,
-    FeatureSet, FeatureSetMember, MemberMode, MemberType, ServerSource, UpdatePolicy,
-    WorkspaceAppearance, WorkspaceBinding, WorkspaceRootValidation,
+    normalize_optional_metadata, validate_workspace_root as validate_workspace_root_path,
+    AppSettingsService, Client, FeatureSet, FeatureSetMember, MemberMode, MemberType, ServerSource,
+    UpdatePolicy, WorkspaceAppearance, WorkspaceBinding, WorkspaceRootValidation,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -217,10 +217,51 @@ pub struct MetaToolsEnabledBody {
 }
 
 fn normalize_label(label: &Option<String>) -> Option<String> {
-    label
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    normalize_optional_metadata(label)
+}
+
+fn normalize_icon(icon: &Option<String>) -> Option<String> {
+    normalize_optional_metadata(icon)
+}
+
+async fn resolve_binding_icon(
+    ctx: &AdminBridgeCtx,
+    normalized_root: &str,
+    body_icon: &Option<String>,
+    existing_icon: Option<String>,
+) -> Result<Option<String>> {
+    let mut icon = if body_icon.is_some() {
+        normalize_icon(body_icon)
+    } else {
+        existing_icon
+    };
+    if icon.is_none() {
+        if let Some(appearance) = ctx
+            .workspace_appearance_repository
+            .get(normalized_root)
+            .await?
+        {
+            icon = Some(appearance.icon);
+        }
+    }
+    Ok(icon)
+}
+
+async fn clear_appearance_for_bound_root(
+    ctx: &AdminBridgeCtx,
+    normalized_root: &str,
+) -> Result<()> {
+    if ctx
+        .workspace_appearance_repository
+        .get(normalized_root)
+        .await?
+        .is_some()
+    {
+        ctx.workspace_appearance_repository
+            .delete(normalized_root)
+            .await?;
+    }
+    Ok(())
 }
 
 fn normalize_workspace_root(raw: &str) -> Result<String> {
@@ -272,6 +313,11 @@ async fn maybe_remove_orphaned_icon(ctx: &AdminBridgeCtx, icon_ref: Option<&str>
 
     let appearances = ctx.workspace_appearance_repository.list().await?;
     if appearances.iter().any(|a| a.icon == icon_ref) {
+        return Ok(());
+    }
+
+    let bindings = ctx.workspace_binding_repository.list().await?;
+    if bindings.iter().any(|b| b.icon.as_deref() == Some(icon_ref)) {
         return Ok(());
     }
 
@@ -526,9 +572,11 @@ pub async fn create_workspace_binding(
 
     let mut binding = WorkspaceBinding::new_multi(normalized.clone(), space_id, feature_set_ids);
     binding.label = normalize_label(&body.label);
+    binding.icon = resolve_binding_icon(ctx, &normalized, &body.icon, None).await?;
     binding.client_id = body.client_id.clone();
 
     ctx.workspace_binding_repository.create(&binding).await?;
+    clear_appearance_for_bound_root(ctx, &normalized).await?;
 
     Ok(to_workspace_binding_response(binding))
 }
@@ -555,11 +603,15 @@ pub async fn update_workspace_binding(
         existing.label.clone()
     };
 
+    let previous_icon = existing.icon.clone();
+    let icon = resolve_binding_icon(ctx, &normalized, &body.icon, existing.icon.clone()).await?;
+
     let updated = WorkspaceBinding {
         id: existing.id,
-        workspace_root: normalized,
+        workspace_root: normalized.clone(),
         client_id: body.client_id.or(existing.client_id),
         label,
+        icon,
         space_id,
         feature_set_ids,
         created_at: existing.created_at,
@@ -567,13 +619,25 @@ pub async fn update_workspace_binding(
     };
 
     ctx.workspace_binding_repository.update(&updated).await?;
+    clear_appearance_for_bound_root(ctx, &normalized).await?;
+
+    if previous_icon.as_deref() != updated.icon.as_deref() {
+        maybe_remove_orphaned_icon(ctx, previous_icon.as_deref()).await?;
+    }
 
     Ok(to_workspace_binding_response(updated))
 }
 
 pub async fn delete_workspace_binding(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {
     let id_uuid = Uuid::parse_str(&id)?;
+    let existing = ctx
+        .workspace_binding_repository
+        .get(&id_uuid)
+        .await?
+        .ok_or_else(|| anyhow!("binding not found: {id}"))?;
+    let previous_icon = existing.icon.clone();
     ctx.workspace_binding_repository.delete(&id_uuid).await?;
+    maybe_remove_orphaned_icon(ctx, previous_icon.as_deref()).await?;
     Ok(json!({ "ok": true }))
 }
 

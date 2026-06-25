@@ -120,7 +120,7 @@ The most load-bearing phase. Gets all fork-specific DB schema onto `main` withou
 
 **New domain entities (additive fields on existing entities):**
 - `InstalledServer`: `cloned_from`, `display_name_override`, `default_params`, `default_params_strategy`, `update_policy`, `pinned_version`, `latest_available_version`, `version_checked_at`, `current_version`
-- `WorkspaceBinding`: `label`, `client_scope`
+- `WorkspaceBinding`: `label`, `icon`, `client_scope`
 - `FeatureSetMember`: `surfaced` flag
 
 **New repositories:**
@@ -131,7 +131,7 @@ The most load-bearing phase. Gets all fork-specific DB schema onto `main` withou
 **Repository updates:**
 - `installed_server_repository.rs` — read/write all new columns
 - `feature_set_repository.rs` — `surfaced` field
-- `workspace_binding_repository.rs` — `label` + `client_scope`
+- `workspace_binding_repository.rs` — `label`, `icon`, `client_scope`
 
 **Outcome:** All fork-specific schema is on `main`, numbered sequentially after upstream's 019. A fresh DB build runs all 31 migrations in order cleanly. New repo traits compile; `pnpm test:rust:unit` passes. No UI changes in this phase — feature pages come later.
 
@@ -240,7 +240,7 @@ Two shipping features from `dev` that depend on Phase 2 migrations.
 
 ---
 
-### Phase 7 — Dashboard + workspace appearances (~1 day)
+### Phase 7 — Dashboard + workspace appearances (~1 day) — **partial; binding metadata complete Jun 25**
 
 **Dashboard (new feature, no upstream conflict):**
 - `apps/desktop/src/features/dashboard/` — `DashboardPage.tsx`, `DashboardQuickLinks.tsx`, `DashboardRecentActivity.tsx`, `DashboardServerHealth.tsx`, `DashboardStatCards.tsx`, `dashboard.helpers.ts`, `useDashboardData.ts`, `index.ts`
@@ -254,6 +254,14 @@ Two shipping features from `dev` that depend on Phase 2 migrations.
 - `apps/desktop/src/lib/api/workspaceAppearances.ts`
 - Wire appearance data into `WorkspacesPage.tsx`, `SpaceSwitcher.tsx`, `SpacePanel.tsx`
 - `apps/desktop/src/lib/spaceAccent.ts` — space color accent helpers (upstream also has this; reconcile)
+
+**Workspace binding metadata (completed Jun 25):**
+- ✅ `WorkspaceBinding.icon` on domain entity + `workspace_binding_repository` SELECT/INSERT/UPDATE
+- ✅ Tauri `WorkspaceBindingDto` / `WorkspaceBindingInput` expose `label` + `icon`; create/update persist both
+- ✅ Admin bridge create/update/delete returns and persists `icon`; orphan local icon cleanup checks bindings
+- ✅ Migration `032_workspace_icon_backfill.sql` — copies appearance icons onto bindings, drops mapped appearance rows
+- ✅ On bind: appearance icon migrates to binding; appearance row deleted (unmapped-only table going forward)
+- `resolve_workspace_icon()` in `workspace_binding.rs` — binding.icon first, appearance fallback for display
 
 **Remaining UI components not yet ported:**
 - `apps/desktop/src/components/SourceBadge.tsx` + `source-badge.helpers.ts`
@@ -316,6 +324,10 @@ The `i18n` branch (13 commits ahead of `dev`) covers full UI string extraction a
 | 6 | `apps/desktop/src/features/settings/ServerUpdatesSection.tsx`, etc. | Create |
 | 7 | `apps/desktop/src/features/dashboard/**` | Create (8 files) |
 | 7 | `crates/mcpmux-core/src/domain/workspace_appearance.rs` | Create |
+| 7 | `crates/mcpmux-core/src/domain/workspace_binding.rs` | ✅ Modify — `icon` field + `resolve_workspace_icon` |
+| 7 | `crates/mcpmux-storage/src/migrations/032_workspace_icon_backfill.sql` | ✅ Create |
+| 7 | `apps/desktop/src-tauri/src/commands/workspace_binding.rs` | ✅ Modify — label/icon round-trip |
+| 7 | `crates/mcpmux-gateway/src/admin/command_bridge/{read,write}.rs` | ✅ Modify — binding icon CRUD |
 | 7 | `apps/desktop/src/features/servers/AddServerMenu.tsx`, etc. | Create |
 | 8 | `i18n` branch | Rebase onto `main` after phases 1–7 |
 

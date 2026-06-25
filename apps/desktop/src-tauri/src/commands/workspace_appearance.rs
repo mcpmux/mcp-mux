@@ -96,8 +96,16 @@ pub(crate) async fn maybe_remove_orphaned_icon_file(
         .await
         .map_err(|e| e.to_string())?;
 
-    // ponytail: WorkspaceBinding.icon is added in Phase 7; only check appearances for now.
     if appearances.iter().any(|a| a.icon == icon_ref_owned) {
+        return Ok(());
+    }
+
+    let bindings = state
+        .workspace_binding_repository
+        .list()
+        .await
+        .map_err(|e| e.to_string())?;
+    if bindings.iter().any(|b| b.icon.as_deref() == Some(icon_ref)) {
         return Ok(());
     }
 

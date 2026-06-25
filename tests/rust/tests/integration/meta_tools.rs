@@ -1149,6 +1149,40 @@ async fn bind_does_not_promote_tools_into_advertised_list() {
     assert_eq!(f.registry.list_as_tools().len(), meta_count);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn invokable_but_not_surfaced_tool_excluded_from_advertised_list() {
+    let f = Fixture::new().await;
+    let fs_id = bind_github_only_to_session_root(&f).await;
+
+    let invokable = f
+        .feature_service
+        .get_invokable_tools_for_grants(&f.space_id.to_string(), &[fs_id.clone()])
+        .await
+        .unwrap();
+    assert!(
+        !invokable.is_empty(),
+        "bound github FS should grant invokable tools"
+    );
+
+    let advertised = f
+        .feature_service
+        .get_advertised_tools_for_grants(&f.space_id.to_string(), &[fs_id])
+        .await
+        .unwrap();
+    assert!(
+        advertised.is_empty(),
+        "non-surfaced tools must stay off tools/list"
+    );
+
+    let tool = invokable.first().unwrap();
+    let redirect = mcpmux_gateway::pool::format_direct_call_redirect(
+        &tool.qualified_name(),
+        &tool.server_id,
+        &tool.feature_name,
+    );
+    assert!(redirect.contains("mcpmux_invoke_tool"));
+}
+
 fn server_readiness(body: &Value, server_id: &str) -> String {
     body.get("servers")
         .unwrap()

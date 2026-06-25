@@ -23,6 +23,16 @@ McpMux works with any MCP-compatible client, including:
 
 All clients connect to the same endpoint: `http://localhost:45818/mcp`
 
+## Backend tools and the lean tool list
+
+Cursor and other clients only see backend tools in `tools/list` when those tools are **surfaced** in a FeatureSet (Bundles → edit a bundle → toggle **Surfaced** per tool). The default integration path is the built-in meta-tools:
+
+- `mcpmux_search_tools` — discover tools for the current workspace
+- `mcpmux_get_tool_schema` — read a tool's parameters
+- `mcpmux_invoke_tool` — invoke with `server_id`, bare `tool` name, and `args`
+
+Do not expect `user-mcpmux-<server>_<tool>` direct calls unless the tool is surfaced. See [Tool Optimization](/docs/tool-optimization/) for the full flow.
+
 ## Connecting and approval
 
 When a new client connects to the gateway, McpMux prompts you to **approve it** with one click. Approving registers the app and completes an **OAuth 2.1 + PKCE** handshake; its access key is stored in your OS keychain. (VS Code and Cursor can be connected in one click from the Home dashboard; other clients paste the gateway URL — see [Getting Started](/docs/getting-started/).)

@@ -68,6 +68,7 @@ pub(crate) fn to_workspace_binding_response(binding: mcpmux_core::WorkspaceBindi
         "workspace_root": binding.workspace_root,
         "client_id": binding.client_id,
         "label": binding.label,
+        "icon": binding.icon,
         "space_id": binding.space_id.to_string(),
         "feature_set_ids": binding.feature_set_ids,
         "created_at": binding.created_at.to_rfc3339(),

@@ -188,6 +188,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "server_current_version",
         sql: include_str!("migrations/031_server_current_version.sql"),
     },
+    Migration {
+        version: 32,
+        name: "workspace_icon_backfill",
+        sql: include_str!("migrations/032_workspace_icon_backfill.sql"),
+    },
 ];
 
 /// SQLite database wrapper.
@@ -470,7 +475,7 @@ impl Database {
             self.conn.pragma_update(None, "foreign_keys", "ON")?;
         }
 
-        info!("Fork-era migration numbering reconciled to version 31");
+        info!("Fork-era migration numbering reconciled to version 32");
         Ok(())
     }
 
@@ -659,7 +664,7 @@ mod tests {
     }
 
     /// Fork `dev`/`i18n` stamped port features at v16–27; upstream+port expects
-    /// upstream v16–19 plus port v20–31. Reconcile must not re-run fork SQL.
+    /// upstream v16–19 plus port v20–32. Reconcile must not re-run fork SQL.
     #[test]
     fn fork_numbered_schema_reconciles_to_port_numbering() {
         use rusqlite::{params, Connection};
@@ -677,6 +682,7 @@ mod tests {
             "server_version_cache",
             "default_params_strategy",
             "server_current_version",
+            "workspace_icon_backfill",
         ];
 
         let conn = Connection::open_in_memory().unwrap();
@@ -697,7 +703,7 @@ mod tests {
 
         for (i, m) in MIGRATIONS
             .iter()
-            .filter(|m| (20..=31).contains(&m.version))
+            .filter(|m| (20..=32).contains(&m.version))
             .enumerate()
         {
             let fork_version = 16 + i as i64;
@@ -721,7 +727,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
 
         let v16_name: String = db
             .conn
@@ -774,7 +780,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
 
         let v16_name: String = db
             .conn

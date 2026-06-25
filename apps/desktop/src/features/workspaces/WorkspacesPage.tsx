@@ -715,16 +715,19 @@ function EntryCard({
         ? 'emerald'
         : 'neutral';
 
+  const displayTitle = entryDisplayTitle(entry);
+  const hasLabel = Boolean(entry.binding?.label?.trim());
+
   return (
     <Card
-      className={`cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
+      className={`h-full cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
         selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
       }`}
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
     >
-      <CardContent className="p-6">
-        <div className="flex items-start gap-4 mb-4">
+      <CardContent className="flex h-full flex-col p-6">
+        <div className="mb-4 flex flex-1 items-start gap-4">
           <div className="relative flex-shrink-0">
             <div
               className={[
@@ -749,8 +752,8 @@ function EntryCard({
               />
             )}
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="mb-1.5 flex min-h-[1.375rem] flex-wrap items-start gap-2">
               {entry.kind === 'unmapped-live' && <Pill tone="amber">{t('card.unmapped')}</Pill>}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">{t('card.offline')}</Pill>}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">{t('card.live')}</Pill>}
@@ -761,27 +764,35 @@ function EntryCard({
               )}
             </div>
             <p
-              className={`text-sm text-[rgb(var(--foreground))] truncate ${
-                entry.binding?.label?.trim() ? 'font-semibold' : 'font-mono'
+              className={`line-clamp-2 min-h-[2.5rem] text-sm leading-snug text-[rgb(var(--foreground))] ${
+                hasLabel ? 'font-semibold' : 'break-all font-mono'
               }`}
-              title={entryDisplayTitle(entry)}
+              title={displayTitle}
             >
-              {entryDisplayTitle(entry)}
+              {displayTitle}
             </p>
-            {entry.binding?.label?.trim() && (
-              <p className="font-mono text-xs text-[rgb(var(--muted))] truncate mt-0.5" title={entry.root}>
-                {entry.root}
-              </p>
-            )}
+            <p
+              className={`mt-0.5 line-clamp-2 min-h-[2rem] font-mono text-xs leading-snug text-[rgb(var(--muted))] ${
+                hasLabel ? 'break-all' : 'invisible'
+              }`}
+              title={hasLabel ? entry.root : undefined}
+              aria-hidden={!hasLabel}
+            >
+              {hasLabel ? entry.root : '\u00A0'}
+            </p>
           </div>
         </div>
 
-        <div className="pt-4 border-t border-[rgb(var(--border-subtle))] text-xs text-[rgb(var(--muted))]">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span>{t('card.routesTo')}</span>
-            <Chip tone="primary">{fsName ?? '—'}</Chip>
-            <span>{t('card.in')}</span>
-            <Chip tone="neutral">{spaceName ?? '—'}</Chip>
+        <div className="mt-auto min-h-[2.25rem] border-t border-[rgb(var(--border-subtle))] pt-4 text-xs text-[rgb(var(--muted))]">
+          <div className="flex flex-wrap items-start gap-1.5">
+            <span className="shrink-0">{t('card.routesTo')}</span>
+            <Chip tone="primary" title={fsName ?? undefined}>
+              {fsName ?? '—'}
+            </Chip>
+            <span className="shrink-0">{t('card.in')}</span>
+            <Chip tone="neutral" title={spaceName ?? undefined}>
+              {spaceName ?? '—'}
+            </Chip>
             {!entry.binding && (
               <span
                 className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase tracking-wider bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200/70 dark:border-amber-800/60"
@@ -825,9 +836,11 @@ function Pill({
 function Chip({
   children,
   tone,
+  title,
 }: {
   children: React.ReactNode;
   tone: 'primary' | 'neutral';
+  title?: string;
 }) {
   const styles =
     tone === 'primary'
@@ -835,9 +848,10 @@ function Chip({
       : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--foreground))]';
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[11px] font-medium ${styles}`}
+      className={`inline-flex max-w-full items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${styles}`}
+      title={title}
     >
-      {children}
+      <span className="truncate">{children}</span>
     </span>
   );
 }
@@ -1080,20 +1094,13 @@ function InspectorPanel({
                 {!isNew && entry && !isMapped && <Pill tone="amber">{t('card.unmapped')}</Pill>}
                 {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">{t('card.offline')}</Pill>}
               </div>
-              <h2 className="text-lg font-bold truncate" title={displayTitle || title}>
+              <h2 className="text-lg font-bold break-words">
                 {!isNew && entry ? displayTitle : title}
               </h2>
               {!isNew && entry && displayTitle !== entry.root && (
-                <p
-                  className="text-xs text-[rgb(var(--muted))] truncate font-mono"
-                  title={entry.root}
-                >
-                  {entry.root}
-                </p>
+                <p className="text-xs text-[rgb(var(--muted))] break-all font-mono">{entry.root}</p>
               )}
-              {isNew && (
-                <p className="text-xs text-[rgb(var(--muted))] truncate">{subtitle}</p>
-              )}
+              {isNew && <p className="text-xs text-[rgb(var(--muted))] break-words">{subtitle}</p>}
             </div>
           </div>
           <button

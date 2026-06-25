@@ -42,6 +42,9 @@ pub struct WorkspaceBinding {
     /// Optional friendly display label shown in the UI instead of the path.
     #[serde(default)]
     pub label: Option<String>,
+    /// Optional icon: emoji, URL, or `local:workspace-icons/…` ref.
+    #[serde(default)]
+    pub icon: Option<String>,
     pub space_id: Uuid,
     /// Order matters for UI rendering only — the resolver treats them as
     /// a set. Stored in the `workspace_binding_feature_sets` junction
@@ -86,12 +89,34 @@ impl WorkspaceBinding {
             workspace_root: workspace_root.into(),
             client_id,
             label: None,
+            icon: None,
             space_id,
             feature_set_ids,
             created_at: now,
             updated_at: now,
         }
     }
+}
+
+/// Trim-empty helper for optional binding metadata fields.
+pub fn normalize_optional_metadata(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Resolve the icon to display for a workspace root.
+///
+/// Bound roots use `WorkspaceBinding.icon`; unmapped roots fall back to
+/// `WorkspaceAppearance`.
+pub fn resolve_workspace_icon(
+    binding: Option<&WorkspaceBinding>,
+    appearance: Option<&super::workspace_appearance::WorkspaceAppearance>,
+) -> Option<String> {
+    binding
+        .and_then(|b| b.icon.clone())
+        .or_else(|| appearance.map(|a| a.icon.clone()))
 }
 
 // ============================================================================
@@ -783,6 +808,22 @@ mod tests {
                 other => panic!("expected Invalid for {bad:?}, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn resolve_workspace_icon_prefers_binding_over_appearance() {
+        let space_id = Uuid::new_v4();
+        let mut bound = WorkspaceBinding::new("/proj", space_id, "fs");
+        bound.icon = Some("binding-icon".to_string());
+        let appearance = crate::domain::WorkspaceAppearance::new("/proj", "appearance-icon");
+        assert_eq!(
+            resolve_workspace_icon(Some(&bound), Some(&appearance)).as_deref(),
+            Some("binding-icon")
+        );
+        assert_eq!(
+            resolve_workspace_icon(None, Some(&appearance)).as_deref(),
+            Some("appearance-icon")
+        );
     }
 
     #[test]

@@ -377,6 +377,12 @@ impl ServerHandler for McpMuxGatewayHandler {
         info.instructions = Some(
             "McpMux aggregates multiple MCP servers. Use tools/prompts/resources \
              from your authorized backend servers to do the user's work.\n\n\
+             Backend tools are NOT listed in tools/list unless individually \
+             surfaced in a FeatureSet. Do not call backend tools by qualified \
+             name (e.g. serverId_toolName) unless they appear in your tools/list. \
+             Default flow: mcpmux_search_tools → mcpmux_get_tool_schema → \
+             mcpmux_invoke_tool with server_id, bare tool name, and args. \
+             Surfaced tools are the opt-in exception for one-hop direct calls.\n\n\
              The `mcpmux_*` tools are different: they are McpMux's own \
              self-management / tool-optimization controls, NOT tools for the \
              user's task. Use them ONLY when the user is explicitly managing \

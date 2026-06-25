@@ -7,7 +7,7 @@
  * - null/undefined
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { resolveWorkspaceIconDisplaySrc } from '@/lib/api/workspaceAppearances';
 
 interface ServerIconProps {
@@ -28,6 +28,7 @@ export function ServerIcon({ icon, className = 'w-9 h-9 object-contain', fallbac
   const [localResolved, setLocalResolved] = useState<{ icon: string; src: string | null } | null>(
     null
   );
+  const blobUrlRef = useRef<string | null>(null);
   const hasFailed = icon != null && failedIcon === icon;
   const localSrc =
     localResolved != null && localResolved.icon === icon ? localResolved.src : null;
@@ -43,7 +44,17 @@ export function ServerIcon({ icon, className = 'w-9 h-9 object-contain', fallbac
     void resolveWorkspaceIconDisplaySrc(localIcon)
       .then((src) => {
         if (cancelled) {
+          if (src?.startsWith('blob:')) {
+            URL.revokeObjectURL(src);
+          }
           return;
+        }
+        if (blobUrlRef.current) {
+          URL.revokeObjectURL(blobUrlRef.current);
+          blobUrlRef.current = null;
+        }
+        if (src?.startsWith('blob:')) {
+          blobUrlRef.current = src;
         }
         setLocalResolved({ icon: localIcon, src });
       })
@@ -56,6 +67,10 @@ export function ServerIcon({ icon, className = 'w-9 h-9 object-contain', fallbac
 
     return () => {
       cancelled = true;
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
     };
   }, [icon, isLocalRef]);
 

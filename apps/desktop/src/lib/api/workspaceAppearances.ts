@@ -42,15 +42,24 @@ export async function resolveWorkspaceIconPath(iconRef: string): Promise<string 
 }
 
 /**
- * Resolve a local icon ref to a displayable URL (Tauri asset URL or admin HTTP path).
+ * Resolve a local icon ref to a displayable URL (Tauri asset URL or fetched blob URL).
  */
 export async function resolveWorkspaceIconDisplaySrc(iconRef: string): Promise<string | null> {
   if (!iconRef.startsWith('local:')) {
     return null;
   }
-  if (!isTauri()) {
-    return `/api/v1/workspaces/icon?iconRef=${encodeURIComponent(iconRef)}`;
+  if (isTauri()) {
+    const absolutePath = await resolveWorkspaceIconPath(iconRef);
+    return fileSrcFromAbsolutePath(absolutePath);
   }
-  const absolutePath = await resolveWorkspaceIconPath(iconRef);
-  return fileSrcFromAbsolutePath(absolutePath);
+
+  const response = await fetch(
+    `/api/v1/workspaces/icon?iconRef=${encodeURIComponent(iconRef)}`,
+    { credentials: 'same-origin' }
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 }

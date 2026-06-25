@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { cfAccessHeadersFromEnv, loadRepoDotEnv } from '../../scripts/cf-access-env.mjs';
+
+loadRepoDotEnv(path.resolve(__dirname, '../..'));
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -44,7 +47,11 @@ export default defineConfig(async () => ({
     ...(isAdminWeb
       ? {
           proxy: {
-            '/api': `http://127.0.0.1:${adminPort}`,
+            '/api': {
+              target: `http://127.0.0.1:${adminPort}`,
+              changeOrigin: true,
+              headers: cfAccessHeadersFromEnv(),
+            },
           },
         }
       : {}),

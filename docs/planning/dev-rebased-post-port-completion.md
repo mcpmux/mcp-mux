@@ -1,6 +1,6 @@
 # dev-rebased Post-Port Completion
 
-**Last Updated:** Jun 24, 2026
+**Last Updated:** Jun 25, 2026
 **Status:** Active — in progress
 **Branch:** `dev-rebased` (HEAD: `a1e672b`)
 **Depends on:** All 8 port phases landed on `dev-rebased` (clean working tree confirmed)
@@ -36,6 +36,8 @@ The 8-phase fork→upstream port landed cleanly on `dev-rebased` (38 commits, ~3
 - Complete `lib/api` `invoke` → `apiCall` migration (12 remaining files)
 - Add any missing HTTP routes to `fetch-api.routes/` surfaced during the migration
 - Feature-by-feature verification of all 8 ported areas (desktop + web admin)
+- ✅ **Projects metadata restore (Jun 25):** `label`/`icon` round-trip through Tauri + admin bridge; migration `032_workspace_icon_backfill`; appearance→binding unify on create/update
+- ✅ **MCP meta-tool contract (Jun 25):** gateway `initialize` instructions + user docs clarify `mcpmux_search_tools` → `mcpmux_invoke_tool` path; no manifest proxy expansion
 
 **Out:**
 
@@ -190,7 +192,9 @@ Walk through every ported feature area against both the desktop Tauri app and we
 
 **Workspaces (Projects)**
 - [ ] Folder → bundle binding create / delete
-- [ ] Workspace appearances: icon + accent colour picker
+- [x] Project rename (`label`) persists via Tauri + admin — restored Jun 25
+- [x] Custom icons (`icon`) persist on bindings; migration 032 backfills from appearances
+- [ ] Workspace appearances: icon picker for unmapped live roots (mapped roots use binding.icon)
 - [ ] Per-client binding scope (client-scope bindings sheet)
 
 **Clients**
@@ -216,6 +220,9 @@ Walk through every ported feature area against both the desktop Tauri app and we
 - [ ] Analytics toggle persists
 
 **Meta-tools** (test via MCP client or gateway harness)
+- [ ] Cursor agents use `mcpmux_search_tools` → `mcpmux_invoke_tool` (not direct `user-mcpmux-<qualified_name>` unless surfaced)
+- [ ] Direct `call_tool` on invokable-but-not-surfaced qualified name returns `use_invoke_tool` redirect
+- [ ] Gateway `initialize` instructions document meta-tool-first backend invoke path
 - [ ] `invoke_tool` resolves a bare tool name (no server prefix)
 - [ ] `get_tool_schema` resolves bare name via `feature_name` (`7e1ab44` fix)
 - [ ] `search_tools` expands synonyms in query
@@ -264,6 +271,10 @@ Walk through every ported feature area against both the desktop Tauri app and we
 | 2 | `apps/desktop/src/lib/api/clientInstall.ts` | `invoke` → `apiCall` |
 | 2 | `apps/desktop/src/lib/backend/data/fetch-api.routes/*` | Add missing routes for any unmapped commands |
 | 3 | All above surfaces | Manual verification only — no file changes expected |
+| — | `apps/desktop/src-tauri/src/commands/workspace_binding.rs` | ✅ Done — label/icon DTO + create/update round-trip |
+| — | `crates/mcpmux-storage/src/migrations/032_workspace_icon_backfill.sql` | ✅ Done — backfill binding icons from appearances |
+| — | `crates/mcpmux-gateway/src/mcp/handler.rs` | ✅ Done — meta-tool-first initialize instructions |
+| — | `docs/guide/clients.mdx`, `docs/guide/tool-optimization.mdx` | ✅ Done — Cursor invoke path documented |
 
 ---
 
@@ -280,6 +291,8 @@ Walk through every ported feature area against both the desktop Tauri app and we
 | [`crates/mcpmux-gateway/src/services/discovery_rank.rs`](../../crates/mcpmux-gateway/src/services/discovery_rank.rs) | Phase 1 target — synonym expansion + stopword filtering |
 | [`crates/mcpmux-gateway/src/admin/write_runtime.rs`](../../crates/mcpmux-gateway/src/admin/write_runtime.rs) | Phase 1 target — `LiveGatewayWriteRuntime` wiring |
 | [`apps/desktop/src/stores/appStore.ts`](../../apps/desktop/src/stores/appStore.ts) | `viewSpace` null trace starting point for data load failures |
+| [`apps/desktop/src-tauri/src/commands/workspace_binding.rs`](../../apps/desktop/src-tauri/src/commands/workspace_binding.rs) | Projects label/icon round-trip (Jun 25) |
+| [`crates/mcpmux-storage/src/migrations/032_workspace_icon_backfill.sql`](../../crates/mcpmux-storage/src/migrations/032_workspace_icon_backfill.sql) | One-time icon backfill from appearances → bindings |
 
 ---
 

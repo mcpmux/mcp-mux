@@ -128,7 +128,6 @@ pub fn format_server_not_in_binding_error(server_id: &str) -> String {
 }
 
 /// Redirect message for direct backend `call_tool` attempts.
-#[allow(dead_code)]
 pub fn format_direct_call_redirect(
     qualified_name: &str,
     server_id: &str,
@@ -819,5 +818,18 @@ impl RoutingService {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod redirect_tests {
+    use super::format_direct_call_redirect;
+
+    #[test]
+    fn direct_call_redirect_points_at_invoke_tool() {
+        let message = format_direct_call_redirect("github_create_issue", "github", "create_issue");
+        assert!(message.contains("mcpmux_invoke_tool"));
+        assert!(message.contains("\"server_id\": \"github\""));
+        assert!(message.contains("\"tool\": \"create_issue\""));
     }
 }

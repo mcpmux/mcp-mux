@@ -69,12 +69,14 @@ impl SqliteWorkspaceBindingRepository {
         let updated_at: String = row.get(4)?;
         let client_id: Option<String> = row.get(5)?;
         let label: Option<String> = row.get(6)?;
+        let icon: Option<String> = row.get(7)?;
 
         Ok(WorkspaceBinding {
             id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
             workspace_root,
             client_id,
             label,
+            icon,
             space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::nil()),
             feature_set_ids: Vec::new(), // filled in by caller
             created_at: Self::parse_datetime(&created_at),
@@ -154,7 +156,7 @@ impl SqliteWorkspaceBindingRepository {
     }
 
     const SELECT_COLS: &'static str =
-        "id, workspace_root, space_id, created_at, updated_at, client_id, label";
+        "id, workspace_root, space_id, created_at, updated_at, client_id, label, icon";
 
     /// Fetch bindings + their FeatureSet lists in two queries.
     /// `where_clause` is appended to the binding SELECT (use `""` for none);
@@ -226,8 +228,8 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO workspace_bindings
-                (id, workspace_root, space_id, created_at, updated_at, client_id, label)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (id, workspace_root, space_id, created_at, updated_at, client_id, label, icon)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 binding.id.to_string(),
                 binding.workspace_root,
@@ -236,6 +238,7 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
                 binding.updated_at.to_rfc3339(),
                 binding.client_id,
                 binding.label,
+                binding.icon,
             ],
         )?;
         Self::rewrite_fs_for_binding(&tx, &binding.id.to_string(), &binding.feature_set_ids)?;
@@ -255,7 +258,7 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let tx = conn.unchecked_transaction()?;
         let rows_affected = tx.execute(
             "UPDATE workspace_bindings
-             SET workspace_root = ?2, space_id = ?3, updated_at = ?4, client_id = ?5, label = ?6
+             SET workspace_root = ?2, space_id = ?3, updated_at = ?4, client_id = ?5, label = ?6, icon = ?7
              WHERE id = ?1",
             params![
                 binding.id.to_string(),
@@ -264,6 +267,7 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
                 binding.updated_at.to_rfc3339(),
                 binding.client_id,
                 binding.label,
+                binding.icon,
             ],
         )?;
 
@@ -353,6 +357,29 @@ mod tests {
             )
             .unwrap();
         fs_id
+    }
+
+    #[tokio::test]
+    async fn test_label_and_icon_round_trip() {
+        let (repo, space_id, fs_id) = fixture().await;
+        let root = if cfg!(windows) {
+            "d:\\labeled"
+        } else {
+            "/labeled"
+        };
+        let mut binding = WorkspaceBinding::new(root, space_id, fs_id.clone());
+        binding.label = Some("My Project".to_string());
+        binding.icon = Some("🚀".to_string());
+        repo.create(&binding).await.unwrap();
+
+        let mut got = repo.get(&binding.id).await.unwrap().unwrap();
+        assert_eq!(got.label.as_deref(), Some("My Project"));
+        assert_eq!(got.icon.as_deref(), Some("🚀"));
+
+        got.icon = Some("📁".to_string());
+        repo.update(&got).await.unwrap();
+        let after = repo.get(&binding.id).await.unwrap().unwrap();
+        assert_eq!(after.icon.as_deref(), Some("📁"));
     }
 
     #[tokio::test]

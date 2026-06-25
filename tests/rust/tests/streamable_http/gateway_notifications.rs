@@ -13,7 +13,7 @@ use axum::{body::Body, http::Request, middleware, middleware::Next, response::Re
 use mcpmux_core::{DomainEvent, ServerDiscoveryService, ServerFeatureRepository, ServerLogManager};
 use mcpmux_gateway::{
     consumers::MCPNotifier,
-    mcp::McpMuxGatewayHandler,
+    mcp::{mcp_oauth_middleware, McpMuxGatewayHandler},
     server::{DependenciesBuilder, GatewayState, ServiceContainer},
 };
 use mcpmux_storage::{InboundClient, InboundClientRepository, RegistrationType};
@@ -90,6 +90,19 @@ impl TestGateway {
     /// Build a test gateway with an in-memory database and mock repositories.
     /// The `client_id` and `space_id` are injected into all requests via test middleware.
     async fn start(client_id: &str, space_id: Uuid) -> Self {
+        Self::build(client_id, space_id, false).await
+    }
+
+    /// Like [`start`], but wires the REAL `mcp_oauth_middleware` with inbound
+    /// auth disabled — no test-injected identity. Proves an anonymous client
+    /// completes a real `initialize` handshake (the no-auth path that left
+    /// editors "stuck at initialize" when auth was disabled but discovery still
+    /// advertised OAuth).
+    async fn start_authless(space_id: Uuid) -> Self {
+        Self::build("mcpmux-anonymous", space_id, true).await
+    }
+
+    async fn build(client_id: &str, space_id: Uuid, authless: bool) -> Self {
         let ct = CancellationToken::new();
 
         // Create in-memory database
@@ -222,19 +235,25 @@ impl TestGateway {
             http_cfg,
         );
 
-        // Build router with test OAuth middleware
-        let test_ctx = Arc::new(TestOAuthContext {
-            client_id: client_id.to_string(),
-            space_id,
-        });
-
+        // Build the router. Normal tests bypass auth with a test middleware that
+        // injects a fixed identity; the authless variant exercises the REAL
+        // middleware with inbound auth disabled, so the gateway must mint an
+        // anonymous identity itself and the handshake must still succeed.
         let router =
-            Router::new()
-                .nest_service("/mcp", mcp_service)
-                .layer(middleware::from_fn_with_state(
-                    test_ctx,
-                    test_oauth_middleware,
-                ));
+            if authless {
+                services.gateway_state.write().await.set_auth_disabled(true);
+                Router::new().nest_service("/mcp", mcp_service).layer(
+                    middleware::from_fn_with_state(services.clone(), mcp_oauth_middleware),
+                )
+            } else {
+                let test_ctx = Arc::new(TestOAuthContext {
+                    client_id: client_id.to_string(),
+                    space_id,
+                });
+                Router::new().nest_service("/mcp", mcp_service).layer(
+                    middleware::from_fn_with_state(test_ctx, test_oauth_middleware),
+                )
+            };
 
         // Bind to random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -402,6 +421,35 @@ async fn test_gateway_advertises_list_changed_capabilities() {
     // Verify we can list tools (proves the handler is working).
     let tools = client.list_tools(Default::default()).await;
     assert!(tools.is_ok(), "list_tools should succeed through gateway");
+
+    client.cancel().await.ok();
+    gw.shutdown();
+}
+
+// ============================================================================
+// B1b: No-auth mode — anonymous client completes a real handshake
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn authless_anonymous_client_completes_real_initialize() {
+    // Regression for the "stuck at initialize" report: with inbound auth
+    // disabled, a client that sends NO token must complete the real `initialize`
+    // handshake through the actual middleware + MCP handler (the gateway mints
+    // an anonymous identity) instead of stalling. This is the end-to-end check
+    // the earlier stub-handler test couldn't make.
+    let space_id = Uuid::new_v4();
+    let gw = TestGateway::start_authless(space_id).await;
+
+    // `connect_client` sends no Authorization header and `.serve()` performs the
+    // initialize handshake — it panics if the gateway 401s or never responds.
+    let client = connect_client(&gw.url, GatewayTestClient::new()).await;
+
+    // A live session that can list tools proves the handshake fully succeeded.
+    let tools = client.list_tools(Default::default()).await;
+    assert!(
+        tools.is_ok(),
+        "anonymous client must complete the handshake when auth is disabled"
+    );
 
     client.cancel().await.ok();
     gw.shutdown();

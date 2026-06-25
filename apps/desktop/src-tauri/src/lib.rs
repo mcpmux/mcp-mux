@@ -419,8 +419,10 @@ pub fn run() {
                 }
 
                 let final_port = preferred_port;
-                let url = format!("http://localhost:{}", final_port);
-                info!("Auto-starting gateway on {}", url);
+                let public_base_url = crate::commands::gateway::load_public_base_url_from_repo(&settings_repo).await;
+                let url = crate::commands::gateway::advertised_base_url(public_base_url.as_deref(), final_port);
+                let local_url = format!("http://localhost:{}", final_port);
+                info!("Auto-starting gateway on {} (advertising {})", local_url, url);
 
                 // Load JWT signing secret (DPAPI on Windows, keychain elsewhere)
                 let jwt_secret = match mcpmux_storage::create_jwt_secret_provider(&app_data_dir) {
@@ -469,6 +471,7 @@ pub fn run() {
                 let config = mcpmux_gateway::GatewayConfig {
                     host: "127.0.0.1".to_string(),  // Bind address must be IP
                     port: final_port,
+                    public_base_url: public_base_url.clone(),
                     enable_cors: true,
                 };
 
@@ -525,6 +528,7 @@ pub fn run() {
                 let mut state = gw_state_clone.write().await;
                 state.running = true;
                 state.url = Some(url.clone());
+                state.bound_port = Some(final_port);
                 state.handle = Some(handle);
                 state.gateway_state = Some(gw_inner_state);
                 state.pool_service = Some(pool_service);
@@ -951,6 +955,9 @@ pub fn run() {
             commands::reset_gateway_port,
             commands::get_gateway_auth_disabled,
             commands::set_gateway_auth_disabled,
+            commands::get_gateway_public_url_settings,
+            commands::set_gateway_public_base_url,
+            commands::reset_gateway_public_base_url,
             commands::probe_gateway_start,
             commands::take_pending_port_conflict,
             commands::start_gateway,
@@ -1026,6 +1033,7 @@ pub fn run() {
                             let mut state = gw_state.write().await;
                             state.running = false;
                             state.url = None;
+                            state.bound_port = None;
                             state.handle.take()
                         };
                         if let Some(h) = handle {

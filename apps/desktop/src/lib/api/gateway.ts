@@ -11,6 +11,15 @@ export interface GatewayStatus {
 }
 
 /**
+ * Public URL advertised by the gateway in OAuth metadata.
+ */
+export interface GatewayPublicUrlSettings {
+  configuredPublicBaseUrl: string | null;
+  activePublicBaseUrl: string | null;
+  localBaseUrl: string | null;
+}
+
+/**
  * Config export format.
  */
 export type ExportFormat = 'cursor' | 'vscode' | 'claude';
@@ -20,6 +29,27 @@ export type ExportFormat = 'cursor' | 'vscode' | 'claude';
  */
 export async function getGatewayStatus(spaceId?: string): Promise<GatewayStatus> {
   return invoke('get_gateway_status', { spaceId });
+}
+
+/**
+ * Get the configured and currently-active public gateway URL settings.
+ */
+export async function getGatewayPublicUrlSettings(): Promise<GatewayPublicUrlSettings> {
+  return invoke('get_gateway_public_url_settings');
+}
+
+/**
+ * Set the public base URL advertised in OAuth metadata. Pass null to clear it.
+ */
+export async function setGatewayPublicBaseUrl(publicBaseUrl: string | null): Promise<void> {
+  return invoke('set_gateway_public_base_url', { publicBaseUrl });
+}
+
+/**
+ * Clear the public base URL and return to local-only localhost metadata.
+ */
+export async function resetGatewayPublicBaseUrl(): Promise<void> {
+  return invoke('reset_gateway_public_base_url');
 }
 
 /**

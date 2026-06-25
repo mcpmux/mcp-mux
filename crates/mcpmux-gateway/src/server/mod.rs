@@ -54,6 +54,13 @@ pub struct GatewayConfig {
     pub host: String,
     /// Port to listen on
     pub port: u16,
+    /// Public base URL advertised in OAuth metadata.
+    ///
+    /// When unset, the gateway behaves as a local-only server and advertises
+    /// `http://localhost:<port>`. When set, this must be the externally
+    /// reachable origin fronting the gateway, for example a Cloudflare Tunnel
+    /// URL such as `https://mcp.example.com`.
+    pub public_base_url: Option<String>,
     /// Enable CORS for browser access
     pub enable_cors: bool,
 }
@@ -63,6 +70,7 @@ impl Default for GatewayConfig {
         Self {
             host: "127.0.0.1".to_string(),
             port: mcpmux_core::branding::DEFAULT_GATEWAY_PORT,
+            public_base_url: None,
             enable_cors: true,
         }
     }
@@ -76,10 +84,61 @@ impl GatewayConfig {
             .expect("Invalid address")
     }
 
-    /// Get the base URL for this gateway
-    /// Uses localhost for consistency with client configurations
+    /// Get the base URL this gateway advertises to MCP/OAuth clients.
     pub fn base_url(&self) -> String {
-        format!("http://localhost:{}", self.port)
+        self.public_base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(|url| url.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| format!("http://localhost:{}", self.port))
+    }
+
+    /// Host values accepted by rmcp's DNS rebinding protection.
+    ///
+    /// rmcp's Streamable HTTP service defaults to loopback-only Host headers.
+    /// When the gateway is published through a reverse proxy or Cloudflare
+    /// Tunnel, ChatGPT reaches it with the public host, so that hostname must
+    /// be explicitly allowlisted.
+    pub fn allowed_hosts(&self) -> Vec<String> {
+        let mut hosts = vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+            "::1".to_string(),
+        ];
+
+        let bind_host = self.host.trim();
+        if !bind_host.is_empty() {
+            hosts.push(bind_host.to_string());
+            hosts.push(format!("{}:{}", bind_host, self.port));
+        }
+
+        if let Some(public_base_url) = self.public_base_url.as_deref() {
+            let trimmed = public_base_url.trim();
+            if !trimmed.is_empty() {
+                match url::Url::parse(trimmed) {
+                    Ok(parsed) => {
+                        if let Some(host) = parsed.host_str() {
+                            hosts.push(host.to_string());
+                            if let Some(port) = parsed.port() {
+                                hosts.push(format!("{}:{}", host, port));
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        warn!(
+                            public_base_url = trimmed,
+                            error = %error,
+                            "[Gateway] Ignoring invalid public_base_url for allowed host list"
+                        );
+                    }
+                }
+            }
+        }
+
+        hosts.sort();
+        hosts.dedup();
+        hosts
     }
 }
 
@@ -277,6 +336,11 @@ impl GatewayServer {
         let mut http_cfg = StreamableHttpServerConfig::default();
         http_cfg.stateful_mode = true;
         http_cfg.json_response = false;
+        http_cfg.allowed_hosts = self.config.allowed_hosts();
+        info!(
+            "[Gateway] MCP allowed Host headers: {:?}",
+            http_cfg.allowed_hosts
+        );
         http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(30));
         http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
         http_cfg.cancellation_token = CancellationToken::new();
@@ -314,6 +378,12 @@ impl GatewayServer {
             // OAuth endpoints (public) - use app_state for base_url access
             .route(
                 "/.well-known/oauth-authorization-server",
+                get(handlers::oauth_metadata),
+            )
+            // Some remote MCP clients, including ChatGPT connector flows, probe
+            // the resource-scoped authorization-server metadata path.
+            .route(
+                "/.well-known/oauth-authorization-server/mcp",
                 get(handlers::oauth_metadata),
             )
             .route(

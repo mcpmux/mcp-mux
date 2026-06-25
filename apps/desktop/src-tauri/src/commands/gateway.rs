@@ -53,8 +53,11 @@ pub struct PendingPortConflict {
 pub struct GatewayAppState {
     /// Gateway running flag
     pub running: bool,
-    /// Gateway URL
+    /// Gateway URL advertised to clients.
     pub url: Option<String>,
+    /// Locally bound port. This remains the actual listener port even when
+    /// `url` is a public tunnel origin such as https://mcp.example.com.
+    pub bound_port: Option<u16>,
     /// Gateway task + graceful-shutdown signal. `shutdown()` + awaiting
     /// `task` (with a timeout) lets the OS reclaim the listener socket
     /// cleanly; `.abort()` alone can leave an orphaned kernel-level bind.
@@ -121,6 +124,79 @@ pub(crate) async fn shutdown_gateway_handle(mut handle: mcpmux_gateway::GatewayS
 /// a fresh client connection automatically draws the user's eye to the
 /// mcpmux app instead of the dialog rendering invisibly under another
 /// window.
+const GATEWAY_PUBLIC_BASE_URL_KEY: &str = "gateway.public_base_url";
+
+pub(crate) fn normalize_public_base_url(raw: &str) -> Result<Option<String>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed = url::Url::parse(trimmed).map_err(|e| format!("Invalid public base URL: {}", e))?;
+
+    if parsed.scheme() != "https" {
+        return Err("Public base URL must start with https://".to_string());
+    }
+    if parsed.host_str().is_none() {
+        return Err("Public base URL must include a host".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("Public base URL must not include credentials".to_string());
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("Public base URL must not include a query string or fragment".to_string());
+    }
+    if parsed.path() != "/" && !parsed.path().is_empty() {
+        return Err(
+            "Public base URL must be an origin only, for example https://mcp.example.com"
+                .to_string(),
+        );
+    }
+
+    let origin = match parsed.port() {
+        Some(port) => format!(
+            "{}://{}:{}",
+            parsed.scheme(),
+            parsed.host_str().unwrap(),
+            port
+        ),
+        None => format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap()),
+    };
+    Ok(Some(origin.trim_end_matches('/').to_string()))
+}
+
+pub(crate) async fn load_public_base_url_from_repo(
+    settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
+) -> Option<String> {
+    settings_repository
+        .get(GATEWAY_PUBLIC_BASE_URL_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| match normalize_public_base_url(&value) {
+            Ok(normalized) => normalized,
+            Err(e) => {
+                warn!(
+                    "[Gateway] Ignoring invalid persisted public base URL: {}",
+                    e
+                );
+                None
+            }
+        })
+}
+
+pub(crate) async fn load_public_base_url(app_state: &AppState) -> Option<String> {
+    load_public_base_url_from_repo(&app_state.settings_repository).await
+}
+
+pub(crate) fn advertised_base_url(public_base_url: Option<&str>, port: u16) -> String {
+    public_base_url
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(|url| url.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| format!("http://localhost:{}", port))
+}
+
 pub(crate) fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
     let Some(window) = app.get_webview_window("main") else {
@@ -896,9 +972,11 @@ pub async fn start_gateway(
         ));
     };
 
-    let url = format!("http://localhost:{}", final_port);
+    let public_base_url = load_public_base_url(&app_state).await;
+    let url = advertised_base_url(public_base_url.as_deref(), final_port);
+    let local_url = format!("http://localhost:{}", final_port);
 
-    info!("Starting gateway on {}", url);
+    info!("Starting gateway on {} (advertising {})", local_url, url);
 
     // Create dependencies using DI builder pattern
     let dependencies = create_gateway_dependencies(&app_state, app_handle.clone())?;
@@ -907,6 +985,7 @@ pub async fn start_gateway(
     let config = mcpmux_gateway::GatewayConfig {
         host: "127.0.0.1".to_string(), // Bind address must be IP
         port: final_port,
+        public_base_url: public_base_url.clone(),
         enable_cors: true,
     };
 
@@ -978,6 +1057,7 @@ pub async fn start_gateway(
     );
     state.running = true;
     state.url = Some(url.clone());
+    state.bound_port = Some(final_port);
     state.handle = Some(handle);
     state.gateway_state = Some(gw_state);
     state.pool_service = Some(pool_service);
@@ -1028,6 +1108,7 @@ pub async fn stop_gateway(
         let handle = state.handle.take();
         state.running = false;
         state.url = None;
+        state.bound_port = None;
         handle
     };
 
@@ -1075,7 +1156,9 @@ pub async fn get_gateway_port_settings(
 
     let active_port = {
         let state = gateway_state.read().await;
-        state.url.as_deref().and_then(parse_port_from_url)
+        state
+            .bound_port
+            .or_else(|| state.url.as_deref().and_then(parse_port_from_url))
     };
 
     Ok(GatewayPortSettings {
@@ -1164,6 +1247,94 @@ pub async fn set_gateway_auth_disabled(
     }
     info!("[Gateway] Inbound auth disabled set to {}", disabled);
     Ok(disabled)
+}
+
+/// Public URL configuration response.
+///
+/// `configured_public_base_url` is the persisted external origin advertised in
+/// OAuth metadata. `active_public_base_url` is the URL currently advertised by
+/// the running gateway, and `local_base_url` is the localhost listener.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayPublicUrlSettings {
+    pub configured_public_base_url: Option<String>,
+    pub active_public_base_url: Option<String>,
+    pub local_base_url: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_gateway_public_url_settings(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    app_state: State<'_, AppState>,
+) -> Result<GatewayPublicUrlSettings, String> {
+    let configured_public_base_url = load_public_base_url(&app_state).await;
+    let (active_public_base_url, local_base_url) = {
+        let state = gateway_state.read().await;
+        (
+            if state.running {
+                state.url.clone()
+            } else {
+                None
+            },
+            state
+                .bound_port
+                .map(|port| format!("http://localhost:{}", port)),
+        )
+    };
+
+    Ok(GatewayPublicUrlSettings {
+        configured_public_base_url,
+        active_public_base_url,
+        local_base_url,
+    })
+}
+
+/// Persist the public base URL advertised in OAuth metadata.
+///
+/// Pass `None` or an empty string to return to local-only localhost metadata.
+/// Non-empty values must be HTTPS origins, e.g. `https://mcp.example.com`.
+#[tauri::command]
+pub async fn set_gateway_public_base_url(
+    public_base_url: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let normalized = match public_base_url.as_deref() {
+        Some(raw) => normalize_public_base_url(raw)?,
+        None => None,
+    };
+
+    match normalized {
+        Some(url) => {
+            app_state
+                .settings_repository
+                .set(GATEWAY_PUBLIC_BASE_URL_KEY, &url)
+                .await
+                .map_err(|e| e.to_string())?;
+            info!("[Gateway] Persisted public base URL: {}", url);
+        }
+        None => {
+            app_state
+                .settings_repository
+                .delete(GATEWAY_PUBLIC_BASE_URL_KEY)
+                .await
+                .map_err(|e| e.to_string())?;
+            info!("[Gateway] Cleared public base URL — reverting to local-only metadata");
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reset_gateway_public_base_url(app_state: State<'_, AppState>) -> Result<(), String> {
+    app_state
+        .settings_repository
+        .delete(GATEWAY_PUBLIC_BASE_URL_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    info!("[Gateway] Cleared public base URL — reverting to local-only metadata");
+    Ok(())
 }
 
 /// Which port source a startup attempt would use.
@@ -1266,6 +1437,7 @@ pub async fn restart_gateway(
         let handle = state.handle.take();
         state.running = false;
         state.url = None;
+        state.bound_port = None;
         handle
     };
     if let Some(h) = handle {

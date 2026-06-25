@@ -54,6 +54,7 @@ export function ConnectionCard() {
   const displayUrl = status.url ?? FALLBACK_URL;
   const mcpUrl = `${displayUrl}/mcp`;
   const port = extractPort(status.url);
+  const isPublicEndpoint = displayUrl.startsWith('https://');
 
   const reloadStatus = useCallback(async () => {
     try {
@@ -148,13 +149,15 @@ export function ConnectionCard() {
               {status.running && (
                 <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-[rgb(var(--muted))] px-1.5 py-0.5 rounded-md bg-[rgb(var(--surface))] border border-[rgb(var(--border-subtle))]">
                   <Lock className="h-2.5 w-2.5" />
-                  Local only
+                  {isPublicEndpoint ? 'Public tunnel' : 'Local only'}
                 </span>
               )}
             </div>
             <p className="text-xs text-[rgb(var(--muted))] mt-0.5 truncate">
               {status.running
-                ? 'Accepting IDE connections on this device.'
+                ? isPublicEndpoint
+                  ? 'Advertising the public tunnel endpoint for remote MCP clients.'
+                  : 'Accepting IDE connections on this device.'
                 : 'Start the gateway to let IDEs connect through McpMux.'}
             </p>
           </div>

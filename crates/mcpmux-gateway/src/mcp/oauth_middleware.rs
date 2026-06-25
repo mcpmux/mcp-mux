@@ -7,7 +7,7 @@
 
 use axum::{
     body::Body,
-    http::{Request, Response, StatusCode},
+    http::{header, Request, Response, StatusCode},
     middleware::Next,
     response::IntoResponse,
 };
@@ -44,6 +44,11 @@ pub async fn mcp_oauth_middleware(
         .map(|ctx| ctx.trace_id.clone())
         .unwrap_or_else(|| "??????".to_string());
 
+    let base_url = {
+        let state = services.gateway_state.read().await;
+        state.base_url.clone()
+    };
+
     // System-wide inbound auth can be disabled (localhost-only convenience):
     // when off, a connection is accepted without a Bearer token and routed by
     // the workspace header / default space. A valid token is still honored when
@@ -53,7 +58,7 @@ pub async fn mcp_oauth_middleware(
 
     let auth_header = request
         .headers()
-        .get("authorization")
+        .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
     let token = auth_header
@@ -108,7 +113,7 @@ pub async fn mcp_oauth_middleware(
             _ => "Invalid token",
         };
         warn!(trace_id = %trace_id, "{}", msg);
-        return unauthorized_response(msg);
+        return unauthorized_response(&base_url, msg);
     } else {
         // Auth disabled → accept anonymously on the default space. Routing
         // still prefers the workspace header (pinned below) → binding.
@@ -224,15 +229,26 @@ pub async fn mcp_oauth_middleware(
     response
 }
 
-/// Generate unauthorized response
-fn unauthorized_response(message: &str) -> Response<Body> {
+/// Generate unauthorized response with RFC 9728 protected-resource discovery.
+fn unauthorized_response(base_url: &str, message: &str) -> Response<Body> {
+    let resource_metadata_url = format!(
+        "{}/.well-known/oauth-protected-resource/mcp",
+        base_url.trim_end_matches('/')
+    );
+    let www_authenticate = format!(
+        r#"Bearer realm="McpMux Gateway", error="invalid_token", error_description="{}", resource_metadata="{}""#,
+        message, resource_metadata_url
+    );
+    let body = serde_json::json!({
+        "error": "invalid_token",
+        "error_description": message,
+        "resource_metadata": resource_metadata_url,
+    });
+
     (
         StatusCode::UNAUTHORIZED,
-        [(
-            "WWW-Authenticate",
-            r#"Bearer realm="McpMux Gateway", error="invalid_token""#,
-        )],
-        message.to_string(),
+        [(header::WWW_AUTHENTICATE, www_authenticate)],
+        axum::Json(body),
     )
         .into_response()
 }

@@ -453,7 +453,7 @@ pub async fn oauth_auth_middleware(
 /// parameter pointing to the OAuth Protected Resource Metadata endpoint.
 fn unauthorized_response_with_url(base_url: &str, error: &str, description: &str) -> Response {
     // RFC 9728: Protected Resource Metadata URL
-    let resource_metadata_url = format!("{}/.well-known/oauth-protected-resource", base_url);
+    let resource_metadata_url = format!("{}/.well-known/oauth-protected-resource/mcp", base_url);
 
     // WWW-Authenticate header per RFC 9728
     let www_authenticate = format!(

@@ -29,6 +29,7 @@ import {
   Package,
   Heart,
   Network,
+  Globe,
   RotateCcw,
   AlertCircle,
   ShieldOff,
@@ -54,6 +55,12 @@ interface GatewayPortSettings {
   configuredPort: number | null;
   defaultPort: number;
   activePort: number | null;
+}
+
+interface GatewayPublicUrlSettings {
+  configuredPublicBaseUrl: string | null;
+  activePublicBaseUrl: string | null;
+  localBaseUrl: string | null;
 }
 
 export function SettingsPage() {
@@ -135,6 +142,14 @@ export function SettingsPage() {
   const [savingPort, setSavingPort] = useState(false);
   const [resettingPort, setResettingPort] = useState(false);
 
+  // Public base URL — optional external HTTPS origin advertised to remote MCP
+  // clients through OAuth metadata. Leave blank for local-only localhost mode.
+  const [publicUrlSettings, setPublicUrlSettings] = useState<GatewayPublicUrlSettings | null>(null);
+  const [publicUrlDraft, setPublicUrlDraft] = useState<string>('');
+  const [publicUrlError, setPublicUrlError] = useState<string | null>(null);
+  const [savingPublicUrl, setSavingPublicUrl] = useState(false);
+  const [resettingPublicUrl, setResettingPublicUrl] = useState(false);
+
   const loadPortSettings = async () => {
     try {
       const s = await invoke<GatewayPortSettings>('get_gateway_port_settings');
@@ -146,8 +161,20 @@ export function SettingsPage() {
     }
   };
 
+  const loadPublicUrlSettings = async () => {
+    try {
+      const s = await invoke<GatewayPublicUrlSettings>('get_gateway_public_url_settings');
+      setPublicUrlSettings(s);
+      setPublicUrlDraft(s.configuredPublicBaseUrl ?? '');
+      setPublicUrlError(null);
+    } catch (err) {
+      console.error('Failed to load gateway public URL settings:', err);
+    }
+  };
+
   useEffect(() => {
     loadPortSettings();
+    loadPublicUrlSettings();
   }, []);
 
   const validatePort = (raw: string): { port: number } | { error: string } => {
@@ -159,6 +186,31 @@ export function SettingsPage() {
       return { error: 'Port must be between 1024 and 65535' };
     }
     return { port: n };
+  };
+
+  const validatePublicBaseUrl = (
+    raw: string
+  ): { publicBaseUrl: string | null } | { error: string } => {
+    const trimmed = raw.trim();
+    if (!trimmed) return { publicBaseUrl: null };
+
+    let url: URL;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      return { error: 'Enter a valid HTTPS origin, for example https://mcp.example.com' };
+    }
+
+    if (url.protocol !== 'https:') return { error: 'Public base URL must start with https://' };
+    if (url.username || url.password)
+      return { error: 'Public base URL must not include credentials' };
+    if (url.search || url.hash)
+      return { error: 'Public base URL must not include a query string or fragment' };
+    if (url.pathname !== '/') {
+      return { error: 'Use the origin only, for example https://mcp.example.com, not a /mcp path' };
+    }
+
+    return { publicBaseUrl: url.origin };
   };
 
   const handleSavePort = async () => {
@@ -206,10 +258,56 @@ export function SettingsPage() {
     }
   };
 
+  const handleSavePublicUrl = async () => {
+    const parsed = validatePublicBaseUrl(publicUrlDraft);
+    if ('error' in parsed) {
+      setPublicUrlError(parsed.error);
+      return;
+    }
+
+    setPublicUrlError(null);
+    setSavingPublicUrl(true);
+    try {
+      await invoke('set_gateway_public_base_url', { publicBaseUrl: parsed.publicBaseUrl });
+      const activeAdvertised = publicUrlSettings?.activePublicBaseUrl ?? null;
+      const desiredAdvertised = parsed.publicBaseUrl ?? publicUrlSettings?.localBaseUrl ?? null;
+      await loadPublicUrlSettings();
+      success(
+        parsed.publicBaseUrl ? 'Public URL saved' : 'Public URL cleared',
+        activeAdvertised && desiredAdvertised && activeAdvertised !== desiredAdvertised
+          ? 'Restart the gateway for OAuth metadata to advertise the new URL.'
+          : parsed.publicBaseUrl
+            ? `Remote clients should use ${parsed.publicBaseUrl}/mcp.`
+            : 'Next gateway start will advertise the local localhost URL.'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setPublicUrlError(msg);
+      error('Failed to save public URL', msg);
+    } finally {
+      setSavingPublicUrl(false);
+    }
+  };
+
+  const handleResetPublicUrl = async () => {
+    setResettingPublicUrl(true);
+    try {
+      await invoke('reset_gateway_public_base_url');
+      await loadPublicUrlSettings();
+      success('Public URL cleared', 'Restart the gateway to return OAuth metadata to localhost.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      error('Failed to clear public URL', msg);
+    } finally {
+      setResettingPublicUrl(false);
+    }
+  };
+
   const handleRestartGateway = async () => {
     try {
       const outcome = await gatewayControl.restart();
       await loadPortSettings();
+      await loadPublicUrlSettings();
       if (outcome.status === 'cancelled') return;
       success(
         'Gateway restarted',
@@ -496,180 +594,297 @@ export function SettingsPage() {
 
         {/* Gateway Section — port override + reset to default */}
         <div ref={registerSection('gateway')} className={sectionFlashClass('gateway')}>
-        <Card data-testid="settings-gateway-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Network className="h-5 w-5" />
-              Gateway
-            </CardTitle>
-            <CardDescription>
-              The local port every AI client connects to. Changing it takes effect on the next
-              gateway start — existing IDE configs pointing at the old port will need updating.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {portSettings === null ? (
-              <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading…
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-start gap-3">
-                  <Network className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
-                  <div className="min-w-0 flex-1">
-                    <label htmlFor="gateway-port-input" className="text-sm font-medium">
-                      Gateway port
-                    </label>
-                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                      Default is <span className="font-mono">{portSettings.defaultPort}</span>. Use
-                      a port between 1024 and 65535.
-                      {portSettings.activePort !== null ? (
-                        <>
-                          {' '}
-                          Currently running on{' '}
-                          <span className="font-mono" data-testid="gateway-active-port">
-                            :{portSettings.activePort}
-                          </span>
-                          .
-                        </>
-                      ) : (
-                        ' Gateway is stopped.'
-                      )}
-                    </p>
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <input
-                        id="gateway-port-input"
-                        type="number"
-                        inputMode="numeric"
-                        min={1024}
-                        max={65535}
-                        value={portDraft}
-                        onChange={(e) => {
-                          setPortDraft(e.target.value);
-                          if (portError) setPortError(null);
-                        }}
-                        disabled={savingPort || resettingPort}
-                        className="focus:ring-primary-500/40 w-28 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2"
-                        data-testid="gateway-port-input"
-                      />
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={handleSavePort}
-                        disabled={
-                          savingPort ||
-                          resettingPort ||
-                          portDraft.trim() ===
-                            String(portSettings.configuredPort ?? portSettings.defaultPort)
-                        }
-                        data-testid="gateway-port-save-btn"
-                      >
-                        {savingPort ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                        Save
-                      </Button>
+          <Card data-testid="settings-gateway-section">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Network className="h-5 w-5" />
+                Gateway
+              </CardTitle>
+              <CardDescription>
+                The local port every AI client connects to. Changing it takes effect on the next
+                gateway start — existing IDE configs pointing at the old port will need updating.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {portSettings === null ? (
+                <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading…
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <Network className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                    <div className="min-w-0 flex-1">
+                      <label htmlFor="gateway-port-input" className="text-sm font-medium">
+                        Gateway port
+                      </label>
+                      <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                        Default is <span className="font-mono">{portSettings.defaultPort}</span>.
+                        Use a port between 1024 and 65535.
+                        {portSettings.activePort !== null ? (
+                          <>
+                            {' '}
+                            Currently running on{' '}
+                            <span className="font-mono" data-testid="gateway-active-port">
+                              :{portSettings.activePort}
+                            </span>
+                            .
+                          </>
+                        ) : (
+                          ' Gateway is stopped.'
+                        )}
+                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <input
+                          id="gateway-port-input"
+                          type="number"
+                          inputMode="numeric"
+                          min={1024}
+                          max={65535}
+                          value={portDraft}
+                          onChange={(e) => {
+                            setPortDraft(e.target.value);
+                            if (portError) setPortError(null);
+                          }}
+                          disabled={savingPort || resettingPort}
+                          className="focus:ring-primary-500/40 w-28 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2"
+                          data-testid="gateway-port-input"
+                        />
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={handleSavePort}
+                          disabled={
+                            savingPort ||
+                            resettingPort ||
+                            portDraft.trim() ===
+                              String(portSettings.configuredPort ?? portSettings.defaultPort)
+                          }
+                          data-testid="gateway-port-save-btn"
+                        >
+                          {savingPort ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                          Save
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleResetPort}
+                          disabled={
+                            savingPort || resettingPort || portSettings.configuredPort === null
+                          }
+                          data-testid="gateway-port-reset-btn"
+                          title={
+                            portSettings.configuredPort === null
+                              ? 'Already using the default port'
+                              : `Reset to ${portSettings.defaultPort}`
+                          }
+                        >
+                          {resettingPort ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <RotateCcw className="mr-2 h-4 w-4" />
+                          )}
+                          Reset to default
+                        </Button>
+                      </div>
+                      {portError ? (
+                        <p
+                          className="mt-2 text-xs text-red-600 dark:text-red-400"
+                          data-testid="gateway-port-error"
+                        >
+                          {portError}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-[rgb(var(--border-subtle))] pt-4">
+                    <div className="flex items-start gap-3">
+                      <Globe className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                      <div className="min-w-0 flex-1">
+                        <label htmlFor="gateway-public-url-input" className="text-sm font-medium">
+                          Public base URL
+                        </label>
+                        <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                          Optional HTTPS origin to advertise in OAuth metadata when the gateway sits
+                          behind a public tunnel. Use{' '}
+                          <span className="font-mono">https://mcp.example.com</span>, not{' '}
+                          <span className="font-mono">/mcp</span>. Leave blank for local-only mode.
+                          {publicUrlSettings?.activePublicBaseUrl ? (
+                            <>
+                              {' '}
+                              Currently advertising{' '}
+                              <span className="font-mono" data-testid="gateway-active-public-url">
+                                {publicUrlSettings.activePublicBaseUrl}
+                              </span>
+                              .
+                            </>
+                          ) : null}
+                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <input
+                            id="gateway-public-url-input"
+                            type="url"
+                            inputMode="url"
+                            placeholder="https://mcp.example.com"
+                            value={publicUrlDraft}
+                            onChange={(e) => {
+                              setPublicUrlDraft(e.target.value);
+                              if (publicUrlError) setPublicUrlError(null);
+                            }}
+                            disabled={savingPublicUrl || resettingPublicUrl}
+                            className="focus:ring-primary-500/40 min-w-[280px] flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2"
+                            data-testid="gateway-public-url-input"
+                          />
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={handleSavePublicUrl}
+                            disabled={
+                              savingPublicUrl ||
+                              resettingPublicUrl ||
+                              publicUrlDraft.trim().replace(/\/+$/, '') ===
+                                (publicUrlSettings?.configuredPublicBaseUrl ?? '')
+                            }
+                            data-testid="gateway-public-url-save-btn"
+                          >
+                            {savingPublicUrl ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : null}
+                            Save
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={handleResetPublicUrl}
+                            disabled={
+                              savingPublicUrl ||
+                              resettingPublicUrl ||
+                              publicUrlSettings?.configuredPublicBaseUrl === null
+                            }
+                            data-testid="gateway-public-url-reset-btn"
+                          >
+                            {resettingPublicUrl ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                              <RotateCcw className="mr-2 h-4 w-4" />
+                            )}
+                            Clear
+                          </Button>
+                        </div>
+                        {publicUrlError ? (
+                          <p
+                            className="mt-2 text-xs text-red-600 dark:text-red-400"
+                            data-testid="gateway-public-url-error"
+                          >
+                            {publicUrlError}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  {publicUrlSettings?.activePublicBaseUrl &&
+                  (publicUrlSettings.configuredPublicBaseUrl ?? publicUrlSettings.localBaseUrl) &&
+                  publicUrlSettings.activePublicBaseUrl !==
+                    (publicUrlSettings.configuredPublicBaseUrl ??
+                      publicUrlSettings.localBaseUrl) ? (
+                    <div
+                      className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-700/60 dark:bg-amber-900/20"
+                      data-testid="gateway-public-url-restart-hint"
+                    >
+                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-amber-800 dark:text-amber-200">
+                          Restart required
+                        </p>
+                        <p className="mt-0.5 text-amber-700 dark:text-amber-300">
+                          The saved public URL does not match the URL currently advertised in OAuth
+                          metadata. Restart the gateway before reconnecting ChatGPT.
+                        </p>
+                      </div>
                       <Button
                         variant="secondary"
                         size="sm"
-                        onClick={handleResetPort}
-                        disabled={
-                          savingPort || resettingPort || portSettings.configuredPort === null
-                        }
-                        data-testid="gateway-port-reset-btn"
-                        title={
-                          portSettings.configuredPort === null
-                            ? 'Already using the default port'
-                            : `Reset to ${portSettings.defaultPort}`
-                        }
+                        onClick={handleRestartGateway}
+                        data-testid="gateway-public-url-restart-btn"
                       >
-                        {resettingPort ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                        )}
-                        Reset to default
+                        Restart gateway
                       </Button>
                     </div>
-                    {portError ? (
-                      <p
-                        className="mt-2 text-xs text-red-600 dark:text-red-400"
-                        data-testid="gateway-port-error"
-                      >
-                        {portError}
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
+                  ) : null}
 
-                {portSettings.activePort !== null &&
-                portSettings.configuredPort !== null &&
-                portSettings.configuredPort !== portSettings.activePort ? (
-                  <div
-                    className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-700/60 dark:bg-amber-900/20"
-                    data-testid="gateway-port-restart-hint"
-                  >
-                    <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-                    <div className="flex-1">
-                      <p className="font-semibold text-amber-800 dark:text-amber-200">
-                        Restart required
-                      </p>
-                      <p className="mt-0.5 text-amber-700 dark:text-amber-300">
-                        Saved port <span className="font-mono">:{portSettings.configuredPort}</span>{' '}
-                        doesn't match the running port{' '}
-                        <span className="font-mono">:{portSettings.activePort}</span>. Restart the
-                        gateway to apply — your IDE configs will need to point at the new URL.
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleRestartGateway}
-                      data-testid="gateway-restart-btn"
+                  {portSettings.activePort !== null &&
+                  portSettings.configuredPort !== null &&
+                  portSettings.configuredPort !== portSettings.activePort ? (
+                    <div
+                      className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs dark:border-amber-700/60 dark:bg-amber-900/20"
+                      data-testid="gateway-port-restart-hint"
                     >
-                      Restart gateway
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                      <div className="flex-1">
+                        <p className="font-semibold text-amber-800 dark:text-amber-200">
+                          Restart required
+                        </p>
+                        <p className="mt-0.5 text-amber-700 dark:text-amber-300">
+                          Saved port{' '}
+                          <span className="font-mono">:{portSettings.configuredPort}</span> doesn't
+                          match the running port{' '}
+                          <span className="font-mono">:{portSettings.activePort}</span>. Restart the
+                          gateway to apply — your IDE configs will need to point at the new URL.
+                        </p>
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleRestartGateway}
+                        data-testid="gateway-restart-btn"
+                      >
+                        Restart gateway
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         {/* Workspaces Section */}
         <div ref={registerSection('workspaces')} className={sectionFlashClass('workspaces')}>
-        <Card data-testid="settings-workspaces-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FolderOpen className="h-5 w-5" />
-              Workspaces
-            </CardTitle>
-            <CardDescription>
-              How McpMux handles folders your connected apps open.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
-                <FolderOpen className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
-                <div>
-                  <label className="text-sm font-medium">Ask to map new folders</label>
-                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                    When a connected app opens a folder you haven't mapped, show a prompt to give
-                    it a specific feature set. The folder already works with your default Starter
-                    set either way.
-                  </p>
+          <Card data-testid="settings-workspaces-section">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FolderOpen className="h-5 w-5" />
+                Workspaces
+              </CardTitle>
+              <CardDescription>
+                How McpMux handles folders your connected apps open.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <FolderOpen className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                  <div>
+                    <label className="text-sm font-medium">Ask to map new folders</label>
+                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                      When a connected app opens a folder you haven't mapped, show a prompt to give
+                      it a specific feature set. The folder already works with your default Starter
+                      set either way.
+                    </p>
+                  </div>
                 </div>
+                <Switch
+                  checked={mappingPromptEnabled}
+                  onCheckedChange={updateMappingPrompt}
+                  disabled={savingMappingPrompt}
+                  data-testid="workspace-mapping-prompt-switch"
+                />
               </div>
-              <Switch
-                checked={mappingPromptEnabled}
-                onCheckedChange={updateMappingPrompt}
-                disabled={savingMappingPrompt}
-                data-testid="workspace-mapping-prompt-switch"
-              />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Security Section */}
@@ -678,37 +893,38 @@ export function SettingsPage() {
           id="settings-security"
           className={sectionFlashClass('security')}
         >
-        <Card data-testid="settings-security-section">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldOff className="h-5 w-5" />
-              Security
-            </CardTitle>
-            <CardDescription>
-              How McpMux authenticates apps connecting to the local gateway.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex min-w-0 flex-1 items-start gap-3">
-                <ShieldOff className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
-                <div>
-                  <label className="text-sm font-medium">Disable authentication</label>
-                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                    Let local apps connect with no access key — just the URL and a workspace header.
-                    Quickest setup, but any app on this machine can then reach the gateway.
-                  </p>
+          <Card data-testid="settings-security-section">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldOff className="h-5 w-5" />
+                Security
+              </CardTitle>
+              <CardDescription>
+                How McpMux authenticates apps connecting to the local gateway.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <ShieldOff className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                  <div>
+                    <label className="text-sm font-medium">Disable authentication</label>
+                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                      Let local apps connect with no access key — just the URL and a workspace
+                      header. Quickest setup, but any app on this machine can then reach the
+                      gateway.
+                    </p>
+                  </div>
                 </div>
+                <Switch
+                  checked={authDisabled}
+                  onCheckedChange={updateAuthDisabled}
+                  disabled={savingAuthDisabled}
+                  data-testid="disable-auth-switch"
+                />
               </div>
-              <Switch
-                checked={authDisabled}
-                onCheckedChange={updateAuthDisabled}
-                disabled={savingAuthDisabled}
-                data-testid="disable-auth-switch"
-              />
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Appearance Section */}

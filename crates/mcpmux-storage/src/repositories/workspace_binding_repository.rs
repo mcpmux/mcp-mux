@@ -94,11 +94,20 @@ impl SqliteWorkspaceBindingRepository {
         let placeholders = std::iter::repeat_n("?", binding_ids.len())
             .collect::<Vec<_>>()
             .join(", ");
+        // Join `feature_sets` and skip soft-deleted ones: deleting a FeatureSet
+        // is a soft delete (`is_deleted = 1`), so the FK `ON DELETE CASCADE` on
+        // this junction never fires and the binding would otherwise keep
+        // pointing at a FeatureSet that `get()` now reports as missing
+        // ("Feature set not found"). Filtering here keeps a binding's
+        // `feature_set_ids` consistent with what actually resolves — and fixes
+        // bindings that were orphaned before delete-time cleanup existed.
         let sql = format!(
-            "SELECT binding_id, feature_set_id
-               FROM workspace_binding_feature_sets
-              WHERE binding_id IN ({placeholders})
-              ORDER BY binding_id, sort_order, feature_set_id"
+            "SELECT wbfs.binding_id, wbfs.feature_set_id
+               FROM workspace_binding_feature_sets wbfs
+               JOIN feature_sets fs ON fs.id = wbfs.feature_set_id
+              WHERE wbfs.binding_id IN ({placeholders})
+                AND fs.is_deleted = 0
+              ORDER BY wbfs.binding_id, wbfs.sort_order, wbfs.feature_set_id"
         );
         let mut stmt = conn.prepare(&sql)?;
         let params_dyn: Vec<&dyn rusqlite::ToSql> = binding_ids
@@ -374,6 +383,60 @@ mod tests {
         repo.update(&updated).await.unwrap();
         let after = repo.get(&binding.id).await.unwrap().unwrap();
         assert_eq!(after.feature_set_ids, vec![fs_id2]);
+    }
+
+    async fn soft_delete_fs(db: &Arc<Mutex<Database>>, fs_id: &str) {
+        let guard = db.lock().await;
+        guard
+            .connection()
+            .execute(
+                "UPDATE feature_sets SET is_deleted = 1 WHERE id = ?",
+                params![fs_id],
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_soft_deleted_feature_set_is_dropped_from_binding() {
+        // Regression: a FeatureSet is soft-deleted, so the junction's FK
+        // ON DELETE CASCADE never fires. The binding must NOT keep reporting
+        // the deleted FS (which `get()` now treats as missing → "Feature set
+        // not found"); only the live one(s) come back.
+        let (repo, space_id, fs_id1) = fixture().await;
+        let db = repo.db.clone();
+        let fs_id2 = add_fs(&db, space_id, "second").await;
+
+        let root = if cfg!(windows) { "d:\\del" } else { "/del" };
+        let binding =
+            WorkspaceBinding::new_multi(root, space_id, vec![fs_id1.clone(), fs_id2.clone()]);
+        repo.create(&binding).await.unwrap();
+        assert_eq!(
+            repo.get(&binding.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .feature_set_ids,
+            vec![fs_id1.clone(), fs_id2.clone()]
+        );
+
+        soft_delete_fs(&db, &fs_id1).await;
+
+        // get(), list() and find_exact_for_roots() all drop the deleted FS.
+        let got = repo.get(&binding.id).await.unwrap().unwrap();
+        assert_eq!(got.feature_set_ids, vec![fs_id2.clone()]);
+        let listed = repo.list().await.unwrap();
+        assert_eq!(listed[0].feature_set_ids, vec![fs_id2.clone()]);
+        let matched = repo
+            .find_exact_for_roots(&[root.to_string()])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(matched.feature_set_ids, vec![fs_id2.clone()]);
+
+        // Deleting the remaining FS leaves an (empty) binding, not an error.
+        soft_delete_fs(&db, &fs_id2).await;
+        let empty = repo.get(&binding.id).await.unwrap().unwrap();
+        assert!(empty.feature_set_ids.is_empty());
     }
 
     #[tokio::test]

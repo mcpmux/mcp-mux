@@ -281,6 +281,34 @@ async fn binding_routes_to_its_target_space_and_fs() {
 }
 
 #[tokio::test]
+async fn deleting_a_bound_feature_set_drops_it_and_resolution_survives() {
+    // Repro of the "Feature set not found" report: a folder mapped to two
+    // FeatureSets; deleting one must drop it from the binding (FeatureSets are
+    // soft-deleted, so the FK ON DELETE CASCADE can't fire) and resolution must
+    // keep working — routing to the survivor, not erroring on the missing one.
+    let f = Fixture::new().await;
+    let binding = WorkspaceBinding::new_multi(
+        normalize_workspace_root(test_root()),
+        f.space_id,
+        vec![f.fs_a_id.clone(), f.fs_b_id.clone()],
+    );
+    f.binding_repo.create(&binding).await.unwrap();
+
+    f.fs_repo.delete(&f.fs_a_id).await.unwrap();
+
+    // The binding no longer references the deleted FS...
+    let reloaded = f.binding_repo.get(&binding.id).await.unwrap().unwrap();
+    assert_eq!(reloaded.feature_set_ids, vec![f.fs_b_id.clone()]);
+
+    // ...and the resolver routes via the binding to just the survivor.
+    f.session_roots.set("s", [test_root()]);
+    f.session_roots.set_roots_capable("s", true);
+    let r = f.resolver.resolve(Some("s"), None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_b_id.clone()]);
+}
+
+#[tokio::test]
 async fn no_inheritance_child_of_bound_parent_falls_back_to_default() {
     // Inheritance is intentionally NOT supported: a session whose reported root
     // is a CHILD of a bound parent does not pick up the parent's binding. With

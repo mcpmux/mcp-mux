@@ -21,6 +21,7 @@ const KNOWN_CLIENT_PATTERNS: { pattern: string; iconKey: string }[] = [
   { pattern: 'clion', iconKey: 'jetbrains' },
   { pattern: 'jetbrains', iconKey: 'jetbrains' },
   { pattern: 'cursor', iconKey: 'cursor' },
+  { pattern: 'opencode', iconKey: 'opencode' },
   { pattern: 'vscode', iconKey: 'vscode' },
   { pattern: 'claude', iconKey: 'claude' },
 ];

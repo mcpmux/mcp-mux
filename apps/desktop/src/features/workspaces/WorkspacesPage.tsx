@@ -113,7 +113,7 @@ function primaryBinding(entry: Entry): WorkspaceBinding | null {
   );
 }
 
-type Selected = { mode: 'new' } | { mode: 'entry'; id: string };
+type Selected = { mode: 'new' } | { mode: 'entry'; id: string; bindingId?: string };
 
 const WORKSPACE_TABLE_REFRESH_CHANNELS: WorkspaceEventChannel[] = [
   'session-roots-changed',
@@ -369,6 +369,14 @@ export function WorkspacesPage() {
 
   const selectedEntry: Entry | null =
     selected?.mode === 'entry' ? entries.find((e) => e.id === selected.id) ?? null : null;
+  const selectedBindingId =
+    selected?.mode === 'entry' ? selected.bindingId : undefined;
+  const activeBinding = selectedEntry
+    ? selectedBindingId
+      ? selectedEntry.bindings.find((b) => b.id === selectedBindingId) ??
+        primaryBinding(selectedEntry)
+      : primaryBinding(selectedEntry)
+    : null;
   const resolveEntryIcon = useCallback(
     (entry: Entry): string | null =>
       liveEntryIcons.get(entry.id) ??
@@ -650,7 +658,9 @@ export function WorkspacesPage() {
                     fsById={fsById}
                     selected={isSelected}
                     onClick={() => setSelected({ mode: 'entry', id: entry.id })}
-                    onMachineRowClick={() => {}}
+                    onMachineRowClick={(bindingId) =>
+                      setSelected({ mode: 'entry', id: entry.id, bindingId })
+                    }
                     t={t}
                   />
                 );
@@ -684,8 +694,9 @@ export function WorkspacesPage() {
             />
           ) : (
             <InspectorPanel
-              key={selectedEntry?.id ?? 'entry'}
+              key={`${selectedEntry?.id ?? 'entry'}:${selectedBindingId ?? 'primary'}`}
               entry={selectedEntry}
+              binding={activeBinding}
               isNew={false}
               resolvedIcon={selectedEntry ? resolveEntryIcon(selectedEntry) : null}
               spaces={spaces}
@@ -694,17 +705,15 @@ export function WorkspacesPage() {
               localMachineId={localMachineId}
               onClose={() => setSelected(null)}
               onSubmit={async (input) => {
-                const binding = selectedEntry ? primaryBinding(selectedEntry) : null;
-                if (binding) {
-                  await handleUpdate(binding.id, input);
+                if (activeBinding) {
+                  await handleUpdate(activeBinding.id, input);
                 } else {
                   const created = await handleCreate(input);
                   setSelected({ mode: 'entry', id: created.id });
                 }
               }}
               onDelete={async () => {
-                const binding = selectedEntry ? primaryBinding(selectedEntry) : null;
-                if (binding) await handleDelete(binding);
+                if (activeBinding) await handleDelete(activeBinding);
               }}
               onIconChange={(icon) => {
                 if (!selectedEntry) return;
@@ -1251,6 +1260,7 @@ type SaveStatus =
 
 function InspectorPanel({
   entry,
+  binding,
   isNew,
   resolvedIcon,
   spaces,
@@ -1265,6 +1275,7 @@ function InspectorPanel({
   t,
 }: {
   entry: Entry | null;
+  binding: WorkspaceBinding | null;
   isNew: boolean;
   resolvedIcon: string | null;
   spaces: Space[];
@@ -1304,7 +1315,6 @@ function InspectorPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const binding = entry ? primaryBinding(entry) : null;
   const isMapped = binding !== null;
   const mode: 'create' | 'edit' | 'create-from-live' = isNew
     ? 'create'

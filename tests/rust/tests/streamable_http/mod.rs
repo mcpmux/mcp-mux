@@ -6,5 +6,6 @@
 //! - Proper protocol negotiation
 
 mod auth_disable;
+mod auth_oauth_e2e;
 mod gateway_notifications;
 mod notifications;

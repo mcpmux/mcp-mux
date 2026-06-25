@@ -46,6 +46,11 @@ reqwest = { version = "0.13", features = ["json"] }
 # URL parsing for OAuth tests
 url = "2.5"
 
+# PKCE + JWT-secret material for the inbound-OAuth end-to-end test
+base64 = "0.22"
+sha2 = "0.10"
+zeroize = "1.8"
+
 # Sync primitives for tests
 parking_lot = "0.12"
 

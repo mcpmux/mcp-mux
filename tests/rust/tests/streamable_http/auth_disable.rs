@@ -133,6 +133,12 @@ impl Harness {
                 "/.well-known/oauth-protected-resource",
                 get(resource_metadata),
             )
+            // RFC 9728 resource-specific variant — this is the one editors like
+            // VS Code probe first (`/.well-known/oauth-protected-resource/mcp`).
+            .route(
+                "/.well-known/oauth-protected-resource/mcp",
+                get(resource_metadata),
+            )
             .route(
                 "/.well-known/oauth-authorization-server",
                 get(oauth_metadata),
@@ -211,8 +217,12 @@ async fn authless_gateway_does_not_advertise_oauth_discovery() {
     // without a token.
     let h = Harness::start(true).await;
     let client = reqwest::Client::new();
+    // Includes the RFC 9728 `/mcp` sub-path — the endpoint VS Code probes first
+    // (its 200 was what pushed editors into an OAuth flow against an authless
+    // gateway, leaving them stuck waiting on `initialize`).
     for path in [
         "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
         "/.well-known/oauth-authorization-server",
     ] {
         let resp = client
@@ -230,12 +240,24 @@ async fn authless_gateway_does_not_advertise_oauth_discovery() {
 
 #[tokio::test]
 async fn auth_required_gateway_advertises_oauth_discovery() {
-    // The default (auth required) still serves discovery so real OAuth works.
+    // The default (auth required) still serves discovery so real OAuth works —
+    // every endpoint, including the RFC 9728 sub-path.
     let h = Harness::start(false).await;
-    let resp = reqwest::Client::new()
-        .get(format!("{}/.well-known/oauth-protected-resource", h.base))
-        .send()
-        .await
-        .expect("request");
-    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let client = reqwest::Client::new();
+    for path in [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-authorization-server",
+    ] {
+        let resp = client
+            .get(format!("{}{path}", h.base))
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::OK,
+            "{path} must be served when auth is required"
+        );
+    }
 }

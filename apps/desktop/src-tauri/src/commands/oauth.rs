@@ -26,7 +26,8 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use mcpmux_core::branding;
 use serde::{Deserialize, Serialize};
@@ -120,6 +121,47 @@ pub struct ConsentRequestDetails {
     pub consent_token: String,
 }
 
+/// Window within which an identical deep-link URL is treated as a duplicate
+/// and dropped. On a warm launch BOTH the deep-link plugin's `on_open_url` and
+/// the single-instance callback fire for the same `mcpmux://` URL, so without
+/// this guard the whole consent flow (deep-link emit → `get_pending_consent` →
+/// consent modal) runs twice per approval.
+const DEEP_LINK_DEDUP_WINDOW: Duration = Duration::from_secs(3);
+
+/// Pure predicate: is `url` a repeat of `last_url` seen `elapsed` ago, within
+/// `window`? Extracted so the dedup rule is unit-testable without the clock.
+fn is_recent_duplicate_link(
+    last_url: Option<&str>,
+    elapsed: Duration,
+    url: &str,
+    window: Duration,
+) -> bool {
+    last_url == Some(url) && elapsed < window
+}
+
+/// True if this exact URL was just handled within [`DEEP_LINK_DEDUP_WINDOW`].
+/// Records `url` as the most-recent on a miss. Distinct authorizations carry a
+/// fresh `request_id` (different URL), so legitimate back-to-back flows are
+/// never collapsed.
+fn deep_link_is_duplicate(url: &str) -> bool {
+    static LAST: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+    let cell = LAST.get_or_init(|| Mutex::new(None));
+    let mut guard = cell.lock().unwrap_or_else(|p| p.into_inner());
+    let now = Instant::now();
+    let dup = guard.as_ref().is_some_and(|(last_url, seen_at)| {
+        is_recent_duplicate_link(
+            Some(last_url.as_str()),
+            now.duration_since(*seen_at),
+            url,
+            DEEP_LINK_DEDUP_WINDOW,
+        )
+    });
+    if !dup {
+        *guard = Some((url.to_string(), now));
+    }
+    dup
+}
+
 /// Handle an incoming deep link URL
 ///
 /// Routes based on the URL path:
@@ -134,6 +176,14 @@ pub fn handle_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &str)
             "[DeepLink] Invalid scheme, expected {}://",
             branding::DEEP_LINK_SCHEME
         );
+        return;
+    }
+
+    // Drop the duplicate that the on_open_url + single-instance paths both
+    // deliver for the same warm-launch URL — otherwise the consent modal and
+    // `get_pending_consent` fire twice per approval.
+    if deep_link_is_duplicate(url) {
+        info!("[DeepLink] Ignoring duplicate within {DEEP_LINK_DEDUP_WINDOW:?}: {url}");
         return;
     }
 
@@ -1094,4 +1144,52 @@ pub async fn revoke_oauth_client_feature_set(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const W: Duration = Duration::from_secs(3);
+    const URL: &str = "mcpmux://authorize?request_id=abc-123";
+
+    #[test]
+    fn first_sighting_is_not_a_duplicate() {
+        // No prior URL → never a duplicate.
+        assert!(!is_recent_duplicate_link(None, Duration::ZERO, URL, W));
+    }
+
+    #[test]
+    fn same_url_within_window_is_a_duplicate() {
+        // The on_open_url + single-instance double-fire: same URL, ~ms apart.
+        assert!(is_recent_duplicate_link(
+            Some(URL),
+            Duration::from_millis(40),
+            URL,
+            W
+        ));
+    }
+
+    #[test]
+    fn same_url_after_window_is_not_a_duplicate() {
+        // A genuine re-auth of the same URL long after is allowed through.
+        assert!(!is_recent_duplicate_link(
+            Some(URL),
+            Duration::from_secs(5),
+            URL,
+            W
+        ));
+    }
+
+    #[test]
+    fn different_request_id_is_never_a_duplicate() {
+        // Distinct authorizations carry a fresh request_id even back-to-back.
+        let other = "mcpmux://authorize?request_id=def-456";
+        assert!(!is_recent_duplicate_link(
+            Some(URL),
+            Duration::from_millis(10),
+            other,
+            W
+        ));
+    }
 }

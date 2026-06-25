@@ -14,7 +14,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::RwLock;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 /// Gateway status response
@@ -810,7 +810,10 @@ pub async fn get_gateway_status(
         }
     };
 
-    info!(
+    // DEBUG, not INFO: the UI polls this on a timer and on every domain event,
+    // so at INFO it floods the log (several lines/sec) and drowns the events
+    // that matter. The data is still available with `RUST_LOG=debug`.
+    debug!(
         "[Gateway] get_gateway_status: running={}, url={:?}, sessions={}, backends={}, space={:?}",
         state.running, state.url, active_sessions, connected_backends, space_id
     );

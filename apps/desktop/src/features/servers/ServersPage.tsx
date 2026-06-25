@@ -62,10 +62,10 @@ function mergeDefinitionsWithStates(
       (input: InputDefinition) => input.required && !inputValues[input.id]
     );
 
-    // Calculate initial connection_status based on enabled state
-    // Calculate initial connection_status based on enabled state
-    // Actual runtime status comes from ServerManager events via useServerManager hook
-    const connection_status = state?.enabled ? 'connecting' : 'disconnected';
+    // Runtime status is in-memory only and comes from ServerManager.
+    // Do not infer `connecting` from persisted `enabled`; custom/offline servers can
+    // otherwise stay stuck in a synthetic Connecting state forever.
+    const connection_status = 'disconnected';
 
     return {
       ...def,
@@ -95,11 +95,7 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
       const inputValues = state.input_values;
       const requiredInputs = definition.transport.metadata?.inputs?.filter((i) => i.required) || [];
       const missing_required_inputs = requiredInputs.some((input) => !inputValues[input.id]);
-      const connection_status = state.enabled
-        ? missing_required_inputs
-          ? 'error'
-          : 'connecting'
-        : 'disconnected';
+      const connection_status = 'disconnected';
 
       return {
         ...definition,
@@ -143,7 +139,7 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
     enabled: state.enabled,
     oauth_connected: state.oauth_connected,
     input_values: state.input_values,
-    connection_status: state.enabled ? 'connecting' : 'disconnected',
+    connection_status: 'disconnected',
     missing_required_inputs: false,
     last_error: null,
     created_at: state.created_at,
@@ -450,6 +446,7 @@ export function ServersPage() {
    * - 'running': Server is connected and running
    * - 'error': Server has an error
    * - 'connected_auto': Non-OAuth server that's connected (no action buttons needed)
+   * - 'disconnected': Server is enabled but has no active runtime connection
    */
   const getServerAction = (
     server: ServerViewModel
@@ -461,7 +458,8 @@ export function ServersPage() {
     | 'auth_required'
     | 'running'
     | 'error'
-    | 'connected_auto' => {
+    | 'connected_auto'
+    | 'disconnected' => {
     if (!server.enabled) {
       return 'enable';
     }
@@ -489,8 +487,7 @@ export function ServersPage() {
         case 'error':
           return 'error';
         case 'disconnected':
-          // Enabled but disconnected - try to connect
-          return server.auth?.type === 'oauth' ? 'auth_required' : 'connected_auto';
+          return server.auth?.type === 'oauth' ? 'auth_required' : 'disconnected';
       }
     }
 
@@ -515,8 +512,8 @@ export function ServersPage() {
       return 'auth_required';
     }
 
-    // Non-OAuth server that's enabled but not yet connected
-    return 'connected_auto';
+    // Enabled but no runtime connection exists yet. Let the user start/retry it.
+    return 'disconnected';
   };
 
   // Get display status for UI
@@ -544,6 +541,8 @@ export function ServersPage() {
         return 'Connected';
       case 'connected_auto':
         return 'Connected';
+      case 'disconnected':
+        return 'Disconnected';
       case 'error':
         return 'Error';
     }
@@ -1225,6 +1224,16 @@ export function ServersPage() {
                           title="Disconnect (keep credentials)"
                         >
                           {actionLoading === `disconnect-${server.id}` ? '...' : 'Disconnect'}
+                        </button>
+                      )}
+
+                      {serverAction === 'disconnected' && gatewayRunning && (
+                        <button
+                          onClick={() => handleRetry(server)}
+                          disabled={retryLoading}
+                          className="rounded-lg bg-[rgb(var(--success))] px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[rgb(var(--success))]/80 disabled:opacity-50"
+                        >
+                          {retryLoading ? 'Connecting...' : 'Connect'}
                         </button>
                       )}
 

@@ -363,8 +363,9 @@ function mergeServers(defs: ServerDefinition[], states: InstalledServerState[]):
       input.required && !inputValues[input.id]
     );
     
-    // Calculate initial connection_status based on enabled state
-    const connection_status = state?.enabled ? 'connecting' : 'disconnected';
+    // Runtime connection status is not persisted. Do not infer Connecting from
+    // the enabled flag; the ServerManager event/status stream owns that state.
+    const connection_status = 'disconnected';
     
     return {
       ...def,

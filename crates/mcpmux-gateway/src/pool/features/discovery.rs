@@ -1,7 +1,9 @@
 //! Feature Discovery Service - SRP: Discovery & caching
 
 use anyhow::Result;
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use super::{convert_to_feature, resource_to_feature, CachedFeatures};
@@ -14,8 +16,27 @@ pub struct FeatureDiscoveryService {
 }
 
 impl FeatureDiscoveryService {
+    const LIST_TIMEOUT: Duration = Duration::from_secs(10);
+
     pub fn new(feature_repo: Arc<dyn ServerFeatureRepository>) -> Self {
         Self { feature_repo }
+    }
+
+    async fn with_list_timeout<T, E, F>(label: &str, fut: F) -> Option<Result<T, E>>
+    where
+        F: Future<Output = Result<T, E>>,
+    {
+        match tokio::time::timeout(Self::LIST_TIMEOUT, fut).await {
+            Ok(result) => Some(result),
+            Err(_) => {
+                warn!(
+                    "[FeatureDiscovery] {} timed out after {:?}",
+                    label,
+                    Self::LIST_TIMEOUT
+                );
+                None
+            }
+        }
     }
 
     /// Discover features from a connected MCP client and cache them
@@ -31,50 +52,83 @@ impl FeatureDiscoveryService {
         );
 
         let mut discovered = CachedFeatures::default();
+        let capabilities = client.peer_info().map(|info| info.capabilities.clone());
+        let capabilities_known = capabilities.is_some();
+        let has_tools = capabilities
+            .as_ref()
+            .and_then(|c| c.tools.as_ref())
+            .is_some();
+        let has_prompts = capabilities
+            .as_ref()
+            .and_then(|c| c.prompts.as_ref())
+            .is_some();
+        let has_resources = capabilities
+            .as_ref()
+            .and_then(|c| c.resources.as_ref())
+            .is_some();
 
-        // Discover tools
-        match client.list_all_tools().await {
-            Ok(tools) => {
-                discovered.tools = tools
-                    .into_iter()
-                    .map(|t| convert_to_feature(space_id, server_id, t))
-                    .collect();
-                debug!(
-                    "[FeatureDiscovery] Discovered {} tools",
-                    discovered.tools.len()
-                );
+        debug!(
+            "[FeatureDiscovery] Capability gates for {}/{}: known={}, tools={}, prompts={}, resources={}",
+            space_id, server_id, capabilities_known, has_tools, has_prompts, has_resources
+        );
+
+        if !capabilities_known || has_tools {
+            match Self::with_list_timeout("tools/list", client.list_all_tools()).await {
+                Some(Ok(tools)) => {
+                    discovered.tools = tools
+                        .into_iter()
+                        .map(|t| convert_to_feature(space_id, server_id, t))
+                        .collect();
+                    debug!(
+                        "[FeatureDiscovery] Discovered {} tools",
+                        discovered.tools.len()
+                    );
+                }
+                Some(Err(e)) => warn!("[FeatureDiscovery] Failed to list tools: {}", e),
+                None => {}
             }
-            Err(e) => warn!("[FeatureDiscovery] Failed to list tools: {}", e),
+        } else {
+            debug!(
+                "[FeatureDiscovery] Skipping tools/list: server explicitly did not advertise tools capability"
+            );
         }
 
-        // Discover prompts
-        match client.list_all_prompts().await {
-            Ok(prompts) => {
-                discovered.prompts = prompts
-                    .into_iter()
-                    .map(|p| convert_to_feature(space_id, server_id, p))
-                    .collect();
-                debug!(
-                    "[FeatureDiscovery] Discovered {} prompts",
-                    discovered.prompts.len()
-                );
+        if !capabilities_known || has_prompts {
+            match Self::with_list_timeout("prompts/list", client.list_all_prompts()).await {
+                Some(Ok(prompts)) => {
+                    discovered.prompts = prompts
+                        .into_iter()
+                        .map(|p| convert_to_feature(space_id, server_id, p))
+                        .collect();
+                    debug!(
+                        "[FeatureDiscovery] Discovered {} prompts",
+                        discovered.prompts.len()
+                    );
+                }
+                Some(Err(e)) => warn!("[FeatureDiscovery] Failed to list prompts: {}", e),
+                None => {}
             }
-            Err(e) => warn!("[FeatureDiscovery] Failed to list prompts: {}", e),
+        } else {
+            debug!("[FeatureDiscovery] Skipping prompts/list: server explicitly did not advertise prompts capability");
         }
 
-        // Discover resources
-        match client.list_all_resources().await {
-            Ok(resources) => {
-                discovered.resources = resources
-                    .into_iter()
-                    .map(|r| resource_to_feature(space_id, server_id, r))
-                    .collect();
-                debug!(
-                    "[FeatureDiscovery] Discovered {} resources",
-                    discovered.resources.len()
-                );
+        if !capabilities_known || has_resources {
+            match Self::with_list_timeout("resources/list", client.list_all_resources()).await {
+                Some(Ok(resources)) => {
+                    discovered.resources = resources
+                        .into_iter()
+                        .map(|r| resource_to_feature(space_id, server_id, r))
+                        .collect();
+                    debug!(
+                        "[FeatureDiscovery] Discovered {} resources",
+                        discovered.resources.len()
+                    );
+                }
+                Some(Err(e)) => warn!("[FeatureDiscovery] Failed to list resources: {}", e),
+                None => {}
             }
-            Err(e) => warn!("[FeatureDiscovery] Failed to list resources: {}", e),
+        } else {
+            debug!("[FeatureDiscovery] Skipping resources/list: server explicitly did not advertise resources capability");
         }
 
         // Cache all features in database

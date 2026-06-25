@@ -3,7 +3,7 @@
 //! Syncs servers from user space JSON configuration files into InstalledServer records.
 //! This enables a unified connection flow regardless of server source (Registry vs UserConfig).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -74,6 +74,25 @@ impl UserSpaceSyncService {
 
         // 2. Convert to ServerDefinitions
         let definitions = config.to_server_definitions(space_id, file_path.to_path_buf());
+
+        // User-config keys are normalized into MCP-safe server IDs. Do not allow
+        // two entries to collapse to the same ID; that would make the sync loop
+        // update the same InstalledServer row and appear to overwrite the previous
+        // custom server.
+        let mut seen_ids: HashMap<String, String> = HashMap::new();
+        for definition in &definitions {
+            if let Some(first_name) =
+                seen_ids.insert(definition.id.clone(), definition.name.clone())
+            {
+                anyhow::bail!(
+                    "Multiple custom servers normalize to the same id '{}': '{}' and '{}'. Rename one mcpServers key to a distinct alphanumeric/hyphen/dot id.",
+                    definition.id,
+                    first_name,
+                    definition.name
+                );
+            }
+        }
+
         let file_server_ids: HashSet<String> = definitions.iter().map(|d| d.id.clone()).collect();
 
         debug!(

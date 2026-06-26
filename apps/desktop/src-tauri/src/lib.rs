@@ -558,11 +558,26 @@ pub fn run() {
                 state.approval_broker = Some(approval_broker);
                 state.session_roots = Some(session_roots);
 
+                // Attach the admin SSE bus so inbound OAuth consent reaches the
+                // web admin (not just the desktop webview) on the auto-start path.
+                let ui_bus = if let Some(admin) =
+                    app_handle_for_sm.try_state::<Arc<RwLock<services::AdminServerState>>>()
+                {
+                    let admin_guard = admin.read().await;
+                    services::admin_server::set_gateway_running(&admin_guard, true);
+                    if let Some(ref gw) = state.gateway_state {
+                        services::admin_server::register_gateway_sse(&admin_guard, gw).await;
+                    }
+                    Some(admin_guard.ui_event_bus.clone())
+                } else {
+                    None
+                };
+
                 if let Some(ref gw) = state.gateway_state {
                     crate::commands::gateway::wire_consent_ui_notifications(
                         &app_handle_for_sm,
                         gw,
-                        None,
+                        ui_bus.clone(),
                     )
                     .await;
                 }

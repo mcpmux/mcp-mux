@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Tauri dev with web admin enabled for the session (MCPMUX_DEV_ADMIN=1).
+ * Tauri dev with web admin enabled for the session (MCPMUX_DEV_ADMIN=1,
+ * VITE_ADMIN_WEB=1). Vite proxies /api → :45819 so the browser tab at :1420
+ * uses the same REST + SSE transport as production web admin.
  * Opens the HMR URL in the default browser after the admin health check passes.
  *
  * Usage (repo root): pnpm dev:admin
@@ -149,6 +151,7 @@ async function main() {
       ...process.env,
       MCPMUX_DEV_ADMIN: '1',
       MCPMUX_DEV_PREP_DONE: '1',
+      VITE_ADMIN_WEB: 'true',
     },
     shell: process.platform === 'win32',
   });

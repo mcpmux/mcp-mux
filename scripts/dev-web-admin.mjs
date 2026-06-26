@@ -64,6 +64,7 @@ function startBackendDetached() {
     ...process.env,
     MCPMUX_DEV_PREP_DONE: '1',
     MCPMUX_DEV_ADMIN: '1',
+    VITE_ADMIN_WEB: 'true',
   };
   const child = spawn(pnpm, ['dev'], {
     cwd: REPO_ROOT,

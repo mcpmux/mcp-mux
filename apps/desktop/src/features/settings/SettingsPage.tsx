@@ -69,12 +69,14 @@ import { getLogRetentionDays, setLogRetentionDays as saveLogRetentionDays } from
 import { MetaToolAuditLog, MetaToolGrantsPanel } from '@/features/metaTools';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
-import { VIEWER_IDENTITY_CHANGED } from '@/hooks/use-viewer-identity.hook';
+import { VIEWER_IDENTITY_CHANGED, useViewerIdentity } from '@/hooks/use-viewer-identity.hook';
 import {
   getMissingMachineProfileField,
   isMachineProfileComplete,
   toMachineProfilePayload,
 } from '@/lib/machine-profile.helpers';
+import { isViewingLocally } from '@/lib/viewer-device.helpers';
+import { MachineProfileEditor } from '@/components/machine-profile-editor';
 import { isTauri } from '@/lib/api/transport';
 import {
   createMachine,
@@ -90,7 +92,6 @@ import {
   listWorkspaceBindings,
   deleteWorkspaceBinding,
 } from '@/lib/api/workspaceBindings';
-import { ServerIcon } from '@/components/ServerIcon';
 
 interface GatewayPublicUrlSettings {
   configuredPublicBaseUrl: string | null;
@@ -1553,15 +1554,17 @@ function MachineIdentitySection({
   }) => Promise<boolean>;
   t: TFunction<['settings', 'common']>;
 }) {
+  const viewer = useViewerIdentity();
+  const viewingLocally = isViewingLocally();
   const [machines, setMachines] = useState<Machine[]>([]);
   const [localMachineId, setLocalMachineIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [savingLocal, setSavingLocal] = useState(false);
-  const [registering, setRegistering] = useState(false);
+  const [savingGateway, setSavingGateway] = useState(false);
+  const [registeringGateway, setRegisteringGateway] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
-  const [nameDraft, setNameDraft] = useState('');
-  const [iconDraft, setIconDraft] = useState('');
-  const [hostnameDraft, setHostnameDraft] = useState('');
+  const [gatewayNameDraft, setGatewayNameDraft] = useState('');
+  const [gatewayIconDraft, setGatewayIconDraft] = useState('');
+  const [gatewayHostnameDraft, setGatewayHostnameDraft] = useState('');
   const [registerName, setRegisterName] = useState('');
   const [registerIcon, setRegisterIcon] = useState('');
   const [registerHostname, setRegisterHostname] = useState('');
@@ -1570,9 +1573,6 @@ function MachineIdentitySection({
   >({});
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
-
-  const isViewingLocally =
-    isTauri() || ['localhost', '127.0.0.1', '[::1]', ''].includes(window.location.hostname);
 
   const localMachine = localMachineId
     ? machines.find((machine) => machine.id === localMachineId) ?? null
@@ -1585,9 +1585,9 @@ function MachineIdentitySection({
       setLocalMachineIdState(localId);
       const current = localId ? list.find((machine) => machine.id === localId) : null;
       if (current) {
-        setNameDraft(current.name);
-        setIconDraft(current.icon ?? '');
-        setHostnameDraft(current.hostname ?? '');
+        setGatewayNameDraft(current.name);
+        setGatewayIconDraft(current.icon ?? '');
+        setGatewayHostnameDraft(current.hostname ?? '');
       }
       const drafts: Record<string, { name: string; icon: string; hostname: string }> = {};
       for (const machine of list) {
@@ -1607,50 +1607,77 @@ function MachineIdentitySection({
 
   useEffect(() => {
     void loadMachines();
+    const onChanged = () => {
+      void loadMachines();
+    };
+    window.addEventListener(VIEWER_IDENTITY_CHANGED, onChanged);
+    return () => window.removeEventListener(VIEWER_IDENTITY_CHANGED, onChanged);
   }, []);
 
   useEffect(() => {
     if (localMachine) {
-      setNameDraft(localMachine.name);
-      setIconDraft(localMachine.icon ?? '');
-      setHostnameDraft(localMachine.hostname ?? '');
+      setGatewayNameDraft(localMachine.name);
+      setGatewayIconDraft(localMachine.icon ?? '');
+      setGatewayHostnameDraft(localMachine.hostname ?? '');
     }
   }, [localMachine]);
 
-  const handleSaveLocal = async () => {
+  const handleViewerSave = async () => {
+    const ok = await viewer.saveProfile();
+    if (ok) {
+      onSuccess(t('machineIdentity.toast.saved'), viewer.name ?? undefined);
+      return;
+    }
+    if (viewer.error === 'saveFailed') {
+      onError(t('machineIdentity.toast.failedSave'));
+      return;
+    }
+    if (
+      viewer.error === 'name' ||
+      viewer.error === 'icon' ||
+      viewer.error === 'hostname'
+    ) {
+      onError(t(`machineIdentity.${viewer.error}Required`));
+    }
+  };
+
+  const handleSaveGateway = async () => {
     if (!localMachine) return;
     const missingField = getMissingMachineProfileField({
-      name: nameDraft,
-      icon: iconDraft,
-      hostname: hostnameDraft,
+      name: gatewayNameDraft,
+      icon: gatewayIconDraft,
+      hostname: gatewayHostnameDraft,
     });
     if (missingField) {
       onError(t(`machineIdentity.${missingField}Required`));
       return;
     }
-    setSavingLocal(true);
+    setSavingGateway(true);
     try {
-      const updated = await updateMachine(localMachine.id, toMachineProfilePayload({
-        name: nameDraft,
-        icon: iconDraft,
-        hostname: hostnameDraft,
-      }));
+      const updated = await updateMachine(
+        localMachine.id,
+        toMachineProfilePayload({
+          name: gatewayNameDraft,
+          icon: gatewayIconDraft,
+          hostname: gatewayHostnameDraft,
+        }),
+      );
       setMachines((prev) =>
-        prev.map((machine) => (machine.id === updated.id ? updated : machine))
+        prev.map((machine) => (machine.id === updated.id ? updated : machine)),
       );
       window.dispatchEvent(new Event(VIEWER_IDENTITY_CHANGED));
       onSuccess(t('machineIdentity.toast.saved'), updated.name);
     } catch (err) {
       onError(
         t('machineIdentity.toast.failedSave'),
-        err instanceof Error ? err.message : String(err)
+        err instanceof Error ? err.message : String(err),
       );
     } finally {
-      setSavingLocal(false);
+      setSavingGateway(false);
     }
   };
 
-  const handleRegister = async () => {
+  const handleRegisterGateway = async () => {
     const missingField = getMissingMachineProfileField({
       name: registerName,
       icon: registerIcon,
@@ -1660,7 +1687,7 @@ function MachineIdentitySection({
       onError(t(`machineIdentity.${missingField}Required`));
       return;
     }
-    setRegistering(true);
+    setRegisteringGateway(true);
     try {
       const created = await createMachine(
         toMachineProfilePayload({
@@ -1680,10 +1707,10 @@ function MachineIdentitySection({
     } catch (err) {
       onError(
         t('machineIdentity.toast.failedRegister'),
-        err instanceof Error ? err.message : String(err)
+        err instanceof Error ? err.message : String(err),
       );
     } finally {
-      setRegistering(false);
+      setRegisteringGateway(false);
     }
   };
 
@@ -1710,10 +1737,10 @@ function MachineIdentitySection({
       setMachines((prev) =>
         prev.map((row) => (row.id === updated.id ? updated : row))
       );
-      if (localMachineId === updated.id) {
-        setNameDraft(updated.name);
-        setIconDraft(updated.icon ?? '');
-        setHostnameDraft(updated.hostname ?? '');
+      if (localMachineId === updated.id || viewer.machineId === updated.id) {
+        setGatewayNameDraft(updated.name);
+        setGatewayIconDraft(updated.icon ?? '');
+        setGatewayHostnameDraft(updated.hostname ?? '');
         window.dispatchEvent(new Event(VIEWER_IDENTITY_CHANGED));
       }
       onSuccess(t('machineIdentity.toast.saved'), updated.name);
@@ -1745,9 +1772,9 @@ function MachineIdentitySection({
       if (localMachineId === machine.id) {
         await setLocalMachineId(null);
         setLocalMachineIdState(null);
-        setNameDraft('');
-        setIconDraft('');
-        setHostnameDraft('');
+        setGatewayNameDraft('');
+        setGatewayIconDraft('');
+        setGatewayHostnameDraft('');
         window.dispatchEvent(new Event(VIEWER_IDENTITY_CHANGED));
       }
       setRowDrafts((prev) => {
@@ -1766,18 +1793,26 @@ function MachineIdentitySection({
     }
   };
 
-  const localProfileDraft = { name: nameDraft, icon: iconDraft, hostname: hostnameDraft };
-  const localDirty =
+  const gatewayProfileDraft = {
+    name: gatewayNameDraft,
+    icon: gatewayIconDraft,
+    hostname: gatewayHostnameDraft,
+  };
+  const gatewayDirty =
     localMachine &&
-    (nameDraft.trim() !== localMachine.name ||
-      (iconDraft.trim() || null) !== localMachine.icon ||
-      (hostnameDraft.trim() || null) !== localMachine.hostname);
-  const localCanSave = isMachineProfileComplete(localProfileDraft);
+    (gatewayNameDraft.trim() !== localMachine.name ||
+      (gatewayIconDraft.trim() || null) !== localMachine.icon ||
+      (gatewayHostnameDraft.trim() || null) !== localMachine.hostname);
+  const gatewayCanSave = isMachineProfileComplete(gatewayProfileDraft);
   const registerCanSave = isMachineProfileComplete({
     name: registerName,
     icon: registerIcon,
     hostname: registerHostname,
   });
+
+  const viewerSectionLabel = viewingLocally
+    ? t('machineIdentity.thisInstall')
+    : t('machineIdentity.thisViewer');
 
   return (
     <Card data-testid="settings-machine-identity-section">
@@ -1789,120 +1824,106 @@ function MachineIdentitySection({
         <CardDescription>{t('machineIdentity.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {loading ? (
+        {loading || viewer.isLoading ? (
           <div className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
             <Loader2 className="h-4 w-4 animate-spin" />
             {t('loading')}
           </div>
-        ) : localMachine ? (
-          <div className="space-y-4">
-            <p className="text-sm font-medium">
-              {isViewingLocally
-                ? t('machineIdentity.thisInstall')
-                : t('machineIdentity.thisGateway')}
-            </p>
-            <div className="flex items-start gap-3">
-              <div className="w-12 h-12 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] flex items-center justify-center flex-shrink-0">
-                {iconDraft.trim() ? (
-                  <ServerIcon icon={iconDraft.trim()} className="h-7 w-7 object-contain" fallback="🖥️" />
-                ) : (
-                  <Monitor className="h-5 w-5 text-[rgb(var(--muted))]" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0 space-y-3">
-                <div>
-                  <label className="text-xs font-medium text-[rgb(var(--muted))]">
-                    {t('machineIdentity.nameLabel')}
-                  </label>
-                  <input
-                    type="text"
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    className="mt-1 w-full px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
-                    data-testid="machine-identity-local-name"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-[rgb(var(--muted))]">
-                    {t('machineIdentity.iconLabel')}
-                  </label>
-                  <input
-                    type="text"
-                    value={iconDraft}
-                    onChange={(e) => setIconDraft(e.target.value)}
-                    placeholder="🖥️"
-                    className="mt-1 w-full px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
-                    data-testid="machine-identity-local-icon"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-[rgb(var(--muted))]">
-                    {t('machineIdentity.hostnameLabel')}
-                  </label>
-                  <input
-                    type="text"
-                    value={hostnameDraft}
-                    onChange={(e) => setHostnameDraft(e.target.value)}
-                    className="mt-1 w-full px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
-                    data-testid="machine-identity-local-hostname"
-                  />
-                </div>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void handleSaveLocal()}
-                  disabled={savingLocal || !localDirty || !localCanSave}
-                  data-testid="machine-identity-local-save"
-                >
-                  {savingLocal ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                  {t('machineIdentity.save')}
-                </Button>
-              </div>
-            </div>
-          </div>
         ) : (
-          <div className="space-y-4">
-            <p className="text-sm text-[rgb(var(--muted))]">{t('machineIdentity.notRegistered')}</p>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <input
-                type="text"
-                value={registerName}
-                onChange={(e) => setRegisterName(e.target.value)}
-                placeholder={t('machineIdentity.nameLabel')}
-                className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
-                data-testid="machine-identity-register-name"
-              />
-              <input
-                type="text"
-                value={registerIcon}
-                onChange={(e) => setRegisterIcon(e.target.value)}
-                placeholder={t('machineIdentity.iconLabel')}
-                className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
-                data-testid="machine-identity-register-icon"
-              />
-              <input
-                type="text"
-                value={registerHostname}
-                onChange={(e) => setRegisterHostname(e.target.value)}
-                onFocus={() => {
-                  if (!registerHostname) void handlePrefillRegisterHostname();
-                }}
-                placeholder={t('machineIdentity.hostnameLabel')}
-                className="px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--surface))]"
-                data-testid="machine-identity-register-hostname"
+          <>
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-medium">{viewerSectionLabel}</p>
+                {!viewingLocally && viewer.hints ? (
+                  <p className="mt-1 text-xs text-[rgb(var(--muted))]">{viewer.hints}</p>
+                ) : null}
+              </div>
+              <MachineProfileEditor
+                nameDraft={viewer.nameDraft}
+                iconDraft={viewer.iconDraft}
+                hostnameDraft={viewer.hostnameDraft}
+                onNameDraftChange={viewer.setNameDraft}
+                onIconDraftChange={viewer.setIconDraft}
+                onHostnameDraftChange={viewer.setHostnameDraft}
+                onSave={() => void handleViewerSave()}
+                isSaving={viewer.isSaving}
+                saveDisabled={!viewer.canSaveProfile}
+                nameLabel={t('machineIdentity.nameLabel')}
+                iconLabel={t('machineIdentity.iconLabel')}
+                hostnameLabel={t('machineIdentity.hostnameLabel')}
+                saveLabel={t('machineIdentity.save')}
+                testIdPrefix="machine-identity-viewer"
               />
             </div>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => void handleRegister()}
-              disabled={registering || !registerCanSave}
-              data-testid="machine-identity-register-btn"
-            >
-              {registering ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-              {t('machineIdentity.createMachine')}
-            </Button>
-          </div>
+
+            {!viewingLocally ? (
+              localMachine ? (
+                <div className="space-y-4 border-t border-[rgb(var(--border-subtle))] pt-6">
+                  <p className="text-sm font-medium">{t('machineIdentity.thisGateway')}</p>
+                  <MachineProfileEditor
+                    nameDraft={gatewayNameDraft}
+                    iconDraft={gatewayIconDraft}
+                    hostnameDraft={gatewayHostnameDraft}
+                    onNameDraftChange={setGatewayNameDraft}
+                    onIconDraftChange={setGatewayIconDraft}
+                    onHostnameDraftChange={setGatewayHostnameDraft}
+                    onSave={() => void handleSaveGateway()}
+                    isSaving={savingGateway}
+                    saveDisabled={!gatewayDirty || !gatewayCanSave}
+                    nameLabel={t('machineIdentity.nameLabel')}
+                    iconLabel={t('machineIdentity.iconLabel')}
+                    hostnameLabel={t('machineIdentity.hostnameLabel')}
+                    saveLabel={t('machineIdentity.save')}
+                    testIdPrefix="machine-identity-gateway"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-4 border-t border-[rgb(var(--border-subtle))] pt-6">
+                  <p className="text-sm font-medium">{t('machineIdentity.thisGateway')}</p>
+                  <p className="text-sm text-[rgb(var(--muted))]">{t('machineIdentity.notRegistered')}</p>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <input
+                      type="text"
+                      value={registerName}
+                      onChange={(e) => setRegisterName(e.target.value)}
+                      placeholder={t('machineIdentity.nameLabel')}
+                      className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm"
+                      data-testid="machine-identity-register-name"
+                    />
+                    <input
+                      type="text"
+                      value={registerIcon}
+                      onChange={(e) => setRegisterIcon(e.target.value)}
+                      placeholder={t('machineIdentity.iconLabel')}
+                      className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm"
+                      data-testid="machine-identity-register-icon"
+                    />
+                    <input
+                      type="text"
+                      value={registerHostname}
+                      onChange={(e) => setRegisterHostname(e.target.value)}
+                      onFocus={() => {
+                        if (!registerHostname) void handlePrefillRegisterHostname();
+                      }}
+                      placeholder={t('machineIdentity.hostnameLabel')}
+                      className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] font-mono px-3 py-1.5 text-sm"
+                      data-testid="machine-identity-register-hostname"
+                    />
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => void handleRegisterGateway()}
+                    disabled={registeringGateway || !registerCanSave}
+                    data-testid="machine-identity-register-btn"
+                  >
+                    {registeringGateway ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {t('machineIdentity.createMachine')}
+                  </Button>
+                </div>
+              )
+            ) : null}
+          </>
         )}
 
         <div className="border-t border-[rgb(var(--border))] pt-4">
@@ -1951,7 +1972,7 @@ function MachineIdentitySection({
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
                           {machine.id === localMachineId
-                            ? isViewingLocally
+                            ? viewingLocally
                               ? t('machineIdentity.thisInstall')
                               : t('machineIdentity.thisGateway')
                             : machine.name}

@@ -51,6 +51,7 @@ interface ViewerIdentityContextValue {
   error: string | null;
   setError: (value: string | null) => void;
   saveProfile: () => Promise<boolean>;
+  canSaveProfile: boolean;
   openPrompt: () => void;
   closePrompt: () => void;
 }
@@ -172,6 +173,9 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     setName(machine?.name ?? null);
     setIcon(machine?.icon ?? '');
     setHostname(machine?.hostname ?? '');
+    setNameDraft(machine?.name ?? '');
+    setIconDraft(machine?.icon ?? '');
+    setHostnameDraft(machine?.hostname ?? '');
     const isComplete =
       machine != null &&
       isMachineProfileComplete({
@@ -179,11 +183,6 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
         icon: machine.icon,
         hostname: machine.hostname,
       });
-    if (!isComplete) {
-      setNameDraft(machine?.name ?? '');
-      setIconDraft(machine?.icon ?? '');
-      setHostnameDraft(machine?.hostname ?? '');
-    }
     setShowPrompt(!isComplete);
   }, []);
 
@@ -306,6 +305,15 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     setError(null);
   }, [name]);
 
+  const profileDraft = { name: nameDraft, icon: iconDraft, hostname: hostnameDraft };
+  const isProfileDirty =
+    !machineId ||
+    nameDraft !== (name ?? '') ||
+    iconDraft !== icon ||
+    hostnameDraft !== hostname;
+  const canSaveProfile =
+    isMachineProfileComplete(profileDraft) && isProfileDirty;
+
   return {
     name,
     icon,
@@ -323,6 +331,7 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     error,
     setError,
     saveProfile,
+    canSaveProfile,
     openPrompt,
     closePrompt,
   };

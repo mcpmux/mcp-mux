@@ -3,11 +3,11 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import { Monitor, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Button, Card, CardContent } from '@mcpmux/ui';
+import { MachineProfileEditor } from '@/components/machine-profile-editor';
 import { ServerIcon } from '@/components/ServerIcon';
 import { useViewerIdentity } from '@/hooks/use-viewer-identity.hook';
-import { isMachineProfileComplete } from '@/lib/machine-profile.helpers';
 import { NAV_SETTINGS } from '@/lib/navigation';
 import { useNavigateTo } from '@/stores';
 
@@ -32,15 +32,13 @@ export function ViewerIdentityModal() {
     error,
     setError,
     saveProfile,
+    canSaveProfile,
     closePrompt,
   } = useViewerIdentity();
 
   if (isLoading || !showPrompt) {
     return null;
   }
-
-  const profileDraft = { name: nameDraft, icon: iconDraft, hostname: hostnameDraft };
-  const canSave = isMachineProfileComplete(profileDraft);
 
   const handleSave = async () => {
     const ok = await saveProfile();
@@ -84,75 +82,24 @@ export function ViewerIdentityModal() {
             {hints ? <p className="text-xs text-[rgb(var(--muted))]">{hints}</p> : null}
           </div>
 
-          <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
-              {iconDraft.trim() ? (
-                <ServerIcon icon={iconDraft.trim()} className="h-7 w-7 object-contain" fallback="🖥️" />
-              ) : (
-                <Monitor className="h-5 w-5 text-[rgb(var(--muted))]" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1 space-y-3">
-              <div>
-                <label className="text-xs font-medium text-[rgb(var(--muted))]">
-                  {t('settings:machineIdentity.nameLabel')}
-                </label>
-                <input
-                  type="text"
-                  value={nameDraft}
-                  onChange={(e) => setNameDraft(e.target.value)}
-                  placeholder={t('common:viewerIdentity.namePlaceholder')}
-                  className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm"
-                  autoFocus
-                  disabled={isSaving}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !isSaving && canSave) {
-                      void handleSave();
-                    }
-                  }}
-                  data-testid="viewer-identity-name-input"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[rgb(var(--muted))]">
-                  {t('settings:machineIdentity.iconLabel')}
-                </label>
-                <input
-                  type="text"
-                  value={iconDraft}
-                  onChange={(e) => setIconDraft(e.target.value)}
-                  placeholder="🖥️"
-                  disabled={isSaving}
-                  className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm"
-                  data-testid="viewer-identity-icon-input"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[rgb(var(--muted))]">
-                  {t('settings:machineIdentity.hostnameLabel')}
-                </label>
-                <input
-                  type="text"
-                  value={hostnameDraft}
-                  onChange={(e) => setHostnameDraft(e.target.value)}
-                  disabled={isSaving}
-                  className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-sm"
-                  data-testid="viewer-identity-hostname-input"
-                />
-              </div>
-            </div>
-          </div>
+          <MachineProfileEditor
+            nameDraft={nameDraft}
+            iconDraft={iconDraft}
+            hostnameDraft={hostnameDraft}
+            onNameDraftChange={setNameDraft}
+            onIconDraftChange={setIconDraft}
+            onHostnameDraftChange={setHostnameDraft}
+            onSave={() => void handleSave()}
+            isSaving={isSaving}
+            saveDisabled={!canSaveProfile}
+            nameLabel={t('settings:machineIdentity.nameLabel')}
+            iconLabel={t('settings:machineIdentity.iconLabel')}
+            hostnameLabel={t('settings:machineIdentity.hostnameLabel')}
+            saveLabel={isSaving ? t('common:viewerIdentity.saving') : t('common:viewerIdentity.save')}
+            testIdPrefix="viewer-identity"
+          />
 
           {errorMessage ? <p className="text-sm text-red-500">{errorMessage}</p> : null}
-
-          <Button
-            variant="primary"
-            className="w-full"
-            onClick={() => void handleSave()}
-            disabled={isSaving || !canSave}
-          >
-            {isSaving ? t('common:viewerIdentity.saving') : t('common:viewerIdentity.save')}
-          </Button>
 
           <p className="text-center text-xs text-[rgb(var(--muted))]">
             {t('common:viewerIdentity.settingsHint')}{' '}

@@ -90,6 +90,7 @@
     "description": "Identify this McpMux install among your homelab boxes and cloud agents.",
     "notRegistered": "This install has no machine identity yet. Register one on the Projects page, or create one below.",
     "thisInstall": "This install",
+    "thisViewer": "This viewer",
     "thisGateway": "This gateway",
     "nameLabel": "Name",
     "iconLabel": "Icon",

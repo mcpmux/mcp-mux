@@ -10,6 +10,8 @@
     "dev:web": "pnpm --filter @mcpmux/desktop dev:web",
     "dev:web:admin": "node scripts/dev-web-admin.mjs",
     "dev:admin": "node scripts/dev-admin.mjs",
+    "dev:stop": "node scripts/dev-stop.mjs",
+    "dev:rebuild": "node scripts/dev-rebuild.mjs",
     "build": "pnpm --filter @mcpmux/desktop build",
     "build:web": "pnpm --filter @mcpmux/desktop build:web",
     "build:web:admin": "pnpm --filter @mcpmux/desktop build:web:admin",

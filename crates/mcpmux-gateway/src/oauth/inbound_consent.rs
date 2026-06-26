@@ -61,6 +61,8 @@ pub struct ConsentRequestDetails {
     pub state: Option<String>,
     pub expires_at: i64,
     pub consent_token: String,
+    /// True when the inbound client has not been approved yet (first connect).
+    pub is_new_client: bool,
 }
 
 /// Request to approve or deny OAuth consent.
@@ -124,6 +126,20 @@ pub async fn get_pending_consent(
         }
     })?;
 
+    let is_new_client = {
+        let state = gateway_state.read().await;
+        match state.inbound_client_repository() {
+            Some(repo) => repo
+                .get_client(&auth.client_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|c| !c.approved)
+                .unwrap_or(false),
+            None => false,
+        }
+    };
+
     let details = ConsentRequestDetails {
         request_id: request_id.clone(),
         client_id: auth.client_id.clone(),
@@ -136,6 +152,7 @@ pub async fn get_pending_consent(
         state: auth.state.clone(),
         expires_at: auth.expires_at,
         consent_token,
+        is_new_client,
     };
 
     info!(

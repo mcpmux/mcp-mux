@@ -48,6 +48,7 @@ export interface ConsentRequestDetails {
   state: string | null;
   expiresAt: number;
   consentToken: string;
+  isNewClient: boolean;
 }
 
 /** Consent validation or approval error from the backend. */

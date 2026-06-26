@@ -116,7 +116,17 @@
     "allowWait": "Allow (wait…)",
     "deny": "Deny",
     "approveFailed": "Failed to approve connection",
-    "denyFailed": "Failed to deny connection"
+    "denyFailed": "Failed to deny connection",
+    "nameMachine": {
+      "title": "Name this machine",
+      "desc": "{{clientName}} is connecting for the first time. Name this machine so you can identify it in workspace bindings.",
+      "sectionLabel": "Machine",
+      "allowBtn": "Allow & Connect",
+      "allowWait": "Allow & Connect (wait…)",
+      "newMachine": "New machine",
+      "namePlaceholder": "My Laptop",
+      "nameRequired": "Enter a name for this machine"
+    }
   },
   "fallbackClientName": "Client"
 }

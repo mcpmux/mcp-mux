@@ -100,7 +100,9 @@ pub struct WorkspaceBindingInput {
 fn parse_optional_machine_id(value: Option<&str>) -> Result<Option<Uuid>, String> {
     match value {
         None | Some("") => Ok(None),
-        Some(raw) => Uuid::parse_str(raw).map(Some).map_err(|e| format!("bad machine_id: {e}")),
+        Some(raw) => Uuid::parse_str(raw)
+            .map(Some)
+            .map_err(|e| format!("bad machine_id: {e}")),
     }
 }
 
@@ -411,9 +413,10 @@ pub async fn update_workspace_binding(
         .list()
         .await
         .map_err(|e| e.to_string())?;
-    if all.iter().any(|b| {
-        b.id != id_uuid && binding_scope_conflicts(b, &normalized, machine_id, None)
-    }) {
+    if all
+        .iter()
+        .any(|b| b.id != id_uuid && binding_scope_conflicts(b, &normalized, machine_id, None))
+    {
         return Err(format!(
             "Another mapping already uses {normalized}. Pick a different folder."
         ));

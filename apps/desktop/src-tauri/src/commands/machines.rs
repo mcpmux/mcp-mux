@@ -119,9 +119,7 @@ pub async fn update_machine(
     }
     machine.updated_at = Utc::now();
 
-    repo.update(&machine)
-        .await
-        .map_err(|e| e.to_string())?;
+    repo.update(&machine).await.map_err(|e| e.to_string())?;
 
     Ok(machine.into())
 }

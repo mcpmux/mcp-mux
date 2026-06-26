@@ -10,16 +10,15 @@ use crate::admin::command_bridge::space::UpdateSpaceInput;
 use crate::admin::command_bridge::write as bridge;
 use crate::admin::command_bridge::write::{
     AddMemberBody, BuiltinServerEnabledBody, BuiltinToolEnabledBody, CloneServerBody,
-    CreateClientBody, CreateFeatureSetBody, CreateMachineBody, CreateSpaceBody, DisconnectServerBody,
-    GatewayPortBody, GatewayPublicUrlBody, GatewayStartBody, InstallServerBody, LogRetentionBody,
-    MetaToolApprovalBody, MetaToolRevokeBody, MetaToolsEnabledBody, MetaToolsRequireApprovalBody,
-    OAuthClientUpdateBody, OAuthGrantBody, SaveServerInputsBody, SaveSpaceConfigBody,
-    ServerConnectionBody, ServerUpdateSettingsBody, SetClientMachineIdBody, SetLocalMachineIdBody,
-    SetMembersBody,
-    SetServerDisplayNameBody, SetServerEnabledBody, SetServerOAuthConnectedBody, SpaceBaseDirBody,
-    StartupSettingsBody, UninstallServerBody, UpdateChannelBody, UpdateFeatureSetBody,
-    UpdateMachineBody, UploadIconBody, WorkspaceAppearanceBody, WorkspaceBindingBody,
-    WorkspaceMappingPromptBody,
+    CreateClientBody, CreateFeatureSetBody, CreateMachineBody, CreateSpaceBody,
+    DisconnectServerBody, GatewayPortBody, GatewayPublicUrlBody, GatewayStartBody,
+    InstallServerBody, LogRetentionBody, MetaToolApprovalBody, MetaToolRevokeBody,
+    MetaToolsEnabledBody, MetaToolsRequireApprovalBody, OAuthClientUpdateBody, OAuthGrantBody,
+    SaveServerInputsBody, SaveSpaceConfigBody, ServerConnectionBody, ServerUpdateSettingsBody,
+    SetClientMachineIdBody, SetLocalMachineIdBody, SetMembersBody, SetServerDisplayNameBody,
+    SetServerEnabledBody, SetServerOAuthConnectedBody, SpaceBaseDirBody, StartupSettingsBody,
+    UninstallServerBody, UpdateChannelBody, UpdateFeatureSetBody, UpdateMachineBody,
+    UploadIconBody, WorkspaceAppearanceBody, WorkspaceBindingBody, WorkspaceMappingPromptBody,
 };
 use crate::admin::handlers::error::ApiError;
 use crate::admin::router::AdminState;

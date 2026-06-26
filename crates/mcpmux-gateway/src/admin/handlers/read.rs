@@ -291,7 +291,9 @@ pub async fn get_local_machine_id(
 }
 
 pub async fn get_hostname() -> Result<Json<Value>, ApiError> {
-    bridge::get_hostname().map(ok).map_err(ApiError::from_bridge)
+    bridge::get_hostname()
+        .map(ok)
+        .map_err(ApiError::from_bridge)
 }
 
 pub async fn get_client_machine_id(

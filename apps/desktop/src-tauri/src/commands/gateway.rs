@@ -3,11 +3,11 @@
 //! IPC commands for controlling the local MCP gateway server.
 
 use crate::commands::server_manager::ServerManagerState;
+use crate::services::ui_events::OAUTH_CONSENT_REQUEST_CHANNEL;
 use crate::AppState;
 use mcpmux_core::service::{allocate_dynamic_port, is_port_available};
 use mcpmux_core::DomainEvent;
 use mcpmux_gateway::admin::ui_events::AdminUiEventBus;
-use crate::services::ui_events::OAUTH_CONSENT_REQUEST_CHANNEL;
 use mcpmux_gateway::{
     ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, OAuthCompleteEvent,
     PoolService, ResolvedTransport, ServerKey, ServerManager,

@@ -222,8 +222,7 @@ impl InboundClientRepository {
             approved: approved_int != 0,
             reports_roots: reports_roots_int != 0,
             roots_capability_known: roots_capability_known_int != 0,
-            machine_id: machine_id_str
-                .and_then(|s| Uuid::parse_str(&s).ok()),
+            machine_id: machine_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
         })
     }
 
@@ -450,11 +449,7 @@ impl InboundClientRepository {
     }
 
     /// Assign or clear the machine id for an inbound OAuth client.
-    pub async fn set_machine_id(
-        &self,
-        client_id: &str,
-        machine_id: Option<Uuid>,
-    ) -> Result<()> {
+    pub async fn set_machine_id(&self, client_id: &str, machine_id: Option<Uuid>) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
         let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

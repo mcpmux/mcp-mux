@@ -6,8 +6,8 @@ use std::sync::Arc;
 use mcpmux_core::{
     AppSettingsRepository, ApplicationServices, FeatureSetRepository, GatewayPortService,
     MachineRepository, ServerDiscoveryService, ServerFeatureRepository, ServerLogManager,
-    SpaceBaseDirRepository, SpaceBuiltinConfigRepository, SpaceService, WorkspaceAppearanceRepository,
-    WorkspaceBindingRepository,
+    SpaceBaseDirRepository, SpaceBuiltinConfigRepository, SpaceService,
+    WorkspaceAppearanceRepository, WorkspaceBindingRepository,
 };
 use mcpmux_storage::InboundClientRepository;
 

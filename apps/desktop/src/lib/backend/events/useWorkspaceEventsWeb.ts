@@ -1,10 +1,19 @@
 /**
  * SSE workspace event channels for web admin mode.
+ *
+ * Uses the shared admin-sse-hub connection instead of opening a second
+ * EventSource, avoiding HTTP/1.1 connection starvation and ensuring workspace
+ * events are gated behind enableAdminSse() like all other domain channels.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
 
 import { isTauri } from '../data/transport';
+import {
+  acquireAdminSseConsumer,
+  releaseAdminSseConsumer,
+  subscribeAdminSseRaw,
+} from './admin-sse-hub';
 
 import type {
   WorkspaceChannelCallback,
@@ -31,20 +40,23 @@ export function useWorkspaceEventsWeb() {
     if (isTauri()) {
       return;
     }
-    const source = new EventSource('/api/v1/events');
 
-    for (const channel of ALL_WORKSPACE_CHANNELS) {
-      source.addEventListener(channel, (event: MessageEvent<string>) => {
-        try {
-          const payload = JSON.parse(event.data) as WorkspacePayloadTypeMap[typeof channel];
-          handlersRef.current.get(channel)?.forEach((handler) => handler(payload));
-        } catch {
-          // ignore malformed frames
-        }
-      });
-    }
+    acquireAdminSseConsumer();
 
-    return () => source.close();
+    const unsubs = ALL_WORKSPACE_CHANNELS.map((channel) =>
+      subscribeAdminSseRaw(channel, (payload) => {
+        handlersRef.current
+          .get(channel)
+          ?.forEach((handler) =>
+            handler(payload as WorkspacePayloadTypeMap[typeof channel])
+          );
+      })
+    );
+
+    return () => {
+      unsubs.forEach((unsub) => unsub());
+      releaseAdminSseConsumer();
+    };
   }, []);
 
   /**

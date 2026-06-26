@@ -139,8 +139,8 @@ fn build_inbound_client_from_request(
         // Capability bits default off / unknown; the gateway flips them
         // on the first `initialize` for any session of this client.
         reports_roots: false,
-            roots_capability_known: false,
-            machine_id: None,
+        roots_capability_known: false,
+        machine_id: None,
     }
 }
 

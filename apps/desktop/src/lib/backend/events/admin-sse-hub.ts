@@ -27,6 +27,7 @@ export const ADMIN_SSE_CHANNELS: DomainEventChannel[] = [
 ];
 
 type ChannelHandler = (payload: DomainEventPayload) => void;
+type RawChannelHandler = (payload: unknown) => void;
 
 let sharedSource: EventSource | null = null;
 let consumerCount = 0;
@@ -34,6 +35,8 @@ let sseEnabled = false;
 const channelHandlers = new Map<DomainEventChannel, Set<ChannelHandler>>();
 const allHandlers = new Set<AllEventsCallback>();
 const lastEventListeners = new Set<(event: { channel: DomainEventChannel; payload: DomainEventPayload }) => void>();
+/** Handlers for non-domain channels (workspace, meta-tool, etc.) sharing the same SSE connection. */
+const rawChannelHandlers = new Map<string, Set<RawChannelHandler>>();
 
 /**
  * Dispatch an SSE frame to all registered handlers.
@@ -61,6 +64,17 @@ function ensureSharedSource(): void {
       try {
         const payload = JSON.parse(event.data) as DomainEventPayload;
         dispatch(channel, payload);
+      } catch {
+        // ignore malformed frames
+      }
+    });
+  }
+
+  for (const [channel, handlers] of rawChannelHandlers) {
+    source.addEventListener(channel, (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as unknown;
+        handlers.forEach((handler) => handler(payload));
       } catch {
         // ignore malformed frames
       }
@@ -151,5 +165,31 @@ export function onAdminSseLastEvent(
   lastEventListeners.add(listener);
   return () => {
     lastEventListeners.delete(listener);
+  };
+}
+
+/**
+ * Subscribe to a non-domain SSE channel on the shared connection (e.g. workspace,
+ * meta-tool, OAuth channels). Attaches to the live source immediately if already
+ * open; otherwise the listener is registered for when the source next opens.
+ */
+export function subscribeAdminSseRaw(channel: string, handler: RawChannelHandler): () => void {
+  if (!rawChannelHandlers.has(channel)) {
+    rawChannelHandlers.set(channel, new Set());
+  }
+  rawChannelHandlers.get(channel)!.add(handler);
+
+  if (sharedSource) {
+    sharedSource.addEventListener(channel, (event: MessageEvent<string>) => {
+      try {
+        handler(JSON.parse(event.data) as unknown);
+      } catch {
+        // ignore malformed frames
+      }
+    });
+  }
+
+  return () => {
+    rawChannelHandlers.get(channel)?.delete(handler);
   };
 }

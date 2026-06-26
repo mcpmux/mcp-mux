@@ -322,7 +322,9 @@ impl AppSettingsService {
             }
             None => {
                 info!("[Settings] Clearing local_machine_id");
-                self.repository.delete(keys::gateway::LOCAL_MACHINE_ID).await
+                self.repository
+                    .delete(keys::gateway::LOCAL_MACHINE_ID)
+                    .await
             }
         }
     }

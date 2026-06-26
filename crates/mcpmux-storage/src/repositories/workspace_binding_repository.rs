@@ -332,10 +332,7 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         }))
     }
 
-    async fn find_exact_global(
-        &self,
-        workspace_root: &str,
-    ) -> Result<Option<WorkspaceBinding>> {
+    async fn find_exact_global(&self, workspace_root: &str) -> Result<Option<WorkspaceBinding>> {
         let bindings = self.list().await?;
         Ok(bindings.into_iter().find(|b| {
             b.workspace_root == workspace_root && b.machine_id.is_none() && b.client_id.is_none()

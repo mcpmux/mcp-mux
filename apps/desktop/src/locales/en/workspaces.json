@@ -43,6 +43,7 @@
     "unmapped": "Unmapped",
     "offline": "Offline",
     "live": "Live",
+    "badgeLiveUnbound": "UNBOUND",
     "routesTo": "Enabled feature sets",
     "in": "Space",
     "unbound": "unbound",

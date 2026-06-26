@@ -97,12 +97,13 @@ import type { Space } from '@/lib/api/spaces';
  *
  * Each card is a workspace entry, unioning bindings and live reported roots
  * (dedup'd by normalized path). Status is conveyed with a corner dot + pill:
- *   • LIVE + unmapped → amber
- *   • LIVE + mapped   → emerald
- *   • OFFLINE + mapped → neutral
+ *   • LIVE + unmapped              → amber UNMAPPED
+ *   • LIVE + bound (other machine) → amber UNBOUND
+ *   • LIVE + bound (this machine)  → emerald LIVE
+ *   • OFFLINE + mapped             → neutral
  */
 
-type EntryKind = 'unmapped-live' | 'mapped-live' | 'mapped-offline';
+type EntryKind = 'unmapped-live' | 'live-unbound' | 'mapped-live' | 'mapped-offline';
 interface Entry {
   id: string;
   kind: EntryKind;
@@ -118,6 +119,19 @@ interface Entry {
 function primaryBinding(entry: Entry): WorkspaceBinding | null {
   return (
     entry.bindings.find((b) => b.machine_id == null) ?? entry.bindings[0] ?? null
+  );
+}
+
+/**
+ * True when at least one binding applies on this install: global or scoped to
+ * the local machine.
+ */
+function entryIsBoundForCurrentMachine(
+  entry: Entry,
+  localMachineId: string | null,
+): boolean {
+  return entry.bindings.some(
+    (b) => b.machine_id == null || b.machine_id === localMachineId,
   );
 }
 
@@ -279,13 +293,19 @@ export function WorkspacesPage() {
         bindings: binds,
         isLive: true,
       });
-      list.push({
+      const entry: Entry = {
         id: primary?.id ?? `live:${root}`,
-        kind: binds.length > 0 ? 'mapped-live' : 'unmapped-live',
+        kind: 'unmapped-live',
         root,
         bindings: binds,
         isLive: true,
-      });
+      };
+      if (binds.length > 0 && entryIsBoundForCurrentMachine(entry, localMachineId)) {
+        entry.kind = 'mapped-live';
+      } else if (binds.length > 0) {
+        entry.kind = 'live-unbound';
+      }
+      list.push(entry);
     }
     for (const b of bindings) {
       const key = b.workspace_root.toLowerCase();
@@ -309,14 +329,15 @@ export function WorkspacesPage() {
     }
     const rank: Record<EntryKind, number> = {
       'unmapped-live': 0,
-      'mapped-live': 1,
-      'mapped-offline': 2,
+      'live-unbound': 1,
+      'mapped-live': 2,
+      'mapped-offline': 3,
     };
     return list.sort((a, b) => {
       const o = rank[a.kind] - rank[b.kind];
       return o !== 0 ? o : a.root.localeCompare(b.root);
     });
-  }, [bindings, bindingsByRoot, reportedRoots]);
+  }, [bindings, bindingsByRoot, reportedRoots, localMachineId]);
 
   const machinesWithBindings = useMemo(() => {
     const ids = new Set<string>();
@@ -1017,7 +1038,7 @@ function EntryCard({
   t: TFunction<['workspaces', 'common']>;
 }) {
   const tone =
-    entry.kind === 'unmapped-live'
+    entry.kind === 'unmapped-live' || entry.kind === 'live-unbound'
       ? 'amber'
       : entry.kind === 'mapped-live'
         ? 'emerald'
@@ -1098,6 +1119,9 @@ function EntryCard({
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="mb-1.5 flex min-h-[1.375rem] flex-wrap items-center gap-2">
               {entry.kind === 'unmapped-live' && <Pill tone="amber">{t('card.unmapped')}</Pill>}
+              {entry.kind === 'live-unbound' && (
+                <Pill tone="amber">{t('card.badgeLiveUnbound')}</Pill>
+              )}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">{t('card.offline')}</Pill>}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">{t('card.live')}</Pill>}
               {binding?.client_id && (

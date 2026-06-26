@@ -168,7 +168,18 @@ export function WorkspaceBindingSheet() {
   }, [subscribe]);
 
   useEffect(() => {
-    if (!payload || (step !== 'machine' && step !== 'adopt')) return;
+    return subscribe('workspace-binding-changed', (p) => {
+      setPayload((current) => {
+        if (!current) return null;
+        const changed = (p as { workspace_root: string }).workspace_root;
+        if (changed.toLowerCase() === current.workspace_root.toLowerCase()) return null;
+        return current;
+      });
+    });
+  }, [subscribe]);
+
+  useEffect(() => {
+    if (!payload || (step !== 'machine' && step !== 'adopt' && step !== 'binding')) return;
     let cancelled = false;
     setLoadingMachines(true);
     listMachines()
@@ -526,6 +537,84 @@ export function WorkspaceBindingSheet() {
               </select>
               <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))]" />
             </div>
+          </div>
+
+          <div>
+            <div className="mb-3 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+              {t('form.machine')}
+            </div>
+            <p className="mb-3 text-xs text-[rgb(var(--muted))]">{t('form.machineHint')}</p>
+            {loadingMachines ? (
+              <div className="flex items-center justify-center py-4 text-[rgb(var(--muted))]">
+                <Loader2 className="h-4 w-4 animate-spin" />
+              </div>
+            ) : (
+              <>
+                <div className="relative">
+                  <select
+                    value={selectedMachineId}
+                    onChange={(e) => setSelectedMachineId(e.target.value)}
+                    className="w-full appearance-none rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-4 py-3 pr-10 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:border-[rgb(var(--border-hover,var(--accent)))] focus:border-[rgb(var(--accent))] focus:outline-none"
+                    data-testid="workspace-binding-machine-picker"
+                  >
+                    <option value="">{t('form.noMachine')}</option>
+                    {machines.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.icon ? `${m.icon}  ` : ''}
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))]" />
+                </div>
+                {!creatingMachine ? (
+                  <button
+                    type="button"
+                    onClick={() => setCreatingMachine(true)}
+                    className="mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed border-[rgb(var(--border))] px-4 py-2.5 text-sm text-[rgb(var(--muted))] transition-colors hover:border-[rgb(var(--accent))] hover:text-[rgb(var(--foreground))]"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {t('sheet.newMachine')}
+                  </button>
+                ) : (
+                  <div className="mt-2 rounded-xl border border-[rgb(var(--border))] p-4 space-y-3">
+                    <input
+                      type="text"
+                      value={newMachineName}
+                      onChange={(e) => setNewMachineName(e.target.value)}
+                      placeholder={t('sheet.machineNamePlaceholder')}
+                      className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm"
+                      autoFocus
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="secondary"
+                        className="flex-1"
+                        onClick={() => {
+                          setCreatingMachine(false);
+                          setNewMachineName('');
+                        }}
+                        disabled={assigningMachine}
+                      >
+                        {t('sheet.notNow')}
+                      </Button>
+                      <Button
+                        variant="primary"
+                        className="flex-1"
+                        onClick={handleCreateMachine}
+                        disabled={assigningMachine}
+                      >
+                        {assigningMachine ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          t('sheet.continue')
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div>

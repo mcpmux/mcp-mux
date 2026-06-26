@@ -641,9 +641,7 @@ pub async fn set_viewer_machine_id(
     }
 
     let settings = AppSettingsService::new(ctx.settings_repository.clone());
-    settings
-        .set_viewer_machine_id(&viewer_id, parsed)
-        .await?;
+    settings.set_viewer_machine_id(&viewer_id, parsed).await?;
     Ok(json!({ "ok": true }))
 }
 

@@ -424,7 +424,17 @@ pub fn start_domain_event_bridge(
             // window forward BEFORE emitting so the popup animates into a
             // visible window instead of rendering behind another app.
             if matches!(event, DomainEvent::WorkspaceNeedsBinding { .. }) {
-                focus_main_window(&app_handle_clone);
+                let has_web_admin = {
+                    let admin_state: tauri::State<
+                        '_,
+                        Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+                    > = app_handle_clone.state();
+                    let guard = admin_state.read().await;
+                    guard.event_hub.has_sse_subscribers()
+                };
+                if !has_web_admin {
+                    focus_main_window(&app_handle_clone);
+                }
             }
 
             // Map domain events to UI channels

@@ -17,7 +17,7 @@ Remote web admin (`mux.joe-hassio.com` → static SPA on `:45819`) now uses a **
 - **Gateway machine (Gondor):** editable only in the **Manage all machines** expander (row labeled `THIS GATEWAY` + `local` badge when remote). The dedicated `"This gateway"` editor block was removed from the main card when the gateway is already registered.
 - **Unregistered gateway (remote only):** if `local_machine_id` is unset, a one-time register prompt still appears below the viewer editor so a fresh install can name the gateway host.
 
-Static tunnel bundles require `pnpm build:web:admin` after UI changes — HMR on `:1420` does not reach `mux.joe-hassio.com`.
+`pnpm dev:admin` now runs `vite build --watch` in parallel, so `apps/desktop/dist/` auto-rebuilds on every frontend save. Hard-refresh `mux.joe-hassio.com` after edits (~10s rebuild). One-off bundle: `pnpm build:web:admin`.
 
 Implementation: [`apps/desktop/src/features/settings/SettingsPage.tsx`](../../apps/desktop/src/features/settings/SettingsPage.tsx) `MachineIdentitySection`; viewer resolution in [`use-viewer-identity.hook.tsx`](../../apps/desktop/src/hooks/use-viewer-identity.hook.tsx) + [`viewer-device.helpers.ts`](../../apps/desktop/src/lib/viewer-device.helpers.ts).
 

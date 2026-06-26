@@ -10,7 +10,7 @@
 
 ## Update — Jun 26, 2026
 
-Phase 1 is implemented and verified end-to-end. `scripts/dev-env.mjs` exists, `scripts/dev-web-admin.mjs` calls it, and `vite.config.ts` proxies `/api` → `:45819` when `VITE_ADMIN_WEB`/`MCPMUX_DEV_ADMIN` is set. `pnpm dev:admin` boots Tauri + gateway + admin and auto-opens the browser at `:1420` once the gateway is stable; Rust changes recompile and restart via `tauri dev`'s watcher, TS/CSS hot-reload in both surfaces.
+Phase 1 is implemented and verified end-to-end. `scripts/dev-env.mjs` exists, `scripts/dev-web-admin.mjs` calls it, and `vite.config.ts` proxies `/api` → `:45819` when `VITE_ADMIN_WEB`/`MCPMUX_DEV_ADMIN` is set. `pnpm dev:admin` boots Tauri + gateway + admin, spawns `vite build --watch` in the background (so `apps/desktop/dist/` auto-rebuilds on every frontend save for `:45819` and the CF tunnel), and auto-opens the browser at `:1420` once the gateway is stable. Rust changes recompile and restart via `tauri dev`'s watcher; TS/CSS hot-reload in both surfaces. Hard-refresh remote tunnel tabs after each rebuild (~10s).
 
 Added while verifying the loop:
 

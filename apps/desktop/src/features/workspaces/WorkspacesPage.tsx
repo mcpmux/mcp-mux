@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import {
@@ -877,8 +885,109 @@ function machineBindingLabel(
   return machinesById.get(binding.machine_id)?.name ?? binding.machine_id;
 }
 
+interface EntryCardRoutingRow {
+  key: string;
+  bindingId?: string;
+  machine?: Machine;
+  machineLabel: string;
+  fsName: string;
+  spaceName: string | undefined;
+  clickable: boolean;
+}
+
 /**
- * Project card — single-machine byline or multi-machine footer rows.
+ * Compact routing table for EntryCard footer — machine, feature set, space.
+ * Uses semantic HTML table (no Table primitive in @mcpmux/ui). Feature set
+ * names wrap to additional lines when needed.
+ */
+function EntryCardRoutingTable({
+  rows,
+  showMachineColumn,
+  onRowClick,
+  t,
+}: {
+  rows: EntryCardRoutingRow[];
+  showMachineColumn: boolean;
+  onRowClick?: (bindingId: string) => void;
+  t: TFunction<['workspaces', 'common']>;
+}) {
+  const headCls =
+    'pb-1 pr-2 text-left text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))] last:pr-0';
+  const cellCls = 'py-0.5 pr-2 align-top text-[11px] text-[rgb(var(--foreground))] last:pr-0';
+
+  return (
+    <table className="w-full border-collapse text-xs">
+      <colgroup>
+        {showMachineColumn ? <col className="w-px" /> : null}
+        <col />
+        <col className="w-px" />
+      </colgroup>
+      <thead>
+        <tr className="border-b border-[rgb(var(--border-subtle))]">
+          {showMachineColumn ? <th className={headCls}>{t('card.machine')}</th> : null}
+          <th className={headCls}>{t('card.routesTo')}</th>
+          <th className={`${headCls} whitespace-nowrap`}>{t('card.in')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => {
+          const fsDisplay = row.fsName || '—';
+          const spaceDisplay = row.spaceName ?? '—';
+          const rowProps = row.clickable
+            ? {
+                role: 'button' as const,
+                tabIndex: 0,
+                className:
+                  'cursor-pointer transition-colors hover:bg-[rgb(var(--surface-hover,var(--background)))]',
+                'aria-label': t('card.machineRow', { machine: row.machineLabel }),
+                onClick: row.bindingId
+                  ? (event: ReactMouseEvent<HTMLTableRowElement>) => {
+                      event.stopPropagation();
+                      onRowClick?.(row.bindingId!);
+                    }
+                  : undefined,
+                onKeyDown: row.bindingId
+                  ? (event: ReactKeyboardEvent<HTMLTableRowElement>) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onRowClick?.(row.bindingId!);
+                      }
+                    }
+                  : undefined,
+              }
+            : {};
+
+          return (
+            <tr key={row.key} {...rowProps}>
+              {showMachineColumn ? (
+                <td className={`${cellCls} whitespace-nowrap`} title={row.machineLabel}>
+                  <span className="inline-flex max-w-[7rem] items-center gap-1">
+                    {row.machine?.icon ? (
+                      <span className="shrink-0 text-[11px] leading-none">{row.machine.icon}</span>
+                    ) : null}
+                    <span className="truncate">{row.machineLabel}</span>
+                  </span>
+                </td>
+              ) : null}
+              <td className={cellCls}>
+                <span className="block break-words font-medium leading-snug text-primary-700 dark:text-primary-300">
+                  {fsDisplay}
+                </span>
+              </td>
+              <td className={`${cellCls} whitespace-nowrap`} title={spaceDisplay}>
+                {spaceDisplay}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Project card — identity header plus routing table footer.
  */
 function EntryCard({
   entry,
@@ -923,6 +1032,34 @@ function EntryCard({
   const singleMachine = singleMachineBinding
     ? machinesById.get(singleMachineBinding.machine_id!)
     : undefined;
+  const showMachineColumn = bindings.some((b) => b.machine_id != null);
+  const routingRows: EntryCardRoutingRow[] = isMultiMachine
+    ? bindings.map((rowBinding) => {
+        const rowMachine = rowBinding.machine_id
+          ? machinesById.get(rowBinding.machine_id)
+          : undefined;
+        return {
+          key: rowBinding.id,
+          bindingId: rowBinding.id,
+          machine: rowMachine,
+          machineLabel: machineBindingLabel(rowBinding, machinesById, t),
+          fsName: formatFsList(
+            rowBinding.feature_set_ids.map((id) => fsById.get(id)?.name ?? id)
+          ),
+          spaceName: spaceById.get(rowBinding.space_id)?.name,
+          clickable: true,
+        };
+      })
+    : [
+        {
+          key: binding?.id ?? entry.id,
+          machine: singleMachine,
+          machineLabel: singleMachine?.name ?? t('form.noMachine'),
+          fsName: fsName ?? '',
+          spaceName,
+          clickable: false,
+        },
+      ];
 
   return (
     <Card
@@ -989,81 +1126,20 @@ function EntryCard({
           </div>
         </div>
 
-        <div className="mt-auto -mx-6 -mb-6 rounded-b-xl border-t border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-5 py-3 text-xs text-[rgb(var(--muted))]">
-          {isMultiMachine ? (
-            <div className="flex flex-col">
-              {bindings.map((rowBinding, index) => {
-                const rowMachine = rowBinding.machine_id ? machinesById.get(rowBinding.machine_id) : undefined;
-                const machineLabel = machineBindingLabel(rowBinding, machinesById, t);
-                const rowFsName = formatFsList(
-                  rowBinding.feature_set_ids.map((id) => fsById.get(id)?.name ?? id)
-                );
-                const rowSpaceName = spaceById.get(rowBinding.space_id)?.name;
-                return (
-                  <button
-                    key={rowBinding.id}
-                    type="button"
-                    className={[
-                      'w-full rounded-md px-1 py-2 text-left transition-colors hover:bg-[rgb(var(--surface-hover,var(--background)))]',
-                      index > 0 ? 'border-t border-[rgb(var(--border-subtle))]' : '',
-                    ].join(' ')}
-                    aria-label={t('card.machineRow', { machine: machineLabel })}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onMachineRowClick(rowBinding.id);
-                    }}
-                  >
-                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      <Chip tone="neutral" title={machineLabel}>
-                        {rowMachine?.icon ? (
-                          <span className="mr-1 text-[11px] leading-none">{rowMachine.icon}</span>
-                        ) : null}
-                        {machineLabel}
-                      </Chip>
-                      <span className="shrink-0 text-[rgb(var(--muted))]">→</span>
-                      <Chip tone="primary" title={rowFsName || undefined}>
-                        {rowFsName || '—'}
-                      </Chip>
-                      <span className="shrink-0">{t('card.in')}</span>
-                      <Chip tone="neutral" title={rowSpaceName ?? undefined}>
-                        {rowSpaceName ?? '—'}
-                      </Chip>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {singleMachine ? (
-                <>
-                  <Chip tone="neutral" title={singleMachine.name}>
-                    {singleMachine.icon ? (
-                      <span className="mr-1 text-[11px] leading-none">{singleMachine.icon}</span>
-                    ) : null}
-                    {singleMachine.name}
-                  </Chip>
-                  <span className="shrink-0 text-[rgb(var(--muted))]">→</span>
-                </>
-              ) : (
-                <span className="shrink-0">{t('card.routesTo')}</span>
-              )}
-              <Chip tone="primary" title={fsName ?? undefined}>
-                {fsName ?? '—'}
-              </Chip>
-              <span className="shrink-0">{t('card.in')}</span>
-              <Chip tone="neutral" title={spaceName ?? undefined}>
-                {spaceName ?? '—'}
-              </Chip>
-              {!binding && (
-                <span
-                  className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase tracking-wider bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200/70 dark:border-amber-800/60"
-                  title={t('card.unboundTooltip')}
-                >
-                  {t('card.unbound')}
-                </span>
-              )}
-            </div>
+        <div className="mt-auto -mx-6 -mb-6 rounded-b-xl bg-[rgb(var(--surface))] px-5 py-3 text-xs text-[rgb(var(--muted))]">
+          <EntryCardRoutingTable
+            rows={routingRows}
+            showMachineColumn={showMachineColumn}
+            onRowClick={isMultiMachine ? onMachineRowClick : undefined}
+            t={t}
+          />
+          {!binding && (
+            <span
+              className="mt-2 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium uppercase tracking-wider bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-200/70 dark:border-amber-800/60"
+              title={t('card.unboundTooltip')}
+            >
+              {t('card.unbound')}
+            </span>
           )}
         </div>
       </CardContent>

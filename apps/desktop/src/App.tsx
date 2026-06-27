@@ -32,11 +32,10 @@ import { FeatureSetsPage } from '@/features/featuresets';
 import { ClientsPage } from '@/features/clients';
 import { ServersPage } from '@/features/servers';
 import { SpacesPage } from '@/features/spaces';
-import { WorkspacesPage } from '@/features/workspaces';
+import { WorkspacesPage, WorkspaceBindingPanel } from '@/features/workspaces';
 import { SettingsPage } from '@/features/settings';
 import { BuiltinServersPage } from '@/features/builtinServers';
 import { AutoStartConflictResolver } from '@/features/gateway/AutoStartConflictResolver';
-import { WorkspaceBindingSheet } from '@/features/workspaces';
 import { MetaToolApprovalDialog } from '@/features/metaTools';
 import { useGatewayEvents } from '@/hooks/useDomainEvents';
 import { getVersion } from '@/lib/api/app';
@@ -397,7 +396,7 @@ function App() {
         <AutoStartConflictResolver />
         <OAuthConsentModal />
         <ViewerIdentityModal />
-        <WorkspaceBindingSheet />
+        <WorkspaceBindingPanel />
         <ServerInstallModal />
         <MetaToolApprovalDialog />
       </ViewerIdentityProvider>

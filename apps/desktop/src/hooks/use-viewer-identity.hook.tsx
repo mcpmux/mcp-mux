@@ -69,6 +69,7 @@ export function ViewerIdentityProvider({ children }: { children: ReactNode }) {
 /**
  * Read viewer identity state from the nearest provider.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- hook must live alongside its provider; splitting the file would break the shared private context reference
 export function useViewerIdentity(): ViewerIdentityContextValue {
   const value = useContext(ViewerIdentityContext);
   if (!value) {

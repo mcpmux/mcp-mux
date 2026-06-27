@@ -4,7 +4,7 @@
 
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
-import { Button, Card, CardContent } from '@mcpmux/ui';
+import { Card, CardContent } from '@mcpmux/ui';
 import { MachineProfileEditor } from '@/components/machine-profile-editor';
 import { ServerIcon } from '@/components/ServerIcon';
 import { useViewerIdentity } from '@/hooks/use-viewer-identity.hook';

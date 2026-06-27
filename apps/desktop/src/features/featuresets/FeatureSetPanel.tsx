@@ -30,6 +30,7 @@ import {
 } from '@/lib/api/featureSets';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeatures } from '@/lib/api/serverFeatures';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 
 interface FeatureSetPanelProps {
   featureSet: FeatureSet;
@@ -461,14 +462,10 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                   <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
                     {t('panel.iconLabel')}
                   </label>
-                  <input
-                    type="text"
+                  <EmojiPickerButton
                     value={editIcon}
-                    onChange={(e) => setEditIcon(e.target.value)}
-                    placeholder={t('panel.iconPlaceholder')}
-                    maxLength={2}
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    data-testid="featureset-panel-icon"
+                    onChange={setEditIcon}
+                    testId="featureset-panel-icon"
                   />
                 </div>
 

@@ -38,6 +38,7 @@ import {
   toMachineProfilePayload,
 } from '@/lib/machine-profile.helpers';
 import { subscribeOAuthConsentEvents } from '@/lib/backend/shell';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import claudeIcon from '@/assets/client-icons/claude.svg';
@@ -496,21 +497,17 @@ export function OAuthConsentModal() {
                   </button>
                 ) : (
                   <div className="space-y-3 rounded-xl border border-[rgb(var(--border))] p-4">
-                    <input
-                      type="text"
-                      value={machineName}
-                      onChange={(e) => setMachineName(e.target.value)}
-                      placeholder={t('oauthConsent.nameMachine.namePlaceholder')}
-                      className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm"
-                      autoFocus
-                    />
-                    <input
-                      type="text"
-                      value={machineIcon}
-                      onChange={(e) => setMachineIcon(e.target.value)}
-                      placeholder={t('oauthConsent.nameMachine.iconPlaceholder')}
-                      className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm"
-                    />
+                    <div className="flex items-center gap-2">
+                      <EmojiPickerButton value={machineIcon} onChange={setMachineIcon} />
+                      <input
+                        type="text"
+                        value={machineName}
+                        onChange={(e) => setMachineName(e.target.value)}
+                        placeholder={t('oauthConsent.nameMachine.namePlaceholder')}
+                        className="min-w-0 flex-1 h-10 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 text-sm"
+                        autoFocus
+                      />
+                    </div>
                     <input
                       type="text"
                       value={machineHostname}

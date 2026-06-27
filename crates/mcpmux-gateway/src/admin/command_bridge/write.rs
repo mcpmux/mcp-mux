@@ -7,8 +7,9 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use mcpmux_core::{
     normalize_optional_metadata, validate_workspace_root as validate_workspace_root_path,
-    AppSettingsService, Client, FeatureSet, FeatureSetMember, Machine, MemberMode, MemberType,
-    ServerSource, UpdatePolicy, WorkspaceAppearance, WorkspaceBinding, WorkspaceRootValidation,
+    AppSettingsService, Client, DomainEvent, FeatureSet, FeatureSetMember, Machine, MemberMode,
+    MemberType, ServerSource, UpdatePolicy, WorkspaceAppearance, WorkspaceBinding,
+    WorkspaceRootValidation,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -326,6 +327,20 @@ fn local_ref_to_file_name(icon_ref: &str) -> Option<&str> {
         return None;
     }
     Some(file_name)
+}
+
+/// Broadcast a `WorkspaceBindingChanged` domain event so the UI refreshes
+/// without requiring a manual reload. Fire-and-forget — a missing subscriber
+/// is not an error.
+fn emit_binding_changed(ctx: &AdminBridgeCtx, space_id: Uuid, workspace_root: &str) {
+    let _ = ctx
+        .services
+        .event_bus
+        .raw_sender()
+        .send(DomainEvent::WorkspaceBindingChanged {
+            space_id,
+            workspace_root: workspace_root.to_string(),
+        });
 }
 
 async fn maybe_remove_orphaned_icon(ctx: &AdminBridgeCtx, icon_ref: Option<&str>) -> Result<()> {
@@ -721,6 +736,7 @@ pub async fn create_workspace_binding(
     ctx.workspace_binding_repository.create(&binding).await?;
     clear_appearance_for_bound_root(ctx, &normalized).await?;
 
+    emit_binding_changed(ctx, space_id, &normalized);
     Ok(to_workspace_binding_response(binding))
 }
 
@@ -771,6 +787,7 @@ pub async fn update_workspace_binding(
         maybe_remove_orphaned_icon(ctx, previous_icon.as_deref()).await?;
     }
 
+    emit_binding_changed(ctx, space_id, &normalized);
     Ok(to_workspace_binding_response(updated))
 }
 
@@ -782,8 +799,11 @@ pub async fn delete_workspace_binding(ctx: &AdminBridgeCtx, id: String) -> Resul
         .await?
         .ok_or_else(|| anyhow!("binding not found: {id}"))?;
     let previous_icon = existing.icon.clone();
+    let space_id = existing.space_id;
+    let root = existing.workspace_root.clone();
     ctx.workspace_binding_repository.delete(&id_uuid).await?;
     maybe_remove_orphaned_icon(ctx, previous_icon.as_deref()).await?;
+    emit_binding_changed(ctx, space_id, &root);
     Ok(json!({ "ok": true }))
 }
 

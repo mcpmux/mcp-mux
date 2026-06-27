@@ -77,6 +77,7 @@ import {
 } from '@/lib/machine-profile.helpers';
 import { isViewingLocally } from '@/lib/viewer-device.helpers';
 import { MachineProfileEditor } from '@/components/machine-profile-editor';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 import { isTauri } from '@/lib/api/transport';
 import {
   createMachine,
@@ -1789,22 +1790,19 @@ function MachineIdentitySection({
                 <div className="space-y-4 border-t border-[rgb(var(--border-subtle))] pt-6">
                   <p className="text-sm font-medium">{t('machineIdentity.thisGateway')}</p>
                   <p className="text-sm text-[rgb(var(--muted))]">{t('machineIdentity.notRegistered')}</p>
-                  <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="flex items-center gap-3">
+                    <EmojiPickerButton
+                      value={registerIcon}
+                      onChange={setRegisterIcon}
+                      testId="machine-identity-register-icon"
+                    />
                     <input
                       type="text"
                       value={registerName}
                       onChange={(e) => setRegisterName(e.target.value)}
                       placeholder={t('machineIdentity.nameLabel')}
-                      className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm"
+                      className="min-w-0 flex-1 h-10 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 text-sm"
                       data-testid="machine-identity-register-name"
-                    />
-                    <input
-                      type="text"
-                      value={registerIcon}
-                      onChange={(e) => setRegisterIcon(e.target.value)}
-                      placeholder={t('machineIdentity.iconLabel')}
-                      className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm"
-                      data-testid="machine-identity-register-icon"
                     />
                     <input
                       type="text"
@@ -1814,7 +1812,7 @@ function MachineIdentitySection({
                         if (!registerHostname) void handlePrefillRegisterHostname();
                       }}
                       placeholder={t('machineIdentity.hostnameLabel')}
-                      className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] font-mono px-3 py-1.5 text-sm"
+                      className="min-w-0 flex-1 h-10 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] font-mono px-3 text-sm"
                       data-testid="machine-identity-register-hostname"
                     />
                   </div>
@@ -1890,7 +1888,16 @@ function MachineIdentitySection({
                           </span>
                         ) : null}
                       </div>
-                      <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="flex items-center gap-2">
+                        <EmojiPickerButton
+                          value={draft.icon}
+                          onChange={(emoji) =>
+                            setRowDrafts((prev) => ({
+                              ...prev,
+                              [machine.id]: { ...draft, icon: emoji },
+                            }))
+                          }
+                        />
                         <input
                           type="text"
                           value={draft.name}
@@ -1900,19 +1907,7 @@ function MachineIdentitySection({
                               [machine.id]: { ...draft, name: e.target.value },
                             }))
                           }
-                          className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
-                        />
-                        <input
-                          type="text"
-                          value={draft.icon}
-                          onChange={(e) =>
-                            setRowDrafts((prev) => ({
-                              ...prev,
-                              [machine.id]: { ...draft, icon: e.target.value },
-                            }))
-                          }
-                          placeholder={t('machineIdentity.iconLabel')}
-                          className="px-3 py-1.5 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
+                          className="min-w-0 flex-1 h-10 px-3 text-sm border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
                         />
                         <input
                           type="text"
@@ -1924,7 +1919,7 @@ function MachineIdentitySection({
                             }))
                           }
                           placeholder={t('machineIdentity.hostnameLabel')}
-                          className="px-3 py-1.5 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
+                          className="min-w-0 flex-1 h-10 px-3 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
                         />
                       </div>
                       <div className="flex items-center gap-2">

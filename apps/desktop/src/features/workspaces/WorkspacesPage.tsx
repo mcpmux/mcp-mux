@@ -80,6 +80,8 @@ import {
 } from '@/stores';
 import type { Space } from '@/lib/api/spaces';
 import { FormField } from './workspace-binding-form.component';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
+import { useViewerIdentity } from '@/hooks/use-viewer-identity.hook';
 
 /**
  * Workspaces page.
@@ -142,6 +144,7 @@ export function WorkspacesPage() {
   const spaces = useSpaces();
   const pendingNew = usePendingWorkspaceNew();
   const clearPendingNew = useSetPendingWorkspaceNew();
+  const { machineId: viewerMachineId } = useViewerIdentity();
   const [bindings, setBindings] = useState<WorkspaceBinding[]>([]);
   const [appearances, setAppearances] = useState<WorkspaceAppearance[]>([]);
   const [reportedRoots, setReportedRoots] = useState<string[]>([]);
@@ -291,7 +294,7 @@ export function WorkspacesPage() {
         bindings: binds,
         isLive: true,
       };
-      if (binds.length > 0 && entryIsBoundForCurrentMachine(entry, localMachineId)) {
+      if (binds.length > 0 && entryIsBoundForCurrentMachine(entry, viewerMachineId ?? localMachineId)) {
         entry.kind = 'mapped-live';
       } else if (binds.length > 0) {
         entry.kind = 'live-unbound';
@@ -328,7 +331,7 @@ export function WorkspacesPage() {
       const o = rank[a.kind] - rank[b.kind];
       return o !== 0 ? o : a.root.localeCompare(b.root);
     });
-  }, [bindings, bindingsByRoot, reportedRoots, localMachineId]);
+  }, [bindings, bindingsByRoot, reportedRoots, localMachineId, viewerMachineId]);
 
   const machinesWithBindings = useMemo(() => {
     const ids = new Set<string>();
@@ -1817,13 +1820,10 @@ function MachineRegistrationModal({
             </FormField>
 
             <FormField label={t('machineIdentity.iconLabel')}>
-              <input
-                type="text"
+              <EmojiPickerButton
                 value={icon}
-                onChange={(e) => setIcon(e.target.value)}
-                placeholder={t('machineIdentity.iconPlaceholder')}
-                className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                data-testid="machine-identity-icon-input"
+                onChange={setIcon}
+                testId="machine-identity-icon-input"
               />
             </FormField>
 

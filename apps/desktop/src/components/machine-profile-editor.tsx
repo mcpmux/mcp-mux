@@ -2,9 +2,9 @@
  * Shared name / icon / hostname editor for machine identity forms.
  */
 
-import { Loader2, Monitor } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
-import { ServerIcon } from '@/components/ServerIcon';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 
 export interface MachineProfileEditorProps {
   nameDraft: string;
@@ -45,60 +45,52 @@ export function MachineProfileEditor({
   const prefix = testIdPrefix;
 
   return (
-    <div className="flex items-start gap-3">
-      <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
-        {iconDraft.trim() ? (
-          <ServerIcon icon={iconDraft.trim()} className="h-7 w-7 object-contain" fallback="🖥️" />
-        ) : (
-          <Monitor className="h-5 w-5 text-[rgb(var(--muted))]" />
-        )}
-      </div>
-      <div className="min-w-0 flex-1 space-y-3">
-        <div>
+    <div className="space-y-3">
+      <div className="flex items-end gap-3">
+        <div className="flex-shrink-0">
+          <label className="text-xs font-medium text-[rgb(var(--muted))]">{iconLabel}</label>
+          <div className="mt-1">
+            <EmojiPickerButton
+              value={iconDraft}
+              onChange={onIconDraftChange}
+              disabled={isSaving}
+              testId={`${prefix}-icon`}
+            />
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
           <label className="text-xs font-medium text-[rgb(var(--muted))]">{nameLabel}</label>
           <input
             type="text"
             value={nameDraft}
             onChange={(e) => onNameDraftChange(e.target.value)}
             disabled={isSaving}
-            className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm"
+            className="mt-1 h-10 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 text-sm"
             data-testid={`${prefix}-name`}
           />
         </div>
-        <div>
-          <label className="text-xs font-medium text-[rgb(var(--muted))]">{iconLabel}</label>
-          <input
-            type="text"
-            value={iconDraft}
-            onChange={(e) => onIconDraftChange(e.target.value)}
-            placeholder="🖥️"
-            disabled={isSaving}
-            className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 text-sm"
-            data-testid={`${prefix}-icon`}
-          />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-[rgb(var(--muted))]">{hostnameLabel}</label>
-          <input
-            type="text"
-            value={hostnameDraft}
-            onChange={(e) => onHostnameDraftChange(e.target.value)}
-            disabled={isSaving}
-            className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm"
-            data-testid={`${prefix}-hostname`}
-          />
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={onSave}
-          disabled={isSaving || saveDisabled}
-          data-testid={`${prefix}-save`}
-        >
-          {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          {saveLabel}
-        </Button>
       </div>
+      <div>
+        <label className="text-xs font-medium text-[rgb(var(--muted))]">{hostnameLabel}</label>
+        <input
+          type="text"
+          value={hostnameDraft}
+          onChange={(e) => onHostnameDraftChange(e.target.value)}
+          disabled={isSaving}
+          className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm"
+          data-testid={`${prefix}-hostname`}
+        />
+      </div>
+      <Button
+        variant="primary"
+        size="sm"
+        onClick={onSave}
+        disabled={isSaving || saveDisabled}
+        data-testid={`${prefix}-save`}
+      >
+        {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+        {saveLabel}
+      </Button>
     </div>
   );
 }

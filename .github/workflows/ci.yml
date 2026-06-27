@@ -239,10 +239,13 @@ jobs:
             tauri-cli-${{ runner.os }}-
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      # PR build verification only: disable updater-artifact signing so the build
+      # needs no secrets. Fork PRs don't receive repository secrets, so requiring
+      # TAURI_SIGNING_PRIVATE_KEY here makes every fork PR fail. Real signed
+      # updater artifacts are produced by the release flow (build-tauri.yml /
+      # nightly.yml) on trusted refs, which is the only place the key belongs.
+      - run: pnpm --filter @mcpmux/desktop exec tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Ad-hoc signing (no Apple Developer ID)
           APPLE_SIGNING_IDENTITY: '-'
 

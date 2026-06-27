@@ -1836,6 +1836,7 @@ export function ServersPage() {
         <ConfigEditorModal
           spaceId={editConfigSpace.id}
           spaceName={editConfigSpace.name}
+          insertNewServer
           onClose={() => setEditConfigSpace(null)}
           onSaved={() => {
             loadData(); // Reload servers after config save

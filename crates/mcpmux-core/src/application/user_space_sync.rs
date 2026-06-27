@@ -3,7 +3,7 @@
 //! Syncs servers from user space JSON configuration files into InstalledServer records.
 //! This enables a unified connection flow regardless of server source (Registry vs UserConfig).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use tracing::{debug, info};
 
 use crate::domain::config::UserSpaceConfig;
-use crate::domain::{InstallationSource, InstalledServer};
+use crate::domain::{InstallationSource, InstalledServer, ServerDefinition};
 use crate::repository::InstalledServerRepository;
 
 /// Result of a sync operation
@@ -48,6 +48,29 @@ impl UserSpaceSyncService {
         Self { installed_repo }
     }
 
+    /// Ensure no two user-config entries normalize to the same MCP server id.
+    ///
+    /// User-config keys are normalized into MCP-safe server ids; if two entries
+    /// collapse to the same id the sync loop would update the same
+    /// `InstalledServer` row and appear to overwrite the previous custom server.
+    /// Reject that up front with a clear error instead of silently dropping one.
+    fn ensure_unique_server_ids(definitions: &[ServerDefinition]) -> Result<()> {
+        let mut seen_ids: HashMap<String, String> = HashMap::new();
+        for definition in definitions {
+            if let Some(first_name) =
+                seen_ids.insert(definition.id.clone(), definition.name.clone())
+            {
+                anyhow::bail!(
+                    "Multiple custom servers normalize to the same id '{}': '{}' and '{}'. Rename one mcpServers key to a distinct alphanumeric/hyphen/dot id.",
+                    definition.id,
+                    first_name,
+                    definition.name
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Sync servers from a user space JSON file into InstalledServer records
     ///
     /// This performs a 3-way diff:
@@ -74,6 +97,12 @@ impl UserSpaceSyncService {
 
         // 2. Convert to ServerDefinitions
         let definitions = config.to_server_definitions(space_id, file_path.to_path_buf());
+
+        // User-config keys are normalized into MCP-safe server IDs; reject two
+        // entries that collapse to the same ID up front so the sync loop can't
+        // silently overwrite one custom server with another.
+        Self::ensure_unique_server_ids(&definitions)?;
+
         let file_server_ids: HashSet<String> = definitions.iter().map(|d| d.id.clone()).collect();
 
         debug!(
@@ -232,5 +261,40 @@ mod tests {
         result.removed.push("c".to_string());
 
         assert_eq!(result.total_changes(), 3);
+    }
+
+    fn definitions_from(json: &str) -> Vec<ServerDefinition> {
+        let config: UserSpaceConfig = serde_json::from_str(json).expect("valid config json");
+        config.to_server_definitions("space-1", std::path::PathBuf::from("test.json"))
+    }
+
+    #[test]
+    fn ensure_unique_server_ids_rejects_colliding_normalized_ids() {
+        // "My Server" and "my_server" both normalize to "myserver".
+        let definitions = definitions_from(
+            r#"{ "mcpServers": {
+                "My Server": { "command": "echo" },
+                "my_server": { "command": "echo" }
+            } }"#,
+        );
+
+        let err = UserSpaceSyncService::ensure_unique_server_ids(&definitions)
+            .expect_err("colliding normalized ids must be rejected");
+        assert!(
+            err.to_string().contains("myserver"),
+            "error should name the colliding id, got: {err}"
+        );
+    }
+
+    #[test]
+    fn ensure_unique_server_ids_accepts_distinct_ids() {
+        let definitions = definitions_from(
+            r#"{ "mcpServers": {
+                "alpha": { "command": "echo" },
+                "beta": { "command": "echo" }
+            } }"#,
+        );
+
+        assert!(UserSpaceSyncService::ensure_unique_server_ids(&definitions).is_ok());
     }
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Save, Loader2, AlertTriangle, Wand2 } from 'lucide-react';
+import { X, Save, Loader2, AlertTriangle, Wand2, Plus } from 'lucide-react';
 import { readSpaceConfig, saveSpaceConfig } from '@/lib/api/spaces';
 import { refreshRegistry } from '@/lib/api/registry';
 import Editor, { type Monaco } from '@monaco-editor/react';
@@ -11,11 +11,56 @@ import { RequestServerCTA } from './Contribute';
 interface ConfigEditorModalProps {
   spaceId: string;
   spaceName: string;
+  insertNewServer?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: ConfigEditorModalProps) {
+type SpaceConfigJson = {
+  mcpServers?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+const CUSTOM_SERVER_BASE_KEY = 'custom-server';
+
+function nextCustomServerKey(servers: Record<string, unknown>): string {
+  let suffix = 1;
+
+  while (true) {
+    const key = suffix === 1 ? CUSTOM_SERVER_BASE_KEY : CUSTOM_SERVER_BASE_KEY + '-' + suffix;
+    if (!(key in servers)) {
+      return key;
+    }
+    suffix += 1;
+  }
+}
+
+function addCustomServerDraft(config: SpaceConfigJson): SpaceConfigJson {
+  const mcpServers = { ...(config.mcpServers ?? {}) };
+  const key = nextCustomServerKey(mcpServers);
+  const suffix =
+    key === CUSTOM_SERVER_BASE_KEY ? '' : ' ' + key.replace(CUSTOM_SERVER_BASE_KEY + '-', '');
+
+  mcpServers[key] = {
+    name: 'New Custom Server' + suffix,
+    command: '',
+    args: [],
+    env: {},
+  };
+
+  return {
+    ...config,
+    mcpServers,
+  };
+}
+
+export function ConfigEditorModal({
+  spaceId,
+  spaceName,
+  insertNewServer = false,
+  onClose,
+  onSaved,
+}: ConfigEditorModalProps) {
   const [content, setContent] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -35,17 +80,19 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
 
   useEffect(() => {
     loadConfig();
-  }, [spaceId]);
+  }, [spaceId, insertNewServer]);
 
   const loadConfig = async () => {
     try {
       setIsLoading(true);
       setError(null);
       const data = await readSpaceConfig(spaceId);
-      // Auto-format on load if valid JSON
+      // Auto-format on load if valid JSON. When opened from Add Custom Server,
+      // insert a unique draft entry instead of replacing an existing server block.
       try {
-        const parsed = JSON.parse(data);
-        setContent(JSON.stringify(parsed, null, 2));
+        const parsed = JSON.parse(data) as SpaceConfigJson;
+        const nextConfig = insertNewServer ? addCustomServerDraft(parsed) : parsed;
+        setContent(JSON.stringify(nextConfig, null, 2));
       } catch {
         setContent(data);
       }
@@ -73,7 +120,7 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
       await saveSpaceConfig(spaceId, content);
       // Refresh server discovery to pick up new/changed servers
       await refreshRegistry();
-      
+
       success('Configuration saved', 'Space configuration updated successfully');
       onSaved();
       onClose();
@@ -92,6 +139,20 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
       editorRef.current.getAction('editor.action.formatDocument')?.run();
     }
   }, []);
+
+  const handleInsertCustomServer = useCallback(() => {
+    try {
+      const parsed = JSON.parse(content || '{"mcpServers":{}}') as SpaceConfigJson;
+      setContent(JSON.stringify(addCustomServerDraft(parsed), null, 2));
+      setIsValidJson(true);
+      setError(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setIsValidJson(false);
+      setError('Invalid JSON: ' + message);
+      showError('Invalid JSON', message);
+    }
+  }, [content, showError]);
 
   // Configure Monaco before mount to set up JSON schema validation
   const handleEditorBeforeMount = (monaco: Monaco) => {
@@ -114,13 +175,13 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
   const handleEditorMount = (editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
-    
+
     // Focus editor on mount
     editor.focus();
   };
 
   const handleEditorValidation = (markers: editor.IMarker[]) => {
-    const errors = markers.map(m => `Line ${m.startLineNumber}: ${m.message}`);
+    const errors = markers.map((m) => `Line ${m.startLineNumber}: ${m.message}`);
     setValidationErrors(errors);
     setIsValidJson(markers.length === 0);
   };
@@ -159,128 +220,141 @@ export function ConfigEditorModal({ spaceId, spaceName, onClose, onSaved }: Conf
 
   return (
     <>
-      <ToastContainer toasts={toasts} onClose={(id) => toasts.find(t => t.id === id)?.onClose(id)} />
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-[rgb(var(--surface))] w-full max-w-4xl h-[80vh] rounded-xl shadow-2xl flex flex-col border border-[rgb(var(--border))]">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-[rgb(var(--border))]">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 flex items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10 border border-[rgb(var(--primary))]/20">
-              <Save className="h-4 w-4 text-[rgb(var(--primary))]" />
+      <ToastContainer
+        toasts={toasts}
+        onClose={(id) => toasts.find((t) => t.id === id)?.onClose(id)}
+      />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div className="flex h-[80vh] w-full max-w-4xl flex-col rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-[rgb(var(--border))] p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-[rgb(var(--primary))]/20 bg-[rgb(var(--primary))]/10">
+                <Save className="h-4 w-4 text-[rgb(var(--primary))]" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold">Custom Server Configuration</h3>
+                <p className="text-xs text-[rgb(var(--muted))]">{spaceName} &middot; JSON config</p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-base font-semibold">
-                Custom Server Configuration
-              </h3>
-              <p className="text-xs text-[rgb(var(--muted))]">
-                {spaceName} &middot; JSON config
-              </p>
-            </div>
+            <button
+              onClick={onClose}
+              className="rounded-lg p-2 transition-colors hover:bg-[rgb(var(--surface-hover))]"
+            >
+              <X className="h-5 w-5 text-[rgb(var(--muted))]" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-[rgb(var(--surface-hover))] rounded-lg transition-colors"
-          >
-            <X className="h-5 w-5 text-[rgb(var(--muted))]" />
-          </button>
-        </div>
 
-        {/* Toolbar */}
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))]">
-          <button
-            onClick={handleSave}
-            disabled={isSaving || isLoading || !isValidJson}
-            className="flex items-center gap-2 px-3.5 py-1.5 text-sm font-medium bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] rounded-lg hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50 shadow-sm transition-colors"
-          >
-            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save
-          </button>
+          {/* Toolbar */}
+          <div className="flex items-center gap-2 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))] px-3 py-2">
+            <button
+              onClick={handleSave}
+              disabled={isSaving || isLoading || !isValidJson}
+              className="flex items-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-3.5 py-1.5 text-sm font-medium text-[rgb(var(--primary-foreground))] shadow-sm transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+            >
+              {isSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              Save
+            </button>
 
-          <div className="h-5 w-px bg-[rgb(var(--border))]" />
+            <div className="h-5 w-px bg-[rgb(var(--border))]" />
 
-          <button
-            onClick={handleFormat}
-            disabled={isLoading || !isValidJson}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] rounded-lg transition-colors disabled:opacity-50"
-            title="Format JSON (Ctrl+Shift+F)"
-          >
-            <Wand2 className="h-4 w-4" />
-            Format
-          </button>
+            <button
+              onClick={handleFormat}
+              disabled={isLoading || !isValidJson}
+              className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))] disabled:opacity-50"
+              title="Format JSON (Ctrl+Shift+F)"
+            >
+              <Wand2 className="h-4 w-4" />
+              Format
+            </button>
 
-          <div className="flex-1" />
+            <button
+              onClick={handleInsertCustomServer}
+              disabled={isLoading || !isValidJson}
+              className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))] disabled:opacity-50"
+              title="Insert another unique custom server entry"
+            >
+              <Plus className="h-4 w-4" />
+              Insert Server
+            </button>
 
-          {!isValidJson && (
-            <span className="flex items-center gap-1.5 text-xs text-[rgb(var(--error))] px-2 font-medium">
-              <AlertTriangle className="h-3 w-3" />
-              {validationErrors.length > 0 ? 'Schema Error' : 'Invalid JSON'}
+            <div className="flex-1" />
+
+            {!isValidJson && (
+              <span className="flex items-center gap-1.5 px-2 text-xs font-medium text-[rgb(var(--error))]">
+                <AlertTriangle className="h-3 w-3" />
+                {validationErrors.length > 0 ? 'Schema Error' : 'Invalid JSON'}
+              </span>
+            )}
+
+            <span className="text-xs text-[rgb(var(--muted))]">
+              Ctrl+S save &middot; Ctrl+Shift+F format
             </span>
-          )}
-
-          <span className="text-xs text-[rgb(var(--muted))]">
-            Ctrl+S save &middot; Ctrl+Shift+F format
-          </span>
-        </div>
-
-        {/* Contribute / Request CTA — surfaces the registry templates so users
-            don't have to hand-roll a definition if one already exists upstream. */}
-        <div className="px-4 py-3 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))]">
-          <RequestServerCTA />
-        </div>
-
-        {/* Editor Area */}
-        <div className="flex-1 relative min-h-0 bg-[#1e1e1e]">
-          {(isLoading || !editorReady) ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
-            </div>
-          ) : (
-            <Editor
-              height="100%"
-              defaultLanguage="json"
-              value={content}
-              theme="vs-dark"
-              onChange={handleContentChange}
-              beforeMount={handleEditorBeforeMount}
-              onMount={handleEditorMount}
-              onValidate={handleEditorValidation}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                fontFamily: "'Fira Code', 'Consolas', monospace",
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 2,
-                wordWrap: 'on',
-                formatOnPaste: true,
-                formatOnType: true,
-                folding: true,
-                bracketPairColorization: { enabled: true },
-                guides: {
-                  bracketPairs: true,
-                  indentation: true,
-                },
-                padding: { top: 12, bottom: 12 },
-              }}
-              loading={
-                <div className="flex items-center justify-center h-full bg-[#1e1e1e]">
-                  <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
-                </div>
-              }
-            />
-          )}
-        </div>
-
-        {/* Footer / Status Bar */}
-        {(error || validationErrors.length > 0) && (
-          <div className="p-2 bg-[rgb(var(--error))]/10 border-t border-[rgb(var(--error))]/20 text-[rgb(var(--error))] text-xs px-4 max-h-20 overflow-auto">
-            {error || validationErrors.slice(0, 3).join(' • ')}
-            {validationErrors.length > 3 && ` (+${validationErrors.length - 3} more)`}
           </div>
-        )}
+
+          {/* Contribute / Request CTA — surfaces the registry templates so users
+            don't have to hand-roll a definition if one already exists upstream. */}
+          <div className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))] px-4 py-3">
+            <RequestServerCTA />
+          </div>
+
+          {/* Editor Area */}
+          <div className="relative min-h-0 flex-1 bg-[#1e1e1e]">
+            {isLoading || !editorReady ? (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
+              </div>
+            ) : (
+              <Editor
+                height="100%"
+                defaultLanguage="json"
+                value={content}
+                theme="vs-dark"
+                onChange={handleContentChange}
+                beforeMount={handleEditorBeforeMount}
+                onMount={handleEditorMount}
+                onValidate={handleEditorValidation}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  fontFamily: "'Fira Code', 'Consolas', monospace",
+                  lineNumbers: 'on',
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  tabSize: 2,
+                  wordWrap: 'on',
+                  formatOnPaste: true,
+                  formatOnType: true,
+                  folding: true,
+                  bracketPairColorization: { enabled: true },
+                  guides: {
+                    bracketPairs: true,
+                    indentation: true,
+                  },
+                  padding: { top: 12, bottom: 12 },
+                }}
+                loading={
+                  <div className="flex h-full items-center justify-center bg-[#1e1e1e]">
+                    <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
+                  </div>
+                }
+              />
+            )}
+          </div>
+
+          {/* Footer / Status Bar */}
+          {(error || validationErrors.length > 0) && (
+            <div className="max-h-20 overflow-auto border-t border-[rgb(var(--error))]/20 bg-[rgb(var(--error))]/10 p-2 px-4 text-xs text-[rgb(var(--error))]">
+              {error || validationErrors.slice(0, 3).join(' • ')}
+              {validationErrors.length > 3 && ` (+${validationErrors.length - 3} more)`}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
     </>
   );
 }

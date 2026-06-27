@@ -97,20 +97,23 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # E2E only needs a runnable app binary, not signed updater artifacts.
+      # Drop the `updater` bundle and disable updater-artifact creation so the
+      # build requires no signing key — fork PRs don't receive repository
+      # secrets, so requiring the key here makes every fork PR fail. Signed
+      # updater artifacts are produced by the release flow on trusted refs.
       - name: Build app (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: pnpm --filter @mcpmux/desktop exec tauri build --bundles deb,rpm,updater
+        run: pnpm --filter @mcpmux/desktop exec tauri build --bundles deb,rpm --config '{"bundle":{"createUpdaterArtifacts":false}}'
         env:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build app (Windows)
         if: matrix.os == 'windows-latest'
-        run: pnpm build
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        # shell: bash so the inline --config JSON is passed verbatim; PowerShell's
+        # native-argument handling would mangle the embedded double quotes.
+        shell: bash
+        run: pnpm --filter @mcpmux/desktop exec tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       # TODO(playwright-migration): desktop E2E has stale assertions from the IA
       # redesign and is being replaced (tauri-playwright spike). Non-blocking

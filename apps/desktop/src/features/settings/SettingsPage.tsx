@@ -130,6 +130,8 @@ export function SettingsPage() {
   // gateway with no access key — used by the one-click per-workspace install.
   const [authDisabled, setAuthDisabled] = useState(false);
   const [savingAuthDisabled, setSavingAuthDisabled] = useState(false);
+  const [networkAccess, setNetworkAccess] = useState(false);
+  const [savingNetworkAccess, setSavingNetworkAccess] = useState(false);
 
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
 
@@ -396,6 +398,34 @@ export function SettingsPage() {
       .then(setAuthDisabled)
       .catch((err) => console.error('Failed to load auth setting:', err));
   }, []);
+
+  // Load the network-access (0.0.0.0 bind) toggle on mount.
+  useEffect(() => {
+    invoke<boolean>('get_gateway_network_access')
+      .then(setNetworkAccess)
+      .catch((err) => console.error('Failed to load network-access setting:', err));
+  }, []);
+
+  const updateNetworkAccess = async (enabled: boolean) => {
+    const prev = networkAccess;
+    setNetworkAccess(enabled);
+    setSavingNetworkAccess(true);
+    try {
+      await invoke('set_gateway_network_access', { enabled });
+      success(
+        'Settings saved',
+        enabled
+          ? 'Gateway will bind 0.0.0.0 — restart it to become reachable on your network.'
+          : 'Gateway will bind 127.0.0.1 — restart it to return to this machine only.'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      error('Failed to update network access', msg);
+      setNetworkAccess(prev);
+    } finally {
+      setSavingNetworkAccess(false);
+    }
+  };
 
   const updateAuthDisabled = async (disabled: boolean) => {
     const prev = authDisabled;
@@ -783,6 +813,91 @@ export function SettingsPage() {
                         ) : null}
                       </div>
                     </div>
+                  </div>
+
+                  <div className="border-t border-[rgb(var(--border-subtle))] pt-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <Network className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                        <div className="min-w-0">
+                          <label className="text-sm font-medium">
+                            Allow access from other devices
+                          </label>
+                          <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                            Bind the gateway to all network interfaces (
+                            <span className="font-mono">0.0.0.0</span>) so other machines on your
+                            network can connect to the same MCP servers. Off keeps it on{' '}
+                            <span className="font-mono">127.0.0.1</span> (this machine only).
+                            Restart the gateway to apply.
+                          </p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={networkAccess}
+                        onCheckedChange={updateNetworkAccess}
+                        disabled={savingNetworkAccess}
+                        data-testid="network-access-switch"
+                      />
+                    </div>
+
+                    {networkAccess ? (
+                      <div
+                        className={`mt-3 flex items-start gap-2 rounded-lg border p-3 text-xs ${
+                          authDisabled
+                            ? 'border-red-300 bg-red-50 dark:border-red-700/60 dark:bg-red-900/20'
+                            : 'border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-900/20'
+                        }`}
+                        data-testid="network-access-warning"
+                      >
+                        <AlertCircle
+                          className={`mt-0.5 h-4 w-4 flex-shrink-0 ${
+                            authDisabled
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'text-amber-600 dark:text-amber-400'
+                          }`}
+                        />
+                        <div className="flex-1">
+                          {authDisabled ? (
+                            <>
+                              <p className="font-semibold text-red-800 dark:text-red-200">
+                                Exposed without authentication
+                              </p>
+                              <p className="mt-0.5 text-red-700 dark:text-red-300">
+                                Authentication is off and the gateway is reachable on your network —
+                                anyone who can reach this machine can use every connected MCP server
+                                and its stored credentials. Turn authentication back on under
+                                Security, or only enable this on a network you trust.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="font-semibold text-amber-800 dark:text-amber-200">
+                                Reachable on your network
+                              </p>
+                              <p className="mt-0.5 text-amber-700 dark:text-amber-300">
+                                Connecting clients still need to be approved, but traffic is plain
+                                HTTP — only enable this on a network you trust. From another device,
+                                replace <span className="font-mono">localhost</span> with this
+                                machine's LAN IP, e.g.{' '}
+                                <span className="font-mono">
+                                  http://192.168.1.x:
+                                  {portSettings.activePort ?? portSettings.defaultPort}/mcp
+                                </span>
+                                .
+                              </p>
+                            </>
+                          )}
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleRestartGateway}
+                          data-testid="network-access-restart-btn"
+                        >
+                          Restart gateway
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
 
                   {publicUrlSettings?.activePublicBaseUrl &&

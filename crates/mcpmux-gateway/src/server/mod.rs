@@ -94,13 +94,30 @@ impl GatewayConfig {
             .unwrap_or_else(|| format!("http://localhost:{}", self.port))
     }
 
+    /// True when the gateway binds to a non-loopback address (e.g. `0.0.0.0`
+    /// or a specific LAN interface) — i.e. it is intentionally exposed on the
+    /// network rather than being local-only.
+    pub fn is_network_bind(&self) -> bool {
+        let host = self.host.trim();
+        !(host.is_empty() || host == "127.0.0.1" || host == "::1" || host == "localhost")
+    }
+
     /// Host values accepted by rmcp's DNS rebinding protection.
     ///
     /// rmcp's Streamable HTTP service defaults to loopback-only Host headers.
     /// When the gateway is published through a reverse proxy or Cloudflare
     /// Tunnel, ChatGPT reaches it with the public host, so that hostname must
     /// be explicitly allowlisted.
+    ///
+    /// When bound to a non-loopback address the gateway is exposed on the LAN
+    /// and reached by IP / hostname / mDNS name we can't enumerate ahead of
+    /// time, so the allowlist is relaxed to empty — rmcp treats an empty list
+    /// as allow-all. The OAuth + per-client consent layer remains the gate.
     pub fn allowed_hosts(&self) -> Vec<String> {
+        if self.is_network_bind() {
+            return Vec::new();
+        }
+
         let mut hosts = vec![
             "localhost".to_string(),
             "127.0.0.1".to_string(),
@@ -678,5 +695,36 @@ mod config_tests {
         let hosts = config_with(Some("not a url")).allowed_hosts();
         assert!(hosts.contains(&"localhost".to_string()));
         assert!(!hosts.iter().any(|h| h.contains("not a url")));
+    }
+
+    fn config_on_host(host: &str) -> GatewayConfig {
+        GatewayConfig {
+            host: host.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn is_network_bind_distinguishes_loopback_from_exposed() {
+        for h in ["127.0.0.1", "::1", "localhost", ""] {
+            assert!(!config_on_host(h).is_network_bind(), "{h:?} is loopback");
+        }
+        for h in ["0.0.0.0", "::", "192.168.1.50"] {
+            assert!(
+                config_on_host(h).is_network_bind(),
+                "{h:?} is a network bind"
+            );
+        }
+    }
+
+    #[test]
+    fn allowed_hosts_relaxes_to_allow_all_on_network_bind() {
+        // rmcp treats an empty allow-list as allow-all; on a network bind we
+        // can't enumerate the LAN host clients will use, so we relax to that.
+        assert!(config_on_host("0.0.0.0").allowed_hosts().is_empty());
+        // Loopback bind keeps the strict allow-list.
+        assert!(config_on_host("127.0.0.1")
+            .allowed_hosts()
+            .contains(&"localhost".to_string()));
     }
 }

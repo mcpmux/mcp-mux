@@ -623,3 +623,60 @@ impl GatewayServerHandle {
         self.shutdown.is_some()
     }
 }
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    fn config_with(public: Option<&str>) -> GatewayConfig {
+        GatewayConfig {
+            public_base_url: public.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn base_url_defaults_to_localhost() {
+        let cfg = config_with(None);
+        assert_eq!(cfg.base_url(), format!("http://localhost:{}", cfg.port));
+    }
+
+    #[test]
+    fn base_url_uses_public_origin_and_trims_trailing_slash() {
+        assert_eq!(
+            config_with(Some("https://mcp.example.com/")).base_url(),
+            "https://mcp.example.com"
+        );
+    }
+
+    #[test]
+    fn allowed_hosts_always_include_loopback() {
+        let hosts = config_with(None).allowed_hosts();
+        for h in ["localhost", "127.0.0.1", "::1"] {
+            assert!(hosts.contains(&h.to_string()), "missing {h} in {hosts:?}");
+        }
+    }
+
+    #[test]
+    fn allowed_hosts_include_public_host_and_optional_port() {
+        let hosts = config_with(Some("https://mcp.example.com")).allowed_hosts();
+        assert!(hosts.contains(&"mcp.example.com".to_string()), "{hosts:?}");
+
+        let hosts_port = config_with(Some("https://mcp.example.com:8443")).allowed_hosts();
+        assert!(
+            hosts_port.contains(&"mcp.example.com".to_string()),
+            "{hosts_port:?}"
+        );
+        assert!(
+            hosts_port.contains(&"mcp.example.com:8443".to_string()),
+            "{hosts_port:?}"
+        );
+    }
+
+    #[test]
+    fn allowed_hosts_ignores_invalid_public_url_without_panicking() {
+        let hosts = config_with(Some("not a url")).allowed_hosts();
+        assert!(hosts.contains(&"localhost".to_string()));
+        assert!(!hosts.iter().any(|h| h.contains("not a url")));
+    }
+}

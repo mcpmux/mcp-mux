@@ -1925,3 +1925,50 @@ pub struct PoolStatsResponse {
     pub connected_instances: usize,
     pub total_space_server_mappings: usize,
 }
+
+#[cfg(test)]
+mod public_base_url_tests {
+    use super::{advertised_base_url, normalize_public_base_url};
+
+    #[test]
+    fn normalize_accepts_https_origin_and_trims_trailing_slash() {
+        assert_eq!(
+            normalize_public_base_url("https://mcp.example.com/").unwrap(),
+            Some("https://mcp.example.com".to_string())
+        );
+        assert_eq!(
+            normalize_public_base_url("https://mcp.example.com:8443").unwrap(),
+            Some("https://mcp.example.com:8443".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_treats_blank_as_none() {
+        assert_eq!(normalize_public_base_url("").unwrap(), None);
+        assert_eq!(normalize_public_base_url("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn normalize_rejects_unsafe_or_non_origin_urls() {
+        // Non-https, credentials, query/fragment, non-root path, and garbage all rejected.
+        assert!(normalize_public_base_url("http://mcp.example.com").is_err());
+        assert!(normalize_public_base_url("https://user:pass@mcp.example.com").is_err());
+        assert!(normalize_public_base_url("https://mcp.example.com/?x=1").is_err());
+        assert!(normalize_public_base_url("https://mcp.example.com/#frag").is_err());
+        assert!(normalize_public_base_url("https://mcp.example.com/mcp").is_err());
+        assert!(normalize_public_base_url("not a url").is_err());
+    }
+
+    #[test]
+    fn advertised_base_url_falls_back_to_localhost() {
+        assert_eq!(advertised_base_url(None, 45818), "http://localhost:45818");
+        assert_eq!(
+            advertised_base_url(Some("   "), 45818),
+            "http://localhost:45818"
+        );
+        assert_eq!(
+            advertised_base_url(Some("https://mcp.example.com/"), 45818),
+            "https://mcp.example.com"
+        );
+    }
+}

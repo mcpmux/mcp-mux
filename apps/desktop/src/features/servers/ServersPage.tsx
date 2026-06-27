@@ -367,7 +367,8 @@ export function ServersPage() {
       }
 
       // Apply runtime statuses from ServerManager to fix initial connection_status
-      // (mergeDefinitionsWithStates hardcodes 'connecting' for enabled servers)
+      // (the view-model builders seed 'disconnected'; ServerManager owns the real
+      // runtime status, which arrives via events)
       const mapStatus = (s: ConnectionStatus): ServerViewModel['connection_status'] => {
         if (s === 'refreshing' || s === 'authenticating') return 'connecting';
         return s;
@@ -1251,9 +1252,13 @@ export function ServersPage() {
                         </button>
                       )}
 
-                      {/* Disable button - shown when enabled and connected/running */}
+                      {/* Disable button - shown when an enabled server is connected,
+                          running, or sitting disconnected (so it can still be turned off
+                          without first reconnecting) */}
                       {server.enabled &&
-                        (serverAction === 'running' || serverAction === 'connected_auto') && (
+                        (serverAction === 'running' ||
+                          serverAction === 'connected_auto' ||
+                          serverAction === 'disconnected') && (
                           <button
                             onClick={() => handleDisableClick(server)}
                             disabled={disableLoading}
@@ -1765,7 +1770,6 @@ export function ServersPage() {
                   </div>
                 </div>
               )}
-
             </div>
 
             {/* Pinned footer — always visible regardless of form length (#163) */}

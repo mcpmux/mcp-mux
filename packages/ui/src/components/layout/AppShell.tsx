@@ -15,13 +15,18 @@ export function AppShell({ sidebar, children, statusBar, titleBar, windowControl
     <div className={cn('flex h-screen flex-col overflow-hidden bg-[rgb(var(--background))]', className)}>
       {/* Custom title bar */}
       {titleBar && (
-        <div className="h-9 flex-shrink-0 bg-[rgb(var(--surface))] border-b border-[rgb(var(--border-subtle))] flex items-center">
+        <div
+          className="drag-region h-9 flex-shrink-0 bg-[rgb(var(--surface))] border-b border-[rgb(var(--border-subtle))] flex items-center"
+          data-tauri-drag-region
+        >
           {/* Draggable area — fills space between logo and window controls */}
-          <div className="drag-region flex-1 h-full flex items-center">
+          <div className="drag-region flex-1 h-full flex items-center" data-tauri-drag-region>
             {titleBar}
           </div>
-          {/* Window controls — outside drag region so clicks work */}
-          {windowControls}
+          {/* Window controls — force no-drag so clicks work inside the draggable titlebar */}
+          <div className="no-drag flex h-full items-center">
+            {windowControls}
+          </div>
         </div>
       )}
 

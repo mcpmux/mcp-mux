@@ -163,3 +163,36 @@ impl FeatureDiscoveryService {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::pending;
+
+    #[tokio::test]
+    async fn with_list_timeout_returns_some_ok_when_future_completes() {
+        let out =
+            FeatureDiscoveryService::with_list_timeout("tools/list", async { Ok::<i32, &str>(42) })
+                .await;
+        assert!(matches!(out, Some(Ok(42))));
+    }
+
+    #[tokio::test]
+    async fn with_list_timeout_propagates_inner_error() {
+        let out = FeatureDiscoveryService::with_list_timeout("prompts/list", async {
+            Err::<i32, &str>("boom")
+        })
+        .await;
+        assert!(matches!(out, Some(Err("boom"))));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn with_list_timeout_returns_none_on_timeout() {
+        // A future that never resolves. Under tokio's paused clock the runtime
+        // auto-advances to the LIST_TIMEOUT deadline, so this resolves to a
+        // timeout without actually waiting 10 seconds.
+        let never = pending::<Result<i32, &str>>();
+        let out = FeatureDiscoveryService::with_list_timeout("resources/list", never).await;
+        assert!(out.is_none());
+    }
+}

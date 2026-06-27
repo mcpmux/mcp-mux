@@ -228,12 +228,21 @@ fn is_loopback_redirect_uri(uri: &str) -> bool {
     }
 }
 
+/// URI schemes that must never be accepted as a redirect target. They can
+/// execute script or load arbitrary content if a redirect is ever navigated to
+/// one (e.g. the consent flow's `window.location.href` fallback), so they are
+/// rejected even though they are technically non-http "custom" schemes.
+const DANGEROUS_REDIRECT_SCHEMES: &[&str] = &["javascript", "data", "vbscript", "file", "blob"];
+
 fn is_custom_scheme_redirect_uri(uri: &str) -> bool {
     let Ok(url) = url::Url::parse(uri) else {
         return false;
     };
 
-    url.scheme() != "http" && url.scheme() != "https"
+    // `url` normalizes the scheme to lowercase, so the denylist comparison is
+    // case-insensitive (e.g. `JavaScript:` is parsed as `javascript`).
+    let scheme = url.scheme();
+    scheme != "http" && scheme != "https" && !DANGEROUS_REDIRECT_SCHEMES.contains(&scheme)
 }
 
 fn is_chatgpt_connector_redirect_uri(uri: &str) -> bool {
@@ -273,6 +282,9 @@ fn filter_valid_redirect_uris(uris: &[String]) -> Vec<String> {
 /// NOT allowed (these are filtered from the request, not hard-failed):
 /// - Other https:// URLs (except for confidential clients with proper secrets)
 /// - http:// URLs to non-loopback addresses
+/// - Dangerous schemes (javascript:, data:, vbscript:, file:, blob:) — rejected
+///   even though they are non-http, since navigating a redirect to one can
+///   execute script or load arbitrary content
 ///
 /// Invalid URIs are silently skipped rather than rejecting the entire registration.
 /// This is necessary because some clients (notably Cursor) send a mix of valid and
@@ -550,6 +562,82 @@ mod tests {
             &["https://chatgpt.com/connector/oauth/abc123".to_string()]
         )
         .is_ok());
+    }
+
+    #[test]
+    fn test_reject_dangerous_custom_schemes() {
+        // Script/content schemes must never count as a valid redirect target, even
+        // though they aren't http(s). A redirect navigated to one of these (e.g. via
+        // the consent modal's window.location.href fallback) could execute script or
+        // load arbitrary content.
+        for uri in [
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox(1)",
+            "file:///etc/passwd",
+            "blob:https://evil.example/uuid",
+        ] {
+            assert!(
+                !is_custom_scheme_redirect_uri(uri),
+                "{uri} must not be a valid custom-scheme redirect"
+            );
+            assert!(
+                validate_redirect_uris(&[uri.to_string()]).is_err(),
+                "{uri} must be rejected when it is the only redirect_uri"
+            );
+        }
+
+        // Legitimate native-app schemes still pass, with or without an authority.
+        assert!(is_custom_scheme_redirect_uri("cursor://callback"));
+        assert!(is_custom_scheme_redirect_uri(
+            "com.example.app:/oauth2redirect"
+        ));
+    }
+
+    #[test]
+    fn test_chatgpt_connector_anchoring_rejects_lookalikes() {
+        // Only https://chatgpt.com/connector/oauth[/...] is accepted.
+        assert!(is_chatgpt_connector_redirect_uri(
+            "https://chatgpt.com/connector/oauth/abc123"
+        ));
+        assert!(is_chatgpt_connector_redirect_uri(
+            "https://chatgpt.com/connector/oauth"
+        ));
+
+        for uri in [
+            "http://chatgpt.com/connector/oauth/abc",       // not https
+            "https://chatgpt.com.evil.com/connector/oauth", // suffix host
+            "https://chatgpt.com@evil.com/connector/oauth", // userinfo, host=evil.com
+            "https://evil.com/connector/oauth",             // wrong host
+            "https://chatgpt.com/connector/oauthEVIL",      // path not anchored
+            "https://chatgpt.com/connector/evil",           // wrong path
+        ] {
+            assert!(
+                !is_chatgpt_connector_redirect_uri(uri),
+                "{uri} must not match the ChatGPT connector rule"
+            );
+        }
+    }
+
+    #[test]
+    fn test_loopback_rejects_userinfo_and_subdomain_tricks() {
+        // Loopback-looking userinfo or subdomains must not be treated as loopback.
+        for uri in [
+            "http://localhost@evil.com/callback",
+            "http://127.0.0.1@evil.com/callback",
+            "http://localhost.evil.com/callback",
+            "http://127.0.0.1.evil.com/callback",
+        ] {
+            assert!(
+                !is_loopback_redirect_uri(uri),
+                "{uri} must not be treated as loopback"
+            );
+        }
+
+        // Genuine loopback hosts still pass.
+        assert!(is_loopback_redirect_uri("http://127.0.0.1:8080/callback"));
+        assert!(is_loopback_redirect_uri("http://localhost/callback"));
+        assert!(is_loopback_redirect_uri("http://[::1]:8080/callback"));
     }
 
     #[test]

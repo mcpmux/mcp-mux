@@ -326,7 +326,10 @@ export function BindingForm({
     space_id: spaceId,
     feature_set_ids: fsIds,
     machine_id: resolvedMachineId,
-    client_id: clientId,
+    // When a machine scope is set, client_id is redundant — the resolver
+    // matches on machine + optional client. Setting both simultaneously
+    // conflicts with find_exact_for_machine's canonical (client_id IS NULL) path.
+    client_id: resolvedMachineId ? null : clientId,
   });
 
   const handleSubmit = async () => {
@@ -385,7 +388,7 @@ export function BindingForm({
       space_id: spaceId,
       feature_set_ids: fsIds,
       machine_id: bindingMachineId(machineId),
-      client_id: clientId,
+      client_id: machineId.trim() ? null : clientId,
     };
 
     const baseline = lastSavedRef.current ?? {

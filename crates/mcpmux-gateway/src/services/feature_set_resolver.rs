@@ -235,7 +235,7 @@ impl FeatureSetResolverService {
                 if let Some(client_machine) = self.client_repo.get_machine_id(cid).await? {
                     if let Some(binding) = self
                         .binding_repo
-                        .find_exact_for_machine(&client_machine, root)
+                        .find_exact_for_machine(&client_machine, root, Some(cid))
                         .await?
                     {
                         return Ok(Some(binding));
@@ -245,7 +245,7 @@ impl FeatureSetResolverService {
             if let Some(local_id) = *self.local_machine_id.read().await {
                 if let Some(binding) = self
                     .binding_repo
-                    .find_exact_for_machine(&local_id, root)
+                    .find_exact_for_machine(&local_id, root, client_id)
                     .await?
                 {
                     return Ok(Some(binding));

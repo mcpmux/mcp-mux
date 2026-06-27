@@ -311,12 +311,20 @@ pub trait WorkspaceBindingRepository: Send + Sync {
         candidate_roots: &[String],
     ) -> RepoResult<Option<WorkspaceBinding>>;
 
-    /// Exact match for a machine-scoped binding (`machine_id` set, `client_id`
-    /// unset) on `workspace_root`.
+    /// Exact match for a machine-scoped binding on `workspace_root`.
+    ///
+    /// Matches bindings where `machine_id` equals the given value AND either:
+    /// - `client_id` is `None` (canonical machine binding), or
+    /// - `client_id` equals the given `client_id` (client+machine scoped binding).
+    ///
+    /// A client+machine scoped binding wins over a machine-only canonical binding
+    /// because it is more specific. Pass `client_id: None` to match canonical
+    /// machine bindings only.
     async fn find_exact_for_machine(
         &self,
         machine_id: &Uuid,
         workspace_root: &str,
+        client_id: Option<&str>,
     ) -> RepoResult<Option<WorkspaceBinding>>;
 
     /// Exact match for a global canonical binding (`machine_id` and `client_id`

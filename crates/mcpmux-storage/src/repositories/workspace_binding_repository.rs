@@ -323,8 +323,21 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         &self,
         machine_id: &Uuid,
         workspace_root: &str,
+        client_id: Option<&str>,
     ) -> Result<Option<WorkspaceBinding>> {
         let bindings = self.list().await?;
+        // Client+machine scoped binding takes priority over machine-only canonical.
+        // Try the specific client match first, fall back to canonical (client_id IS NULL).
+        let specific = client_id.and_then(|cid| {
+            bindings.iter().find(|b| {
+                b.workspace_root == workspace_root
+                    && b.machine_id == Some(*machine_id)
+                    && b.client_id.as_deref() == Some(cid)
+            })
+        });
+        if let Some(b) = specific {
+            return Ok(Some(b.clone()));
+        }
         Ok(bindings.into_iter().find(|b| {
             b.workspace_root == workspace_root
                 && b.machine_id == Some(*machine_id)

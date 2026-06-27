@@ -243,9 +243,17 @@ export function WorkspaceBindingPanel() {
         return;
       }
       await createWorkspaceBinding(input);
+      // Auto-link the client to the machine when a machine is chosen —
+      // the user picking a machine for the binding is the same intent as saying
+      // "this Cursor is running on that machine." Override any prior assignment
+      // so the resolver's client-machine lookup stays in sync with the binding.
+      if (payload.clientId && input.machine_id && clientMachineId !== input.machine_id) {
+        await setClientMachineId(payload.clientId, input.machine_id).catch(() => undefined);
+        setClientMachineIdState(input.machine_id);
+      }
       close();
     },
-    [payload, isEdit, close],
+    [payload, isEdit, clientMachineId, close],
   );
 
   const handleDelete = useCallback(async () => {

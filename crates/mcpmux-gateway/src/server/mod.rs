@@ -17,6 +17,7 @@ mod state;
 // inbound auth is disabled, and driving the full inbound OAuth flow
 // (register → authorize → consent → token → authenticated /mcp) end to end.
 // AppState is also used throughout this module.
+pub(crate) use handlers::effective_base_url;
 pub use handlers::{
     oauth_authorize, oauth_consent_approve, oauth_metadata, oauth_register, oauth_token,
     resource_metadata, AppState,
@@ -184,6 +185,8 @@ impl GatewayServer {
         // Configure gateway state
         let mut state = GatewayState::new(domain_event_tx.clone());
         state.set_base_url(config.base_url());
+        state.set_public_base_url(config.public_base_url.clone());
+        state.set_network_bind(config.is_network_bind());
         if let Some(jwt_secret) = dependencies.jwt_secret.clone() {
             state.set_jwt_secret(jwt_secret);
         }

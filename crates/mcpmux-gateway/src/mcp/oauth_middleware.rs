@@ -44,9 +44,21 @@ pub async fn mcp_oauth_middleware(
         .map(|ctx| ctx.trace_id.clone())
         .unwrap_or_else(|| "??????".to_string());
 
+    // Advertise the address the client actually reached us on (or the configured
+    // public base URL) so a gateway bound to 0.0.0.0 returns a resource-metadata
+    // URL the remote client can resolve — see `effective_base_url`.
     let base_url = {
         let state = services.gateway_state.read().await;
-        state.base_url.clone()
+        let host = request
+            .headers()
+            .get(header::HOST)
+            .and_then(|v| v.to_str().ok());
+        crate::server::effective_base_url(
+            state.public_base_url.as_deref(),
+            state.network_bind,
+            host,
+            &state.base_url,
+        )
     };
 
     // System-wide inbound auth can be disabled (localhost-only convenience):

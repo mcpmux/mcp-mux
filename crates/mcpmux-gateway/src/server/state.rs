@@ -43,6 +43,14 @@ pub struct ClientSession {
 pub struct GatewayState {
     /// Base URL for this gateway (e.g., "http://localhost:3100")
     pub base_url: String,
+    /// Configured public base URL (e.g. an https tunnel origin). When set it is
+    /// advertised verbatim in OAuth/MCP metadata; when None the advertised base
+    /// is the request Host (on a network bind) or `base_url` (loopback).
+    pub public_base_url: Option<String>,
+    /// True when the gateway is bound to a non-loopback address. Lets the
+    /// metadata handlers advertise the host a remote client actually used
+    /// instead of `localhost`, without changing local-only behavior.
+    pub network_bind: bool,
     /// Active client sessions
     pub sessions: HashMap<Uuid, ClientSession>,
     /// Access key to client ID mapping
@@ -73,6 +81,8 @@ impl GatewayState {
     pub fn new(domain_event_tx: broadcast::Sender<DomainEvent>) -> Self {
         Self {
             base_url: "http://localhost:3100".to_string(), // Default
+            public_base_url: None,
+            network_bind: false,
             sessions: HashMap::new(),
             access_keys: HashMap::new(),
             oauth_tokens: HashMap::new(),
@@ -90,6 +100,16 @@ impl GatewayState {
     pub fn set_base_url(&mut self, base_url: String) {
         info!("[State] Base URL configured: {}", base_url);
         self.base_url = base_url;
+    }
+
+    /// Set the configured public base URL (None = local-only / host-derived).
+    pub fn set_public_base_url(&mut self, public_base_url: Option<String>) {
+        self.public_base_url = public_base_url;
+    }
+
+    /// Record whether the gateway is bound to a non-loopback address.
+    pub fn set_network_bind(&mut self, network_bind: bool) {
+        self.network_bind = network_bind;
     }
 
     /// Whether inbound MCP auth is disabled — connections may be accepted

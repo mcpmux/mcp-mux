@@ -21,7 +21,6 @@ import {
   ChevronRight,
   FileText,
   FolderOpen,
-  Layers,
   Loader2,
   MessageSquare,
   Package,
@@ -46,15 +45,11 @@ import {
 import {
   clearUnmappedReportedRoots,
   forgetReportedRoot,
-  createWorkspaceBinding,
-  deleteWorkspaceBinding,
   getWorkspaceEffectiveFeatures,
   listReportedWorkspaceRoots,
   listWorkspaceBindings,
-  updateWorkspaceBinding,
   type EffectiveFeature,
   type WorkspaceBinding,
-  type WorkspaceBindingInput,
   type WorkspaceEffectiveFeatures,
 } from '@/lib/api/workspaceBindings';
 import {
@@ -76,17 +71,15 @@ import {
   listFeatureSets,
   type FeatureSet,
 } from '@/lib/api/featureSets';
-import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
-import { WorkspaceSetupWizard } from './WorkspaceSetupWizard';
-import { useSpaces, usePendingWorkspaceNew, useSetPendingWorkspaceNew } from '@/stores';
 import { ServerIcon } from '@/components/ServerIcon';
-import type { Space } from '@/lib/api/spaces';
 import {
-  BindingForm,
-  FormField,
-  SaveStatusPill,
-  type SaveStatus,
-} from './workspace-binding-form.component';
+  useBindingPanelStore,
+  usePendingWorkspaceNew,
+  useSetPendingWorkspaceNew,
+  useSpaces,
+} from '@/stores';
+import type { Space } from '@/lib/api/spaces';
+import { FormField } from './workspace-binding-form.component';
 
 /**
  * Workspaces page.
@@ -94,8 +87,8 @@ import {
  * Mirrors the Clients page's shape for visual consistency:
  *   • Header: title + subtitle + refresh, followed by a single large search.
  *   • Content: responsive cards grid inside a max-w-[2000px] wrapper.
- *   • Inspector: fixed-right side panel with a `fixed inset-0` backdrop-
- *     blur dim + `animate-in slide-in-from-right` entrance.
+ *   • Binding edits: card clicks open the global WorkspaceBindingPanel via
+ *     bindingPanelStore (mounted in App.tsx).
  *
  * Each card is a workspace entry, unioning bindings and live reported roots
  * (dedup'd by normalized path). Status is conveyed with a corner dot + pill:
@@ -137,8 +130,6 @@ function entryIsBoundForCurrentMachine(
   );
 }
 
-type Selected = { mode: 'new' } | { mode: 'entry'; id: string; bindingId?: string };
-
 const WORKSPACE_TABLE_REFRESH_CHANNELS: WorkspaceEventChannel[] = [
   'session-roots-changed',
   'workspace-binding-changed',
@@ -162,15 +153,13 @@ export function WorkspacesPage() {
   const [error, setError] = useState<string | null>(null);
   const { toasts, success, error: showError, dismiss } = useToast();
   const { confirm, ConfirmDialogElement } = useConfirm();
+  const openBindingPanel = useBindingPanelStore((state) => state.open);
 
-  const [selected, setSelected] = useState<Selected | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'live' | 'mapped' | 'unmapped'>('all');
   const [machineFilter, setMachineFilter] = useState<string>('all');
   const [identityBannerDismissed, setIdentityBannerDismissed] = useState(false);
   const [showIdentityModal, setShowIdentityModal] = useState(false);
-  /** Optimistic icon overrides while the inspector panel is open. */
-  const [liveEntryIcons, setLiveEntryIcons] = useState<Map<string, string>>(new Map());
 
   const loadData = useCallback(async () => {
     setError(null);
@@ -199,13 +188,13 @@ export function WorkspacesPage() {
     void loadData().finally(() => setIsLoading(false));
   }, [loadData]);
 
-  // Opened from the home "Set up a folder" CTA — launch the create walkthrough.
+  // Opened from the home "Set up a folder" CTA — open global binding panel.
   useEffect(() => {
     if (pendingNew) {
-      setSelected({ mode: 'new' });
+      openBindingPanel({ mode: 'create' });
       clearPendingNew(false);
     }
-  }, [pendingNew, clearPendingNew]);
+  }, [pendingNew, clearPendingNew, openBindingPanel]);
 
   // Refresh whenever something the table reflects changes outside the page:
   //   • `session-roots-changed` — a connected client newly reported a root.
@@ -398,71 +387,13 @@ export function WorkspacesPage() {
     return { all: entries.length, live, mapped, unmapped };
   }, [entries]);
 
-  const selectedEntry: Entry | null =
-    selected?.mode === 'entry' ? entries.find((e) => e.id === selected.id) ?? null : null;
-  const selectedBindingId =
-    selected?.mode === 'entry' ? selected.bindingId : undefined;
-  const activeBinding = selectedEntry
-    ? selectedBindingId
-      ? selectedEntry.bindings.find((b) => b.id === selectedBindingId) ??
-        primaryBinding(selectedEntry)
-      : primaryBinding(selectedEntry)
-    : null;
   const resolveEntryIcon = useCallback(
     (entry: Entry): string | null =>
-      liveEntryIcons.get(entry.id) ??
       primaryBinding(entry)?.icon ??
       appearancesByRoot.get(entry.root.toLowerCase()) ??
       null,
-    [appearancesByRoot, liveEntryIcons]
+    [appearancesByRoot]
   );
-
-  const selectedIsNew = selected?.mode === 'new';
-  const panelOpen = selected !== null;
-
-  useEffect(() => {
-    if (!panelOpen) {
-      setLiveEntryIcons(new Map());
-    }
-  }, [panelOpen]);
-
-  const handleCreate = async (input: WorkspaceBindingInput): Promise<WorkspaceBinding> => {
-    const created = await createWorkspaceBinding(input);
-    setBindings((prev) =>
-      [...prev, created].sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
-    );
-    success(t('toast.bindingSaved'), created.workspace_root);
-    return created;
-  };
-
-  const handleUpdate = async (id: string, input: WorkspaceBindingInput) => {
-    const updated = await updateWorkspaceBinding(id, input);
-    setBindings((prev) =>
-      prev
-        .map((b) => (b.id === id ? updated : b))
-        .sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
-    );
-    success(t('toast.bindingUpdated'), updated.workspace_root);
-  };
-
-  const handleDelete = async (binding: WorkspaceBinding) => {
-    const ok = await confirm({
-      title: t('confirm.removeTitle'),
-      message: t('confirm.removeMessage', { path: binding.workspace_root }),
-      confirmLabel: t('confirm.removeLabel'),
-      cancelLabel: t('common:actions.cancel'),
-      variant: 'danger',
-    });
-    if (!ok) return;
-    try {
-      await deleteWorkspaceBinding(binding.id);
-      setBindings((prev) => prev.filter((b) => b.id !== binding.id));
-      setSelected(null);
-      success(t('toast.bindingRemoved'), binding.workspace_root);
-    } catch (e) {
-      showError(t('toast.failedToRemove'), e instanceof Error ? e.message : String(e));
-    }
-  };
 
   const handleRegisterMachine = async (input: {
     name: string;
@@ -543,7 +474,7 @@ export function WorkspacesPage() {
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => setSelected({ mode: 'new' })}
+                onClick={() => openBindingPanel({ mode: 'create' })}
                 data-testid="workspace-binding-create-toggle"
                 className="whitespace-nowrap"
               >
@@ -663,14 +594,12 @@ export function WorkspacesPage() {
             <EmptyState
               hasAny={entries.length > 0}
               hasFilter={searchQuery.length > 0 || filter !== 'all' || machineFilter !== 'all'}
-              onCreate={() => setSelected({ mode: 'new' })}
+              onCreate={() => openBindingPanel({ mode: 'create' })}
               t={t}
             />
           ) : (
             <div className="grid gap-5 auto-fill-cards">
               {filtered.map((entry) => {
-                const isSelected =
-                  selected?.mode === 'entry' && selected.id === entry.id;
                 const binding = primaryBinding(entry);
                 // For mapped entries: trust the binding. For unmapped: fall
                 // back to the system's default Space + its Default FS so
@@ -696,11 +625,23 @@ export function WorkspacesPage() {
                     machinesById={machinesById}
                     spaceById={spaceById}
                     fsById={fsById}
-                    selected={isSelected}
-                    onClick={() => setSelected({ mode: 'entry', id: entry.id })}
-                    onMachineRowClick={(bindingId) =>
-                      setSelected({ mode: 'entry', id: entry.id, bindingId })
-                    }
+                    onClick={() => {
+                      const primary = primaryBinding(entry);
+                      if (primary) {
+                        openBindingPanel({ mode: 'edit', binding: primary });
+                        return;
+                      }
+                      openBindingPanel({
+                        mode: 'create-from-live',
+                        workspaceRoot: entry.root,
+                      });
+                    }}
+                    onMachineRowClick={(bindingId) => {
+                      const rowBinding = entry.bindings.find((b) => b.id === bindingId);
+                      if (rowBinding) {
+                        openBindingPanel({ mode: 'edit', binding: rowBinding });
+                      }
+                    }}
                     onForget={
                       entry.kind === 'unmapped-live'
                         ? () => handleForgetRoot(entry.root)
@@ -714,70 +655,6 @@ export function WorkspacesPage() {
           )}
         </div>
       </div>
-
-      {panelOpen && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40 animate-in fade-in duration-200"
-            onClick={() => setSelected(null)}
-          />
-          {selectedIsNew ? (
-            <WorkspaceSetupWizard
-              spaces={spaces}
-              featureSets={featureSets}
-              reportedRoots={reportedRoots}
-              existingBindings={bindings}
-              onClose={() => setSelected(null)}
-              onCreate={async (input) => {
-                const created = await handleCreate(input);
-                // Land on the new mapping's inspector so its effective features
-                // are shown right after creation.
-                setSelected({ mode: 'entry', id: created.id });
-                return created;
-              }}
-              onError={(msg) => showError(t('toast.couldNotSave'), msg)}
-            />
-          ) : (
-            <InspectorPanel
-              key={`${selectedEntry?.id ?? 'entry'}:${selectedBindingId ?? 'primary'}`}
-              entry={selectedEntry}
-              binding={activeBinding}
-              isNew={false}
-              resolvedIcon={selectedEntry ? resolveEntryIcon(selectedEntry) : null}
-              spaces={spaces}
-              featureSets={featureSets}
-              machines={machines}
-              localMachineId={localMachineId}
-              onClose={() => setSelected(null)}
-              onSubmit={async (input) => {
-                if (activeBinding) {
-                  await handleUpdate(activeBinding.id, input);
-                } else {
-                  const created = await handleCreate(input);
-                  setSelected({ mode: 'entry', id: created.id });
-                }
-              }}
-              onDelete={async () => {
-                if (activeBinding) await handleDelete(activeBinding);
-              }}
-              onIconChange={(icon) => {
-                if (!selectedEntry) return;
-                setLiveEntryIcons((prev) => {
-                  const next = new Map(prev);
-                  if (icon) {
-                    next.set(selectedEntry.id, icon);
-                  } else {
-                    next.delete(selectedEntry.id);
-                  }
-                  return next;
-                });
-              }}
-              onError={(msg) => showError(t('toast.couldNotSave'), msg)}
-              t={t}
-            />
-          )}
-        </>
-      )}
 
       <ToastContainer toasts={toasts} onClose={dismiss} />
       {ConfirmDialogElement}
@@ -998,7 +875,6 @@ function EntryCard({
   machinesById,
   spaceById,
   fsById,
-  selected,
   onClick,
   onMachineRowClick,
   onForget,
@@ -1012,7 +888,6 @@ function EntryCard({
   machinesById: Map<string, Machine>;
   spaceById: Map<string, Space>;
   fsById: Map<string, FeatureSet>;
-  selected: boolean;
   onClick: () => void;
   onMachineRowClick: (bindingId: string) => void;
   onForget?: () => void;
@@ -1065,9 +940,7 @@ function EntryCard({
 
   return (
     <Card
-      className={`group relative h-full cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] ${
-        selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
-      }`}
+      className="group relative h-full cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01]"
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
     >
@@ -1186,29 +1059,6 @@ function Pill({
       title={title}
     >
       {children}
-    </span>
-  );
-}
-
-function Chip({
-  children,
-  tone,
-  title,
-}: {
-  children: React.ReactNode;
-  tone: 'primary' | 'neutral';
-  title?: string;
-}) {
-  const styles =
-    tone === 'primary'
-      ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 border-primary-200 dark:border-primary-800/60'
-      : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--foreground))]';
-  return (
-    <span
-      className={`inline-flex max-w-full items-center whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${styles}`}
-      title={title}
-    >
-      <span className="truncate">{children}</span>
     </span>
   );
 }
@@ -1341,225 +1191,6 @@ export function CollapsibleSection({
       {open && (
         <div className="border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))] p-4">
           {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Inspector side panel
-// ---------------------------------------------------------------------------
-
-function InspectorPanel({
-  entry,
-  binding,
-  isNew,
-  resolvedIcon,
-  spaces,
-  featureSets,
-  machines,
-  localMachineId,
-  onClose,
-  onSubmit,
-  onDelete,
-  onError,
-  onIconChange,
-  t,
-}: {
-  entry: Entry | null;
-  binding: WorkspaceBinding | null;
-  isNew: boolean;
-  resolvedIcon: string | null;
-  spaces: Space[];
-  featureSets: FeatureSet[];
-  machines: Machine[];
-  localMachineId: string | null;
-  onClose: () => void;
-  onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
-  onDelete: () => Promise<void>;
-  onError: (msg: string) => void;
-  /** Live icon edits from the binding form (before autosave lands in entry state). */
-  onIconChange?: (icon: string | null) => void;
-  t: TFunction<['workspaces', 'common']>;
-}) {
-  const [editedIcon, setEditedIcon] = useState<string | null | undefined>(undefined);
-  const [prevResolvedIcon, setPrevResolvedIcon] = useState(resolvedIcon);
-
-  if (resolvedIcon !== prevResolvedIcon) {
-    setPrevResolvedIcon(resolvedIcon);
-    setEditedIcon(undefined);
-  }
-
-  const liveIcon = editedIcon !== undefined ? editedIcon : resolvedIcon;
-
-  const handleIconChange = useCallback(
-    (icon: string | null) => {
-      setEditedIcon(icon);
-      onIconChange?.(icon);
-    },
-    [onIconChange]
-  );
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const isMapped = binding !== null;
-  const mode: 'create' | 'edit' | 'create-from-live' = isNew
-    ? 'create'
-    : isMapped
-      ? 'edit'
-      : 'create-from-live';
-  const title = isNew
-    ? t('panel.newBinding')
-    : isMapped
-      ? t('panel.binding')
-      : t('panel.configureWorkspace');
-  const displayTitle = entry ? entryDisplayTitle(entry) : '';
-  const subtitle = isNew
-    ? t('panel.newSubtitle')
-    : displayTitle !== entry?.root
-      ? entry?.root ?? ''
-      : displayTitle;
-
-  // Auto-save status drives the small pill in the Mapping section header.
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>({ kind: 'idle' });
-
-  // Effective-features count drives the badge in the section header so the
-  // user can see scale without expanding.
-  const [effectiveTotal, setEffectiveTotal] = useState<number | null>(null);
-
-  return (
-    <div className="fixed right-0 top-0 bottom-0 w-full max-w-[480px] min-w-[420px] bg-[rgb(var(--surface))] border-l border-[rgb(var(--border))] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 z-50">
-      <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-11 h-11 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg flex-shrink-0 border border-[rgb(var(--border-subtle))]">
-              {liveIcon ? (
-                <ServerIcon icon={liveIcon} className="h-6 w-6 object-contain" fallback="📁" />
-              ) : (
-                <FolderOpen className="h-5 w-5 text-[rgb(var(--muted))]" />
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                {!isNew && entry?.isLive && <Pill tone="emerald">{t('card.live')}</Pill>}
-                {!isNew && entry && !isMapped && <Pill tone="amber">{t('card.unmapped')}</Pill>}
-                {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">{t('card.offline')}</Pill>}
-              </div>
-              <h2 className="text-lg font-bold break-words">
-                {!isNew && entry ? displayTitle : title}
-              </h2>
-              {!isNew && entry && displayTitle !== entry.root && (
-                <p className="text-xs text-[rgb(var(--muted))] break-all font-mono">{entry.root}</p>
-              )}
-              {isNew && <p className="text-xs text-[rgb(var(--muted))] break-words">{subtitle}</p>}
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
-            aria-label={t('panel.closeAria')}
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
-        <CollapsibleSection
-          icon={<FolderOpen className="h-5 w-5" />}
-          tone="primary"
-          title={t('panel.mapping')}
-          subtitle={
-            mode === 'create'
-              ? t('panel.mappingSubtitleCreate')
-              : mode === 'create-from-live'
-                ? t('panel.mappingSubtitleLive')
-                : isMapped && binding
-                  ? t('panel.mappingSubtitleRoutes', {
-                      featureSets:
-                        formatFsList(
-                          binding.feature_set_ids.map(
-                            (id) => featureSets.find((f) => f.id === id)?.name ?? id
-                          )
-                        ) || '—',
-                      space:
-                        spaces.find((s) => s.id === binding.space_id)?.name ?? '—',
-                    })
-                  : t('panel.mappingSubtitleAutosave')
-          }
-          defaultOpen={isNew || !isMapped}
-          headerExtra={mode === 'edit' ? <SaveStatusPill status={saveStatus} t={t} /> : null}
-          testId="workspace-mapping-section"
-        >
-          <BindingForm
-            mode={mode}
-            spaces={spaces}
-            featureSets={featureSets}
-            machines={machines}
-            localMachineId={localMachineId}
-            initial={binding}
-            prefillRoot={entry && !isMapped ? entry.root : undefined}
-            initialUnmappedIcon={!isMapped ? resolvedIcon : null}
-            onCancel={onClose}
-            onSubmit={onSubmit}
-            onError={onError}
-            onSaveStatusChange={setSaveStatus}
-            onIconChange={handleIconChange}
-            t={t}
-          />
-        </CollapsibleSection>
-
-        {entry && !isNew && (
-          <CollapsibleSection
-            icon={<Wrench className="h-5 w-5" />}
-            tone="primary"
-            title="Connect apps to this folder"
-            subtitle="Write the McpMux config into this folder for the apps you use, with this folder's workspace header."
-            defaultOpen={!isMapped}
-            testId="workspace-install-section"
-          >
-            <WorkspaceInstallPanel workspaceRoot={entry.root} />
-          </CollapsibleSection>
-        )}
-
-        {entry && !isNew && (
-          <CollapsibleSection
-            icon={<Layers className="h-5 w-5" />}
-            tone="purple"
-            title={t('panel.effectiveFeatures')}
-            subtitle={t('panel.effectiveFeaturesSubtitle')}
-            defaultOpen={true}
-            badge={effectiveTotal ?? undefined}
-            testId="workspace-effective-features-section"
-          >
-            <EffectiveFeaturesContent
-              root={entry.root}
-              onTotalChange={setEffectiveTotal}
-              t={t}
-            />
-          </CollapsibleSection>
-        )}
-
-      </div>
-
-      {binding && (
-        <div className="flex-shrink-0 p-4 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void onDelete()}
-            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
-            data-testid={`workspace-binding-delete-${binding.id}`}
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            {t('actions.removeBinding')}
-          </Button>
         </div>
       )}
     </div>

@@ -203,15 +203,6 @@
     "machineNamePlaceholder": "Machine name",
     "machineNameRequired": "Enter a machine name",
     "continue": "Continue",
-    "pickMachine": "Pick a machine first",
-    "adopt": "Existing configuration",
-    "adoptDesc": "This folder name is already configured on another machine. Copy an existing routing setup or start fresh.",
-    "adoptColMachine": "Machine",
-    "adoptColPath": "Path",
-    "adoptColSpace": "Space",
-    "adoptColToolSet": "Tool set",
-    "adoptUseThis": "Use this",
-    "adoptStartFresh": "Start fresh",
-    "adoptNoMachine": "No machine"
+    "pickMachine": "Pick a machine first"
   }
 }

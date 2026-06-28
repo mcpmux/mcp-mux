@@ -93,10 +93,10 @@ export const NAV_ZONES: NavZone[] = [
       },
       {
         key: 'workspaces',
-        label: 'Workspaces',
+        label: 'Mapping',
         icon: FolderOpen,
         testId: 'nav-workspaces',
-        hint: 'Folder → tools mappings',
+        hint: 'Route apps to tools — by folder or id',
       },
       {
         key: 'featuresets',

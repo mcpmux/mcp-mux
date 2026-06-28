@@ -106,6 +106,8 @@ export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
     workspace_root: b.workspace_root,
     space_id: b.space_id,
     feature_set_ids: b.feature_set_ids,
+    // Preserve the type so editing an id mapping doesn't re-validate as a path.
+    binding_type: b.binding_type,
   };
 }
 

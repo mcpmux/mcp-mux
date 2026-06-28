@@ -281,7 +281,7 @@ export default function ClientsPage() {
                   onClick={() => navigateTo('workspaces')}
                   className="font-medium text-[rgb(var(--accent))] hover:underline"
                 >
-                  Workspaces
+                  Mapping
                 </button>{' '}
                 per folder, not per app.
               </>

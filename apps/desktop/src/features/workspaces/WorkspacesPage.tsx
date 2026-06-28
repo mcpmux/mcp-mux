@@ -1610,7 +1610,10 @@ function BindingForm({
   const [fsIds, setFsIds] = useState<string[]>(initial?.feature_set_ids ?? []);
   // A mapping is keyed by a folder path OR an arbitrary id/label. The type is
   // chosen at create time and fixed thereafter (an id never becomes a folder).
-  const [bindingType, setBindingType] = useState<'path' | 'id'>(initial?.binding_type ?? 'path');
+  // Mapping type is chosen in the create wizard and fixed thereafter; here
+  // (edit / create-from-live) we only read it so an id mapping isn't
+  // re-validated as a filesystem path.
+  const bindingType = initial?.binding_type ?? 'path';
   const isId = bindingType === 'id';
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -1831,27 +1834,6 @@ function BindingForm({
           ? 'Enter an id or label (a client id, machine name, or any string), then choose the tools it gets. A headless or remote client that sends this exact value in the X-Mcpmux-Workspace header receives exactly those tools.'
           : 'Pick a folder, then choose the tools it should get. Whenever you open that folder in a connected app — Cursor, VS Code, Claude — McpMux hands it exactly the tools you choose here, and nothing else.'}
       </div>
-
-      {mode === 'create' && (
-        <div className="flex gap-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-1">
-          {(['path', 'id'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setBindingType(t)}
-              className={[
-                'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                bindingType === t
-                  ? 'bg-primary-500 text-white'
-                  : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))]',
-              ].join(' ')}
-              data-testid={`workspace-binding-type-${t}`}
-            >
-              {t === 'path' ? 'Folder' : 'ID / label'}
-            </button>
-          ))}
-        </div>
-      )}
 
       <FormField label={isId ? 'Mapping ID / label' : 'Workspace folder'}>
         <div className="flex gap-2">

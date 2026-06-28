@@ -10,6 +10,8 @@ import { invoke } from '@tauri-apps/api/core';
 export interface WorkspaceBinding {
   id: string;
   workspace_root: string;
+  /** `path` (a normalized folder) or `id` (an arbitrary exact-match key). */
+  binding_type: 'path' | 'id';
   space_id: string;
   /**
    * Non-empty by construction. Order is the operator-chosen rendering
@@ -26,6 +28,8 @@ export interface WorkspaceBindingInput {
   workspace_root: string;
   space_id: string;
   feature_set_ids: string[];
+  /** `path` (default — folder, normalized) or `id` (verbatim exact-match key). */
+  binding_type?: 'path' | 'id';
 }
 
 /** List every binding (sorted by workspace_root). */
@@ -69,9 +73,7 @@ export async function validateWorkspaceRoot(path: string): Promise<string> {
 }
 
 /** List bindings whose target Space is the given one. */
-export async function listWorkspaceBindingsForSpace(
-  spaceId: string
-): Promise<WorkspaceBinding[]> {
+export async function listWorkspaceBindingsForSpace(spaceId: string): Promise<WorkspaceBinding[]> {
   return invoke('list_workspace_bindings_for_space', { spaceId });
 }
 

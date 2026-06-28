@@ -901,6 +901,7 @@ pub async fn update_oauth_client(
 #[tauri::command]
 pub async fn delete_oauth_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    app: State<'_, AppState>,
     client_id: String,
 ) -> Result<(), String> {
     let app_state = gateway_state.read().await;
@@ -921,6 +922,23 @@ pub async fn delete_oauth_client(
         .map_err(|e| format!("Failed to delete client: {}", e))?;
 
     info!("[OAuth] Deleted client: {}", client_id);
+
+    // Best-effort: remove the auto-mapped clientId id-binding so a deleted
+    // client doesn't leave an orphan "<client_id> → Starter" mapping behind in
+    // the Mapping tab. Only API-key clients have such a binding; for DCR
+    // clients this is a no-op.
+    if let Ok(Some(b)) = app
+        .workspace_binding_repository
+        .find_by_id_key(&client_id)
+        .await
+    {
+        if let Err(e) = app.workspace_binding_repository.delete(&b.id).await {
+            warn!(
+                "[OAuth] failed to remove clientId mapping for {}: {}",
+                client_id, e
+            );
+        }
+    }
 
     // Emit domain event
     state.emit_domain_event(mcpmux_core::DomainEvent::ClientDeleted { client_id });

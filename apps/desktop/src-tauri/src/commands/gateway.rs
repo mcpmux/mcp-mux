@@ -125,6 +125,7 @@ pub(crate) async fn shutdown_gateway_handle(mut handle: mcpmux_gateway::GatewayS
 /// mcpmux app instead of the dialog rendering invisibly under another
 /// window.
 const GATEWAY_PUBLIC_BASE_URL_KEY: &str = "gateway.public_base_url";
+const GATEWAY_NETWORK_ACCESS_KEY: &str = "gateway.network_access_enabled";
 
 pub(crate) fn normalize_public_base_url(raw: &str) -> Result<Option<String>, String> {
     let trimmed = raw.trim();
@@ -187,6 +188,33 @@ pub(crate) async fn load_public_base_url_from_repo(
 
 pub(crate) async fn load_public_base_url(app_state: &AppState) -> Option<String> {
     load_public_base_url_from_repo(&app_state.settings_repository).await
+}
+
+/// The address the gateway binds to: loopback by default, or `0.0.0.0` (all
+/// interfaces) once the user opts into network access so other devices on the
+/// LAN can reach it.
+pub(crate) fn bind_host_for(network_access: bool) -> &'static str {
+    if network_access {
+        "0.0.0.0"
+    } else {
+        "127.0.0.1"
+    }
+}
+
+pub(crate) async fn load_network_access_from_repo(
+    settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
+) -> bool {
+    settings_repository
+        .get(GATEWAY_NETWORK_ACCESS_KEY)
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
+pub(crate) async fn load_network_access(app_state: &AppState) -> bool {
+    load_network_access_from_repo(&app_state.settings_repository).await
 }
 
 pub(crate) fn advertised_base_url(public_base_url: Option<&str>, port: u16) -> String {
@@ -981,9 +1009,13 @@ pub async fn start_gateway(
     // Create dependencies using DI builder pattern
     let dependencies = create_gateway_dependencies(&app_state, app_handle.clone())?;
 
+    // Bind all interfaces when the user opted into network access so other
+    // devices on the LAN can reach the gateway; loopback-only otherwise.
+    let network_access = load_network_access(&app_state).await;
+
     // Create gateway config
     let config = mcpmux_gateway::GatewayConfig {
-        host: "127.0.0.1".to_string(), // Bind address must be IP
+        host: bind_host_for(network_access).to_string(),
         port: final_port,
         public_base_url: public_base_url.clone(),
         enable_cors: true,
@@ -1334,6 +1366,37 @@ pub async fn reset_gateway_public_base_url(app_state: State<'_, AppState>) -> Re
         .map_err(|e| e.to_string())?;
 
     info!("[Gateway] Cleared public base URL — reverting to local-only metadata");
+    Ok(())
+}
+
+/// Whether the gateway is configured to bind all network interfaces (`0.0.0.0`).
+#[tauri::command]
+pub async fn get_gateway_network_access(app_state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(load_network_access(&app_state).await)
+}
+
+/// Enable or disable binding the gateway to all interfaces (`0.0.0.0`) so other
+/// devices on the network can reach it. Off (default) keeps it on `127.0.0.1`
+/// (this machine only). Restart the gateway for the change to take effect.
+#[tauri::command]
+pub async fn set_gateway_network_access(
+    enabled: bool,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    app_state
+        .settings_repository
+        .set(
+            GATEWAY_NETWORK_ACCESS_KEY,
+            if enabled { "true" } else { "false" },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if enabled {
+        info!("[Gateway] Network access enabled — will bind 0.0.0.0 on next start/restart");
+    } else {
+        info!("[Gateway] Network access disabled — will bind 127.0.0.1 on next start/restart");
+    }
     Ok(())
 }
 
@@ -1970,5 +2033,11 @@ mod public_base_url_tests {
             advertised_base_url(Some("https://mcp.example.com/"), 45818),
             "https://mcp.example.com"
         );
+    }
+
+    #[test]
+    fn bind_host_for_maps_network_access_to_address() {
+        assert_eq!(super::bind_host_for(false), "127.0.0.1");
+        assert_eq!(super::bind_host_for(true), "0.0.0.0");
     }
 }

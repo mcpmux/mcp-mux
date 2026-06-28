@@ -17,6 +17,7 @@ mod state;
 // inbound auth is disabled, and driving the full inbound OAuth flow
 // (register → authorize → consent → token → authenticated /mcp) end to end.
 // AppState is also used throughout this module.
+pub(crate) use handlers::effective_base_url;
 pub use handlers::{
     oauth_authorize, oauth_consent_approve, oauth_metadata, oauth_register, oauth_token,
     resource_metadata, AppState,
@@ -29,7 +30,9 @@ pub use startup::{AutoConnectResult, StartupOrchestrator, TokenRefreshResult};
 pub use state::{ClientSession, GatewayState};
 
 use axum::{
+    extract::ConnectInfo,
     middleware,
+    response::IntoResponse,
     routing::{delete, get, post, put},
     Router,
 };
@@ -94,13 +97,30 @@ impl GatewayConfig {
             .unwrap_or_else(|| format!("http://localhost:{}", self.port))
     }
 
+    /// True when the gateway binds to a non-loopback address (e.g. `0.0.0.0`
+    /// or a specific LAN interface) — i.e. it is intentionally exposed on the
+    /// network rather than being local-only.
+    pub fn is_network_bind(&self) -> bool {
+        let host = self.host.trim();
+        !(host.is_empty() || host == "127.0.0.1" || host == "::1" || host == "localhost")
+    }
+
     /// Host values accepted by rmcp's DNS rebinding protection.
     ///
     /// rmcp's Streamable HTTP service defaults to loopback-only Host headers.
     /// When the gateway is published through a reverse proxy or Cloudflare
     /// Tunnel, ChatGPT reaches it with the public host, so that hostname must
     /// be explicitly allowlisted.
+    ///
+    /// When bound to a non-loopback address the gateway is exposed on the LAN
+    /// and reached by IP / hostname / mDNS name we can't enumerate ahead of
+    /// time, so the allowlist is relaxed to empty — rmcp treats an empty list
+    /// as allow-all. The OAuth + per-client consent layer remains the gate.
     pub fn allowed_hosts(&self) -> Vec<String> {
+        if self.is_network_bind() {
+            return Vec::new();
+        }
+
         let mut hosts = vec![
             "localhost".to_string(),
             "127.0.0.1".to_string(),
@@ -142,6 +162,46 @@ impl GatewayConfig {
     }
 }
 
+/// The desktop-only client-management routes (list / update / delete clients).
+/// `/oauth/clients/{id}/features` is intentionally excluded — it is the public
+/// client-facing endpoint.
+fn is_management_path(path: &str) -> bool {
+    path == "/oauth/clients"
+        || (path.starts_with("/oauth/clients/") && !path.ends_with("/features"))
+}
+
+/// Reject the desktop-only client-management endpoints when the request comes
+/// from a non-loopback peer.
+///
+/// On a loopback bind every peer is local, so this is a no-op. On a `0.0.0.0`
+/// (network) bind the whole router is exposed, but client enumeration / CRUD
+/// must stay off the LAN — the OAuth flow and `/oauth/clients/{id}/features`
+/// remain reachable. The peer socket address (not the spoofable `Host` header)
+/// is the trust signal. Falls open only when no peer address is available
+/// (an embedded/test server without `ConnectInfo`), which never happens on the
+/// real network listener.
+async fn restrict_management_to_loopback(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    if is_management_path(request.uri().path()) {
+        let peer_is_local = request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|info| info.0.ip().is_loopback())
+            .unwrap_or(true);
+        if !peer_is_local {
+            warn!("[Gateway] Rejected non-loopback access to a client-management endpoint");
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                "Client management is only available from this machine",
+            )
+                .into_response();
+        }
+    }
+    next.run(request).await
+}
+
 /// MCP Gateway Server
 ///
 /// Self-contained server that manages its own services and lifecycle.
@@ -167,6 +227,8 @@ impl GatewayServer {
         // Configure gateway state
         let mut state = GatewayState::new(domain_event_tx.clone());
         state.set_base_url(config.base_url());
+        state.set_public_base_url(config.public_base_url.clone());
+        state.set_network_bind(config.is_network_bind());
         if let Some(jwt_secret) = dependencies.jwt_secret.clone() {
             state.set_jwt_secret(jwt_secret);
         }
@@ -445,7 +507,9 @@ impl GatewayServer {
             ))
             // Rate limiting on OAuth endpoints
             .layer(axum::Extension(rate_limiter))
-            .layer(middleware::from_fn(rate_limit::rate_limit_middleware));
+            .layer(middleware::from_fn(rate_limit::rate_limit_middleware))
+            // Keep desktop-only client management off the LAN on a 0.0.0.0 bind.
+            .layer(middleware::from_fn(restrict_management_to_loopback));
 
         // Add CORS if enabled
         if self.config.enable_cors {
@@ -561,12 +625,15 @@ impl GatewayServer {
 
         info!("[Gateway] Ready to accept connections (servers connecting in background)");
 
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                shutdown.await;
-                info!("[Gateway] Graceful shutdown signal received — closing listener");
-            })
-            .await?;
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            info!("[Gateway] Graceful shutdown signal received — closing listener");
+        })
+        .await?;
 
         info!("[Gateway] Listener closed, run_with_shutdown returning");
         Ok(())
@@ -678,5 +745,48 @@ mod config_tests {
         let hosts = config_with(Some("not a url")).allowed_hosts();
         assert!(hosts.contains(&"localhost".to_string()));
         assert!(!hosts.iter().any(|h| h.contains("not a url")));
+    }
+
+    fn config_on_host(host: &str) -> GatewayConfig {
+        GatewayConfig {
+            host: host.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn is_network_bind_distinguishes_loopback_from_exposed() {
+        for h in ["127.0.0.1", "::1", "localhost", ""] {
+            assert!(!config_on_host(h).is_network_bind(), "{h:?} is loopback");
+        }
+        for h in ["0.0.0.0", "::", "192.168.1.50"] {
+            assert!(
+                config_on_host(h).is_network_bind(),
+                "{h:?} is a network bind"
+            );
+        }
+    }
+
+    #[test]
+    fn allowed_hosts_relaxes_to_allow_all_on_network_bind() {
+        // rmcp treats an empty allow-list as allow-all; on a network bind we
+        // can't enumerate the LAN host clients will use, so we relax to that.
+        assert!(config_on_host("0.0.0.0").allowed_hosts().is_empty());
+        // Loopback bind keeps the strict allow-list.
+        assert!(config_on_host("127.0.0.1")
+            .allowed_hosts()
+            .contains(&"localhost".to_string()));
+    }
+
+    #[test]
+    fn management_path_matching_excludes_features_and_oauth_flow() {
+        assert!(super::is_management_path("/oauth/clients")); // list
+        assert!(super::is_management_path("/oauth/clients/abc123")); // update/delete
+                                                                     // Client-facing + OAuth-flow + other routes are NOT loopback-gated.
+        assert!(!super::is_management_path("/oauth/clients/abc123/features"));
+        assert!(!super::is_management_path("/oauth/authorize"));
+        assert!(!super::is_management_path("/oauth/token"));
+        assert!(!super::is_management_path("/mcp"));
+        assert!(!super::is_management_path("/health"));
     }
 }

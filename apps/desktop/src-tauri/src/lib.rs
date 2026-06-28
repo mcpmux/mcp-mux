@@ -421,6 +421,10 @@ pub fn run() {
                 let final_port = preferred_port;
                 let public_base_url = crate::commands::gateway::load_public_base_url_from_repo(&settings_repo).await;
                 let url = crate::commands::gateway::advertised_base_url(public_base_url.as_deref(), final_port);
+                // Bind all interfaces when the user opted into network access so other
+                // devices on the LAN can reach the gateway; loopback-only otherwise.
+                let network_access =
+                    crate::commands::gateway::load_network_access_from_repo(&settings_repo).await;
                 let local_url = format!("http://localhost:{}", final_port);
                 info!("Auto-starting gateway on {} (advertising {})", local_url, url);
 
@@ -469,7 +473,7 @@ pub fn run() {
 
                 // Create gateway config
                 let config = mcpmux_gateway::GatewayConfig {
-                    host: "127.0.0.1".to_string(),  // Bind address must be IP
+                    host: crate::commands::gateway::bind_host_for(network_access).to_string(),
                     port: final_port,
                     public_base_url: public_base_url.clone(),
                     enable_cors: true,
@@ -958,6 +962,8 @@ pub fn run() {
             commands::get_gateway_public_url_settings,
             commands::set_gateway_public_base_url,
             commands::reset_gateway_public_base_url,
+            commands::get_gateway_network_access,
+            commands::set_gateway_network_access,
             commands::probe_gateway_start,
             commands::take_pending_port_conflict,
             commands::start_gateway,

@@ -66,19 +66,151 @@ pub struct OAuthServerMetadata {
     pub client_id_metadata_document_supported: Option<bool>,
 }
 
+/// Build an `http://HOST` (or `http://HOST:PORT`) origin from a request `Host`
+/// header. Returns `None` when the value is not a bare authority — it carries
+/// userinfo, a path, or is otherwise unparseable — so the caller keeps the
+/// configured local base instead of advertising an attacker-shaped value.
+fn host_to_http_origin(host: &str) -> Option<String> {
+    let parsed = url::Url::parse(&format!("http://{host}")).ok()?;
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return None;
+    }
+    let host_str = parsed.host_str()?;
+    Some(match parsed.port() {
+        Some(port) => format!("http://{host_str}:{port}"),
+        None => format!("http://{host_str}"),
+    })
+}
+
+/// The base URL to advertise in OAuth / MCP metadata.
+///
+/// Precedence:
+/// 1. An explicitly configured public base URL (e.g. an https tunnel origin) —
+///    pinned regardless of how the request arrived.
+/// 2. On a network bind (`0.0.0.0`), the host the client actually reached the
+///    gateway on (the request `Host` header), so the advertised endpoints are
+///    the LAN IP / hostname / mDNS name the client used, not `localhost`.
+/// 3. Otherwise the configured local fallback (`base_url`, http://localhost:port).
+pub(crate) fn effective_base_url(
+    public_base_url: Option<&str>,
+    network_bind: bool,
+    host_header: Option<&str>,
+    local_fallback: &str,
+) -> String {
+    if let Some(public) = public_base_url.map(str::trim).filter(|s| !s.is_empty()) {
+        return public.trim_end_matches('/').to_string();
+    }
+    if network_bind {
+        if let Some(origin) = host_header
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .and_then(host_to_http_origin)
+        {
+            return origin;
+        }
+    }
+    local_fallback.trim_end_matches('/').to_string()
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::effective_base_url;
+
+    const LOCAL: &str = "http://localhost:45818";
+
+    #[test]
+    fn public_base_url_is_pinned_over_host() {
+        assert_eq!(
+            effective_base_url(
+                Some("https://mcp.example.com/"),
+                true,
+                Some("192.168.1.5:45818"),
+                LOCAL
+            ),
+            "https://mcp.example.com"
+        );
+    }
+
+    #[test]
+    fn network_bind_advertises_the_request_host() {
+        assert_eq!(
+            effective_base_url(None, true, Some("192.168.1.5:45818"), LOCAL),
+            "http://192.168.1.5:45818"
+        );
+    }
+
+    #[test]
+    fn network_bind_without_host_falls_back() {
+        assert_eq!(effective_base_url(None, true, None, LOCAL), LOCAL);
+    }
+
+    #[test]
+    fn loopback_bind_ignores_host_and_keeps_fallback() {
+        // Local-only behavior is unchanged even if a Host header is present.
+        assert_eq!(
+            effective_base_url(None, false, Some("evil.example"), LOCAL),
+            LOCAL
+        );
+    }
+
+    #[test]
+    fn network_bind_rejects_malformed_host_and_falls_back() {
+        // Embedded userinfo, a path, or garbage is not advertised.
+        assert_eq!(
+            effective_base_url(None, true, Some("user@evil.example"), LOCAL),
+            LOCAL
+        );
+        assert_eq!(
+            effective_base_url(None, true, Some("evil.example/oauth/authorize"), LOCAL),
+            LOCAL
+        );
+        assert_eq!(effective_base_url(None, true, Some("   "), LOCAL), LOCAL);
+    }
+
+    #[test]
+    fn network_bind_preserves_port_and_ipv6_host() {
+        assert_eq!(
+            effective_base_url(None, true, Some("[::1]:45818"), LOCAL),
+            "http://[::1]:45818"
+        );
+        assert_eq!(
+            effective_base_url(None, true, Some("host.local"), LOCAL),
+            "http://host.local"
+        );
+    }
+}
+
 /// OAuth metadata endpoint (RFC 8414)
 pub async fn oauth_metadata(
     axum::extract::State(app_state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<OAuthServerMetadata>, StatusCode> {
     // When inbound auth is disabled, don't advertise an authorization server —
     // otherwise MCP clients that probe discovery start an OAuth flow even
     // though `/mcp` accepts them without a token. 404 makes them connect
     // tokenlessly.
-    if app_state.gateway_state.read().await.auth_disabled() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let (public_base_url, network_bind) = {
+        let state = app_state.gateway_state.read().await;
+        if state.auth_disabled() {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        (state.public_base_url.clone(), state.network_bind)
+    };
     info!("[Gateway] OAuth metadata request - serving authorization server metadata");
-    let base = &app_state.base_url;
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    let base = effective_base_url(
+        public_base_url.as_deref(),
+        network_bind,
+        host,
+        &app_state.base_url,
+    );
     Ok(Json(OAuthServerMetadata {
         issuer: base.to_string(),
         authorization_endpoint: format!("{}/oauth/authorize", base),
@@ -111,14 +243,27 @@ pub struct ProtectedResourceMetadata {
 /// This tells MCP clients where to find the authorization server
 pub async fn resource_metadata(
     axum::extract::State(app_state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Json<ProtectedResourceMetadata>, StatusCode> {
     // See `oauth_metadata`: stay silent about auth when it's disabled so clients
     // don't kick off OAuth against a gateway that accepts them tokenlessly.
-    if app_state.gateway_state.read().await.auth_disabled() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let (public_base_url, network_bind) = {
+        let state = app_state.gateway_state.read().await;
+        if state.auth_disabled() {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        (state.public_base_url.clone(), state.network_bind)
+    };
     info!("[Gateway] Protected resource metadata request");
-    let base = &app_state.base_url;
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    let base = effective_base_url(
+        public_base_url.as_deref(),
+        network_bind,
+        host,
+        &app_state.base_url,
+    );
     Ok(Json(ProtectedResourceMetadata {
         resource: format!("{}/mcp", base),
         authorization_servers: vec![base.to_string()],

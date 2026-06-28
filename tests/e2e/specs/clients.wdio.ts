@@ -24,8 +24,8 @@ describe('Connections - Page shell', () => {
     // Heading has been renamed.
     expect(pageSource.includes('Apps')).toBe(true);
 
-    // The page routes users to Workspaces for any routing questions.
-    expect(pageSource.includes('Workspaces')).toBe(true);
+    // The page routes users to the Mapping tab for any routing questions.
+    expect(pageSource.includes('Mapping')).toBe(true);
   });
 
   it('TC-CL-002: Open side panel and verify legacy routing controls are gone', async () => {
@@ -56,5 +56,33 @@ describe('Connections - Page shell', () => {
       const pageSource = await browser.getPageSource();
       expect(pageSource.includes("Let's hook up your first IDE")).toBe(true);
     }
+  });
+
+  it('TC-CL-003: Register an API-key client and reveal the key once', async () => {
+    // The desktop app auto-starts the gateway, so register_api_key_client can
+    // mint a key. Open the Apps tab, register a client, and confirm the
+    // generated mcpk_ key is shown exactly once.
+    const connectionsBtn = await byTestId('nav-clients');
+    await connectionsBtn.click();
+    await browser.pause(1000);
+
+    const registerBtn = await byTestId('register-api-key-client-btn');
+    await registerBtn.click();
+    await browser.pause(800);
+
+    const nameInput = await byTestId('register-api-key-name');
+    await nameInput.setValue('e2e-headless-bot');
+
+    const generateBtn = await byTestId('register-api-key-generate');
+    await generateBtn.click();
+    await browser.pause(1500);
+
+    await browser.saveScreenshot('./tests/e2e/screenshots/cl-03-api-key-created.png');
+
+    const keyEl = await byTestId('register-api-key-value');
+    await expect(keyEl).toBeDisplayed();
+    const keyText = await keyEl.getText();
+    // Shown once, prefixed mcpk_ (never the stored hash).
+    expect(keyText.startsWith('mcpk_')).toBe(true);
   });
 });

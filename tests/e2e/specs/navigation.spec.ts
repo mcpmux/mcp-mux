@@ -30,8 +30,9 @@ test.describe('Navigation', () => {
     await page.locator('nav button:has-text("Discover")').click({ force: true });
     await expect(page.locator('h1:has-text("Discover")')).toBeVisible();
 
-    // Spaces (use last() to avoid space switcher)
-    await page.locator('nav button:has-text("Spaces")').last().click({ force: true });
+    // Mapping (the workspace→tools mapping tab; nav label was renamed from
+    // "Workspaces", but the page heading is still "Workspaces").
+    await page.locator('nav button:has-text("Mapping")').click({ force: true });
     await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
 
     // FeatureSets

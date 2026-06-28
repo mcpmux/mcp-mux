@@ -37,6 +37,7 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use super::gateway::GatewayAppState;
+use crate::state::AppState;
 
 // ============================================================================
 // Deep Link Handling
@@ -979,6 +980,7 @@ fn generate_api_key() -> (String, String, String) {
 #[tauri::command]
 pub async fn register_api_key_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    app: State<'_, AppState>,
     name: String,
     locked_space_id: Option<String>,
 ) -> Result<RegisteredApiKeyClient, String> {
@@ -1042,6 +1044,18 @@ pub async fn register_api_key_client(
         trimmed, client_id
     );
 
+    // Best-effort: auto-create a clientId-keyed mapping → the (locked or
+    // default) Space's Starter, so the client routes sensibly out of the box
+    // and the mapping is visible + editable in the Mapping tab. A failure here
+    // must not undo the registration — without an explicit mapping the resolver
+    // still falls back to the default Starter.
+    if let Err(e) = auto_map_api_key_client(&app, &client_id, locked_space_id.as_deref()).await {
+        warn!(
+            "[OAuth] auto-map for {} failed (non-fatal): {}",
+            client_id, e
+        );
+    }
+
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: trimmed.to_string(),
@@ -1049,6 +1063,40 @@ pub async fn register_api_key_client(
         api_key: plaintext,
         key_prefix,
     })
+}
+
+/// Auto-create a clientId-keyed `id` mapping pointing at the (locked or
+/// default) Space's Starter FeatureSet, so a freshly-registered API-key client
+/// routes somewhere sensible by default and the operator can retarget it from
+/// the Mapping tab.
+async fn auto_map_api_key_client(
+    app: &AppState,
+    client_id: &str,
+    locked_space_id: Option<&str>,
+) -> Result<(), String> {
+    let space_id = match locked_space_id {
+        Some(s) => uuid::Uuid::parse_str(s).map_err(|e| e.to_string())?,
+        None => {
+            app.space_service
+                .get_default()
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("no default Space configured")?
+                .id
+        }
+    };
+    let starter = app
+        .feature_set_repository
+        .get_starter_for_space(&space_id.to_string())
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Space has no Starter FeatureSet")?;
+    let binding =
+        mcpmux_core::WorkspaceBinding::new_id(client_id.to_string(), space_id, vec![starter.id]);
+    app.workspace_binding_repository
+        .create(&binding)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Issue an additional API key for an existing client (rotation). Returns the

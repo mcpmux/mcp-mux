@@ -128,6 +128,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "space_base_dirs",
         sql: include_str!("migrations/019_space_base_dirs.sql"),
     },
+    Migration {
+        version: 20,
+        name: "inbound_client_api_keys",
+        sql: include_str!("migrations/020_inbound_client_api_keys.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

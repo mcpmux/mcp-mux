@@ -276,6 +276,12 @@ pub trait WorkspaceBindingRepository: Send + Sync {
         &self,
         candidate_roots: &[String],
     ) -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Resolve an **id-keyed** binding by exact-string match (no path
+    /// normalization). Used to route headless/remote clients by a client id or
+    /// an arbitrary label sent in `X-Mcpmux-Workspace`. Only `BindingType::Id`
+    /// bindings are considered, so a folder path can never collide with a label.
+    async fn find_by_id_key(&self, key: &str) -> RepoResult<Option<WorkspaceBinding>>;
 }
 
 /// Credential repository trait (local-only, never synced)

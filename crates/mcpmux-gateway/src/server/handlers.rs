@@ -66,6 +66,27 @@ pub struct OAuthServerMetadata {
     pub client_id_metadata_document_supported: Option<bool>,
 }
 
+/// Build an `http://HOST` (or `http://HOST:PORT`) origin from a request `Host`
+/// header. Returns `None` when the value is not a bare authority — it carries
+/// userinfo, a path, or is otherwise unparseable — so the caller keeps the
+/// configured local base instead of advertising an attacker-shaped value.
+fn host_to_http_origin(host: &str) -> Option<String> {
+    let parsed = url::Url::parse(&format!("http://{host}")).ok()?;
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return None;
+    }
+    let host_str = parsed.host_str()?;
+    Some(match parsed.port() {
+        Some(port) => format!("http://{host_str}:{port}"),
+        None => format!("http://{host_str}"),
+    })
+}
+
 /// The base URL to advertise in OAuth / MCP metadata.
 ///
 /// Precedence:
@@ -85,8 +106,12 @@ pub(crate) fn effective_base_url(
         return public.trim_end_matches('/').to_string();
     }
     if network_bind {
-        if let Some(host) = host_header.map(str::trim).filter(|s| !s.is_empty()) {
-            return format!("http://{}", host.trim_end_matches('/'));
+        if let Some(origin) = host_header
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .and_then(host_to_http_origin)
+        {
+            return origin;
         }
     }
     local_fallback.trim_end_matches('/').to_string()
@@ -130,6 +155,32 @@ mod base_url_tests {
         assert_eq!(
             effective_base_url(None, false, Some("evil.example"), LOCAL),
             LOCAL
+        );
+    }
+
+    #[test]
+    fn network_bind_rejects_malformed_host_and_falls_back() {
+        // Embedded userinfo, a path, or garbage is not advertised.
+        assert_eq!(
+            effective_base_url(None, true, Some("user@evil.example"), LOCAL),
+            LOCAL
+        );
+        assert_eq!(
+            effective_base_url(None, true, Some("evil.example/oauth/authorize"), LOCAL),
+            LOCAL
+        );
+        assert_eq!(effective_base_url(None, true, Some("   "), LOCAL), LOCAL);
+    }
+
+    #[test]
+    fn network_bind_preserves_port_and_ipv6_host() {
+        assert_eq!(
+            effective_base_url(None, true, Some("[::1]:45818"), LOCAL),
+            "http://[::1]:45818"
+        );
+        assert_eq!(
+            effective_base_url(None, true, Some("host.local"), LOCAL),
+            "http://host.local"
         );
     }
 }

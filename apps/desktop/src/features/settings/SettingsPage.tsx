@@ -885,6 +885,13 @@ export function SettingsPage() {
                                 </span>
                                 .
                               </p>
+                              <p className="mt-1 text-amber-700 dark:text-amber-300">
+                                Per-client OAuth approval happens on this machine, so a remote
+                                client that signs in via OAuth (e.g. ChatGPT) can't finish approval
+                                over the network yet — front the gateway with the public URL + a
+                                tunnel for that. For plain LAN sharing, pair this with
+                                authentication disabled.
+                              </p>
                             </>
                           )}
                         </div>

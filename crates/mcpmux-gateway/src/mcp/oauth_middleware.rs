@@ -95,19 +95,45 @@ pub async fn mcp_oauth_middleware(
         None => None,
     };
 
-    // Resolve (client_id, space_id) from the token, or — when auth is disabled
-    // — fall back to an anonymous identity on the default space.
-    let (client_id, space_id) = if let Some(claims) = claims {
+    // If there's no valid JWT, a presented Bearer may instead be a long-lived
+    // API key (host-issued, for headless/remote clients) — validate it directly
+    // to a client_id so a remote client can authenticate with no interactive
+    // consent (the OAuth consent deep link only works on the host).
+    let api_key_client_id = if claims.is_none() {
+        match token {
+            Some(tok) => match services
+                .dependencies
+                .inbound_client_repo
+                .validate_api_key(tok)
+                .await
+            {
+                Ok(result) => result.map(|auth| auth.client_id),
+                Err(e) => {
+                    warn!(trace_id = %trace_id, "API key validation error: {}", e);
+                    None
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    // Resolve (client_id, space_id) from the authenticated identity (JWT or API
+    // key); when auth is disabled, fall back to an anonymous identity on the
+    // default space.
+    let authed_client_id = claims.map(|c| c.client_id).or(api_key_client_id);
+    let (client_id, space_id) = if let Some(cid) = authed_client_id {
         match services
             .space_resolver_service
-            .resolve_space_for_client(&claims.client_id)
+            .resolve_space_for_client(&cid)
             .await
         {
-            Ok(id) => (claims.client_id, id),
+            Ok(id) => (cid, id),
             Err(e) => {
                 warn!(
                     trace_id = %trace_id,
-                    client_id = %claims.client_id,
+                    client_id = %cid,
                     "Failed to resolve space: {}", e
                 );
                 return (

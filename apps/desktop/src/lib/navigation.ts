@@ -86,10 +86,10 @@ export const NAV_ZONES: NavZone[] = [
     entries: [
       {
         key: 'clients',
-        label: 'Apps',
+        label: 'Clients',
         icon: Monitor,
         testId: 'nav-clients',
-        hint: 'AI apps connected through your gateway',
+        hint: 'AI clients connected through your gateway',
       },
       {
         key: 'workspaces',

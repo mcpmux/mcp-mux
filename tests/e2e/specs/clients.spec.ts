@@ -8,7 +8,7 @@ test.describe('Connections Page', () => {
     await dashboard.navigate();
 
     // Click Clients in sidebar
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
 
     await expect(clients.heading).toBeVisible();
     await expect(clients.heading).toHaveText('Connections');
@@ -17,7 +17,7 @@ test.describe('Connections Page', () => {
   test('should describe that routing lives in Workspaces', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
 
     // Routing is configured in Workspaces, not per-client.
     await expect(
@@ -28,7 +28,7 @@ test.describe('Connections Page', () => {
   test('should show description text', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
     
     const description = page.locator('text=/connected|AI|client/i');
     // Description about clients should be visible
@@ -37,7 +37,7 @@ test.describe('Connections Page', () => {
   test('should show empty state or client list', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
     
     const emptyState = page.locator('text=/No clients|no.*connected/i');
     const clientItems = page.locator('[class*="rounded"][class*="border"]');
@@ -52,7 +52,7 @@ test.describe('Connections Page', () => {
   test('should display client cards if clients exist', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
     
     const clientCards = page.locator('[class*="rounded"][class*="border"]');
     const count = await clientCards.count();
@@ -69,7 +69,7 @@ test.describe('Connection Details', () => {
   test('should show last-seen indicator on connection cards', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
 
     const clientCards = page.locator('[data-testid^="client-card-"]');
     const count = await clientCards.count();
@@ -87,7 +87,7 @@ test.describe('Connection Details', () => {
   }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
 
     const clientCards = page.locator('[data-testid^="client-card-"]');
     const count = await clientCards.count();
@@ -112,7 +112,7 @@ test.describe('Connection lifecycle', () => {
   test('should have refresh button if available', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
 
     const refreshButton = page.getByRole('button', { name: /Refresh/ });
     // Always rendered on the Connections header.
@@ -126,7 +126,7 @@ test.describe('Connections toast container', () => {
     const clients = new ClientsPage(page);
     await dashboard.navigate();
 
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
     await expect(clients.heading).toBeVisible();
 
     await expect(clients.toastContainer).toBeAttached();
@@ -138,7 +138,7 @@ test.describe('Connections toast container', () => {
     const clients = new ClientsPage(page);
     await dashboard.navigate();
 
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
 
     const clientCards = page.locator('[data-testid^="client-card-"]');
     const count = await clientCards.count();
@@ -162,7 +162,7 @@ test.describe('Connections toast container', () => {
     const clients = new ClientsPage(page);
     await dashboard.navigate();
 
-    await page.locator('nav button:has-text("Apps")').click();
+    await page.locator('nav button:has-text("Clients")').click();
 
     const clientCards = page.locator('[data-testid^="client-card-"]');
     const count = await clientCards.count();

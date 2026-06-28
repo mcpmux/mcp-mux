@@ -22,7 +22,7 @@ describe('Connections - Page shell', () => {
     const pageSource = await browser.getPageSource();
 
     // Heading has been renamed.
-    expect(pageSource.includes('Apps')).toBe(true);
+    expect(pageSource.includes('Clients')).toBe(true);
 
     // The page routes users to the Mapping tab for any routing questions.
     expect(pageSource.includes('Mapping')).toBe(true);

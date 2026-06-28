@@ -57,6 +57,7 @@ import {
   useSetPendingClientId,
 } from '@/stores';
 import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
+import { ClientApiKeysSection } from './ClientApiKeysSection';
 
 // Bundled icons for well-known AI clients.
 const CLIENT_ICON_ASSETS: Record<string, string> = {
@@ -594,6 +595,14 @@ function SidePanel({
             An alias shown in logs and this list. Doesn't affect routing.
           </p>
         </section>
+
+        {client.registration_type === 'preregistered' && (
+          <ClientApiKeysSection
+            clientId={client.client_id}
+            onError={onToastError}
+            onSuccess={onToastSuccess}
+          />
+        )}
 
         <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
           <div className="flex items-start gap-3">

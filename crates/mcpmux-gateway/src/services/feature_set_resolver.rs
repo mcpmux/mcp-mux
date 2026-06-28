@@ -95,7 +95,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use mcpmux_core::{
-    FeatureSetRepository, SpaceBaseDirRepository, SpaceRepository, WorkspaceBindingRepository,
+    FeatureSetRepository, SpaceBaseDirRepository, SpaceRepository, WorkspaceBinding,
+    WorkspaceBindingRepository,
 };
 use mcpmux_storage::InboundClientRepository;
 use serde::Serialize;
@@ -281,6 +282,65 @@ impl FeatureSetResolverService {
         })
     }
 
+    /// Resolve a binding from header/root candidate keys: a **path** binding
+    /// (exact normalized match) or, failing that, an **id** binding (exact
+    /// verbatim match — a client id or arbitrary label). First hit wins. Path
+    /// and id bindings live in disjoint namespaces in the repo, so this never
+    /// double-matches.
+    async fn mapping_binding_for_roots(
+        &self,
+        roots: &[String],
+    ) -> Result<Option<WorkspaceBinding>> {
+        if let Some(b) = self.binding_repo.find_exact_for_roots(roots).await? {
+            return Ok(Some(b));
+        }
+        for r in roots {
+            if let Some(b) = self.binding_repo.find_by_id_key(r).await? {
+                return Ok(Some(b));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Resolve a client locked to Space `locked`. The Space is fixed to
+    /// `locked`; the header/roots may still pick the FeatureSet, but only when
+    /// their binding lives in `locked`. A header whose binding resolves to a
+    /// different Space — or no header at all — falls back to `locked`'s Starter.
+    /// A locked client never touches the roots-pending or client-grant tiers.
+    async fn resolve_locked(
+        &self,
+        session_id: Option<&str>,
+        locked: Uuid,
+    ) -> Result<ResolvedFeatureSet> {
+        if let Some(sid) = session_id {
+            if let Some(roots) = self.session_roots.get(sid) {
+                if !roots.is_empty() {
+                    if let Some(binding) = self.mapping_binding_for_roots(&roots).await? {
+                        if binding.space_id == locked {
+                            debug!(
+                                %locked,
+                                workspace_root = %binding.workspace_root,
+                                "[FeatureSetResolver] locked client — header binding within locked Space",
+                            );
+                            return Ok(ResolvedFeatureSet {
+                                feature_set_ids: binding.feature_set_ids,
+                                space_id: Some(locked),
+                                source: ResolutionSource::WorkspaceBinding,
+                            });
+                        }
+                        debug!(
+                            %locked,
+                            binding_space = %binding.space_id,
+                            "[FeatureSetResolver] locked client — header binding in a different Space; ignored",
+                        );
+                    }
+                }
+            }
+        }
+        // No header, or its binding is outside the locked Space → locked Starter.
+        self.default_fallback(locked).await
+    }
+
     /// Borrow the session-roots registry. The notifier uses this to GC
     /// dead sessions out of the registry when reaping the corresponding
     /// peer entries — keeping both stores in sync.
@@ -310,6 +370,23 @@ impl FeatureSetResolverService {
                 });
             }
         };
+
+        // Lock-confine: a client locked to Space L only ever resolves to L. The
+        // header/roots may still pick a FeatureSet *within* L; a binding that
+        // resolves to a different Space — or no header — yields L's Starter.
+        // Bypasses the roots-pending and grant tiers entirely.
+        if let Some(cid) = client_id {
+            if let Some(locked) = self.client_repo.get_locked_space(cid).await? {
+                match locked.parse::<Uuid>() {
+                    Ok(locked_uuid) => return self.resolve_locked(session_id, locked_uuid).await,
+                    Err(e) => warn!(
+                        client_id = %cid,
+                        locked_space = %locked,
+                        "[FeatureSetResolver] client locked to unparseable space id: {e}",
+                    ),
+                }
+            }
+        }
 
         // Tier 1 / 1b / 1c — branches on roots-capable + roots-arrived state.
         if let Some(sid) = session_id {
@@ -345,11 +422,9 @@ impl FeatureSetResolverService {
             // (no ancestor inheritance).
             if has_roots {
                 let reported_roots = roots.expect("has_roots implies Some");
-                if let Some(binding) = self
-                    .binding_repo
-                    .find_exact_for_roots(&reported_roots)
-                    .await?
-                {
+                // Exact binding match: a path binding (normalized folder) or an
+                // id binding (verbatim label / client-id sent in the header).
+                if let Some(binding) = self.mapping_binding_for_roots(&reported_roots).await? {
                     debug!(
                         workspace_root = %binding.workspace_root,
                         space_id = %binding.space_id,
@@ -433,6 +508,23 @@ impl FeatureSetResolverService {
         // (the desktop UI's preview HTTP path lands here too). Consult the
         // per-client grant table.
         if let Some(cid) = client_id {
+            // clientId-keyed mapping (auto-created for API-key clients): when no
+            // header/roots selected a binding above, route by the client's own
+            // id. Editor clients have no such binding and fall through to grants.
+            if let Some(binding) = self.binding_repo.find_by_id_key(cid).await? {
+                debug!(
+                    client_id = %cid,
+                    workspace_root = %binding.workspace_root,
+                    space_id = %binding.space_id,
+                    "[FeatureSetResolver] resolved via clientId mapping",
+                );
+                return Ok(ResolvedFeatureSet {
+                    feature_set_ids: binding.feature_set_ids,
+                    space_id: Some(binding.space_id),
+                    source: ResolutionSource::WorkspaceBinding,
+                });
+            }
+
             // Propagate storage errors instead of treating them as "no
             // grants": a transient DB failure must surface as a request
             // error, not a silent deny (which would also record a `None`

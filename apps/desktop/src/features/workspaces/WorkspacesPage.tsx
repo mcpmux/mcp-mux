@@ -67,7 +67,6 @@ import {
 } from '@/lib/machine-profile.helpers';
 import { listWorkspaceAppearances, type WorkspaceAppearance } from '@/lib/api/workspaceAppearances';
 import {
-  isStarterFeatureSet,
   listFeatureSets,
   type FeatureSet,
 } from '@/lib/api/featureSets';
@@ -95,12 +94,12 @@ import { useViewerIdentity } from '@/hooks/use-viewer-identity.hook';
  * Each card is a workspace entry, unioning bindings and live reported roots
  * (dedup'd by normalized path). Status is conveyed with a corner dot + pill:
  *   • LIVE + unmapped              → amber UNMAPPED
- *   • LIVE + bound (other machine) → amber UNBOUND
+ *   • LIVE + bound (other machine) → violet BOUND ELSEWHERE
  *   • LIVE + bound (this machine)  → emerald LIVE
  *   • OFFLINE + mapped             → neutral
  */
 
-type EntryKind = 'unmapped-live' | 'live-unbound' | 'mapped-live' | 'mapped-offline';
+type EntryKind = 'unmapped-live' | 'live-elsewhere' | 'mapped-live' | 'mapped-offline';
 interface Entry {
   id: string;
   kind: EntryKind;
@@ -252,21 +251,6 @@ export function WorkspacesPage() {
     for (const machine of machines) m.set(machine.id, machine);
     return m;
   }, [machines]);
-  /**
-   * The system's routing fallback: the `is_default` Space plus that Space's
-   * Default FeatureSet. Sessions whose reported root has no binding resolve
-   * here. We compute it once and pass it down so EntryCard can show the
-   * effective FS on every row, including unmapped ones.
-   */
-  const fallback = useMemo(() => {
-    const space = spaces.find((s) => s.is_default) ?? spaces[0] ?? null;
-    if (!space) return null;
-    const fs =
-      featureSets.find(
-        (f) => f.space_id === space.id && isStarterFeatureSet(f)
-      ) ?? null;
-    return { space, fs };
-  }, [spaces, featureSets]);
 
   /**
    * Unified list: live-reported roots come first (unmapped amber, then
@@ -297,7 +281,7 @@ export function WorkspacesPage() {
       if (binds.length > 0 && entryIsBoundForCurrentMachine(entry, viewerMachineId ?? localMachineId)) {
         entry.kind = 'mapped-live';
       } else if (binds.length > 0) {
-        entry.kind = 'live-unbound';
+        entry.kind = 'live-elsewhere';
       }
       list.push(entry);
     }
@@ -323,7 +307,7 @@ export function WorkspacesPage() {
     }
     const rank: Record<EntryKind, number> = {
       'unmapped-live': 0,
-      'live-unbound': 1,
+      'live-elsewhere': 1,
       'mapped-live': 2,
       'mapped-offline': 3,
     };
@@ -602,29 +586,13 @@ export function WorkspacesPage() {
             />
           ) : (
             <div className="grid gap-5 auto-fill-cards">
-              {filtered.map((entry) => {
-                const binding = primaryBinding(entry);
-                // For mapped entries: trust the binding. For unmapped: fall
-                // back to the system's default Space + its Default FS so
-                // every card answers "what tools does this folder see?".
-                const resolvedSpaceName = binding
-                  ? spaceById.get(binding.space_id)?.name
-                  : fallback?.space.name;
-                const resolvedFsName = binding
-                  ? formatFsList(
-                      binding.feature_set_ids.map(
-                        (id) => fsById.get(id)?.name ?? id
-                      )
-                    )
-                  : fallback?.fs?.name;
-                return (
+              {filtered.map((entry) => (
                   <EntryCard
                     key={entry.id}
                     entry={entry}
                     icon={resolveEntryIcon(entry)}
-                    spaceName={resolvedSpaceName}
-                    fsName={resolvedFsName}
                     bindings={entry.bindings}
+                    currentMachineId={viewerMachineId ?? localMachineId}
                     machinesById={machinesById}
                     spaceById={spaceById}
                     fsById={fsById}
@@ -645,6 +613,12 @@ export function WorkspacesPage() {
                         openBindingPanel({ mode: 'edit', binding: rowBinding });
                       }
                     }}
+                    onCreateForCurrentMachine={() => {
+                      openBindingPanel({
+                        mode: 'create-from-live',
+                        workspaceRoot: entry.root,
+                      });
+                    }}
                     onForget={
                       entry.kind === 'unmapped-live'
                         ? () => handleForgetRoot(entry.root)
@@ -652,8 +626,7 @@ export function WorkspacesPage() {
                     }
                     t={t}
                   />
-                );
-              })}
+              ))}
             </div>
           )}
         </div>
@@ -768,6 +741,9 @@ function machineBindingLabel(
 interface EntryCardRoutingRow {
   key: string;
   bindingId?: string;
+  /** Opens create panel scoped to the viewer's current machine. */
+  createForCurrentMachine?: boolean;
+  ghost?: boolean;
   machine?: Machine;
   machineLabel: string;
   fsName: string;
@@ -784,11 +760,13 @@ function EntryCardRoutingTable({
   rows,
   showMachineColumn,
   onRowClick,
+  onCreateForCurrentMachine,
   t,
 }: {
   rows: EntryCardRoutingRow[];
   showMachineColumn: boolean;
   onRowClick?: (bindingId: string) => void;
+  onCreateForCurrentMachine?: () => void;
   t: TFunction<['workspaces', 'common']>;
 }) {
   const headCls =
@@ -813,28 +791,33 @@ function EntryCardRoutingTable({
         {rows.map((row) => {
           const fsDisplay = row.fsName || '—';
           const spaceDisplay = row.spaceName ?? '—';
-          const rowProps = row.clickable
+          const rowAction = row.createForCurrentMachine
+            ? onCreateForCurrentMachine
+            : row.bindingId
+              ? () => onRowClick?.(row.bindingId!)
+              : undefined;
+          const rowProps = row.clickable && rowAction
             ? {
                 role: 'button' as const,
                 tabIndex: 0,
-                className:
+                className: [
                   'cursor-pointer transition-colors hover:bg-[rgb(var(--surface-hover,var(--background)))]',
-                'aria-label': t('card.machineRow', { machine: row.machineLabel }),
-                onClick: row.bindingId
-                  ? (event: ReactMouseEvent<HTMLTableRowElement>) => {
-                      event.stopPropagation();
-                      onRowClick?.(row.bindingId!);
-                    }
-                  : undefined,
-                onKeyDown: row.bindingId
-                  ? (event: ReactKeyboardEvent<HTMLTableRowElement>) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onRowClick?.(row.bindingId!);
-                      }
-                    }
-                  : undefined,
+                  row.ghost ? 'opacity-70' : '',
+                ].join(' '),
+                'aria-label': row.createForCurrentMachine
+                  ? t('card.addBindingForMachine', { machine: row.machineLabel })
+                  : t('card.machineRow', { machine: row.machineLabel }),
+                onClick: (event: ReactMouseEvent<HTMLTableRowElement>) => {
+                  event.stopPropagation();
+                  rowAction();
+                },
+                onKeyDown: (event: ReactKeyboardEvent<HTMLTableRowElement>) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    rowAction();
+                  }
+                },
               }
             : {};
 
@@ -851,7 +834,14 @@ function EntryCardRoutingTable({
                 </td>
               ) : null}
               <td className={cellCls}>
-                <span className="block break-words font-medium leading-snug text-primary-700 dark:text-primary-300">
+                <span
+                  className={[
+                    'block break-words font-medium leading-snug',
+                    row.ghost
+                      ? 'italic text-[rgb(var(--muted))]'
+                      : 'text-primary-700 dark:text-primary-300',
+                  ].join(' ')}
+                >
                   {fsDisplay}
                 </span>
               </td>
@@ -867,79 +857,114 @@ function EntryCardRoutingTable({
 }
 
 /**
+ * Build routing table rows for an entry — every binding is clickable; when live
+ * on a foreign machine, append a ghost row for the viewer's current machine.
+ */
+function buildEntryRoutingRows(
+  entry: Entry,
+  bindings: WorkspaceBinding[],
+  currentMachineId: string | null,
+  machinesById: Map<string, Machine>,
+  spaceById: Map<string, Space>,
+  fsById: Map<string, FeatureSet>,
+  t: TFunction<['workspaces', 'common']>,
+): EntryCardRoutingRow[] {
+  const rows: EntryCardRoutingRow[] = bindings.map((rowBinding) => {
+    const rowMachine = rowBinding.machine_id
+      ? machinesById.get(rowBinding.machine_id)
+      : undefined;
+    return {
+      key: rowBinding.id,
+      bindingId: rowBinding.id,
+      machine: rowMachine,
+      machineLabel: machineBindingLabel(rowBinding, machinesById, t),
+      fsName: formatFsList(
+        rowBinding.feature_set_ids.map((id) => fsById.get(id)?.name ?? id),
+      ),
+      spaceName: spaceById.get(rowBinding.space_id)?.name,
+      clickable: true,
+    };
+  });
+
+  const needsGhostRow =
+    entry.kind === 'live-elsewhere' &&
+    Boolean(currentMachineId) &&
+    !bindings.some(
+      (b) => b.machine_id == null || b.machine_id === currentMachineId,
+    );
+
+  if (needsGhostRow && currentMachineId) {
+    const currentMachine = machinesById.get(currentMachineId);
+    rows.push({
+      key: `ghost:${currentMachineId}`,
+      createForCurrentMachine: true,
+      ghost: true,
+      machine: currentMachine,
+      machineLabel: currentMachine?.name ?? currentMachineId,
+      fsName: t('card.notConfigured'),
+      spaceName: undefined,
+      clickable: true,
+    });
+  }
+
+  return rows;
+}
+
+/**
  * Project card — identity header plus routing table footer.
  */
 function EntryCard({
   entry,
   icon,
-  spaceName,
-  fsName,
   bindings,
+  currentMachineId,
   machinesById,
   spaceById,
   fsById,
   onClick,
   onMachineRowClick,
+  onCreateForCurrentMachine,
   onForget,
   t,
 }: {
   entry: Entry;
   icon: string | null;
-  spaceName: string | undefined;
-  fsName: string | undefined;
   bindings: WorkspaceBinding[];
+  currentMachineId: string | null;
   machinesById: Map<string, Machine>;
   spaceById: Map<string, Space>;
   fsById: Map<string, FeatureSet>;
   onClick: () => void;
   onMachineRowClick: (bindingId: string) => void;
+  onCreateForCurrentMachine: () => void;
   onForget?: () => void;
   t: TFunction<['workspaces', 'common']>;
 }) {
   const tone =
-    entry.kind === 'unmapped-live' || entry.kind === 'live-unbound'
+    entry.kind === 'unmapped-live'
       ? 'amber'
-      : entry.kind === 'mapped-live'
-        ? 'emerald'
-        : 'neutral';
+      : entry.kind === 'live-elsewhere'
+        ? 'info'
+        : entry.kind === 'mapped-live'
+          ? 'emerald'
+          : 'neutral';
 
   const displayTitle = entryDisplayTitle(entry);
   const binding = primaryBinding(entry);
   const hasLabel = Boolean(binding?.label?.trim());
-  const isMultiMachine = bindings.length > 1;
-  const singleMachineBinding =
-    bindings.length === 1 && bindings[0].machine_id != null ? bindings[0] : null;
-  const singleMachine = singleMachineBinding
-    ? machinesById.get(singleMachineBinding.machine_id!)
-    : undefined;
-  const showMachineColumn = bindings.some((b) => b.machine_id != null);
-  const routingRows: EntryCardRoutingRow[] = isMultiMachine
-    ? bindings.map((rowBinding) => {
-        const rowMachine = rowBinding.machine_id
-          ? machinesById.get(rowBinding.machine_id)
-          : undefined;
-        return {
-          key: rowBinding.id,
-          bindingId: rowBinding.id,
-          machine: rowMachine,
-          machineLabel: machineBindingLabel(rowBinding, machinesById, t),
-          fsName: formatFsList(
-            rowBinding.feature_set_ids.map((id) => fsById.get(id)?.name ?? id)
-          ),
-          spaceName: spaceById.get(rowBinding.space_id)?.name,
-          clickable: true,
-        };
-      })
-    : [
-        {
-          key: binding?.id ?? entry.id,
-          machine: singleMachine,
-          machineLabel: singleMachine?.name ?? t('form.noMachine'),
-          fsName: fsName ?? '',
-          spaceName,
-          clickable: false,
-        },
-      ];
+  const routingRows = buildEntryRoutingRows(
+    entry,
+    bindings,
+    currentMachineId,
+    machinesById,
+    spaceById,
+    fsById,
+    t,
+  );
+  const showMachineColumn =
+    bindings.some((b) => b.machine_id != null) ||
+    routingRows.some((row) => row.ghost) ||
+    bindings.length > 1;
 
   return (
     <Card
@@ -968,9 +993,11 @@ function EntryCard({
                 'w-14 h-14 flex items-center justify-center rounded-xl border',
                 tone === 'amber'
                   ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200/80 dark:border-amber-800/50 text-amber-600 dark:text-amber-400'
-                  : tone === 'emerald'
-                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/80 dark:border-emerald-800/50 text-emerald-600 dark:text-emerald-400'
-                    : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))]',
+                  : tone === 'info'
+                    ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200/80 dark:border-violet-800/50 text-violet-600 dark:text-violet-400'
+                    : tone === 'emerald'
+                      ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/80 dark:border-emerald-800/50 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))]',
               ].join(' ')}
             >
               {icon ? (
@@ -989,8 +1016,8 @@ function EntryCard({
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="mb-1.5 flex min-h-[1.375rem] flex-wrap items-center gap-2">
               {entry.kind === 'unmapped-live' && <Pill tone="amber">{t('card.unmapped')}</Pill>}
-              {entry.kind === 'live-unbound' && (
-                <Pill tone="amber">{t('card.badgeLiveUnbound')}</Pill>
+              {entry.kind === 'live-elsewhere' && (
+                <Pill tone="info">{t('card.badgeBoundElsewhere')}</Pill>
               )}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">{t('card.offline')}</Pill>}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">{t('card.live')}</Pill>}
@@ -1024,7 +1051,8 @@ function EntryCard({
           <EntryCardRoutingTable
             rows={routingRows}
             showMachineColumn={showMachineColumn}
-            onRowClick={isMultiMachine ? onMachineRowClick : undefined}
+            onRowClick={onMachineRowClick}
+            onCreateForCurrentMachine={onCreateForCurrentMachine}
             t={t}
           />
           {!binding && (
@@ -1047,15 +1075,17 @@ function Pill({
   title,
 }: {
   children: React.ReactNode;
-  tone: 'amber' | 'emerald' | 'neutral';
+  tone: 'amber' | 'emerald' | 'neutral' | 'info';
   title?: string;
 }) {
   const cls =
     tone === 'amber'
       ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-200/80 dark:border-amber-800/60'
-      : tone === 'emerald'
-        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
-        : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
+      : tone === 'info'
+        ? 'bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border-violet-200/80 dark:border-violet-800/60'
+        : tone === 'emerald'
+          ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
+          : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[10px] font-semibold uppercase tracking-wider ${cls}`}

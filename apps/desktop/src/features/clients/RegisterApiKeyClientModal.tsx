@@ -10,10 +10,11 @@
  * never display it again — if lost, revoke it and issue a new one.
  */
 
-import { useState } from 'react';
-import { AlertTriangle, Check, Copy, KeyRound, Loader2, ShieldCheck, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Check, Copy, KeyRound, Loader2, Lock, ShieldCheck, X } from 'lucide-react';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
 import { registerApiKeyClient, type RegisteredApiKeyClient } from '@/lib/api/gateway';
+import { listSpaces, type Space } from '@/lib/api/spaces';
 
 interface RegisterApiKeyClientModalProps {
   onClose: () => void;
@@ -26,10 +27,22 @@ export function RegisterApiKeyClientModal({
   onRegistered,
 }: RegisterApiKeyClientModalProps) {
   const [name, setName] = useState('');
+  const [lockedSpaceId, setLockedSpaceId] = useState('');
+  const [spaces, setSpaces] = useState<Space[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RegisteredApiKeyClient | null>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    listSpaces()
+      .then(setSpaces)
+      .catch(() => setSpaces([]));
+  }, []);
+
+  const lockedSpaceName = result?.lockedSpaceId
+    ? (spaces.find((s) => s.id === result.lockedSpaceId)?.name ?? 'a Space')
+    : null;
 
   const handleGenerate = async () => {
     const trimmed = name.trim();
@@ -40,7 +53,7 @@ export function RegisterApiKeyClientModal({
     setIsSubmitting(true);
     setError(null);
     try {
-      const client = await registerApiKeyClient(trimmed);
+      const client = await registerApiKeyClient(trimmed, lockedSpaceId || null);
       setResult(client);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -130,6 +143,13 @@ export function RegisterApiKeyClientModal({
                 <code className="block break-all font-mono text-xs text-[rgb(var(--text))]">
                   Authorization: Bearer {result.keyPrefix}…
                 </code>
+                {lockedSpaceName && (
+                  <p className="mt-2 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+                    <Lock className="h-3.5 w-3.5" />
+                    Locked to <span className="font-medium">{lockedSpaceName}</span> — this key can
+                    only ever reach that Space.
+                  </p>
+                )}
               </div>
 
               <div className="flex justify-end">
@@ -157,6 +177,30 @@ export function RegisterApiKeyClientModal({
                   placeholder="e.g. CI runner, my-laptop, prod-bot"
                   className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm transition-all focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]/40"
                 />
+              </div>
+
+              <div>
+                <label htmlFor="api-key-lock-space" className="mb-1.5 block text-sm font-medium">
+                  Lock to a Space <span className="text-[rgb(var(--muted))]">(optional)</span>
+                </label>
+                <select
+                  id="api-key-lock-space"
+                  data-testid="register-api-key-lock-space"
+                  value={lockedSpaceId}
+                  onChange={(e) => setLockedSpaceId(e.target.value)}
+                  className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm transition-all focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]/40"
+                >
+                  <option value="">No lock — route by mapping (any Space)</option>
+                  {spaces.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
+                  Locking confines this client to one Space — a leaked key can never reach the
+                  others. Leave unlocked to route it later from the Workspaces tab.
+                </p>
               </div>
 
               <div className="flex items-start gap-3 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-3.5">

@@ -808,3 +808,242 @@ async fn pinned_header_root_without_binding_falls_back_to_space_default() {
     assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
     assert_eq!(r.space_id, Some(f.space_id));
 }
+
+// ---------------------------------------------------------------------------
+// Generalized mappings (id-keyed bindings) + clientId routing + lock-confine
+// (P2). Precedence (unlocked): header > clientId-binding > Space default.
+// Locked: Space is ALWAYS the locked one; the header only picks the FeatureSet
+// when its binding lives in that Space, else the locked Space's Starter.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn id_binding_routes_by_header_value() {
+    // A header that is an arbitrary label (not a folder) routes via an id-keyed
+    // binding: the pinned header shadows roots and matches the id verbatim.
+    let f = Fixture::new().await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "team-x",
+            f.space_id,
+            vec![f.fs_a_id.clone()],
+        ))
+        .await
+        .unwrap();
+    f.session_roots.set_pinned("s", "team-x");
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("client-1"))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn client_id_binding_routes_when_no_header() {
+    // No header/roots: an unlocked client routes by its own clientId via an
+    // id-binding keyed by the client id (auto-created on registration).
+    let f = Fixture::new().await;
+    f.make_client("mcp_abc").await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "mcp_abc",
+            f.space_id,
+            vec![f.fs_b_id.clone()],
+        ))
+        .await
+        .unwrap();
+    // Explicitly rootless so we skip the pending grace and reach the clientId tier.
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("mcp_abc"))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_b_id]);
+}
+
+#[tokio::test]
+async fn header_beats_client_id_binding_when_both_present() {
+    // Unlocked precedence: an explicit header outranks the clientId binding.
+    let f = Fixture::new().await;
+    f.make_client("mcp_abc").await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "mcp_abc",
+            f.space_id,
+            vec![f.fs_b_id.clone()],
+        ))
+        .await
+        .unwrap();
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "team-x",
+            f.space_id,
+            vec![f.fs_a_id.clone()],
+        ))
+        .await
+        .unwrap();
+    f.session_roots.set_pinned("s", "team-x");
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("mcp_abc"))
+        .await
+        .unwrap();
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]); // header's FS, not clientId's
+}
+
+#[tokio::test]
+async fn locked_client_uses_header_fs_when_binding_is_in_locked_space() {
+    // A locked client whose header binding lives IN the locked Space uses that
+    // binding's FeatureSet — the Space stays locked, the FeatureSet is selectable.
+    let f = Fixture::new().await;
+    f.make_client("locked-2").await;
+    f.client_repo
+        .set_locked_space("locked-2", Some(&f.space_id.to_string()))
+        .await
+        .unwrap();
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "inhouse",
+            f.space_id,
+            vec![f.fs_a_id.clone()],
+        ))
+        .await
+        .unwrap();
+    f.session_roots.set_pinned("s", "inhouse");
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("locked-2"))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn locked_client_ignores_foreign_header_and_uses_locked_starter() {
+    // A client locked to Space L, sending a header whose binding lives in a
+    // DIFFERENT Space, is confined to L and falls back to L's Starter.
+    let f = Fixture::new().await;
+    f.make_client("locked-1").await;
+    let other_base = if cfg!(windows) { "d:\\other" } else { "/other" };
+    let (other_space, other_starter) = f.make_space_with_base_dir("Other", other_base).await;
+    f.client_repo
+        .set_locked_space("locked-1", Some(&f.space_id.to_string()))
+        .await
+        .unwrap();
+    // Header binding points at the OTHER space.
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "foreign",
+            other_space,
+            vec![other_starter],
+        ))
+        .await
+        .unwrap();
+    f.session_roots.set_pinned("s", "foreign");
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("locked-1"))
+        .await
+        .unwrap();
+    // Confined to the locked (default) Space; the foreign header is ignored.
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.source, ResolutionSource::SpaceDefault);
+    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id]);
+}
+
+#[tokio::test]
+async fn locked_client_with_no_header_gets_locked_space_starter() {
+    let f = Fixture::new().await;
+    f.make_client("locked-3").await;
+    f.client_repo
+        .set_locked_space("locked-3", Some(&f.space_id.to_string()))
+        .await
+        .unwrap();
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("locked-3"))
+        .await
+        .unwrap();
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.source, ResolutionSource::SpaceDefault);
+    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id]);
+}
+
+#[tokio::test]
+async fn locked_client_honors_in_space_retargeted_client_id_mapping() {
+    // A locked client with no header: its clientId-keyed mapping was retargeted
+    // (from the auto-created Starter) to another FeatureSet that still lives in
+    // the locked Space. The resolver must honor that mapping — the Space stays
+    // locked, but the operator's FeatureSet choice is respected.
+    let f = Fixture::new().await;
+    f.make_client("locked-4").await;
+    f.client_repo
+        .set_locked_space("locked-4", Some(&f.space_id.to_string()))
+        .await
+        .unwrap();
+    // Retargeted clientId mapping → a non-Starter FS within the locked Space.
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "locked-4",
+            f.space_id,
+            vec![f.fs_a_id.clone()],
+        ))
+        .await
+        .unwrap();
+    // No header; explicitly rootless so we reach the clientId tier.
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("locked-4"))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn locked_client_ignores_out_of_space_client_id_mapping() {
+    // A locked client whose clientId mapping points at a DIFFERENT Space must be
+    // confined to the locked Space: the out-of-Space mapping is ignored and the
+    // client falls back to the locked Space's Starter (lock-confinement holds).
+    let f = Fixture::new().await;
+    f.make_client("locked-5").await;
+    let other_base = if cfg!(windows) {
+        "d:\\elsewhere"
+    } else {
+        "/elsewhere"
+    };
+    let (other_space, other_starter) = f.make_space_with_base_dir("Elsewhere", other_base).await;
+    f.client_repo
+        .set_locked_space("locked-5", Some(&f.space_id.to_string()))
+        .await
+        .unwrap();
+    // clientId mapping points OUT of the locked Space.
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "locked-5",
+            other_space,
+            vec![other_starter],
+        ))
+        .await
+        .unwrap();
+    // No header; explicitly rootless so we reach the clientId tier.
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some("locked-5"))
+        .await
+        .unwrap();
+    // Confined to the locked (default) Space; the foreign mapping is ignored.
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.source, ResolutionSource::SpaceDefault);
+    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id]);
+}

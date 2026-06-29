@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  Copy,
   FolderOpen,
   FolderSearch,
   Layers,
@@ -53,6 +54,11 @@ export function WorkspaceSetupWizard({
   onError: (msg: string) => void;
 }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  // A mapping is keyed by a folder PATH (the default) or an arbitrary ID/label
+  // (a client id, machine name, … — for headless/remote clients). `folder`
+  // holds whichever value the user enters.
+  const [bindingType, setBindingType] = useState<'path' | 'id'>('path');
+  const isId = bindingType === 'id';
   const [folder, setFolder] = useState('');
   const [validating, setValidating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -127,6 +133,7 @@ export function WorkspaceSetupWizard({
         workspace_root: folder,
         space_id: spaceId,
         feature_set_ids: Array.from(fsIds),
+        binding_type: bindingType,
       });
       // The parent transitions to the new mapping's inspector (which shows its
       // effective features) — don't close here, or that view would be lost.
@@ -136,11 +143,13 @@ export function WorkspaceSetupWizard({
     }
   };
 
-  const TITLES = ['Choose a folder', 'Connect your apps', 'Choose its tools'] as const;
+  const TITLES = isId
+    ? (['Choose an id', 'How clients connect', 'Choose its tools'] as const)
+    : (['Choose a folder', 'Connect your apps', 'Choose its tools'] as const);
 
   return (
     <div
-      className="fixed right-0 top-0 bottom-0 z-50 flex w-full min-w-[420px] max-w-[480px] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl animate-in slide-in-from-right duration-300"
+      className="animate-in slide-in-from-right fixed bottom-0 right-0 top-0 z-50 flex w-full min-w-[420px] max-w-[480px] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl duration-300"
       data-testid="workspace-setup-wizard"
     >
       {/* Header + progress */}
@@ -148,7 +157,7 @@ export function WorkspaceSetupWizard({
         <div className="flex items-start justify-between">
           <div className="min-w-0">
             <div className="text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              Set up a folder · Step {step} of 3
+              {isId ? 'Set up an ID mapping' : 'Set up a folder'} · Step {step} of 3
             </div>
             <h2 className="mt-0.5 text-lg font-bold">{TITLES[step - 1]}</h2>
           </div>
@@ -175,80 +184,154 @@ export function WorkspaceSetupWizard({
       <div className="flex-1 overflow-y-auto p-6">
         {step === 1 && (
           <div className="space-y-4" data-testid="wizard-step-folder">
-            <p className="text-sm text-[rgb(var(--muted))]">
-              Which project folder do you want to map? Pick one, or choose a folder an app already
-              opened.
-            </p>
-            <Button variant="primary" size="sm" onClick={pickFolder} disabled={validating}>
-              {validating ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <FolderOpen className="mr-2 h-4 w-4" />
-              )}
-              Choose folder…
-            </Button>
+            {/* Folder vs ID — a folder routes editors by the path they open; an
+                id routes a headless/remote client by an exact label it sends. */}
+            <div className="flex gap-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-1">
+              {(['path', 'id'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setBindingType(t)}
+                  className={[
+                    'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    bindingType === t
+                      ? 'bg-primary-500 text-white'
+                      : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))]',
+                  ].join(' ')}
+                  data-testid={`wizard-type-${t}`}
+                >
+                  {t === 'path' ? 'Folder' : 'ID / label'}
+                </button>
+              ))}
+            </div>
 
-            {folder && (
-              <div
-                className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
-                  alreadyMapped
-                    ? 'border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-900/20'
-                    : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
-                }`}
-              >
-                {alreadyMapped ? (
-                  <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-600" />
-                ) : (
-                  <Check className="h-4 w-4 flex-shrink-0 text-green-600" />
+            {isId ? (
+              <>
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  Enter an id or label — a client id, machine name, or any string. A headless or
+                  remote client that sends this exact value in the{' '}
+                  <code className="font-mono text-xs">X-Mcpmux-Workspace</code> header gets the
+                  tools you choose next.
+                </p>
+                <input
+                  type="text"
+                  value={folder}
+                  onChange={(e) => setFolder(e.target.value)}
+                  placeholder="e.g. a client id or machine name"
+                  className="focus:ring-primary-500 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2"
+                  data-testid="wizard-id-input"
+                />
+                {alreadyMapped && (
+                  <p
+                    className="text-xs text-amber-700 dark:text-amber-400"
+                    data-testid="wizard-folder-mapped-error"
+                  >
+                    That id is already mapped — edit it from the Mapping list instead.
+                  </p>
                 )}
-                <span className="truncate font-mono text-xs" title={folder}>
-                  {folder}
-                </span>
-              </div>
-            )}
-            {alreadyMapped && (
-              <p
-                className="text-xs text-amber-700 dark:text-amber-400"
-                data-testid="wizard-folder-mapped-error"
-              >
-                This folder is already mapped — edit it from the Workspaces list instead.
-              </p>
-            )}
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  Which project folder do you want to map? Pick one, or choose a folder an app
+                  already opened.
+                </p>
+                <Button variant="primary" size="sm" onClick={pickFolder} disabled={validating}>
+                  {validating ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                  )}
+                  Choose folder…
+                </Button>
 
-            {unmappedRoots.length > 0 && (
-              <div>
-                <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[rgb(var(--muted))]">
-                  <FolderSearch className="h-3.5 w-3.5" />
-                  Detected workspaces
-                </div>
-                <div className="overflow-hidden rounded-lg border border-[rgb(var(--border))]">
-                  {unmappedRoots.slice(0, 6).map((r, i) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setFolder(r)}
-                      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[rgb(var(--surface-hover))] ${
-                        i > 0 ? 'border-t border-[rgb(var(--border-subtle))]' : ''
-                      } ${folder === r ? 'bg-primary-500/5' : ''}`}
-                    >
-                      <FolderOpen className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
-                      <span className="truncate font-mono text-xs" title={r}>
-                        {r}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+                {folder && (
+                  <div
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                      alreadyMapped
+                        ? 'border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-900/20'
+                        : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
+                    }`}
+                  >
+                    {alreadyMapped ? (
+                      <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-600" />
+                    ) : (
+                      <Check className="h-4 w-4 flex-shrink-0 text-green-600" />
+                    )}
+                    <span className="truncate font-mono text-xs" title={folder}>
+                      {folder}
+                    </span>
+                  </div>
+                )}
+                {alreadyMapped && (
+                  <p
+                    className="text-xs text-amber-700 dark:text-amber-400"
+                    data-testid="wizard-folder-mapped-error"
+                  >
+                    This folder is already mapped — edit it from the Workspaces list instead.
+                  </p>
+                )}
+
+                {unmappedRoots.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[rgb(var(--muted))]">
+                      <FolderSearch className="h-3.5 w-3.5" />
+                      Detected workspaces
+                    </div>
+                    <div className="overflow-hidden rounded-lg border border-[rgb(var(--border))]">
+                      {unmappedRoots.slice(0, 6).map((r, i) => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => setFolder(r)}
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[rgb(var(--surface-hover))] ${
+                            i > 0 ? 'border-t border-[rgb(var(--border-subtle))]' : ''
+                          } ${folder === r ? 'bg-primary-500/5' : ''}`}
+                        >
+                          <FolderOpen className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
+                          <span className="truncate font-mono text-xs" title={r}>
+                            {r}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
 
         {step === 2 && (
           <div className="space-y-3" data-testid="wizard-step-apps">
-            <WorkspaceInstallPanel workspaceRoot={folder} />
-            <p className="text-center text-xs text-[rgb(var(--muted))]">
-              Optional — you can connect apps later from this folder&apos;s mapping.
-            </p>
+            {isId ? (
+              <div className="space-y-3">
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  A headless or remote client routes here by sending this id in the{' '}
+                  <code className="font-mono text-xs">X-Mcpmux-Workspace</code> header. There&apos;s
+                  no folder to auto-write app config for — copy the value into your client.
+                </p>
+                <div className="flex items-stretch gap-2">
+                  <code className="flex-1 select-all break-all rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-xs">
+                    {folder || '—'}
+                  </code>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void navigator.clipboard.writeText(folder).catch(() => {})}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <WorkspaceInstallPanel workspaceRoot={folder} />
+                <p className="text-center text-xs text-[rgb(var(--muted))]">
+                  Optional — you can connect apps later from this folder&apos;s mapping.
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -299,9 +382,9 @@ export function WorkspaceSetupWizard({
                         type="checkbox"
                         checked={fsIds.has(fs.id)}
                         onChange={() => toggleFs(fs.id)}
-                        className="h-4 w-4 flex-shrink-0 accent-primary-500"
+                        className="accent-primary-500 h-4 w-4 flex-shrink-0"
                       />
-                      <Layers className="h-4 w-4 flex-shrink-0 text-primary-500" />
+                      <Layers className="text-primary-500 h-4 w-4 flex-shrink-0" />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{fs.name}</span>
                       {isStarterFeatureSet(fs) && (
                         <span className="flex-shrink-0 rounded-full bg-[rgb(var(--surface))] px-1.5 text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
@@ -354,7 +437,11 @@ export function WorkspaceSetupWizard({
             disabled={saving || fsIds.size === 0 || !folder}
             data-testid="wizard-finish"
           >
-            {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Wrench className="mr-1.5 h-4 w-4" />}
+            {saving ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <Wrench className="mr-1.5 h-4 w-4" />
+            )}
             Finish
           </Button>
         )}

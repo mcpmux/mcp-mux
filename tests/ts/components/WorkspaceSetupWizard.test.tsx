@@ -81,6 +81,7 @@ describe('WorkspaceSetupWizard', () => {
       workspace_root: '/proj/app',
       space_id: 's1',
       feature_set_ids: ['fs_starter'],
+      binding_type: 'path',
     });
     // The parent navigates to the new mapping's inspector (effective features);
     // the wizard itself does not close.

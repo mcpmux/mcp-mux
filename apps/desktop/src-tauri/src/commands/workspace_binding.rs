@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use mcpmux_core::{
-    validate_workspace_root as validate_root, DomainEvent, FeatureSet, FeatureSetType, MemberMode,
-    MemberType, ServerFeature, WorkspaceBinding, WorkspaceRootValidation,
+    validate_workspace_root as validate_root, BindingType, DomainEvent, FeatureSet, FeatureSetType,
+    MemberMode, MemberType, ServerFeature, WorkspaceBinding, WorkspaceRootValidation,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -54,6 +54,8 @@ async fn emit_binding_changed(
 pub struct WorkspaceBindingDto {
     pub id: String,
     pub workspace_root: String,
+    /// `path` (folder, normalized) or `id` (arbitrary exact-match key).
+    pub binding_type: String,
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
     pub created_at: String,
@@ -65,6 +67,7 @@ impl From<WorkspaceBinding> for WorkspaceBindingDto {
         Self {
             id: b.id.to_string(),
             workspace_root: b.workspace_root,
+            binding_type: b.binding_type.as_str().to_string(),
             space_id: b.space_id.to_string(),
             feature_set_ids: b.feature_set_ids,
             created_at: b.created_at.to_rfc3339(),
@@ -83,6 +86,10 @@ pub struct WorkspaceBindingInput {
     pub workspace_root: String,
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
+    /// `path` (default — folder, normalized + validated) or `id` (arbitrary
+    /// exact-match key, taken verbatim). Optional for backward compatibility.
+    #[serde(default)]
+    pub binding_type: Option<String>,
 }
 
 fn parse_space_id(input: &WorkspaceBindingInput) -> Result<Uuid, String> {
@@ -229,6 +236,26 @@ fn normalize_and_validate(raw: &str) -> Result<String, String> {
     }
 }
 
+/// Resolve the storage key + type from the input. `path` bindings are
+/// normalized + validated (rejecting relative paths, filesystem roots, …);
+/// `id` bindings take the raw string verbatim (any non-empty label a headless
+/// client sends in `X-Mcpmux-Workspace`, e.g. a client id or machine name).
+fn resolve_key_and_type(input: &WorkspaceBindingInput) -> Result<(String, BindingType), String> {
+    match input.binding_type.as_deref() {
+        Some("id") => {
+            let key = input.workspace_root.trim();
+            if key.is_empty() {
+                return Err("Mapping id cannot be empty".into());
+            }
+            Ok((key.to_string(), BindingType::Id))
+        }
+        _ => Ok((
+            normalize_and_validate(&input.workspace_root)?,
+            BindingType::Path,
+        )),
+    }
+}
+
 /// Create a binding. Path is normalized + validated server-side so the UI
 /// can pass raw input (Windows paths, file:// URIs, trailing slashes).
 #[tauri::command]
@@ -239,9 +266,9 @@ pub async fn create_workspace_binding(
 ) -> Result<WorkspaceBindingDto, String> {
     let space_id = parse_space_id(&input)?;
     let feature_set_ids = validate_fs_list(&input)?;
-    let normalized = normalize_and_validate(&input.workspace_root)?;
+    let (key, binding_type) = resolve_key_and_type(&input)?;
 
-    // Reject a duplicate folder up front with a readable message. The schema
+    // Reject a duplicate key up front with a readable message. The schema
     // already enforces `UNIQUE(workspace_root)`, but that surfaces an opaque
     // SQLite constraint error — this gives the UI something a user can act on.
     let existing = state
@@ -249,13 +276,16 @@ pub async fn create_workspace_binding(
         .list()
         .await
         .map_err(|e| e.to_string())?;
-    if existing.iter().any(|b| b.workspace_root == normalized) {
+    if existing.iter().any(|b| b.workspace_root == key) {
         return Err(format!(
-            "A mapping already exists for {normalized}. Edit the existing mapping instead of adding a second one."
+            "A mapping already exists for {key}. Edit the existing mapping instead of adding a second one."
         ));
     }
 
-    let binding = WorkspaceBinding::new_multi(normalized.clone(), space_id, feature_set_ids);
+    let binding = match binding_type {
+        BindingType::Id => WorkspaceBinding::new_id(key.clone(), space_id, feature_set_ids),
+        BindingType::Path => WorkspaceBinding::new_multi(key.clone(), space_id, feature_set_ids),
+    };
 
     state
         .workspace_binding_repository
@@ -292,9 +322,9 @@ pub async fn update_workspace_binding(
     let id_uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let space_id = parse_space_id(&input)?;
     let feature_set_ids = validate_fs_list(&input)?;
-    let normalized = normalize_and_validate(&input.workspace_root)?;
+    let (key, binding_type) = resolve_key_and_type(&input)?;
 
-    // If the edit moved the folder onto a path another mapping already owns,
+    // If the edit moved the mapping onto a key another mapping already owns,
     // reject with a readable message rather than tripping the DB UNIQUE
     // constraint. Exclude this binding's own row.
     let all = state
@@ -304,10 +334,10 @@ pub async fn update_workspace_binding(
         .map_err(|e| e.to_string())?;
     if all
         .iter()
-        .any(|b| b.id != id_uuid && b.workspace_root == normalized)
+        .any(|b| b.id != id_uuid && b.workspace_root == key)
     {
         return Err(format!(
-            "Another mapping already uses {normalized}. Pick a different folder."
+            "Another mapping already uses {key}. Pick a different key."
         ));
     }
 
@@ -321,7 +351,8 @@ pub async fn update_workspace_binding(
 
     let updated = WorkspaceBinding {
         id: existing.id,
-        workspace_root: normalized,
+        workspace_root: key,
+        binding_type,
         space_id,
         feature_set_ids,
         created_at: existing.created_at,

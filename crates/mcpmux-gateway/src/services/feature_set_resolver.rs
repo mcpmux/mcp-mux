@@ -303,13 +303,15 @@ impl FeatureSetResolverService {
     }
 
     /// Resolve a client locked to Space `locked`. The Space is fixed to
-    /// `locked`; the header/roots may still pick the FeatureSet, but only when
-    /// their binding lives in `locked`. A header whose binding resolves to a
-    /// different Space — or no header at all — falls back to `locked`'s Starter.
-    /// A locked client never touches the roots-pending or client-grant tiers.
+    /// `locked`; the header/roots — or the client's own retargeted clientId
+    /// mapping — may still pick the FeatureSet, but only when that binding lives
+    /// in `locked`. A binding that resolves to a different Space (or no binding
+    /// at all) falls back to `locked`'s Starter. A locked client never touches
+    /// the roots-pending or client-grant tiers.
     async fn resolve_locked(
         &self,
         session_id: Option<&str>,
+        client_id: Option<&str>,
         locked: Uuid,
     ) -> Result<ResolvedFeatureSet> {
         if let Some(sid) = session_id {
@@ -337,7 +339,35 @@ impl FeatureSetResolverService {
                 }
             }
         }
-        // No header, or its binding is outside the locked Space → locked Starter.
+        // A locked client may still have its clientId-keyed `id` mapping
+        // retargeted from the Mapping tab. Honor that mapping's FeatureSet — but
+        // only when it stays within the locked Space, preserving
+        // lock-confinement. A mapping pointing out of the Space (or none) falls
+        // through to the locked Starter.
+        if let Some(cid) = client_id {
+            if let Some(binding) = self.binding_repo.find_by_id_key(cid).await? {
+                if binding.space_id == locked {
+                    debug!(
+                        %locked,
+                        client_id = %cid,
+                        "[FeatureSetResolver] locked client — clientId mapping within locked Space",
+                    );
+                    return Ok(ResolvedFeatureSet {
+                        feature_set_ids: binding.feature_set_ids,
+                        space_id: Some(locked),
+                        source: ResolutionSource::WorkspaceBinding,
+                    });
+                }
+                debug!(
+                    %locked,
+                    client_id = %cid,
+                    binding_space = %binding.space_id,
+                    "[FeatureSetResolver] locked client — clientId mapping in a different Space; ignored",
+                );
+            }
+        }
+
+        // No header/mapping within the locked Space → locked Starter.
         self.default_fallback(locked).await
     }
 
@@ -378,7 +408,11 @@ impl FeatureSetResolverService {
         if let Some(cid) = client_id {
             if let Some(locked) = self.client_repo.get_locked_space(cid).await? {
                 match locked.parse::<Uuid>() {
-                    Ok(locked_uuid) => return self.resolve_locked(session_id, locked_uuid).await,
+                    Ok(locked_uuid) => {
+                        return self
+                            .resolve_locked(session_id, client_id, locked_uuid)
+                            .await
+                    }
                     Err(e) => warn!(
                         client_id = %cid,
                         locked_space = %locked,

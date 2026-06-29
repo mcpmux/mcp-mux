@@ -121,7 +121,7 @@ function GetStartedStrip() {
       icon: Monitor,
       title: 'Connect an AI app',
       desc: 'Point Cursor, Claude, or VS Code at your gateway below.',
-      cta: 'See Apps',
+      cta: 'See Clients',
       nav: 'clients' as NavItem,
     },
   ];
@@ -310,8 +310,8 @@ export function HomePage() {
           testId="stat-clients"
           valueTestId="stat-clients-value"
           icon={Monitor}
-          label="Apps"
-          sub="Connected AI apps"
+          label="Clients"
+          sub="Connected AI clients"
           value={String(stats.clients)}
           accent="hsl(152 55% 45%)"
           navTarget="clients"

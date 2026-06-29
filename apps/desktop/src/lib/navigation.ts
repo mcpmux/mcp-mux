@@ -86,17 +86,17 @@ export const NAV_ZONES: NavZone[] = [
     entries: [
       {
         key: 'clients',
-        label: 'Apps',
+        label: 'Clients',
         icon: Monitor,
         testId: 'nav-clients',
-        hint: 'AI apps connected through your gateway',
+        hint: 'AI clients connected through your gateway',
       },
       {
         key: 'workspaces',
-        label: 'Workspaces',
+        label: 'Mapping',
         icon: FolderOpen,
         testId: 'nav-workspaces',
-        hint: 'Folder → tools mappings',
+        hint: 'Route apps to tools — by folder or id',
       },
       {
         key: 'featuresets',

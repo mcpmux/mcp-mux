@@ -269,16 +269,14 @@ async fn empty_mapping_yields_zero_effective_tools() {
     assert!(ctx.effective_tools("sess").await.is_empty());
 }
 
-/// A reported root with no mapping falls back to the default Space's Starter
-/// FS (the "every folder needs mapping" fix) → it sees exactly the Starter's
-/// tools, not nothing. We drop one tool into the Starter and confirm the
-/// unmapped session resolves to `SpaceDefault` and sees precisely that tool.
+/// A reported root with no mapping resolves to `Unbound` (deny by default) —
+/// zero backend tools regardless of Starter FS membership.
 #[tokio::test(flavor = "multi_thread")]
-async fn unbound_session_falls_back_to_starter_fs() {
+async fn unbound_session_returns_no_tools() {
     let ctx = Ctx::new().await;
 
-    // Put one tool in the default Space's Starter FS so the fallback is
-    // observable (the seeded Starter is otherwise empty).
+    // Put one tool in the default Space's Starter FS — unbound sessions must
+    // NOT see it (Starter is no longer the silent fallback).
     let starter = ctx
         .fs_repo
         .get_starter_for_space(&ctx.space_id_str)
@@ -299,19 +297,13 @@ async fn unbound_session_falls_back_to_starter_fs() {
     ctx.session_roots.set_roots_capable("sess", true);
 
     let resolved = ctx.resolver.resolve(Some("sess"), None).await.unwrap();
-    assert_eq!(resolved.source, ResolutionSource::SpaceDefault);
-    assert_eq!(resolved.feature_set_ids, vec![starter.id]);
-    assert_eq!(
-        ctx.effective_tools("sess").await,
-        vec!["create_issue".to_string()],
-    );
+    assert_eq!(resolved.source, ResolutionSource::Unbound);
+    assert!(resolved.feature_set_ids.is_empty());
+    assert!(ctx.effective_tools("sess").await.is_empty());
 }
 
-/// The "grant nothing by default" off-switch: the Starter is builtin and can't
-/// be deleted, but an operator can EMPTY it. An empty Starter still resolves
-/// (source `SpaceDefault`), but yields zero effective tools — so unmapped
-/// folders see nothing until they're either bound or the Starter is populated.
-/// The seeded Starter starts empty, which is exactly this state.
+/// Unbound sessions get zero effective tools even when the Starter FS is
+/// populated — deny by default is independent of Starter membership.
 #[tokio::test(flavor = "multi_thread")]
 async fn empty_starter_grants_nothing_to_unbound_session() {
     let ctx = Ctx::new().await;
@@ -341,9 +333,8 @@ async fn empty_starter_grants_nothing_to_unbound_session() {
     ctx.session_roots.set_roots_capable("sess", true);
 
     let resolved = ctx.resolver.resolve(Some("sess"), None).await.unwrap();
-    assert_eq!(resolved.source, ResolutionSource::SpaceDefault);
-    assert_eq!(resolved.feature_set_ids, vec![starter.id]);
-    // Resolves to the Starter, but it grants nothing.
+    assert_eq!(resolved.source, ResolutionSource::Unbound);
+    assert!(resolved.feature_set_ids.is_empty());
     assert!(ctx.effective_tools("sess").await.is_empty());
 }
 

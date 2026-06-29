@@ -8,11 +8,10 @@
 //!      list; resolver fires `list_changed` later when roots populate.
 //!   3. **ClientGrant** — rootless-by-design client. Per-client grants
 //!      from the `client_grants` table apply.
-//!   4. **SpaceDefault** — fell back to the default Space's Starter FS
-//!      because nothing more specific resolved: an unmapped folder (roots
-//!      reported, no binding), a rootless client with no grants, or a
-//!      roots-capable client that never reported a folder once the grace
-//!      window lapsed.
+//!   4. **Unbound** — no binding matched; deny by default (empty FS list).
+//!      Applies to an unmapped folder (roots reported, no binding), a rootless
+//!      client with no grants, or a roots-capable client that never reported a
+//!      folder once the grace window lapsed.
 //!   5. **Deny** — defensive only: no default Space, or (degenerately) the
 //!      default Space has no Starter FS. The Starter is builtin/seeded so this
 //!      is normally unreachable. Empty FS list.
@@ -41,8 +40,8 @@ struct Fixture {
     client_repo: Arc<InboundClientRepository>,
     base_dir_repo: Arc<dyn SpaceBaseDirRepository>,
     space_id: Uuid,
-    /// The default Space's auto-seeded Starter FS — the target of every
-    /// `SpaceDefault` fallback.
+    /// The default Space's auto-seeded Starter FS — used by tests that need a
+    /// known FS id (e.g. ClientGrant / WorkspaceBinding paths).
     starter_fs_id: String,
     fs_a_id: String,
     fs_b_id: String,
@@ -63,8 +62,7 @@ impl Fixture {
         let default_space = space_repo.get_default().await.unwrap().unwrap();
         let space_id = default_space.id;
 
-        // The default Space is seeded with its Starter FS by migrations; make
-        // sure it's present so the `SpaceDefault` fallback has a target.
+        // The default Space is seeded with its Starter FS by migrations.
         fs_repo
             .ensure_builtin_for_space(&space_id.to_string())
             .await
@@ -110,7 +108,7 @@ impl Fixture {
     }
 
     /// Build a second resolver over the same repos with a custom grace
-    /// window — used to exercise the post-grace `SpaceDefault` fallback
+    /// window — used to exercise the post-grace `Unbound` fallback
     /// deterministically (grace = 0) without sleeping.
     fn resolver_with_grace(&self, grace: Duration) -> FeatureSetResolverService {
         FeatureSetResolverService::new(
@@ -187,16 +185,16 @@ fn test_root() -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// SpaceDefault tier — the "every folder needs mapping" fallback
+// Unbound tier — deny by default
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn default_when_no_session_id_and_no_grants() {
     let f = Fixture::new().await;
     let r = f.resolver.resolve(None, None).await.unwrap();
-    // No session, no grants → fall back to the default Space's Starter FS.
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    // No session, no grants → Unbound (deny by default).
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
     assert_eq!(r.space_id, Some(f.space_id));
 }
 
@@ -219,12 +217,12 @@ async fn pending_when_session_has_no_roots_and_capability_unknown() {
 async fn default_when_session_explicitly_rootless_and_no_grants() {
     // Explicit Some(false) capability — client told us it doesn't
     // support roots — and no client grants. It told us it has no folder,
-    // so settle straight on the Space default (no grace wait needed).
+    // so settle straight on Unbound (no grace wait needed).
     let f = Fixture::new().await;
     f.session_roots.set_roots_capable("rootless", false);
     let r = f.resolver.resolve(Some("rootless"), None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
 }
 
 #[tokio::test]
@@ -233,19 +231,18 @@ async fn default_when_roots_reported_but_no_binding_matches() {
     let other = if cfg!(windows) { "d:\\tmp" } else { "/tmp" };
     f.session_roots.set("sess", [other]);
     let r = f.resolver.resolve(Some("sess"), None).await.unwrap();
-    // Roots present but no binding → the folder is unmapped, so it falls
-    // back to the default Space's Starter FS (and upstream still emits
-    // WorkspaceNeedsBinding so the user can attach an explicit mapping).
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    // Roots present but no binding → the folder is unmapped, so Unbound
+    // (deny by default). Upstream still emits WorkspaceNeedsBinding so the
+    // user can attach an explicit binding.
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
     assert_eq!(r.space_id, Some(f.space_id));
 }
 
 // Note: the "no Starter FS → Deny" branch is purely defensive — the Starter
 // is builtin and seeded with every Space, so it can't be removed through the
-// public API. The user's real "grant nothing by default" lever is *emptying*
-// the Starter (it still resolves to SpaceDefault, just with no members); that
-// off-switch is proven end-to-end in `effective_features.rs`.
+// public API. Unbound sessions always get empty ids regardless of Starter
+// membership; that off-switch is proven end-to-end in `effective_features.rs`.
 
 // ---------------------------------------------------------------------------
 // PendingRoots tier
@@ -315,7 +312,7 @@ async fn deleting_a_bound_feature_set_drops_it_and_resolution_survives() {
 async fn no_inheritance_child_of_bound_parent_falls_back_to_default() {
     // Inheritance is intentionally NOT supported: a session whose reported root
     // is a CHILD of a bound parent does not pick up the parent's binding. With
-    // no exact binding of its own it's an unmapped folder → SpaceDefault (the
+    // no exact binding of its own it's an unmapped folder → Unbound (the
     // child does NOT inherit the parent's FS A).
     let f = Fixture::new().await;
     let (parent, child) = if cfg!(windows) {
@@ -332,13 +329,13 @@ async fn no_inheritance_child_of_bound_parent_falls_back_to_default() {
         .await
         .unwrap();
 
-    // Child reports its root, no exact binding for it → SpaceDefault (no
+    // Child reports its root, no exact binding for it → Unbound (no
     // inheritance of the parent's FS A).
     f.session_roots.set("child", [child]);
     f.session_roots.set_roots_capable("child", true);
     let r = f.resolver.resolve(Some("child"), None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
     assert_ne!(r.feature_set_ids, vec![f.fs_a_id.clone()]);
 
     // The parent's own exact root still resolves to its binding.
@@ -350,7 +347,7 @@ async fn no_inheritance_child_of_bound_parent_falls_back_to_default() {
 }
 
 // ---------------------------------------------------------------------------
-// SpaceDefault tier — base-directory scoping
+// Unbound tier — base-directory scoping (space_id only, empty ids)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -361,17 +358,17 @@ async fn unmapped_root_under_base_dir_scopes_to_that_space() {
     } else {
         ("/work", "/work/proj")
     };
-    let (work_space, work_starter) = f.make_space_with_base_dir("Work", base).await;
+    let (work_space, _work_starter) = f.make_space_with_base_dir("Work", base).await;
 
     // Session reports a folder UNDER Work's base dir, with no explicit binding.
     f.session_roots.set("s", [root]);
     f.session_roots.set_roots_capable("s", true);
 
     let r = f.resolver.resolve(Some("s"), None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    // Scoped to the Work space's Starter — NOT the global default space's.
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    // Scoped to the Work space — NOT the global default space.
     assert_eq!(r.space_id, Some(work_space));
-    assert_eq!(r.feature_set_ids, vec![work_starter]);
+    assert!(r.feature_set_ids.is_empty());
     assert_ne!(r.space_id, Some(f.space_id));
 }
 
@@ -390,10 +387,10 @@ async fn unmapped_root_outside_base_dirs_uses_default_space() {
     f.session_roots.set_roots_capable("s", true);
 
     let r = f.resolver.resolve(Some("s"), None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    // No base dir claims it → global default space's Starter.
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    // No base dir claims it → global default space.
     assert_eq!(r.space_id, Some(f.space_id));
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    assert!(r.feature_set_ids.is_empty());
 }
 
 #[tokio::test]
@@ -405,7 +402,7 @@ async fn nested_base_dir_most_specific_space_wins() {
         ("/work", "/work/client", "/work/client/app")
     };
     f.make_space_with_base_dir("Work", work_base).await;
-    let (client_space, client_starter) = f.make_space_with_base_dir("Client", client_base).await;
+    let (client_space, _client_starter) = f.make_space_with_base_dir("Client", client_base).await;
 
     f.session_roots.set("s", [root]);
     f.session_roots.set_roots_capable("s", true);
@@ -416,7 +413,8 @@ async fn nested_base_dir_most_specific_space_wins() {
         Some(client_space),
         "the most-specific (longest) base dir wins"
     );
-    assert_eq!(r.feature_set_ids, vec![client_starter]);
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
 }
 
 #[tokio::test]
@@ -522,9 +520,9 @@ async fn rootless_client_without_grants_falls_back_to_default() {
         .resolve(Some("s"), Some(client_id))
         .await
         .unwrap();
-    // Rootless + no grants → Space default rather than nothing.
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    // Rootless + no grants → Unbound (deny by default).
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
 }
 
 #[tokio::test]
@@ -556,15 +554,15 @@ async fn roots_arrived_empty_falls_through_to_grants() {
 
 #[tokio::test]
 async fn roots_arrived_empty_without_grants_falls_back_to_default() {
-    // Same arrived-empty state but no grants → SpaceDefault, NOT PendingRoots,
-    // so the session settles (on the Space default) instead of re-probing
+    // Same arrived-empty state but no grants → Unbound, NOT PendingRoots,
+    // so the session settles (deny by default) instead of re-probing
     // `roots/list` forever.
     let f = Fixture::new().await;
     f.session_roots.set_roots_capable("s", true);
     f.session_roots.set("s", Vec::<String>::new());
     let r = f.resolver.resolve(Some("s"), None).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
 }
 
 #[tokio::test]
@@ -593,9 +591,9 @@ async fn capable_session_does_not_fall_through_to_grants() {
 #[tokio::test]
 async fn pending_roots_grace_lapse_falls_back_to_space_default_not_grants() {
     // After the grace window lapses with no root reported, a roots-capable
-    // session settles on the Space DEFAULT — never on another client's
-    // grants. This proves both halves of the grace design:
-    //   1. it stops waiting (→ SpaceDefault, not a perpetual PendingRoots), and
+    // session settles on Unbound — never on another client's grants. This
+    // proves both halves of the grace design:
+    //   1. it stops waiting (→ Unbound, not a perpetual PendingRoots), and
     //   2. it preserves per-session isolation (→ NOT ClientGrant, even though
     //      this client has a grant).
     let f = Fixture::new().await;
@@ -609,9 +607,8 @@ async fn pending_roots_grace_lapse_falls_back_to_space_default_not_grants() {
 
     f.session_roots.set_roots_capable("s", true); // capable, but no roots ever arrive
     let r = resolver.resolve(Some("s"), Some(client_id)).await.unwrap();
-    assert_eq!(r.source, ResolutionSource::SpaceDefault);
-    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
-    assert_ne!(r.feature_set_ids, vec![f.fs_a_id.clone()]);
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
 }
 
 // ---------------------------------------------------------------------------

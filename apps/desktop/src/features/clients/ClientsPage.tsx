@@ -23,6 +23,7 @@ import {
   Check,
   Globe,
   ShieldOff,
+  KeyRound,
 } from 'lucide-react';
 import { ConnectIDEs } from '@/components/ConnectIDEs';
 import type { GatewayStatus, OAuthClient } from '@/lib/api/gateway';
@@ -55,6 +56,7 @@ import {
   usePendingClientId,
   useSetPendingClientId,
 } from '@/stores';
+import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
 
 // Bundled icons for well-known AI clients.
 const CLIENT_ICON_ASSETS: Record<string, string> = {
@@ -124,6 +126,7 @@ export default function ClientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selected, setSelected] = useState<OAuthClient | null>(null);
+  const [showRegister, setShowRegister] = useState(false);
   const [editAlias, setEditAlias] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>({
@@ -283,10 +286,21 @@ export default function ClientsPage() {
               </>
             }
             actions={
-              <Button variant="ghost" size="md" onClick={refreshClients} disabled={isRefreshing}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="md" onClick={refreshClients} disabled={isRefreshing}>
+                  <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={() => setShowRegister(true)}
+                  data-testid="register-api-key-client-btn"
+                >
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  Register client
+                </Button>
+              </div>
             }
           />
 
@@ -407,6 +421,16 @@ export default function ClientsPage() {
             onToastSuccess={success}
           />
         </>
+      )}
+
+      {showRegister && (
+        <RegisterApiKeyClientModal
+          onClose={() => setShowRegister(false)}
+          onRegistered={(client) => {
+            success(`Registered "${client.clientName}" with an API key.`);
+            void refreshClients();
+          }}
+        />
       )}
 
       <ToastContainer toasts={toasts} onClose={dismiss} />
@@ -582,7 +606,9 @@ function SidePanel({
                 When this client reports a folder as an MCP root, mcpmux uses the matching Workspace
                 binding to pick the Space and FeatureSet. If it doesn&apos;t report the folder
                 reliably (e.g. Cursor), open the folder in Workspaces and{' '}
-                <span className="font-medium text-[rgb(var(--foreground))]">Connect apps to this folder</span>{' '}
+                <span className="font-medium text-[rgb(var(--foreground))]">
+                  Connect apps to this folder
+                </span>{' '}
                 to auto-write its config with a workspace header.
               </p>
               <button

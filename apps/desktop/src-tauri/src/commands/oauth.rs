@@ -943,6 +943,7 @@ pub async fn delete_oauth_client(
 pub struct RegisteredApiKeyClient {
     pub client_id: String,
     pub client_name: String,
+    pub locked_space_id: Option<String>,
     pub api_key: String,
     pub key_prefix: String,
 }
@@ -973,12 +974,13 @@ fn generate_api_key() -> (String, String, String) {
     (key_id, plaintext, key_prefix)
 }
 
-/// Register a new pre-approved client authenticated by an API key. The returned
-/// `api_key` is shown once and never stored.
+/// Register a new pre-approved client authenticated by an API key, optionally
+/// locked to a Space. The returned `api_key` is shown once and never stored.
 #[tauri::command]
 pub async fn register_api_key_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
     name: String,
+    locked_space_id: Option<String>,
 ) -> Result<RegisteredApiKeyClient, String> {
     let app_state = gateway_state.read().await;
     let Some(ref gw_state) = app_state.gateway_state else {
@@ -1024,6 +1026,12 @@ pub async fn register_api_key_client(
         .await
         .map_err(|e| format!("Failed to create client: {}", e))?;
 
+    if let Some(ref space) = locked_space_id {
+        repo.set_locked_space(&client_id, Some(space))
+            .await
+            .map_err(|e| format!("Failed to lock client to space: {}", e))?;
+    }
+
     let (key_id, plaintext, key_prefix) = generate_api_key();
     repo.create_api_key(&key_id, &client_id, &plaintext, &key_prefix, None, None)
         .await
@@ -1037,6 +1045,7 @@ pub async fn register_api_key_client(
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: trimmed.to_string(),
+        locked_space_id,
         api_key: plaintext,
         key_prefix,
     })
@@ -1079,9 +1088,15 @@ pub async fn create_client_api_key(
     .await
     .map_err(|e| format!("Failed to create API key: {}", e))?;
 
+    let locked_space_id = repo
+        .get_locked_space(&client_id)
+        .await
+        .map_err(|e| format!("Failed to read client: {}", e))?;
+
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: client.client_name,
+        locked_space_id,
         api_key: plaintext,
         key_prefix,
     })

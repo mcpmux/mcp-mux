@@ -350,6 +350,7 @@ export async function revokeOAuthClientFeatureSet(
 export interface RegisteredApiKeyClient {
   clientId: string;
   clientName: string;
+  lockedSpaceId: string | null;
   /** The full key — shown once; afterwards only its hash is kept. */
   apiKey: string;
   keyPrefix: string;
@@ -366,11 +367,14 @@ export interface ApiKeyInfo {
 }
 
 /**
- * Register a pre-approved client authenticated by an API key. The returned key
- * is shown once and never retrievable again.
+ * Register a pre-approved client authenticated by an API key, optionally locked
+ * to a space. The returned key is shown once and never retrievable again.
  */
-export async function registerApiKeyClient(name: string): Promise<RegisteredApiKeyClient> {
-  return invoke('register_api_key_client', { name });
+export async function registerApiKeyClient(
+  name: string,
+  lockedSpaceId?: string | null
+): Promise<RegisteredApiKeyClient> {
+  return invoke('register_api_key_client', { name, lockedSpaceId: lockedSpaceId ?? null });
 }
 
 /** Issue an additional API key for an existing client (rotation). Shown once. */

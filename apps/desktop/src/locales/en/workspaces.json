@@ -87,7 +87,9 @@
     "mappingSubtitleAutosave": "Changes save automatically.",
     "effectiveFeatures": "Effective Features",
     "effectiveFeaturesSubtitle": "Tools, prompts, and resources this folder currently sees",
-    "removeBinding": "Remove binding"
+    "removeBinding": "Remove binding",
+    "identityPlaceholder": "Add a label…",
+    "machineGlobal": "Global"
   },
   "saveStatus": {
     "saving": "Saving",

@@ -12,7 +12,6 @@ import {
   AlertCircle,
   Check,
   ChevronDown,
-  FolderOpen,
   FolderSearch,
   Loader2,
 } from 'lucide-react';
@@ -24,14 +23,11 @@ import {
 import {
   deleteWorkspaceAppearance,
   upsertWorkspaceAppearance,
-  uploadWorkspaceIcon,
 } from '@/lib/api/workspaceAppearances';
 import { isStarterFeatureSet, type FeatureSet } from '@/lib/api/featureSets';
 import { createMachine, getHostname, type Machine } from '@/lib/api/machines';
 import type { Space } from '@/lib/api/spaces';
-import { ServerIcon } from '@/components/ServerIcon';
 import { MachineProfileEditor } from '@/components/machine-profile-editor';
-import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 
 export type SaveStatus =
   | { kind: 'idle' }
@@ -161,12 +157,9 @@ export function BindingForm({
   featureSets,
   machines,
   localMachineId,
-  initial,
+  initial: _initial,
   initialUnmappedIcon,
-  label,
-  setLabel,
   icon,
-  setIcon,
   spaceId,
   setSpaceId,
   fsIds,
@@ -181,8 +174,6 @@ export function BindingForm({
   onFormSubmit,
   onCancel,
   onError,
-  onPersistIcon,
-  onIconChange,
   t,
 }: {
   mode: 'create' | 'edit' | 'create-from-live';
@@ -192,10 +183,7 @@ export function BindingForm({
   localMachineId: string | null;
   initial?: WorkspaceBinding | null;
   initialUnmappedIcon?: string | null;
-  label: string;
-  setLabel: (value: string) => void;
   icon: string;
-  setIcon: (value: string) => void;
   spaceId: string;
   setSpaceId: (value: string) => void;
   fsIds: string[];
@@ -210,8 +198,6 @@ export function BindingForm({
   onFormSubmit: (machineTargets: (string | null)[]) => Promise<void>;
   onCancel: () => void;
   onError: (message: string) => void;
-  onPersistIcon?: (nextIcon: string) => Promise<void>;
-  onIconChange?: (icon: string | null) => void;
   t: TFunction<['workspaces', 'common']>;
 }) {
   const rootRef = useRef<HTMLInputElement | null>(null);
@@ -225,7 +211,6 @@ export function BindingForm({
   const [newMachineIcon, setNewMachineIcon] = useState('');
   const [newMachineHostname, setNewMachineHostname] = useState('');
   const [creatingMachine, setCreatingMachine] = useState(false);
-  const [iconFilePath, setIconFilePath] = useState('');
   const isEdit = mode === 'edit';
 
   const rootEditable = mode !== 'create-from-live';
@@ -326,31 +311,6 @@ export function BindingForm({
     mode === 'create-from-live' ? normalizeIcon(initialUnmappedIcon) : null
   );
 
-  /** Persist icon immediately after upload so the card updates without waiting for autosave. */
-  const persistIconNow = async (nextIcon: string) => {
-    const workspaceRoot = root.trim();
-    if (!workspaceRoot) return;
-
-    if (mode === 'edit' && initial && canSubmit && onPersistIcon) {
-      await onPersistIcon(nextIcon);
-      return;
-    }
-
-    if (mode === 'create-from-live') {
-      const normalizedIcon = normalizeIcon(nextIcon);
-      if (normalizedIcon) {
-        await upsertWorkspaceAppearance({
-          workspace_root: workspaceRoot,
-          icon: normalizedIcon,
-        });
-        lastSavedAppearanceRef.current = normalizedIcon;
-      } else {
-        await deleteWorkspaceAppearance(workspaceRoot);
-        lastSavedAppearanceRef.current = null;
-      }
-    }
-  };
-
   const submitLabel =
     mode === 'create-from-live' ? t('form.saveBinding') : t('form.createBinding');
 
@@ -384,134 +344,6 @@ export function BindingForm({
 
   return (
     <div className="space-y-5">
-      <FormField label={t('form.label')} hint={t('form.labelHint')}>
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder={t('form.labelPlaceholder')}
-          className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-          data-testid="workspace-binding-label-input"
-        />
-      </FormField>
-
-      <FormField label={t('form.icon')} hint={t('form.iconHint')}>
-        <div className="space-y-2.5">
-          <div className="flex items-start gap-3">
-            <div className="w-14 h-14 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] flex items-center justify-center flex-shrink-0">
-              {icon.trim() ? (
-                <ServerIcon icon={icon.trim()} className="h-9 w-9 object-contain" fallback="📁" />
-              ) : (
-                <FolderOpen className="h-6 w-6 text-[rgb(var(--muted))]" />
-              )}
-            </div>
-            <div className="flex-1 min-w-0 space-y-2">
-              <div className="flex items-center gap-2">
-                <EmojiPickerButton
-                  value={icon.trim().length <= 2 ? icon.trim() : ''}
-                  onChange={(emoji) => {
-                    setIcon(emoji);
-                    onIconChange?.(emoji);
-                  }}
-                />
-                <input
-                  type="text"
-                  value={icon}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setIcon(next);
-                    onIconChange?.(normalizeIcon(next));
-                  }}
-                  placeholder={t('form.iconPlaceholder')}
-                  className="min-w-0 flex-1 h-10 px-3 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  data-testid="workspace-binding-icon-input"
-                />
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {isTauri() ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        const picked = await pickPath({
-                          directory: false,
-                          multiple: false,
-                          title: t('form.pickIconTitle'),
-                          filters: [
-                            {
-                              name: t('form.imagesFilter'),
-                              extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
-                            },
-                          ],
-                        });
-                        if (typeof picked !== 'string' || picked.length === 0) return;
-                        const localRef = await uploadWorkspaceIcon(picked);
-                        setIcon(localRef);
-                        onIconChange?.(localRef);
-                        await persistIconNow(localRef);
-                      } catch (e) {
-                        onError(e instanceof Error ? e.message : String(e));
-                      }
-                    }}
-                    data-testid="workspace-binding-icon-upload"
-                  >
-                    {t('form.upload')}
-                  </Button>
-                ) : (
-                  <>
-                    <input
-                      type="text"
-                      value={iconFilePath}
-                      onChange={(e) => setIconFilePath(e.target.value)}
-                      placeholder="Enter absolute path"
-                      className="min-w-0 flex-1 px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      data-testid="workspace-binding-icon-path-input"
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={!iconFilePath.trim()}
-                      onClick={async () => {
-                        const picked = iconFilePath.trim();
-                        if (!picked) return;
-                        try {
-                          const localRef = await uploadWorkspaceIcon(picked);
-                          setIcon(localRef);
-                          onIconChange?.(localRef);
-                          await persistIconNow(localRef);
-                          setIconFilePath('');
-                        } catch (e) {
-                          onError(e instanceof Error ? e.message : String(e));
-                        }
-                      }}
-                      data-testid="workspace-binding-icon-upload"
-                    >
-                      {t('form.upload')}
-                    </Button>
-                  </>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setIcon('');
-                    onIconChange?.(null);
-                    void persistIconNow('').catch((e) =>
-                      onError(e instanceof Error ? e.message : String(e))
-                    );
-                  }}
-                  disabled={!icon.trim()}
-                  data-testid="workspace-binding-icon-clear"
-                >
-                  {t('form.clear')}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </FormField>
-
       <FormField label={t('form.machine')} hint={t('form.machineHint')}>
         {isEdit ? (
           <div className="space-y-2">

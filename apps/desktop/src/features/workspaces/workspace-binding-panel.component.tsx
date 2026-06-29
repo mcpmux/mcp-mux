@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
@@ -33,6 +34,7 @@ import {
 import { listFeatureSets, type FeatureSet } from '@/lib/api/featureSets';
 import { listSpaces, type Space } from '@/lib/api/spaces';
 import { ServerIcon } from '@/components/ServerIcon';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 import { useBindingPanelStore } from '@/stores/bindingPanelStore';
 import {
   BindingForm,
@@ -85,6 +87,108 @@ function Pill({
 }
 
 /**
+ * Inline-editable workspace identity in the panel header: icon, label, and machine badge.
+ */
+function PanelIdentityHeader({
+  mode,
+  label,
+  setLabel,
+  icon,
+  setIcon,
+  workspaceRoot,
+  machineBadgeLabel,
+  machineBadgeIcon,
+  onMachineBadgeClick,
+  onIconClear,
+  badges,
+  footer,
+  t,
+}: {
+  mode: 'create' | 'edit' | 'create-from-live';
+  label: string;
+  setLabel: (value: string) => void;
+  icon: string;
+  setIcon: (value: string) => void;
+  workspaceRoot?: string;
+  machineBadgeLabel: string;
+  machineBadgeIcon: string | null;
+  onMachineBadgeClick: () => void;
+  onIconClear: () => void;
+  badges?: ReactNode;
+  footer?: ReactNode;
+  t: TFunction<['workspaces', 'common']>;
+}) {
+  const labelPlaceholder = workspaceRoot?.trim() || t('panel.identityPlaceholder');
+  const trimmedIcon = icon.trim();
+
+  return (
+    <div className="flex items-start gap-3 flex-1 min-w-0">
+      <div className="flex flex-col items-center gap-1 flex-shrink-0">
+        <div className="w-11 h-11 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg border border-[rgb(var(--border-subtle))]">
+          {trimmedIcon ? (
+            <ServerIcon icon={trimmedIcon} className="h-6 w-6 object-contain" fallback="📁" />
+          ) : (
+            <FolderOpen className="h-5 w-5 text-[rgb(var(--muted))]" />
+          )}
+        </div>
+        <div className="flex items-center gap-0.5">
+          <EmojiPickerButton
+            value={trimmedIcon.length <= 2 ? trimmedIcon : ''}
+            onChange={(emoji) => setIcon(emoji)}
+            testId="workspace-binding-header-emoji"
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-1.5 text-[10px]"
+            onClick={onIconClear}
+            disabled={!trimmedIcon}
+            data-testid="workspace-binding-header-icon-clear"
+          >
+            {t('form.clear')}
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex-1 min-w-0">
+        {badges ? <div className="flex items-center gap-2 mb-1 flex-wrap">{badges}</div> : null}
+        <input
+          type="text"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder={labelPlaceholder}
+          className="w-full bg-transparent border-0 p-0 text-lg font-bold text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-0 break-words"
+          data-testid="workspace-binding-header-label"
+        />
+        {workspaceRoot ? (
+          <p className="text-xs text-[rgb(var(--muted))] break-all font-mono mt-0.5">{workspaceRoot}</p>
+        ) : mode === 'create' ? (
+          <p className="text-xs text-[rgb(var(--muted))] break-words mt-0.5">{t('panel.newSubtitle')}</p>
+        ) : null}
+        {footer}
+      </div>
+
+      <button
+        type="button"
+        onClick={onMachineBadgeClick}
+        className="flex-shrink-0 rounded-md transition-colors hover:bg-[rgb(var(--surface-hover))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+        data-testid="workspace-binding-header-machine-badge"
+        title={machineBadgeLabel}
+      >
+        <Pill tone="neutral">
+          <span className="inline-flex items-center gap-1 normal-case tracking-normal">
+            {machineBadgeIcon ? (
+              <span className="text-xs leading-none">{machineBadgeIcon}</span>
+            ) : null}
+            {machineBadgeLabel}
+          </span>
+        </Pill>
+      </button>
+    </div>
+  );
+}
+
+/**
  * Synthetic binding seed for create-from-live so BindingForm picks up event hints.
  */
 function buildFormInitial(
@@ -132,7 +236,6 @@ export function WorkspaceBindingPanel() {
   const [loadingData, setLoadingData] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ kind: 'idle' });
   const [effectiveTotal, setEffectiveTotal] = useState<number | null>(null);
-  const [resolvedIcon, setResolvedIcon] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [icon, setIcon] = useState('');
   const [spaceId, setSpaceId] = useState('');
@@ -192,7 +295,6 @@ export function WorkspaceBindingPanel() {
     setLoadingData(true);
     setSaveStatus({ kind: 'idle' });
     setEffectiveTotal(null);
-    setResolvedIcon(null);
     setCreatingMachine(false);
     setNewMachineName('');
 
@@ -604,18 +706,30 @@ export function WorkspaceBindingPanel() {
     }
   };
 
+  const machinesById = useMemo(() => new Map(machines.map((m) => [m.id, m])), [machines]);
+
+  const machineBadgeLabel =
+    machineId && machinesById.has(machineId)
+      ? machinesById.get(machineId)!.name
+      : t('panel.machineGlobal');
+
+  const machineBadgeIcon = machineId ? (machinesById.get(machineId)?.icon ?? null) : null;
+
+  const handleHeaderIconClear = useCallback(() => {
+    setIcon('');
+    if (isEdit && formInitial && canSubmit) {
+      void handlePersistIcon('').catch((e) =>
+        showError(t('toast.couldNotSave'), e instanceof Error ? e.message : String(e)),
+      );
+    }
+  }, [isEdit, formInitial, canSubmit, handlePersistIcon, showError, t]);
+
+  const handleMachineBadgeClick = useCallback(() => {
+    // Phase 3: scopeSectionRef.current?.expand()
+  }, []);
+
   if (!isOpen || !payload) return null;
 
-  const title =
-    mode === 'create'
-      ? t('panel.newBinding')
-      : mode === 'edit'
-        ? t('panel.binding')
-        : payload.collisionClientId
-          ? t('sheet.titleCollision')
-          : t('sheet.titleNew');
-
-  const displayTitle = formInitial?.label?.trim() || workspaceRoot || title;
   const binding = payload.binding ?? null;
   const showEffectiveFeatures =
     (mode === 'edit' && binding != null) || (mode === 'create-from-live' && !!workspaceRoot);
@@ -649,17 +763,20 @@ export function WorkspaceBindingPanel() {
         data-testid="workspace-binding-panel"
       >
         <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="w-11 h-11 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg flex-shrink-0 border border-[rgb(var(--border-subtle))]">
-                {resolvedIcon ? (
-                  <ServerIcon icon={resolvedIcon} className="h-6 w-6 object-contain" fallback="📁" />
-                ) : (
-                  <FolderOpen className="h-5 w-5 text-[rgb(var(--muted))]" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+          <div className="flex items-start justify-between gap-2">
+            <PanelIdentityHeader
+              mode={mode}
+              label={label}
+              setLabel={setLabel}
+              icon={icon}
+              setIcon={setIcon}
+              workspaceRoot={workspaceRoot}
+              machineBadgeLabel={machineBadgeLabel}
+              machineBadgeIcon={machineBadgeIcon}
+              onMachineBadgeClick={handleMachineBadgeClick}
+              onIconClear={handleHeaderIconClear}
+              badges={
+                <>
                   {mode === 'create-from-live' && (
                     <Pill tone={payload.collisionClientId ? 'amber' : 'primary'}>
                       <span className="inline-flex items-center gap-1">
@@ -672,28 +789,17 @@ export function WorkspaceBindingPanel() {
                     <Pill tone="amber">{t('card.unmapped')}</Pill>
                   )}
                   {mode === 'edit' && binding && <Pill tone="neutral">{t('card.offline')}</Pill>}
-                </div>
-                <h2 className="text-lg font-bold break-words">
-                  {mode === 'create' ? title : displayTitle}
-                </h2>
-                {mode === 'create-from-live' && payload.collisionClientId && (
-                  <p className="text-xs text-[rgb(var(--muted))] mt-1">{t('sheet.descCollision')}</p>
-                )}
-                {mode === 'create-from-live' && !payload.collisionClientId && (
-                  <p className="text-xs text-[rgb(var(--muted))] mt-1">{t('sheet.descNew')}</p>
-                )}
-                {mode !== 'create' && workspaceRoot && displayTitle !== workspaceRoot && (
-                  <p className="text-xs text-[rgb(var(--muted))] break-all font-mono mt-0.5">
-                    {workspaceRoot}
+                </>
+              }
+              footer={
+                mode === 'create-from-live' ? (
+                  <p className="text-xs text-[rgb(var(--muted))] mt-1">
+                    {payload.collisionClientId ? t('sheet.descCollision') : t('sheet.descNew')}
                   </p>
-                )}
-                {mode === 'create' && (
-                  <p className="text-xs text-[rgb(var(--muted))] break-words mt-0.5">
-                    {t('panel.newSubtitle')}
-                  </p>
-                )}
-              </div>
-            </div>
+                ) : undefined
+              }
+              t={t}
+            />
             <button
               type="button"
               onClick={close}
@@ -826,10 +932,7 @@ export function WorkspaceBindingPanel() {
                   machines={machines}
                   localMachineId={effectiveMachineId}
                   initial={formInitial}
-                  label={label}
-                  setLabel={setLabel}
                   icon={icon}
-                  setIcon={setIcon}
                   spaceId={spaceId}
                   setSpaceId={setSpaceId}
                   fsIds={fsIds}
@@ -844,8 +947,6 @@ export function WorkspaceBindingPanel() {
                   onFormSubmit={handleFormSubmit}
                   onCancel={close}
                   onError={(msg) => showError(t('toast.couldNotSave'), msg)}
-                  onPersistIcon={handlePersistIcon}
-                  onIconChange={setResolvedIcon}
                   t={t}
                 />
               </CollapsibleSection>

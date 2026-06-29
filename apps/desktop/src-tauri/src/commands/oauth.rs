@@ -927,6 +927,221 @@ pub async fn delete_oauth_client(
     Ok(())
 }
 
+// =============================================================================
+// API-key clients (manually registered, host-issued credentials)
+//
+// A "preregistered", pre-approved inbound client authenticated by a long-lived
+// API key. Unlike DCR clients it skips the browser-consent deep link, so
+// headless/remote clients can connect with just the key — the secure path when
+// the gateway is exposed over the network.
+// =============================================================================
+
+/// A newly-registered API-key client. `api_key` is returned ONCE at creation —
+/// McpMux stores only its SHA-256 hash and can never show it again.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisteredApiKeyClient {
+    pub client_id: String,
+    pub client_name: String,
+    pub api_key: String,
+    pub key_prefix: String,
+}
+
+/// API-key metadata for display (never includes the secret).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyInfo {
+    pub key_id: String,
+    pub key_prefix: String,
+    pub label: Option<String>,
+    pub revoked: bool,
+    pub last_used_at: Option<String>,
+    pub created_at: String,
+}
+
+/// Generate a strong API key: `mcpk_` + 256 bits of v4-UUID randomness.
+/// Returns `(key_id, plaintext, key_prefix)`. Only the hash is ever stored.
+fn generate_api_key() -> (String, String, String) {
+    let key_id = uuid::Uuid::new_v4().to_string();
+    let secret = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let plaintext = format!("mcpk_{secret}");
+    let key_prefix: String = plaintext.chars().take(13).collect(); // "mcpk_" + 8 chars
+    (key_id, plaintext, key_prefix)
+}
+
+/// Register a new pre-approved client authenticated by an API key. The returned
+/// `api_key` is shown once and never stored.
+#[tauri::command]
+pub async fn register_api_key_client(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    name: String,
+) -> Result<RegisteredApiKeyClient, String> {
+    let app_state = gateway_state.read().await;
+    let Some(ref gw_state) = app_state.gateway_state else {
+        return Err("Gateway not running".to_string());
+    };
+    let state = gw_state.read().await;
+    let Some(repo) = state.inbound_client_repository() else {
+        return Err("Database not available".to_string());
+    };
+
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Client name is required".to_string());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let client_id = format!("mcp_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let client = mcpmux_storage::InboundClient {
+        client_id: client_id.clone(),
+        registration_type: mcpmux_storage::RegistrationType::Preregistered,
+        client_name: trimmed.to_string(),
+        client_alias: None,
+        redirect_uris: vec![],
+        grant_types: vec![],
+        response_types: vec![],
+        token_endpoint_auth_method: "none".to_string(),
+        scope: None,
+        approved: true,
+        logo_uri: None,
+        client_uri: None,
+        software_id: None,
+        software_version: None,
+        metadata_url: None,
+        metadata_cached_at: None,
+        metadata_cache_ttl: None,
+        last_seen: None,
+        created_at: now.clone(),
+        updated_at: now,
+        reports_roots: false,
+        roots_capability_known: false,
+    };
+    repo.save_client(&client)
+        .await
+        .map_err(|e| format!("Failed to create client: {}", e))?;
+
+    let (key_id, plaintext, key_prefix) = generate_api_key();
+    repo.create_api_key(&key_id, &client_id, &plaintext, &key_prefix, None, None)
+        .await
+        .map_err(|e| format!("Failed to create API key: {}", e))?;
+
+    info!(
+        "[OAuth] Registered API-key client {} ({})",
+        trimmed, client_id
+    );
+
+    Ok(RegisteredApiKeyClient {
+        client_id,
+        client_name: trimmed.to_string(),
+        api_key: plaintext,
+        key_prefix,
+    })
+}
+
+/// Issue an additional API key for an existing client (rotation). Returns the
+/// new key plaintext once.
+#[tauri::command]
+pub async fn create_client_api_key(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    client_id: String,
+    label: Option<String>,
+) -> Result<RegisteredApiKeyClient, String> {
+    let app_state = gateway_state.read().await;
+    let Some(ref gw_state) = app_state.gateway_state else {
+        return Err("Gateway not running".to_string());
+    };
+    let state = gw_state.read().await;
+    let Some(repo) = state.inbound_client_repository() else {
+        return Err("Database not available".to_string());
+    };
+
+    let Some(client) = repo
+        .get_client(&client_id)
+        .await
+        .map_err(|e| format!("Failed to load client: {}", e))?
+    else {
+        return Err("Client not found".to_string());
+    };
+
+    let (key_id, plaintext, key_prefix) = generate_api_key();
+    repo.create_api_key(
+        &key_id,
+        &client_id,
+        &plaintext,
+        &key_prefix,
+        label.as_deref(),
+        None,
+    )
+    .await
+    .map_err(|e| format!("Failed to create API key: {}", e))?;
+
+    Ok(RegisteredApiKeyClient {
+        client_id,
+        client_name: client.client_name,
+        api_key: plaintext,
+        key_prefix,
+    })
+}
+
+/// List a client's API keys (metadata only — never the secret).
+#[tauri::command]
+pub async fn list_client_api_keys(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    client_id: String,
+) -> Result<Vec<ApiKeyInfo>, String> {
+    let app_state = gateway_state.read().await;
+    let Some(ref gw_state) = app_state.gateway_state else {
+        return Err("Gateway not running".to_string());
+    };
+    let state = gw_state.read().await;
+    let Some(repo) = state.inbound_client_repository() else {
+        return Err("Database not available".to_string());
+    };
+
+    let keys = repo
+        .list_api_keys(&client_id)
+        .await
+        .map_err(|e| format!("Failed to list API keys: {}", e))?;
+
+    Ok(keys
+        .into_iter()
+        .map(|k| ApiKeyInfo {
+            key_id: k.key_id,
+            key_prefix: k.key_prefix,
+            label: k.label,
+            revoked: k.revoked,
+            last_used_at: k.last_used_at,
+            created_at: k.created_at,
+        })
+        .collect())
+}
+
+/// Revoke a single API key (it can never authenticate again).
+#[tauri::command]
+pub async fn revoke_client_api_key(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    key_id: String,
+) -> Result<(), String> {
+    let app_state = gateway_state.read().await;
+    let Some(ref gw_state) = app_state.gateway_state else {
+        return Err("Gateway not running".to_string());
+    };
+    let state = gw_state.read().await;
+    let Some(repo) = state.inbound_client_repository() else {
+        return Err("Database not available".to_string());
+    };
+
+    repo.revoke_api_key(&key_id)
+        .await
+        .map_err(|e| format!("Failed to revoke API key: {}", e))?;
+    info!("[OAuth] Revoked API key {}", key_id);
+    Ok(())
+}
+
 /// Open a URL without flashing a terminal window (Windows-specific)
 #[cfg(target_os = "windows")]
 fn open_url_no_flash(url: &str) -> Result<(), String> {

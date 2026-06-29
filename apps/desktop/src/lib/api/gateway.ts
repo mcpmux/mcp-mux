@@ -151,10 +151,7 @@ export async function restartGateway(opts?: {
 /**
  * Export config for a client.
  */
-export async function exportConfig(
-  format: ExportFormat,
-  clientId?: string
-): Promise<string> {
+export async function exportConfig(format: ExportFormat, clientId?: string): Promise<string> {
   return invoke('export_config', { format, clientId });
 }
 
@@ -181,7 +178,11 @@ export async function connectServer(serverId: string): Promise<void> {
  * @param spaceId - The space ID (required for proper space isolation)
  * @param logout - If true, also delete stored credentials (OAuth tokens)
  */
-export async function disconnectServer(serverId: string, spaceId: string, logout?: boolean): Promise<void> {
+export async function disconnectServer(
+  serverId: string,
+  spaceId: string,
+  logout?: boolean
+): Promise<void> {
   return invoke('disconnect_server', { serverId, spaceId, logout });
 }
 
@@ -199,13 +200,13 @@ export type RegistrationType = 'cimd' | 'dcr' | 'preregistered';
 
 /**
  * Inbound client (unified OAuth + MCP model)
- * 
+ *
  * Represents apps connecting TO McpMux (e.g., Cursor, VS Code, Claude Desktop).
  * Supports three MCP registration approaches:
  * - CIMD: Client ID Metadata Documents (client_id is a URL)
  * - DCR: Dynamic Client Registration (server generates client_id)
  * - Preregistered: Server pre-configures client_id
- * 
+ *
  * Per RFC 7591, clients self-identify via metadata they provide.
  * Use `logo_uri`, `software_id`, and `client_name` for client identification.
  */
@@ -216,20 +217,20 @@ export interface OAuthClient {
   client_alias: string | null;
   redirect_uris: string[];
   scope: string | null;
-  
+
   // Approval status - true if user has explicitly approved this client
   approved: boolean;
-  
+
   // RFC 7591 Client Metadata (use these for client identification)
-  logo_uri?: string | null;  // URL for client's logo
-  client_uri?: string | null;  // URL of client's homepage
-  software_id?: string | null;  // Unique identifier (e.g., "com.cursor.app")
-  software_version?: string | null;  // Client software version
-  
+  logo_uri?: string | null; // URL for client's logo
+  client_uri?: string | null; // URL of client's homepage
+  software_id?: string | null; // Unique identifier (e.g., "com.cursor.app")
+  software_version?: string | null; // Client software version
+
   // CIMD-specific fields (only used when registration_type='cimd')
-  metadata_url?: string | null;  // URL where metadata was fetched
-  metadata_cached_at?: string | null;  // When we last fetched
-  metadata_cache_ttl?: number | null;  // Cache duration in seconds
+  metadata_url?: string | null; // URL where metadata was fetched
+  metadata_cached_at?: string | null; // When we last fetched
+  metadata_cache_ttl?: number | null; // Cache duration in seconds
 
   last_seen: string | null;
   created_at: string;
@@ -302,10 +303,7 @@ export async function deleteOAuthClient(clientId: string): Promise<void> {
  * means the rootless fallback would deny — consumer should render the
  * "no defaults configured" empty state.
  */
-export async function getOAuthClientGrants(
-  clientId: string,
-  spaceId: string
-): Promise<string[]> {
+export async function getOAuthClientGrants(clientId: string, spaceId: string): Promise<string[]> {
   return invoke('get_oauth_client_grants', { clientId, spaceId });
 }
 
@@ -338,6 +336,59 @@ export async function revokeOAuthClientFeatureSet(
     spaceId,
     featureSetId,
   });
+}
+
+// =============================================================================
+// API-key clients (manually registered, host-issued credentials)
+// =============================================================================
+//
+// A pre-approved inbound client authenticated by a long-lived API key. Skips
+// the browser-consent deep link, so headless/remote clients can connect with
+// just the key — the secure path when the gateway is exposed over the network.
+
+/** A newly-registered API-key client. `apiKey` is shown ONCE — store it now. */
+export interface RegisteredApiKeyClient {
+  clientId: string;
+  clientName: string;
+  /** The full key — shown once; afterwards only its hash is kept. */
+  apiKey: string;
+  keyPrefix: string;
+}
+
+/** API-key metadata for display (never the secret). */
+export interface ApiKeyInfo {
+  keyId: string;
+  keyPrefix: string;
+  label: string | null;
+  revoked: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Register a pre-approved client authenticated by an API key. The returned key
+ * is shown once and never retrievable again.
+ */
+export async function registerApiKeyClient(name: string): Promise<RegisteredApiKeyClient> {
+  return invoke('register_api_key_client', { name });
+}
+
+/** Issue an additional API key for an existing client (rotation). Shown once. */
+export async function createClientApiKey(
+  clientId: string,
+  label?: string | null
+): Promise<RegisteredApiKeyClient> {
+  return invoke('create_client_api_key', { clientId, label: label ?? null });
+}
+
+/** List a client's API keys (metadata only — never the secret). */
+export async function listClientApiKeys(clientId: string): Promise<ApiKeyInfo[]> {
+  return invoke('list_client_api_keys', { clientId });
+}
+
+/** Revoke an API key (it can never authenticate again). */
+export async function revokeClientApiKey(keyId: string): Promise<void> {
+  return invoke('revoke_client_api_key', { keyId });
 }
 
 /**
@@ -394,7 +445,7 @@ export async function refreshOAuthTokensOnStartup(): Promise<RefreshResult> {
 
 /**
  * Open a URL using the system's default handler.
- * 
+ *
  * This is needed for custom protocol URLs (like `cursor://`) that
  * the webview's opener plugin may not be allowed to open directly.
  */

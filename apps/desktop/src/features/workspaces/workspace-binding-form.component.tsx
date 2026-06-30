@@ -102,6 +102,41 @@ export function folderName(root: string): string {
   return segments[segments.length - 1] ?? root;
 }
 
+/**
+ * Bindings on other machines (or scopes) that can seed a new create-from-live row.
+ * Same folder name is enough; identical absolute paths count when machine differs.
+ */
+export function findAdoptableSiblingBindings(
+  allBindings: WorkspaceBinding[],
+  workspaceRoot: string,
+  targetMachineId: string | null,
+): WorkspaceBinding[] {
+  const currentFolder = folderName(workspaceRoot).toLowerCase();
+  const normalizedRoot = workspaceRoot.toLowerCase();
+  return allBindings.filter((binding) => {
+    if (folderName(binding.workspace_root).toLowerCase() !== currentFolder) return false;
+    const samePath = binding.workspace_root.toLowerCase() === normalizedRoot;
+    if (!samePath) return true;
+    return (binding.machine_id ?? null) !== targetMachineId;
+  });
+}
+
+/**
+ * Space, feature sets, label, and icon to copy from an adopt source binding.
+ */
+export function adoptBindingSeed(
+  source: WorkspaceBinding,
+  workspaceRoot: string,
+): Pick<WorkspaceBinding, 'space_id' | 'feature_set_ids' | 'label' | 'icon'> {
+  const trimmedLabel = source.label?.trim() ?? '';
+  return {
+    space_id: source.space_id,
+    feature_set_ids: source.feature_set_ids,
+    label: trimmedLabel.length > 0 ? trimmedLabel : folderName(workspaceRoot),
+    icon: source.icon,
+  };
+}
+
 /** True when the icon value is an uploaded file ref or URL, not a plain emoji. */
 function isWorkspaceFileIcon(icon: string): boolean {
   const trimmed = icon.trim();

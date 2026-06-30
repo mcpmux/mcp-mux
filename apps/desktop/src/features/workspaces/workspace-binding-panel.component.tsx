@@ -36,6 +36,7 @@ import {
 } from '@/lib/api/machines';
 import {
   deleteWorkspaceAppearance,
+  listWorkspaceAppearances,
   upsertWorkspaceAppearance,
 } from '@/lib/api/workspaceAppearances';
 import { listFeatureSets, type FeatureSet } from '@/lib/api/featureSets';
@@ -50,6 +51,8 @@ import {
   bindingMachineId,
   bindingScopeConflicts,
   buildBindingPayload,
+  adoptBindingSeed,
+  findAdoptableSiblingBindings,
   folderName,
   normalizeIcon,
   sameBindingInput,
@@ -267,6 +270,7 @@ export function WorkspaceBindingPanel() {
   const [clientMachineId, setClientMachineIdState] = useState<string | null>(null);
   const [showMachineCallout, setShowMachineCallout] = useState(false);
   const [adoptDismissed, setAdoptDismissed] = useState(false);
+  const [appearanceIcon, setAppearanceIcon] = useState<string | null>(null);
   const [assignMachineId, setAssignMachineId] = useState('');
   const [creatingMachine, setCreatingMachine] = useState(false);
   const [newMachineName, setNewMachineName] = useState('');
@@ -326,15 +330,17 @@ export function WorkspaceBindingPanel() {
     setCreatingMachine(false);
     setNewMachineName('');
     setAdoptDismissed(false);
+    setAppearanceIcon(null);
 
     void (async () => {
       try {
-        const [loadedSpaces, loadedFs, loadedMachines, loadedBindings, loadedLocalId] =
+        const [loadedSpaces, loadedFs, loadedMachines, loadedBindings, loadedAppearances, loadedLocalId] =
           await Promise.all([
           listSpaces(),
           listFeatureSets(),
           listMachines().catch(() => [] as Machine[]),
           listWorkspaceBindings().catch(() => [] as WorkspaceBinding[]),
+          listWorkspaceAppearances().catch(() => []),
           getLocalMachineId().catch(() => null),
         ]);
         if (cancelled) return;
@@ -343,6 +349,14 @@ export function WorkspaceBindingPanel() {
         setMachines(loadedMachines);
         setAllBindings(loadedBindings);
         setLocalMachineId(loadedLocalId);
+
+        const rootForAppearance = payload.workspaceRoot ?? payload.binding?.workspace_root;
+        if (rootForAppearance) {
+          const appearance = loadedAppearances.find(
+            (entry) => entry.workspace_root.toLowerCase() === rootForAppearance.toLowerCase(),
+          );
+          setAppearanceIcon(appearance?.icon ?? null);
+        }
 
         if (payload.mode === 'create-from-live' && payload.clientId) {
           const existingClientMachine = await getClientMachineId(payload.clientId).catch(
@@ -396,20 +410,18 @@ export function WorkspaceBindingPanel() {
   const isEdit = mode === 'edit';
   const rootEditable = mode !== 'create-from-live';
   const spaceLocked = payload?.spaceLocked ?? false;
-  const panelKey = `${mode}:${payload?.binding?.id ?? workspaceRoot ?? 'new'}:${spaces.length}`;
+  const panelKey = `${mode}:${payload?.binding?.id ?? workspaceRoot ?? 'new'}:${spaces.length}:${allBindings.length}`;
 
   const defaultTargetMachineId =
     clientMachineId ?? viewerMachineId ?? localMachineId ?? null;
 
   const siblingBindings = useMemo(() => {
     if (mode !== 'create-from-live' || !workspaceRoot) return [];
-    const currentFolder = folderName(workspaceRoot).toLowerCase();
-    return allBindings.filter(
-      (b) =>
-        b.workspace_root.toLowerCase() !== workspaceRoot.toLowerCase() &&
-        folderName(b.workspace_root).toLowerCase() === currentFolder,
-    );
-  }, [mode, workspaceRoot, allBindings]);
+    return findAdoptableSiblingBindings(allBindings, workspaceRoot, defaultTargetMachineId);
+  }, [mode, workspaceRoot, allBindings, defaultTargetMachineId]);
+
+  const adoptSource =
+    mode === 'create-from-live' && !adoptDismissed ? siblingBindings[0] ?? null : null;
 
   const effectiveMachineId = isEdit
     ? bindingMachineId(machineId)
@@ -418,11 +430,21 @@ export function WorkspaceBindingPanel() {
   useEffect(() => {
     if (!isOpen || !payload || loadingData) return;
     const initial = formInitial;
-    setRoot(initial?.workspace_root ?? payload.workspaceRoot ?? '');
-    setLabel(initial?.label ?? '');
-    setIcon(initial?.icon ?? payload.appearanceIcon ?? '');
-    setSpaceId(initial?.space_id ?? defaultSpaceId);
-    setFsIds(initial?.feature_set_ids ?? []);
+    const rootValue = initial?.workspace_root ?? payload.workspaceRoot ?? '';
+    const adopted = adoptSource ? adoptBindingSeed(adoptSource, rootValue) : null;
+    const resolvedIcon =
+      adopted?.icon ??
+      initial?.icon ??
+      payload.appearanceIcon ??
+      appearanceIcon ??
+      '';
+    const resolvedLabel = adopted?.label ?? initial?.label ?? '';
+
+    setRoot(rootValue);
+    setLabel(resolvedLabel);
+    setIcon(resolvedIcon);
+    setSpaceId(adopted?.space_id ?? initial?.space_id ?? defaultSpaceId);
+    setFsIds(adopted?.feature_set_ids ?? initial?.feature_set_ids ?? []);
     setMachineId(initial?.machine_id ?? '');
     setMachineIds(
       mode === 'edit' ? [] : defaultTargetMachineId ? [defaultTargetMachineId] : [],
@@ -432,7 +454,7 @@ export function WorkspaceBindingPanel() {
     lastSavedRef.current = null;
     pendingPayloadRef.current = null;
     lastSavedAppearanceRef.current =
-      mode === 'create-from-live' ? normalizeIcon(initial?.icon) : null;
+      mode === 'create-from-live' ? normalizeIcon(resolvedIcon) : null;
   }, [
     panelKey,
     loadingData,
@@ -442,6 +464,8 @@ export function WorkspaceBindingPanel() {
     defaultSpaceId,
     mode,
     defaultTargetMachineId,
+    adoptSource,
+    appearanceIcon,
   ]);
 
   useEffect(() => {
@@ -1039,7 +1063,7 @@ export function WorkspaceBindingPanel() {
                 </div>
               )}
 
-              {mode === 'create-from-live' && siblingBindings.length > 0 && !adoptDismissed && (
+              {mode === 'create-from-live' && siblingBindings.length > 1 && !adoptDismissed && (
                 <div
                   className="rounded-xl border border-primary-200/80 dark:border-primary-800/50 bg-primary-50/50 dark:bg-primary-900/10 p-4 space-y-3"
                   data-testid="workspace-binding-adopt-card"
@@ -1105,10 +1129,11 @@ export function WorkspaceBindingPanel() {
                                   variant="secondary"
                                   size="sm"
                                   onClick={() => {
-                                    setSpaceId(sibling.space_id);
-                                    setFsIds(sibling.feature_set_ids);
-                                    if (sibling.label) setLabel(sibling.label);
-                                    if (sibling.icon) setIcon(sibling.icon);
+                                    const seed = adoptBindingSeed(sibling, root);
+                                    setSpaceId(seed.space_id);
+                                    setFsIds(seed.feature_set_ids);
+                                    setLabel(seed.label ?? '');
+                                    setIcon(seed.icon ?? '');
                                     setAdoptDismissed(true);
                                   }}
                                   data-testid={`workspace-binding-adopt-use-${sibling.id}`}

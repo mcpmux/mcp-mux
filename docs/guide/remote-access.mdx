@@ -59,12 +59,27 @@ Point the client at your public MCP URL instead of localhost:
       "url": "https://mcp.example.com/mcp",
       "headers": {
         "CF-Access-Client-Id": "<service-token-id>",
-        "CF-Access-Client-Secret": "<service-token-secret>"
+        "CF-Access-Client-Secret": "<service-token-secret>",
+        "X-Mcpmux-Machine-Id": "<machine-uuid-from-mcpmux-settings>"
       }
     }
   }
 }
 ```
+
+When multiple physical devices (e.g. a Mac Studio and a laptop) share one tunneled gateway, add `X-Mcpmux-Machine-Id` on **each** device's config so machine-scoped workspace bindings resolve correctly. Copy the UUID from **Settings → Machine Identity** in McpMux.
+
+### Per-device identity (shared tunnel)
+
+One gateway install can serve MCP for several physical machines over a tunnel. The gateway host always knows its own identity (`gateway.local_machine_id`), but it cannot tell which laptop made a given request unless the client says so.
+
+| Situation | What to do |
+| --------- | ---------- |
+| MCP on `localhost:45818` on the same box as McpMux | No extra header — `local_machine_id` is enough |
+| Cursor on a **different** machine hitting a tunneled URL | Add `X-Mcpmux-Machine-Id: <that-machine-uuid>` to that device's MCP config |
+| Binding scoped to machine A only | Requests with machine B's header (or no header when B is remote) stay **unbound** until you create a binding for B |
+
+In **Settings → Machine Identity → Manage all machines**, use **Copy MCP header** to get a ready-made JSON snippet for Cursor or other HTTP MCP clients.
 
 Service tokens are created in **Zero Trust → Access → Service auth**. The MCP and admin Access applications each need a policy that accepts your token (or your SSO identity for browser admin use).
 

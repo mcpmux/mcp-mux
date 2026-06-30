@@ -1,7 +1,7 @@
 # Workspace Machine Binding
 
-**Last Updated:** Jun 26, 2026
-**Status:** In progress — Phases 1–4 largely landed; Phase 5 UI partially complete (machine filter/badges pending; Settings Machine Identity viewer-only layout done)
+**Last Updated:** Jun 30, 2026
+**Status:** In progress — Phases 1–4 largely landed; per-device header for tunneled multi-device routing landed Jun 30, 2026
 **Branch:** `feat/workspace-machine-binding` (off `dev-rebased`)
 **Depends on:** `dev-rebased` label/icon port complete (migration 032 landed)
 **Unblocks:** Per-machine project organization and override routing; homelab multi-box workflow
@@ -23,6 +23,28 @@ Implementation: [`apps/desktop/src/features/settings/SettingsPage.tsx`](../../ap
 
 ---
 
+## Update — Jun 30, 2026 (machine ID in viewer modal + Settings viewer card)
+
+Machine catalog UUID is surfaced on all viewer identity surfaces via [`machine-id-section.component.tsx`](../../apps/desktop/src/components/machine-id-section.component.tsx):
+
+- **Status bar modal** (`ViewerIdentityModal`): always-visible Machine ID section — read-only UUID + **Copy UUID** / **Copy MCP header** when linked; paste-to-link when unlinked.
+- **Settings viewer card** (`"This viewer"` / `"This install"`): same `MachineIdSection` wired to `useViewerIdentity()`.
+- **Manage all machines** rows: **Copy UUID** added beside existing **Copy MCP header** (shared [`machine-id.helpers.ts`](../../apps/desktop/src/lib/machine-id.helpers.ts)).
+
+`linkMachineById` in the viewer identity hook validates UUID format, confirms the row exists in the catalog, and calls `setViewerMachineId` so remote browsers can attach to an existing machine without creating a duplicate row.
+
+---
+
+## Update — Jun 30, 2026 (per-device header for shared tunnel)
+
+When multiple physical devices reach **one** gateway via a tunnel (`gateway.public_url`), the gateway cannot infer which laptop/desktop made the request from `gateway.local_machine_id` alone — that always identifies the host running McpMux (e.g. Gondor), not the device running Cursor (e.g. Rohan).
+
+**Fix:** each device's MCP client config sends `X-Mcpmux-Machine-Id: <machine-uuid>`. The resolver uses that header as the machine signal for binding lookup. When the header is present, client and gateway-local machine tags are skipped so a tunneled caller is not mistaken for the gateway host.
+
+See [`per-device-machine-header.md`](./per-device-machine-header.md) for full design, resolver priority, and client setup. User-facing docs: [Remote Access](/docs/remote-access/), [Workspaces](/docs/workspaces/), [Clients](/docs/clients/).
+
+---
+
 ## Problem
 
 McpMux runs as a single central gateway (Box 1 / Gondor in the homelab). Remote machines (Box 4 MacBook, cloud agents) connect into it and report workspace roots. Today the Projects page has no concept of which physical machine a project lives on — all 13 bindings look identical regardless of origin box, and the same path can't exist more than once even if it belongs to a different machine.
@@ -40,7 +62,7 @@ Two things break down:
 | # | Decision | Choice | Rationale |
 | - | -------- | ------ | --------- |
 | 1 | Machine catalog | Dedicated `machines` table — `id, name, icon, hostname, created_at, updated_at` | Machines need their own label/icon (same pattern as Spaces). Free-text `machine_name` on each binding would diverge and can't carry metadata or be renamed atomically. |
-| 2 | Local machine identity | `gateway.local_machine_id` app setting (UUID FK into `machines`); on first use, prompt user to name/register this install | Each McpMux install self-identifies. Session roots are reported by the machine running that install, so the gateway knows which machine they came from without any client-side changes. |
+| 2 | Local machine identity | `gateway.local_machine_id` app setting (UUID FK into `machines`); on first use, prompt user to name/register this install | Each McpMux install self-identifies. For **local** MCP (`localhost:45818`), session roots and `local_machine_id` are enough. For **tunneled** multi-device setups, also send `X-Mcpmux-Machine-Id` per device — see [`per-device-machine-header.md`](./per-device-machine-header.md). |
 | 3 | Naming | `machine` / `machine_id` throughout (domain, SQL, TS, UI) | More generic than "box" — covers cloud agents, CI runners, etc. Matches how the concept appears in homelab docs. |
 | 4 | Routing model | Same partial unique index pattern as `client_id` (migration 027): global binding `WHERE machine_id IS NULL`, machine-scoped binding `WHERE machine_id IS NOT NULL`. Resolver: machine-specific match first, global fallback. | Directly mirrors the existing `client_id` scope layer. Same binding, same path — machine override inherits the canonical intent and only changes what needs to change for that box. |
 | 5 | Resolver wiring | Plumb `local_machine_id` from `AppSettingsService` into `FeatureSetResolverService` at startup | The resolver is the natural chokepoint. No protocol change needed — the gateway already knows its own machine identity via settings. |
@@ -101,23 +123,27 @@ app_settings
 
 ### Resolver flow (with machine dimension)
 
+**No `X-Mcpmux-Machine-Id` header** (local MCP or legacy remote):
+
 ```
 resolve(session_id, client_id):
-    roots = session_roots.get(session_id)
-    local_machine = settings.get_local_machine_id()   ← NEW
-
     for root in roots:
-        // Try machine-specific binding first
-        if local_machine:
-            binding = repo.find_exact(machine_id=local_machine, root=root)
-            if binding: return (binding.space_id, binding.feature_set_ids)
-
-        // Fall back to global canonical
-        binding = repo.find_exact(machine_id=NULL, root=root)
-        if binding: return (binding.space_id, binding.feature_set_ids)
-
-    // ... existing Tier 2/3 fallback unchanged
+        if client.machine_id: try binding for that machine
+        if local_machine_id:  try binding for gateway host machine
+        try global binding (machine_id IS NULL)
 ```
+
+**Header present** (`X-Mcpmux-Machine-Id: <uuid>` on tunneled clients):
+
+```
+resolve(session_id, client_id, request_machine_id):
+    for root in roots:
+        try binding for request_machine_id only
+        try global binding (machine_id IS NULL)
+        // client + local_machine_id skipped — avoids Rohan→Gondor mis-routing
+```
+
+Bound-elsewhere: a path scoped only to machine A does not match when the request carries machine B's header (or when `local_machine_id` is B with no header).
 
 ### First-time machine registration
 
@@ -242,6 +268,7 @@ Clicking "Set up" opens a small modal: name field (required), icon (optional), h
 
 | File | Notes |
 | ---- | ----- |
+| [`docs/planning/per-device-machine-header.md`](./per-device-machine-header.md) | Tunneled multi-device routing via `X-Mcpmux-Machine-Id` |
 | [`crates/mcpmux-storage/src/migrations/027_workspace_binding_client_scope.sql`](../../crates/mcpmux-storage/src/migrations/027_workspace_binding_client_scope.sql) | Template for partial unique index pattern; machine scope mirrors client scope exactly |
 | [`crates/mcpmux-storage/src/migrations/020_workspace_binding_label.sql`](../../crates/mcpmux-storage/src/migrations/020_workspace_binding_label.sql) | Minimal `ALTER TABLE ADD COLUMN` migration pattern |
 | [`crates/mcpmux-core/src/domain/workspace_binding.rs`](../../crates/mcpmux-core/src/domain/workspace_binding.rs) | `client_id` precedent for optional scoping fields |

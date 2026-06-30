@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 import { Card, CardContent } from '@mcpmux/ui';
 import { MachineProfileEditor } from '@/components/machine-profile-editor';
+import { MachineIdSection } from '@/components/machine-id-section.component';
 import { ServerIcon } from '@/components/ServerIcon';
 import { useViewerIdentity } from '@/hooks/use-viewer-identity.hook';
 import { NAV_SETTINGS } from '@/lib/navigation';
@@ -19,8 +20,10 @@ export function ViewerIdentityModal() {
   const navigate = useNavigate();
   const {
     name,
+    machineId,
     hints,
     showPrompt,
+    promptMode,
     isLoading,
     isSaving,
     nameDraft,
@@ -34,11 +37,19 @@ export function ViewerIdentityModal() {
     saveProfile,
     canSaveProfile,
     closePrompt,
+    prefillHostnameHint,
+    linkMachineIdDraft,
+    setLinkMachineIdDraft,
+    isLinking,
+    linkError,
+    linkMachineById,
   } = useViewerIdentity();
 
   if (isLoading || !showPrompt) {
     return null;
   }
+
+  const isEditMode = promptMode === 'edit';
 
   const handleSave = async () => {
     const ok = await saveProfile();
@@ -68,7 +79,7 @@ export function ViewerIdentityModal() {
           type="button"
           onClick={closePrompt}
           aria-label={t('common:viewerIdentity.close')}
-          disabled={!name || isSaving}
+          disabled={(!isEditMode && !name) || isSaving || isLinking}
           className="absolute right-3 top-3 rounded-md p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] disabled:invisible"
         >
           <X className="h-4 w-4" />
@@ -76,9 +87,15 @@ export function ViewerIdentityModal() {
         <CardContent className="flex flex-col gap-4 px-6 pb-6 pt-8">
           <div className="space-y-1.5 text-center">
             <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">
-              {t('common:viewerIdentity.promptTitle')}
+              {isEditMode
+                ? t('common:viewerIdentity.promptEditTitle')
+                : t('common:viewerIdentity.promptTitle')}
             </h2>
-            <p className="text-sm text-[rgb(var(--muted))]">{t('common:viewerIdentity.promptDesc')}</p>
+            <p className="text-sm text-[rgb(var(--muted))]">
+              {isEditMode
+                ? t('common:viewerIdentity.promptEditDesc')
+                : t('common:viewerIdentity.promptDesc')}
+            </p>
             {hints ? <p className="text-xs text-[rgb(var(--muted))]">{hints}</p> : null}
           </div>
 
@@ -89,14 +106,34 @@ export function ViewerIdentityModal() {
             onNameDraftChange={setNameDraft}
             onIconDraftChange={setIconDraft}
             onHostnameDraftChange={setHostnameDraft}
+            onHostnameFocus={() => {
+              void prefillHostnameHint();
+            }}
             onSave={() => void handleSave()}
-            isSaving={isSaving}
-            saveDisabled={!canSaveProfile}
+            isSaving={isSaving || isLinking}
+            saveDisabled={!canSaveProfile || isLinking}
             nameLabel={t('settings:machineIdentity.nameLabel')}
             iconLabel={t('settings:machineIdentity.iconLabel')}
             hostnameLabel={t('settings:machineIdentity.hostnameLabel')}
-            saveLabel={isSaving ? t('common:viewerIdentity.saving') : t('common:viewerIdentity.save')}
+            saveLabel={
+              isSaving
+                ? t('common:viewerIdentity.saving')
+                : isEditMode
+                  ? t('common:viewerIdentity.saveEdit')
+                  : t('common:viewerIdentity.save')
+            }
             testIdPrefix="viewer-identity"
+          />
+
+          <MachineIdSection
+            machineId={machineId}
+            linkMachineIdDraft={linkMachineIdDraft}
+            onLinkMachineIdDraftChange={setLinkMachineIdDraft}
+            onLink={linkMachineById}
+            isLinking={isLinking}
+            linkError={linkError}
+            testIdPrefix="viewer-identity"
+            compact
           />
 
           {errorMessage ? <p className="text-sm text-red-500">{errorMessage}</p> : null}
@@ -106,7 +143,7 @@ export function ViewerIdentityModal() {
             <button
               type="button"
               onClick={handleOpenSettings}
-              disabled={isSaving}
+              disabled={isSaving || isLinking}
               className="text-[rgb(var(--primary))] underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
               {t('common:viewerIdentity.settingsLink')}

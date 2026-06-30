@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   createMachine,
+  getHostname,
   getLocalMachineId,
   getViewerMachineId,
   listMachines,
@@ -14,6 +15,7 @@ import {
   isMachineProfileComplete,
   toMachineProfilePayload,
 } from '@/lib/machine-profile.helpers';
+import { isMachineUuid } from '@/lib/machine-id.helpers';
 import {
   clearViewerDeviceName,
   clearViewerMachineIdCache,
@@ -26,6 +28,9 @@ import {
 } from '@/lib/viewer-device.helpers';
 
 export const VIEWER_IDENTITY_CHANGED = 'mcpmux-viewer-identity-changed';
+
+/** Whether the identity modal is blocking setup, open for edits, or hidden. */
+export type ViewerIdentityPromptMode = 'blocked' | 'edit' | 'closed';
 
 interface ViewerMachineProfile {
   id: string;
@@ -41,6 +46,7 @@ interface ViewerIdentityContextValue {
   hints: string | null;
   isLoading: boolean;
   isSaving: boolean;
+  promptMode: ViewerIdentityPromptMode;
   showPrompt: boolean;
   nameDraft: string;
   iconDraft: string;
@@ -54,6 +60,20 @@ interface ViewerIdentityContextValue {
   canSaveProfile: boolean;
   openPrompt: () => void;
   closePrompt: () => void;
+  prefillHostnameHint: () => Promise<void>;
+  linkMachineIdDraft: string;
+  setLinkMachineIdDraft: (value: string) => void;
+  isLinking: boolean;
+  linkError: string | null;
+  linkMachineById: (id?: string) => Promise<boolean>;
+}
+
+/**
+ * Normalize a machine catalog id for create-vs-update branching.
+ */
+function normalizeMachineId(id: string | null | undefined): string | null {
+  const trimmed = id?.trim();
+  return trimmed || null;
 }
 
 const ViewerIdentityContext = createContext<ViewerIdentityContextValue | null>(null);
@@ -163,31 +183,49 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
   const [hints, setHints] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [showPrompt, setShowPrompt] = useState(false);
+  const [promptMode, setPromptMode] = useState<ViewerIdentityPromptMode>('closed');
   const [nameDraft, setNameDraft] = useState('');
   const [iconDraft, setIconDraft] = useState('');
   const [hostnameDraft, setHostnameDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [linkMachineIdDraft, setLinkMachineIdDraft] = useState('');
+  const [isLinking, setIsLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
-  const applyMachine = useCallback((machine: ViewerMachineProfile | null) => {
-    setMachineId(machine?.id ?? null);
-    setName(machine?.name ?? null);
-    setIcon(machine?.icon ?? '');
-    setHostname(machine?.hostname ?? '');
-    setNameDraft(machine?.name ?? '');
-    setIconDraft(machine?.icon ?? '');
-    setHostnameDraft(machine?.hostname ?? '');
-    const isComplete =
-      machine != null &&
-      isMachineProfileComplete({
-        name: machine.name,
-        icon: machine.icon,
-        hostname: machine.hostname,
-      });
-    setShowPrompt(!isComplete);
-  }, []);
+  const applyMachine = useCallback(
+    (machine: ViewerMachineProfile | null, options?: { preservePrompt?: boolean }) => {
+      const normalizedId = normalizeMachineId(machine?.id);
+      setMachineId(normalizedId);
+      setName(machine?.name ?? null);
+      setIcon(machine?.icon ?? '');
+      setHostname(machine?.hostname ?? '');
 
-  const refreshIdentity = useCallback(async () => {
+      if (options?.preservePrompt) {
+        return;
+      }
+
+      const isComplete =
+        machine != null &&
+        isMachineProfileComplete({
+          name: machine.name,
+          icon: machine.icon,
+          hostname: machine.hostname,
+        });
+
+      if (!isComplete) {
+        setPromptMode('blocked');
+      } else {
+        setPromptMode((current) => (current === 'edit' ? 'edit' : 'closed'));
+      }
+
+      setNameDraft(machine?.name ?? '');
+      setIconDraft(machine?.icon ?? '');
+      setHostnameDraft(machine?.hostname ?? '');
+    },
+    [],
+  );
+
+  const refreshIdentity = useCallback(async (options?: { preservePrompt?: boolean }) => {
     setIsLoading(true);
     try {
       const viewingLocally = isViewingLocally();
@@ -211,16 +249,17 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
       if (!machine) {
         const legacyName = getViewerDeviceName();
         if (legacyName) {
-          applyMachine({ id: '', name: legacyName, icon: '', hostname: '' });
+          applyMachine({ id: '', name: legacyName, icon: '', hostname: '' }, options);
           return;
         }
       }
 
-      applyMachine(machine);
+      applyMachine(machine, options);
     } catch {
       const legacyName = getViewerDeviceName();
       applyMachine(
         legacyName ? { id: '', name: legacyName, icon: '', hostname: '' } : null,
+        options,
       );
     } finally {
       setIsLoading(false);
@@ -232,11 +271,11 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     void refreshIdentity();
 
     const onChanged = () => {
-      void refreshIdentity();
+      void refreshIdentity({ preservePrompt: promptMode === 'edit' });
     };
     window.addEventListener(VIEWER_IDENTITY_CHANGED, onChanged);
     return () => window.removeEventListener(VIEWER_IDENTITY_CHANGED, onChanged);
-  }, [refreshIdentity]);
+  }, [promptMode, refreshIdentity]);
 
   const saveProfile = useCallback(async () => {
     const missingField = getMissingMachineProfileField({
@@ -259,16 +298,23 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     setIsSaving(true);
     setError(null);
     try {
-      const machine = machineId
-        ? await updateMachine(machineId, payload)
+      let targetMachineId = normalizeMachineId(machineId);
+      let linkedLocalMachineId: string | null = null;
+      if (!targetMachineId && viewingLocally) {
+        linkedLocalMachineId = normalizeMachineId(await getLocalMachineId());
+        targetMachineId = linkedLocalMachineId;
+      }
+
+      const machine = targetMachineId
+        ? await updateMachine(targetMachineId, payload)
         : await createMachine(payload);
 
       if (viewingLocally) {
-        if (!machineId) {
+        if (!normalizeMachineId(machineId) && !linkedLocalMachineId) {
           await setLocalMachineId(machine.id);
         }
         await setViewerMachineId(viewerId, null);
-      } else if (!machineId) {
+      } else if (!normalizeMachineId(machineId)) {
         await setViewerMachineId(viewerId, machine.id);
       }
 
@@ -279,7 +325,10 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
       setName(machine.name);
       setIcon(machine.icon ?? '');
       setHostname(machine.hostname ?? '');
-      setShowPrompt(false);
+      setNameDraft(machine.name);
+      setIconDraft(machine.icon ?? '');
+      setHostnameDraft(machine.hostname ?? '');
+      setPromptMode('closed');
       window.dispatchEvent(new Event(VIEWER_IDENTITY_CHANGED));
       return true;
     } catch {
@@ -295,25 +344,90 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     setIconDraft(icon);
     setHostnameDraft(hostname);
     setError(null);
-    setShowPrompt(true);
+    setPromptMode('edit');
   }, [hostname, icon, name]);
 
   const closePrompt = useCallback(() => {
-    if (!name) {
+    if (promptMode === 'blocked' && !name) {
       return;
     }
-    setShowPrompt(false);
+    setPromptMode('closed');
     setError(null);
-  }, [name]);
+  }, [name, promptMode]);
+
+  /**
+   * Prefill hostname from the gateway OS hint when the draft is still empty.
+   */
+  const prefillHostnameHint = useCallback(async () => {
+    if (hostnameDraft.trim()) {
+      return;
+    }
+    try {
+      const hinted = await getHostname();
+      if (hinted.trim()) {
+        setHostnameDraft(hinted.trim());
+      }
+    } catch {
+      /* hostname hint is optional */
+    }
+  }, [hostnameDraft]);
+
+  /**
+   * Link this viewer profile to an existing machine catalog row by UUID.
+   */
+  const linkMachineById = useCallback(
+    async (id?: string): Promise<boolean> => {
+      const candidate = (id ?? linkMachineIdDraft).trim();
+      if (!isMachineUuid(candidate)) {
+        setLinkError('invalidId');
+        return false;
+      }
+
+      setIsLinking(true);
+      setLinkError(null);
+      try {
+        const machines = await listMachines();
+        const machine = machines.find((entry) => entry.id === candidate);
+        if (!machine) {
+          setLinkError('linkNotFound');
+          return false;
+        }
+
+        await setViewerMachineId(viewerId, candidate);
+        setViewerMachineIdCache(candidate);
+        clearViewerDeviceName();
+
+        const profile = toViewerProfile(machine);
+        setMachineId(normalizeMachineId(profile.id));
+        setName(profile.name);
+        setIcon(profile.icon);
+        setHostname(profile.hostname);
+        setNameDraft(profile.name);
+        setIconDraft(profile.icon);
+        setHostnameDraft(profile.hostname);
+        setLinkMachineIdDraft('');
+
+        window.dispatchEvent(new Event(VIEWER_IDENTITY_CHANGED));
+        return true;
+      } catch {
+        setLinkError('linkFailed');
+        return false;
+      } finally {
+        setIsLinking(false);
+      }
+    },
+    [linkMachineIdDraft, viewerId],
+  );
 
   const profileDraft = { name: nameDraft, icon: iconDraft, hostname: hostnameDraft };
   const isProfileDirty =
-    !machineId ||
+    !normalizeMachineId(machineId) ||
     nameDraft !== (name ?? '') ||
     iconDraft !== icon ||
     hostnameDraft !== hostname;
   const canSaveProfile =
     isMachineProfileComplete(profileDraft) && isProfileDirty;
+  const showPrompt = promptMode !== 'closed';
 
   return {
     name,
@@ -322,6 +436,7 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     hints,
     isLoading,
     isSaving,
+    promptMode,
     showPrompt,
     nameDraft,
     iconDraft,
@@ -335,5 +450,11 @@ function useViewerIdentityState(): ViewerIdentityContextValue {
     canSaveProfile,
     openPrompt,
     closePrompt,
+    prefillHostnameHint,
+    linkMachineIdDraft,
+    setLinkMachineIdDraft,
+    isLinking,
+    linkError,
+    linkMachineById,
   };
 }

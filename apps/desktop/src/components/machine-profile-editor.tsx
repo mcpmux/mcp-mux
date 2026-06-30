@@ -13,6 +13,7 @@ export interface MachineProfileEditorProps {
   onNameDraftChange: (value: string) => void;
   onIconDraftChange: (value: string) => void;
   onHostnameDraftChange: (value: string) => void;
+  onHostnameFocus?: () => void;
   onSave: () => void;
   isSaving: boolean;
   saveDisabled: boolean;
@@ -33,6 +34,7 @@ export function MachineProfileEditor({
   onNameDraftChange,
   onIconDraftChange,
   onHostnameDraftChange,
+  onHostnameFocus,
   onSave,
   isSaving,
   saveDisabled,
@@ -76,6 +78,7 @@ export function MachineProfileEditor({
           type="text"
           value={hostnameDraft}
           onChange={(e) => onHostnameDraftChange(e.target.value)}
+          onFocus={onHostnameFocus}
           disabled={isSaving}
           className="mt-1 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1.5 font-mono text-sm"
           data-testid={`${prefix}-hostname`}

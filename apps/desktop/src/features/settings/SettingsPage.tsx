@@ -39,6 +39,7 @@ import {
   ShieldOff,
   ChevronDown,
   ChevronRight,
+  Copy,
 } from 'lucide-react';
 import {
   useAppStore,
@@ -75,8 +76,13 @@ import {
   isMachineProfileComplete,
   toMachineProfilePayload,
 } from '@/lib/machine-profile.helpers';
+import {
+  buildMcpMachineHeaderSnippet,
+  copyTextToClipboard,
+} from '@/lib/machine-id.helpers';
 import { isViewingLocally } from '@/lib/viewer-device.helpers';
 import { MachineProfileEditor } from '@/components/machine-profile-editor';
+import { MachineIdSection } from '@/components/machine-id-section.component';
 import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 import { isTauri } from '@/lib/api/transport';
 import {
@@ -1734,6 +1740,32 @@ function MachineIdentitySection({
     }
   };
 
+  /** Copy the raw machine UUID to the clipboard. */
+  const handleCopyMachineUuid = async (machine: Machine) => {
+    try {
+      await copyTextToClipboard(machine.id);
+      onSuccess(t('machineIdentity.toast.copyUuid'));
+    } catch (err) {
+      onError(
+        t('machineIdentity.toast.failedCopyUuid'),
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  };
+
+  /** Copy the MCP client header snippet for a machine to the clipboard. */
+  const handleCopyMcpHeader = async (machine: Machine) => {
+    try {
+      await copyTextToClipboard(buildMcpMachineHeaderSnippet(machine.id));
+      onSuccess(t('machineIdentity.toast.copyHeader'));
+    } catch (err) {
+      onError(
+        t('machineIdentity.toast.failedCopyHeader'),
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  };
+
   const registerCanSave = isMachineProfileComplete({
     name: registerName,
     icon: registerIcon,
@@ -1782,6 +1814,15 @@ function MachineIdentitySection({
                 iconLabel={t('machineIdentity.iconLabel')}
                 hostnameLabel={t('machineIdentity.hostnameLabel')}
                 saveLabel={t('machineIdentity.save')}
+                testIdPrefix="machine-identity-viewer"
+              />
+              <MachineIdSection
+                machineId={viewer.machineId}
+                linkMachineIdDraft={viewer.linkMachineIdDraft}
+                onLinkMachineIdDraftChange={viewer.setLinkMachineIdDraft}
+                onLink={viewer.linkMachineById}
+                isLinking={viewer.isLinking}
+                linkError={viewer.linkError}
                 testIdPrefix="machine-identity-viewer"
               />
             </div>
@@ -1922,7 +1963,25 @@ function MachineIdentitySection({
                           className="min-w-0 flex-1 h-10 px-3 text-sm font-mono border border-[rgb(var(--border))] rounded-lg bg-[rgb(var(--background))]"
                         />
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleCopyMachineUuid(machine)}
+                          data-testid={`machine-identity-copy-uuid-${machine.id}`}
+                        >
+                          <Copy className="h-4 w-4 mr-2" />
+                          {t('common:viewerIdentity.copyUuid')}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleCopyMcpHeader(machine)}
+                          data-testid={`machine-identity-copy-header-${machine.id}`}
+                        >
+                          <Copy className="h-4 w-4 mr-2" />
+                          {t('machineIdentity.copyHeader')}
+                        </Button>
                         <Button
                           variant="secondary"
                           size="sm"

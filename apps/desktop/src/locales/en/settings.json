@@ -104,6 +104,7 @@
     "noMachines": "No machines registered yet.",
     "createMachine": "Register this install",
     "deleteMachine": "Delete",
+    "copyHeader": "Copy MCP header",
     "confirmDeleteTitle": "Delete machine",
     "confirmDeleteMessage": "Remove \"{{name}}\"? Workspace bindings scoped to this machine will also be deleted.",
     "toast": {
@@ -112,7 +113,11 @@
       "registered": "Machine registered",
       "failedSave": "Failed to save machine",
       "failedDelete": "Failed to delete machine",
-      "failedRegister": "Failed to register machine"
+      "failedRegister": "Failed to register machine",
+      "copyHeader": "MCP header snippet copied",
+      "failedCopyHeader": "Failed to copy MCP header snippet",
+      "copyUuid": "Machine UUID copied",
+      "failedCopyUuid": "Failed to copy machine UUID"
     }
   },
   "appearance": {

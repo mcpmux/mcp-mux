@@ -106,6 +106,45 @@ pub async fn create_space(
     Ok(space)
 }
 
+/// Update a space's display metadata (name, icon, description).
+#[tauri::command]
+pub async fn update_space(
+    id: String,
+    name: Option<String>,
+    icon: Option<String>,
+    description: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<Space, String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+
+    let space = state
+        .space_service
+        .update(uuid, name, icon, description)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Emit domain event if gateway is running
+    let gw_state = gateway_state.read().await;
+    if let Some(ref gw) = gw_state.gateway_state {
+        let gw = gw.read().await;
+        gw.emit_domain_event(mcpmux_core::DomainEvent::SpaceUpdated {
+            space_id: uuid,
+            name: space.name.clone(),
+        });
+    }
+
+    // Update system tray menu to reflect the rename
+    if let Err(e) = tray::update_tray_spaces(&app, &state).await {
+        warn!("Failed to update tray menu: {}", e);
+    }
+
+    info!("[update_space] Space '{}' updated successfully", uuid);
+
+    Ok(space)
+}
+
 /// Delete a space.
 #[tauri::command]
 pub async fn delete_space(

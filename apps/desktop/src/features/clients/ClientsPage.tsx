@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useSearch, useLocation } from 'wouter';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
+import { useClientEvents, useOAuthClientEventListener } from '@/lib/backend/events';
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import claudeIcon from '@/assets/client-icons/claude.svg';
@@ -40,21 +43,10 @@ import {
   listFeatureSetsBySpace,
   type FeatureSet,
 } from '@/lib/api/featureSets';
-import {
-  Card,
-  CardContent,
-  Button,
-  useToast,
-  ToastContainer,
-  useConfirm,
-  PageHeader,
-} from '@mcpmux/ui';
-import {
-  useDefaultSpace,
-  useNavigateTo,
-  usePendingClientId,
-  useSetPendingClientId,
-} from '@/stores';
+import { Card, CardContent, Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
+import { useDefaultSpace } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
+import { NAV_PATH_MAP } from '@/lib/navigation';
 
 // Bundled icons for well-known AI clients.
 const CLIENT_ICON_ASSETS: Record<string, string> = {
@@ -97,16 +89,16 @@ function ClientIcon({ logo_uri, client_name }: { logo_uri?: string | null; clien
   return <span>🤖</span>;
 }
 
-function formatLastSeen(iso: string | null): string {
-  if (!iso) return 'never';
+function formatLastSeen(iso: string | null, t: TFunction<'clients'>): string {
+  if (!iso) return t('lastSeen.never');
   const then = new Date(iso);
   const now = new Date();
   const secs = Math.floor((now.getTime() - then.getTime()) / 1000);
-  if (secs < 10) return 'just now';
-  if (secs < 60) return `${secs}s ago`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
+  if (secs < 10) return t('lastSeen.justNow');
+  if (secs < 60) return t('lastSeen.secondsAgo', { count: secs });
+  if (secs < 3600) return t('lastSeen.minutesAgo', { count: Math.floor(secs / 60) });
+  if (secs < 86400) return t('lastSeen.hoursAgo', { count: Math.floor(secs / 3600) });
+  return t('lastSeen.daysAgo', { count: Math.floor(secs / 86400) });
 }
 
 /**
@@ -118,6 +110,7 @@ function formatLastSeen(iso: string | null): string {
  * was last seen, and "remove this key" when trust is withdrawn.
  */
 export default function ClientsPage() {
+  const { t } = useTranslation(['clients', 'common', 'nav']);
   const [clients, setClients] = useState<OAuthClient[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -135,9 +128,10 @@ export default function ClientsPage() {
 
   const { toasts, success, error: showError, info, dismiss } = useToast();
   const { confirm, ConfirmDialogElement } = useConfirm();
-  const pendingClientId = usePendingClientId();
-  const setPendingClientId = useSetPendingClientId();
-  const navigateTo = useNavigateTo();
+  const search = useSearch();
+  const [, setLocation] = useLocation();
+  const selectClientId = new URLSearchParams(search).get('select');
+  const navigate = useNavigate();
   const defaultSpace = useDefaultSpace();
 
   const loadClients = async () => {
@@ -153,7 +147,7 @@ export default function ClientsPage() {
     }
   };
 
-  const refreshClients = async () => {
+  const refreshClients = useCallback(async () => {
     setIsRefreshing(true);
     try {
       setClients(await listOAuthClients());
@@ -162,7 +156,7 @@ export default function ClientsPage() {
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadClients();
@@ -172,36 +166,35 @@ export default function ClientsPage() {
   }, []);
 
   useEffect(() => {
-    if (!pendingClientId || isLoading) return;
-    const client = clients.find((c) => c.client_id === pendingClientId);
+    if (!selectClientId || isLoading) return;
+    const client = clients.find((c) => c.client_id === selectClientId);
     if (client) {
       openPanel(client);
-      setPendingClientId(null);
+      setLocation(NAV_PATH_MAP.clients, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingClientId, isLoading, clients]);
+  }, [selectClientId, isLoading, clients]);
 
-  useEffect(() => {
-    const unlistenDomain = listen<{
-      action: string;
-      client_id: string;
-      client_name?: string;
-    }>('client-changed', (event) => {
-      refreshClients();
-      if (event.payload.action === 'reconnected') {
-        const name = event.payload.client_name || event.payload.client_id;
-        info('Client reconnected', name);
-      }
-    });
-    const unlistenOAuth = listen('oauth-client-changed', () => {
-      refreshClients();
-    });
-    return () => {
-      unlistenDomain.then((fn) => fn());
-      unlistenOAuth.then((fn) => fn());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useClientEvents(
+    useCallback(
+      (_channel, payload) => {
+        refreshClients();
+        if (payload.action === 'reconnected') {
+          const name =
+            (typeof payload.client_name === 'string' ? payload.client_name : null) ||
+            (typeof payload.client_id === 'string' ? payload.client_id : t('fallbackClientName'));
+          info(t('toast.reconnected'), name);
+        }
+      },
+      [refreshClients, info, t]
+    )
+  );
+
+  useOAuthClientEventListener(
+    useCallback(() => {
+      void refreshClients();
+    }, [refreshClients])
+  );
 
   const openPanel = (client: OAuthClient) => {
     setSelected(client);
@@ -217,9 +210,9 @@ export default function ClientsPage() {
       });
       setClients((prev) => prev.map((c) => (c.client_id === updated.client_id ? updated : c)));
       setSelected(updated);
-      success('Saved', `"${updated.client_alias || updated.client_name}" updated`);
+      success(t('toast.saved'), t('toast.savedBody', { name: updated.client_alias || updated.client_name }));
     } catch (e) {
-      showError('Failed to save', e instanceof Error ? e.message : String(e));
+      showError(t('toast.saveFailed'), e instanceof Error ? e.message : String(e));
     } finally {
       setIsSaving(false);
     }
@@ -229,9 +222,10 @@ export default function ClientsPage() {
     const name = client.client_alias || client.client_name;
     if (
       !(await confirm({
-        title: 'Revoke connection',
-        message: `Remove "${name}"? All tokens for this client will be revoked. The client will need to re-approve to connect again.`,
-        confirmLabel: 'Revoke',
+        title: t('confirm.revokeTitle'),
+        message: t('confirm.revokeMessage', { name }),
+        confirmLabel: t('confirm.revokeLabel'),
+        cancelLabel: t('common:actions.cancel'),
         variant: 'danger',
       }))
     ) {
@@ -241,9 +235,9 @@ export default function ClientsPage() {
       await deleteOAuthClient(client.client_id);
       setClients((prev) => prev.filter((c) => c.client_id !== client.client_id));
       setSelected(null);
-      success('Connection revoked', `"${name}" removed`);
+      success(t('toast.connectionRevoked'), t('toast.connectionRevokedBody', { name }));
     } catch (e) {
-      showError('Failed to revoke', e instanceof Error ? e.message : String(e));
+      showError(t('toast.revokeFailed'), e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -257,45 +251,54 @@ export default function ClientsPage() {
     );
   });
 
-  // Snapshot `now` each time the clients list changes so the staleness
-  // indicators refresh when the underlying data refreshes — without making
-  // the component body impure.
-  const renderNow = useMemo(() => Date.now(), [clients]);
+  const clientsStalenessKey = useMemo(
+    () => clients.map((c) => c.last_seen ?? '').join('\0'),
+    [clients]
+  );
+  const [renderNow, setRenderNow] = useState(() => Date.now());
+  useEffect(() => {
+    setRenderNow(Date.now());
+  }, [clientsStalenessKey]);
 
   return (
     <div className="relative flex h-full flex-col" data-testid="clients-page">
       <header className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-8">
         <div className="mx-auto max-w-[2000px]">
-          <PageHeader
-            title="Apps"
-            titleTestId="clients-title"
-            subtitle={
-              <>
-                The AI apps connected through your gateway. Which tools each one gets (which Space,
-                which FeatureSet) is configured in{' '}
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold" data-testid="clients-title">
+                {t('title')}
+              </h1>
+              <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
+                {t('subtitlePrefix')}{' '}
                 <button
-                  onClick={() => navigateTo('workspaces')}
+                  onClick={() => navigate('workspaces')}
                   className="font-medium text-[rgb(var(--accent))] hover:underline"
+                  data-testid="clients-workspaces-link"
                 >
-                  Workspaces
+                  {t('nav:projects')}
                 </button>{' '}
-                per folder, not per app.
-              </>
-            }
-            actions={
-              <Button variant="ghost" size="md" onClick={refreshClients} disabled={isRefreshing}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
-            }
-          />
+                {t('subtitleSuffix')}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="md"
+              onClick={refreshClients}
+              disabled={isRefreshing}
+              data-testid="clients-refresh-btn"
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              {t('common:actions.refresh')}
+            </Button>
+          </div>
 
           {clients.length > 0 && (
             <div className="relative max-w-3xl">
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[rgb(var(--muted))]" />
               <input
                 type="text"
-                placeholder="Search by name, alias, or id…"
+                placeholder={t('searchPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="focus:ring-primary-500 focus:border-primary-500 w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3 pl-12 pr-4 text-base transition-all focus:outline-none focus:ring-2"
@@ -325,9 +328,9 @@ export default function ClientsPage() {
               <Card className="mx-auto max-w-2xl">
                 <CardContent className="flex flex-col items-center justify-center py-16">
                   <Laptop className="mb-4 h-16 w-16 text-[rgb(var(--muted))]" />
-                  <h3 className="mb-2 text-lg font-medium">No connections match your search</h3>
+                  <h3 className="mb-2 text-lg font-medium">{t('empty.noMatchTitle')}</h3>
                   <p className="max-w-md text-center text-sm text-[rgb(var(--muted))]">
-                    Try adjusting your search terms.
+                    {t('empty.noMatchDesc')}
                   </p>
                 </CardContent>
               </Card>
@@ -364,11 +367,11 @@ export default function ClientsPage() {
                       </div>
 
                       <div className="flex items-center justify-between text-xs text-[rgb(var(--muted))]">
-                        <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-flex items-center gap-1.5" data-testid="client-last-seen">
                           <span
                             className={`h-1.5 w-1.5 rounded-full ${lastSeenDotColor(client.last_seen, renderNow)}`}
                           />
-                          Last seen {formatLastSeen(client.last_seen)}
+                          {t('lastSeen.label', { time: formatLastSeen(client.last_seen, t) })}
                         </span>
                         <CapabilityBadge
                           reportsRoots={client.reports_roots}
@@ -401,7 +404,7 @@ export default function ClientsPage() {
             onRevoke={() => handleRevoke(selected)}
             onOpenWorkspaces={() => {
               setSelected(null);
-              navigateTo('workspaces');
+              navigate('workspaces');
             }}
             onToastError={showError}
             onToastSuccess={success}
@@ -446,6 +449,8 @@ function CapabilityBadge({
   reportsRoots: boolean;
   rootsCapabilityKnown: boolean;
 }) {
+  const { t } = useTranslation('clients');
+
   if (!rootsCapabilityKnown) {
     // Unknown — hide the badge entirely. Returning null keeps adjacent
     // layout stable (the panel header + the grants section both render
@@ -455,21 +460,21 @@ function CapabilityBadge({
   if (reportsRoots) {
     return (
       <span
-        title="This client declares the MCP roots capability. Its sessions route via Workspace bindings; the per-client grant list below applies only to rare rootless reconnects."
+        title={t('capability.reportsWorkspaceTitle')}
         className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
       >
         <FolderOpen className="h-3 w-3" />
-        Reports workspace
+        {t('capability.reportsWorkspace')}
       </span>
     );
   }
   return (
     <span
-      title="This client does NOT declare the MCP roots capability. It always routes via the per-client grants set in this panel — configure them below."
+      title={t('capability.rootlessTitle')}
       className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
     >
       <Globe className="h-3 w-3" />
-      Rootless
+      {t('capability.rootless')}
     </span>
   );
 }
@@ -505,6 +510,7 @@ function SidePanel({
   onToastError,
   onToastSuccess,
 }: SidePanelProps) {
+  const { t } = useTranslation(['clients', 'nav']);
   const aliasDirty = (client.client_alias || '') !== editAlias;
 
   return (
@@ -533,7 +539,7 @@ function SidePanel({
           <button
             onClick={onClose}
             className="flex-shrink-0 rounded-lg p-1.5 transition-colors hover:bg-[rgb(var(--surface-hover))]"
-            aria-label="Close panel"
+            aria-label={t('panel.closeAria')}
           >
             <X className="h-5 w-5" />
           </button>
@@ -543,7 +549,7 @@ function SidePanel({
       <div className="flex-1 space-y-6 overflow-y-auto p-6">
         <section>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-            Display name
+            {t('panel.displayName')}
           </h3>
           <div className="flex gap-2">
             <input
@@ -558,6 +564,7 @@ function SidePanel({
               variant="primary"
               onClick={onSaveAlias}
               disabled={!aliasDirty || isSaving}
+              data-testid="client-save-alias-btn"
             >
               {isSaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -567,7 +574,7 @@ function SidePanel({
             </Button>
           </div>
           <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
-            An alias shown in logs and this list. Doesn't affect routing.
+            {t('panel.displayNameHint')}
           </p>
         </section>
 
@@ -577,19 +584,20 @@ function SidePanel({
               <FolderOpen className="h-5 w-5 text-[rgb(var(--accent))]" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Routing is workspace-driven</p>
+              <p className="text-sm font-semibold">{t('panel.routingTitle')}</p>
               <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                When this client reports a folder as an MCP root, mcpmux uses the matching Workspace
-                binding to pick the Space and FeatureSet. If it doesn&apos;t report the folder
-                reliably (e.g. Cursor), open the folder in Workspaces and{' '}
-                <span className="font-medium text-[rgb(var(--foreground))]">Connect apps to this folder</span>{' '}
-                to auto-write its config with a workspace header.
+                {t('panel.routingDesc')}{' '}
+                <span className="font-medium text-[rgb(var(--foreground))]">
+                  {t('panel.routingDescEmphasis')}
+                </span>{' '}
+                {t('panel.routingDescSuffix')}
               </p>
               <button
                 onClick={onOpenWorkspaces}
                 className="mt-2 text-xs font-medium text-[rgb(var(--accent))] hover:underline"
+                data-testid="client-open-workspaces-btn"
               >
-                Open Workspaces →
+                {t('panel.openProjects')}
               </button>
             </div>
           </div>
@@ -615,18 +623,18 @@ function SidePanel({
 
         <section>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-            Client info
+            {t('panel.clientInfo')}
           </h3>
           <div className="space-y-2 text-xs">
-            <InfoRow label="Client ID" value={client.client_id} mono />
-            <InfoRow label="Client name" value={client.client_name} />
-            {client.software_id && <InfoRow label="Software" value={client.software_id} />}
-            {client.software_version && <InfoRow label="Version" value={client.software_version} />}
-            <InfoRow label="Registered via" value={client.registration_type ?? 'dynamic'} />
+            <InfoRow label={t('panel.clientId')} value={client.client_id} mono />
+            <InfoRow label={t('panel.clientName')} value={client.client_name} />
+            {client.software_id && <InfoRow label={t('panel.software')} value={client.software_id} />}
+            {client.software_version && <InfoRow label={t('panel.version')} value={client.software_version} />}
+            <InfoRow label={t('panel.registeredVia')} value={client.registration_type ?? 'dynamic'} />
             {client.last_seen && (
               <InfoRow
-                label="Last seen"
-                value={`${formatLastSeen(client.last_seen)} (${new Date(client.last_seen).toLocaleString()})`}
+                label={t('panel.lastSeen')}
+                value={`${formatLastSeen(client.last_seen, t)} (${new Date(client.last_seen).toLocaleString()})`}
               />
             )}
           </div>
@@ -639,9 +647,10 @@ function SidePanel({
           size="sm"
           onClick={onRevoke}
           className="w-full text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-900/20"
+          data-testid="client-revoke-btn"
         >
           <Trash2 className="mr-2 h-4 w-4" />
-          Revoke connection
+          {t('panel.revokeConnection')}
         </Button>
       </div>
     </div>
@@ -681,6 +690,7 @@ function RootlessGrantsSection({
   onError: (title: string, body?: string) => void;
   onSuccess: (title: string, body?: string) => void;
 }) {
+  const { t } = useTranslation('clients');
   const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
   const [grantedIds, setGrantedIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -721,7 +731,7 @@ function RootlessGrantsSection({
       })
       .catch((e) => {
         if (cancelled) return;
-        onError('Failed to load grants', e instanceof Error ? e.message : String(e));
+        onError(t('toast.loadGrantsFailed'), e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -742,16 +752,15 @@ function RootlessGrantsSection({
     try {
       if (isGranted) {
         await revokeOAuthClientFeatureSet(clientId, defaultSpaceId, fs.id);
-        onSuccess(`Revoked "${fs.name}"`);
+        onSuccess(t('toast.revoked', { name: fs.name }));
       } else {
         await grantOAuthClientFeatureSet(clientId, defaultSpaceId, fs.id);
-        onSuccess(`Granted "${fs.name}"`);
+        onSuccess(t('toast.granted', { name: fs.name }));
       }
     } catch (e) {
-      // Roll back the optimistic update on failure.
       setGrantedIds((prev) => (isGranted ? [...prev, fs.id] : prev.filter((id) => id !== fs.id)));
       onError(
-        isGranted ? 'Failed to revoke grant' : 'Failed to grant',
+        isGranted ? t('toast.revokeGrantFailed') : t('toast.grantFailed'),
         e instanceof Error ? e.message : String(e)
       );
     } finally {
@@ -764,37 +773,29 @@ function RootlessGrantsSection({
       <div className="mb-2 flex items-start gap-2">
         <div className="flex-1">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-            Default for rootless sessions
+            {t('grants.title')}
           </h3>
         </div>
         <span
           className="inline-flex items-center gap-1 rounded-full bg-[rgb(var(--accent))]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--accent))]"
-          title="Used only when this client connects without reporting a workspace folder"
+          title={t('grants.badgeTitle')}
         >
           <Globe className="h-3 w-3" />
-          Rootless only
+          {t('grants.badge')}
         </span>
       </div>
       <p className="mb-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
-        This client doesn&apos;t declare the MCP{' '}
-        <code className="rounded bg-[rgb(var(--surface))] px-1 text-[10px]">roots</code> capability,
-        so its sessions route through the FeatureSets you pick here instead of through Workspace
-        bindings. Leaving the list empty denies the client — rootless sessions then see only the
-        built-in
-        <code className="mx-1 rounded bg-[rgb(var(--surface))] px-1 text-[10px]">mcpmux_*</code>
-        management tools.
+        {t('grants.description')}
       </p>
 
       {!defaultSpaceId ? (
-        <p className="text-xs italic text-[rgb(var(--muted))]">No default Space configured.</p>
+        <p className="text-xs italic text-[rgb(var(--muted))]">{t('grants.noDefaultSpace')}</p>
       ) : isLoading ? (
         <div className="flex items-center justify-center py-6">
           <Loader2 className="h-4 w-4 animate-spin text-[rgb(var(--muted))]" />
         </div>
       ) : featureSets.length === 0 ? (
-        <p className="text-xs italic text-[rgb(var(--muted))]">
-          No FeatureSets exist in the default Space yet.
-        </p>
+        <p className="text-xs italic text-[rgb(var(--muted))]">{t('grants.noBundles')}</p>
       ) : (
         // Bordered container, search at the top, scrollable body — same
         // shape as the Workspaces binding picker so the two screens feel
@@ -812,7 +813,7 @@ function RootlessGrantsSection({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={`Search ${featureSets.length} feature set${featureSets.length === 1 ? '' : 's'}…`}
+                placeholder={t('grants.searchPlaceholder', { count: featureSets.length })}
                 className="focus:ring-primary-500 w-full rounded border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] py-1.5 pl-7 pr-2.5 text-xs focus:outline-none focus:ring-2"
                 data-testid="rootless-grants-search"
               />
@@ -821,7 +822,7 @@ function RootlessGrantsSection({
           <div className="max-h-72 space-y-1 overflow-y-auto p-1.5">
             {filteredFs.length === 0 ? (
               <p className="px-2 py-3 text-center text-xs italic text-[rgb(var(--muted))]">
-                No feature sets match &ldquo;{search}&rdquo;.
+                {t('grants.noMatch', { query: search })}
               </p>
             ) : (
               filteredFs.map((fs) => {
@@ -867,9 +868,9 @@ function RootlessGrantsSection({
                     {isStarterFeatureSet(fs) && (
                       <span
                         className="flex-shrink-0 rounded bg-[rgb(var(--surface))] px-1 py-0.5 text-[9px] uppercase tracking-wide text-[rgb(var(--muted))]"
-                        title="Auto-seeded with this Space."
+                        title={t('grants.starterTitle')}
                       >
-                        starter
+                        {t('grants.starter')}
                       </span>
                     )}
                   </button>
@@ -879,9 +880,9 @@ function RootlessGrantsSection({
           </div>
           {search && filteredFs.length > 0 && filteredFs.length < featureSets.length && (
             <div className="border-t border-[rgb(var(--border-subtle))] px-3 py-1.5 text-[11px] text-[rgb(var(--muted))]">
-              {filteredFs.length} of {featureSets.length} shown
+              {t('grants.shownCount', { shown: filteredFs.length, total: featureSets.length })}
               {grantedIds.some((id) => !filteredFs.find((f) => f.id === id)) &&
-                ' (granted FSes always visible)'}
+                t('grants.grantedAlwaysVisible')}
             </div>
           )}
         </div>
@@ -891,9 +892,7 @@ function RootlessGrantsSection({
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-2.5">
           <ShieldOff className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
           <p className="text-[11px] text-[rgb(var(--muted))]">
-            No per-client defaults set — rootless sessions from this client fall back to your
-            default Starter set. Pick a FeatureSet above to grant this client a specific set
-            instead.
+            {t('grants.noDefaultsWarning')}
           </p>
         </div>
       )}
@@ -917,20 +916,19 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
 // ---------------------------------------------------------------------------
 
 function EmptyStateOnboarding({ gatewayStatus }: { gatewayStatus: GatewayStatus }) {
+  const { t } = useTranslation('clients');
+
   return (
     <div className="mx-auto max-w-4xl space-y-6" data-testid="clients-empty-connect">
       <Card data-testid="clients-empty-onboarding">
         <CardContent className="p-8">
           <div className="mb-1 flex items-start gap-4">
-            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-[rgb(var(--primary))]/10 text-[rgb(var(--primary))]">
+            <div className="from-primary-500 to-primary-600 flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-[0_6px_16px_-4px_rgb(99_102_241/0.45)]">
               <PlugZap className="h-6 w-6" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold">Connect your first AI app</h2>
-              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                McpMux is one connection your AI app uses to reach every tool. Three steps and
-                you&apos;re done:
-              </p>
+              <h2 className="text-xl font-semibold">{t('onboarding.title')}</h2>
+              <p className="mt-1 text-sm text-[rgb(var(--muted))]">{t('onboarding.intro')}</p>
             </div>
           </div>
 
@@ -938,27 +936,27 @@ function EmptyStateOnboarding({ gatewayStatus }: { gatewayStatus: GatewayStatus 
             <OnboardingStep
               n={1}
               tone="primary"
-              title="Pick your IDE below and follow its prompt"
-              body="Each card tells you exactly what the button does — either one-click install or copy a small config for you to paste."
+              title={t('onboarding.step1Title')}
+              body={t('onboarding.step1Body')}
             />
             <OnboardingStep
               n={2}
               tone="primary"
-              title="Enable mcpmux in your IDE's MCP settings"
-              body="One-click install usually wires it up automatically. If you pasted a config, open your IDE's MCP panel and toggle mcpmux on — a restart may be needed for the IDE to pick it up."
+              title={t('onboarding.step2Title')}
+              body={t('onboarding.step2Body')}
             />
             <OnboardingStep
               n={3}
               tone="emerald"
               title={
                 <>
-                  Approve the connection{' '}
+                  {t('onboarding.step3Title')}{' '}
                   <span className="ml-1 inline-flex items-center rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                    right here
+                    {t('onboarding.step3Badge')}
                   </span>
                 </>
               }
-              body="mcpmux will pop a dialog the moment your IDE reaches the gateway. Until you accept it, nothing is routed."
+              body={t('onboarding.step3Body')}
             />
           </ol>
 
@@ -967,11 +965,10 @@ function EmptyStateOnboarding({ gatewayStatus }: { gatewayStatus: GatewayStatus 
               <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
               <div>
                 <p className="font-semibold text-amber-800 dark:text-amber-200">
-                  Gateway is stopped
+                  {t('onboarding.gatewayStoppedTitle')}
                 </p>
                 <p className="mt-0.5 text-amber-700 dark:text-amber-300">
-                  Start it from the Dashboard first — otherwise the IDE will hang at{' '}
-                  <code>initialize</code>.
+                  {t('onboarding.gatewayStoppedBody')}
                 </p>
               </div>
             </div>

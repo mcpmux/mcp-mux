@@ -11,7 +11,7 @@ mod routing;
 // Re-export public types
 pub use conversion::{convert_to_feature, resource_to_feature};
 pub use discovery::FeatureDiscoveryService;
-pub use facade::FeatureService;
+pub use facade::{FeatureService, InactiveDiscoveryEntry};
 pub use resolution::FeatureResolutionService;
 pub use routing::FeatureRoutingService;
 

@@ -44,7 +44,12 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost https: data: blob:",
+      "devCsp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' ipc: http://ipc.localhost http://localhost:* ws://localhost:* ws://127.0.0.1:*; img-src 'self' asset: http://asset.localhost https: http: data: blob:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**"]
+      }
     }
   },
   "bundle": {

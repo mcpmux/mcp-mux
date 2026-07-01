@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useAppStore } from '@/stores';
+import { renderWithI18n } from '../render-with-i18n.helpers';
 
 // ---------- Hoisted mock functions (available before vi.mock factories run) ----------
 
-const { mockInvoke, mockCheck, mockGetGatewayStatus } = vi.hoisted(() => ({
+const { mockInvoke, mockCheck, mockGetGatewayStatus, mockCheckForUpdate, mockGetAutoInstallUpdates } =
+  vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockCheck: vi.fn(),
   mockGetGatewayStatus: vi.fn(),
+  mockCheckForUpdate: vi.fn(),
+  mockGetAutoInstallUpdates: vi.fn().mockResolvedValue(false),
 }));
 
 // ---------- Module mocks ----------
@@ -20,6 +24,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/plugin-updater', () => ({
   check: mockCheck,
+}));
+
+vi.mock('@/lib/updates', () => ({
+  checkForUpdate: mockCheckForUpdate,
+  getAutoInstallUpdates: mockGetAutoInstallUpdates,
 }));
 
 // Mock page components as lightweight stubs
@@ -43,7 +52,7 @@ vi.mock('@/features/settings', () => ({
 }));
 vi.mock('@/features/workspaces', () => ({
   WorkspacesPage: () => <div data-testid="workspaces-page" />,
-  WorkspaceBindingSheet: () => null,
+  WorkspaceBindingPanel: () => null,
 }));
 
 // Mock non-essential components
@@ -52,6 +61,9 @@ vi.mock('@/components/OAuthConsentModal', () => ({
 }));
 vi.mock('@/components/ServerInstallModal', () => ({
   ServerInstallModal: () => null,
+}));
+vi.mock('@/features/metaTools', () => ({
+  MetaToolApprovalDialog: () => null,
 }));
 vi.mock('@/components/SpaceSwitcher', () => ({
   SpaceSwitcher: () => <div data-testid="space-switcher" />,
@@ -63,6 +75,11 @@ vi.mock('@/components/ThemeProvider', () => ({
 // Mock hooks
 vi.mock('@/hooks/useDataSync', () => ({
   useDataSync: vi.fn(),
+}));
+
+vi.mock('@/hooks/useMetaToolEvents', () => ({
+  useMetaToolEventListener: vi.fn(),
+  useMetaToolEvents: vi.fn(() => ({ subscribe: vi.fn(() => vi.fn()) })),
 }));
 
 type GatewayPayload = { action: string; url?: string; port?: number };
@@ -120,6 +137,15 @@ vi.mock('@/lib/api/featureSets', () => ({
 vi.mock('@/lib/api/registry', () => ({
   listInstalledServers: vi.fn().mockResolvedValue([]),
 }));
+vi.mock('@/lib/api/workspaceBindings', () => ({
+  listWorkspaceBindings: vi.fn().mockResolvedValue([]),
+}));
+vi.mock('@/lib/api/serverManager', () => ({
+  getServerStatuses: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('@/lib/api/spaces', () => ({
+  listSpaces: vi.fn().mockResolvedValue([]),
+}));
 
 // Mock window API for WindowButton
 vi.mock('@tauri-apps/api/window', () => ({
@@ -166,7 +192,7 @@ describe('App – dynamic version display', () => {
   it('should display version from get_version command', async () => {
     setupInvoke({ get_version: '1.2.3' });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('statusbar-version')).toHaveTextContent('v1.2.3');
@@ -177,7 +203,7 @@ describe('App – dynamic version display', () => {
     // invoke never resolves
     mockInvoke.mockImplementation(() => new Promise(() => {}));
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     // The span only renders once `appVersion` has a value.
     expect(screen.queryByTestId('statusbar-version')).toBeNull();
@@ -186,7 +212,7 @@ describe('App – dynamic version display', () => {
   it('should not crash and should omit the version when fetch fails', async () => {
     setupInvoke({ get_version: new Error('command failed') });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     // App still renders (sidebar is present) even if version lookup errored.
     await waitFor(() => {
@@ -205,7 +231,7 @@ describe('App – dynamic gateway URL display', () => {
   it('should show "Gateway stopped" as default gateway state', async () => {
     setupGateway({ running: false, url: null });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
@@ -217,7 +243,7 @@ describe('App – dynamic gateway URL display', () => {
   it('should show "Gateway stopped" when gateway is running but url is null', async () => {
     setupGateway({ running: true, url: null });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
@@ -229,7 +255,7 @@ describe('App – dynamic gateway URL display', () => {
   it('should flip to running state when gateway-started event fires', async () => {
     setupGateway({ running: false, url: null });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
@@ -253,7 +279,7 @@ describe('App – dynamic gateway URL display', () => {
   it('should flip back to stopped when gateway-stopped event fires', async () => {
     setupGateway({ running: false, url: null });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('statusbar-gateway')).toHaveTextContent(
@@ -289,34 +315,39 @@ describe('App – dynamic gateway URL display', () => {
 
 describe('App – update banner', () => {
   beforeEach(() => {
-    // The startup auto-update check is gated behind `!import.meta.env.DEV`
-    // (it must never run under `pnpm dev`). Vitest runs in dev mode, so stub
-    // DEV=false here to exercise the production update flow.
-    vi.stubEnv('DEV', false);
     vi.useFakeTimers();
     gatewayEventCallbacks = [];
     setupInvoke({ get_version: '0.1.2' });
+    mockGetAutoInstallUpdates.mockResolvedValue(false);
     setupGateway({ running: false, url: null });
+    mockCheckForUpdate.mockReset();
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllEnvs();
   });
 
   it('should show update banner when update is available', async () => {
-    mockCheck.mockResolvedValue({ version: '2.0.0', body: 'New features' });
+    mockCheckForUpdate.mockResolvedValue({
+      version: '2.0.0',
+      downloadAndInstall: vi.fn(),
+    });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     // Banner should not be visible before the 5s delay
     expect(screen.queryByTestId('update-banner')).not.toBeInTheDocument();
 
-    // Trigger the setTimeout, then switch to real timers so waitFor can poll
-    vi.advanceTimersByTime(5000);
+    // Trigger the 5s delay and flush the async update check
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     vi.useRealTimers();
 
     await waitFor(() => {
+      expect(mockCheckForUpdate).toHaveBeenCalled();
       const banner = screen.getByTestId('update-banner');
       expect(banner).toBeInTheDocument();
       expect(banner).toHaveTextContent('v2.0.0');
@@ -325,11 +356,15 @@ describe('App – update banner', () => {
   });
 
   it('should not show banner when no update is available', async () => {
-    mockCheck.mockResolvedValue(null);
+    mockCheckForUpdate.mockResolvedValue(null);
 
-    render(<App />);
+    renderWithI18n(<App />);
 
-    vi.advanceTimersByTime(5000);
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     vi.useRealTimers();
 
     // Give the async check time to resolve and confirm no banner appears
@@ -340,9 +375,9 @@ describe('App – update banner', () => {
   });
 
   it('should not show banner when update check fails', async () => {
-    mockCheck.mockRejectedValue(new Error('network error'));
+    mockCheckForUpdate.mockRejectedValue(new Error('network error'));
 
-    render(<App />);
+    renderWithI18n(<App />);
 
     vi.advanceTimersByTime(5000);
     vi.useRealTimers();
@@ -354,22 +389,26 @@ describe('App – update banner', () => {
   });
 
   it('should dismiss banner when X button is clicked', async () => {
-    vi.useRealTimers();
     const user = userEvent.setup();
 
-    mockCheck.mockResolvedValue({ version: '2.0.0', body: '' });
+    mockCheckForUpdate.mockResolvedValue({
+      version: '2.0.0',
+      downloadAndInstall: vi.fn(),
+    });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
-    // Wait for the 5s setTimeout + async check to complete
-    await waitFor(
-      () => {
-        expect(screen.getByTestId('update-banner')).toBeInTheDocument();
-      },
-      { timeout: 7000 }
-    );
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
 
-    // Click dismiss
+    await waitFor(() => {
+      expect(screen.getByTestId('update-banner')).toBeInTheDocument();
+    });
+
     await user.click(screen.getByTestId('dismiss-update-banner'));
 
     await waitFor(() => {
@@ -378,21 +417,26 @@ describe('App – update banner', () => {
   });
 
   it('should navigate to Settings and hide banner when "Update now" is clicked', async () => {
-    vi.useRealTimers();
     const user = userEvent.setup();
 
-    mockCheck.mockResolvedValue({ version: '2.0.0', body: '' });
+    mockCheckForUpdate.mockResolvedValue({
+      version: '2.0.0',
+      downloadAndInstall: vi.fn(),
+    });
 
-    render(<App />);
+    renderWithI18n(<App />);
 
-    await waitFor(
-      () => {
-        expect(screen.getByTestId('update-banner')).toBeInTheDocument();
-      },
-      { timeout: 7000 }
-    );
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.useRealTimers();
 
-    // Click "Update now"
+    await waitFor(() => {
+      expect(screen.getByTestId('update-banner')).toBeInTheDocument();
+    });
+
     await user.click(screen.getByText('Update now'));
 
     await waitFor(() => {

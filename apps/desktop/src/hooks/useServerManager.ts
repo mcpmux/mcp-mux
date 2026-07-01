@@ -1,30 +1,33 @@
 /**
- * useServerManager - React hook for event-driven server management
+ * useServerManager - React hook for event-driven server management.
  *
  * Provides:
- * - Automatic subscription to server events
+ * - Automatic subscription to server events via the useDomainEvents facade
  * - Local state management for server statuses
  * - Helper functions for common operations
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ServerStatusResponse,
-  ServerStatusEvent,
-  AuthProgressEvent,
-  FeaturesUpdatedEvent,
-  getServerStatuses,
-  enableServer,
-  disableServer,
-  startAuth,
+  type ConnectionStatus,
+  type FeaturesUpdatedEvent,
+  type ServerStatusResponse,
   cancelAuth,
-  retryConnection,
-  onServerStatus,
-  onAuthProgress,
-  onFeaturesUpdated,
+  disableServer,
+  enableServer,
   getConnectButtonLabel,
   getServerAction,
-} from "../lib/api/serverManager";
+  getServerStatuses,
+  retryConnection,
+  startAuth,
+} from '../lib/api/serverManager';
+import { listServerFeaturesByServer } from '../lib/api/serverFeatures';
+import {
+  useDomainEvents,
+  type ServerAuthProgressPayload,
+  type ServerFeaturesRefreshedPayload,
+  type ServerStatusChangedPayload,
+} from './useDomainEvents';
 
 interface UseServerManagerOptions {
   spaceId: string;
@@ -57,34 +60,64 @@ interface UseServerManagerResult {
   getAction: (
     serverId: string
   ) =>
-    | "enable"
-    | "disable"
-    | "connect"
-    | "cancel"
-    | "retry"
-    | "connected"
-    | "connecting";
+    | 'enable'
+    | 'disable'
+    | 'connect'
+    | 'cancel'
+    | 'retry'
+    | 'connected'
+    | 'connecting';
   /** Refresh statuses from backend */
   refresh: () => Promise<void>;
 }
 
+/**
+ * Normalize backend status strings to the UI ConnectionStatus union.
+ */
+function normalizeConnectionStatus(status: string): ConnectionStatus {
+  if (status === 'auth_required') {
+    return 'oauth_required';
+  }
+  return status as ConnectionStatus;
+}
+
+/**
+ * Map a REST/Tauri status payload into ServerStatusResponse.
+ */
+function toServerStatusResponse(
+  serverId: string,
+  payload: Pick<ServerStatusResponse, 'flow_id' | 'has_connected_before' | 'message'> & {
+    status: string;
+  }
+): ServerStatusResponse {
+  return {
+    server_id: serverId,
+    status: normalizeConnectionStatus(payload.status),
+    flow_id: payload.flow_id,
+    has_connected_before: payload.has_connected_before,
+    message: payload.message ?? null,
+  };
+}
+
+/**
+ * Event-driven hook for managing MCP server connection state.
+ * Uses the useDomainEvents facade so it works on both Tauri desktop and web admin.
+ */
 export function useServerManager({
   spaceId,
   onFeaturesChange,
 }: UseServerManagerOptions): UseServerManagerResult {
-  const [statuses, setStatuses] = useState<
-    Record<string, ServerStatusResponse>
-  >({});
+  const [statuses, setStatuses] = useState<Record<string, ServerStatusResponse>>({});
   const [authProgress, setAuthProgress] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const prevSpaceId = useRef<string | null>(null);
 
-  // Stable ref for onFeaturesChange to avoid re-subscribing on every render
   const onFeaturesChangeRef = useRef(onFeaturesChange);
   onFeaturesChangeRef.current = onFeaturesChange;
 
-  // Fetch initial statuses
+  const { subscribe } = useDomainEvents();
+
   const refresh = useCallback(async () => {
     if (!spaceId) return;
 
@@ -92,9 +125,16 @@ export function useServerManager({
       setLoading(true);
       setError(null);
       const result = await getServerStatuses(spaceId);
-      setStatuses(result);
+      const normalized = Object.fromEntries(
+        Object.entries(result).map(([serverId, status]) => [
+          serverId,
+          toServerStatusResponse(serverId, status),
+        ])
+      );
+      setStatuses(normalized);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -105,135 +145,98 @@ export function useServerManager({
       setStatuses({});
       setAuthProgress({});
       setError(null);
-      setLoading(true); // Set loading true while fetching
+      setLoading(true);
       prevSpaceId.current = spaceId || null;
-      
-      // Immediately hydrate from backend on space switch
+
       if (spaceId) {
-        refresh();
+        void refresh();
       }
     }
   }, [spaceId, refresh]);
 
-  // Initial fetch (only on mount, not on space change since handled above)
   useEffect(() => {
     if (!prevSpaceId.current) {
-      refresh();
+      void refresh();
     }
   }, [refresh]);
 
-  // Subscribe to events
   useEffect(() => {
     if (!spaceId) return;
 
-    const unsubscribers: Array<() => void> = [];
-
-    // Event listeners are async (Tauri listen() returns a Promise).
-    // Events emitted between the initial getServerStatuses fetch and listener
-    // activation are lost. Track when all listeners are ready, then re-fetch
-    // statuses to catch any events missed during the gap.
-    const listenerPromises: Array<Promise<() => void>> = [];
-
-    // Status changes
-    const statusPromise = onServerStatus((event: ServerStatusEvent) => {
-      if (event.space_id !== spaceId) return;
-
-      setStatuses((prev) => {
-        const existing = prev[event.server_id];
-        // Ignore events from older flows (race condition prevention)
-        if (existing && existing.flow_id > event.flow_id) {
-          return prev;
-        }
-
-        return {
-          ...prev,
-          [event.server_id]: {
-            server_id: event.server_id,
-            status: event.status,
-            flow_id: event.flow_id,
-            has_connected_before: event.has_connected_before,
-            message: event.message || null,
-          },
-        };
-      });
-
-      // Clear auth progress when leaving Authenticating state
-      if (event.status !== "authenticating") {
-        setAuthProgress((prev) => {
-          const next = { ...prev };
-          delete next[event.server_id];
-          return next;
-        });
-      }
-    });
-    statusPromise.then((unlisten) => unsubscribers.push(unlisten));
-    listenerPromises.push(statusPromise);
-
-    // Auth progress
-    const authPromise = onAuthProgress((event: AuthProgressEvent) => {
-      if (event.space_id !== spaceId) return;
-
-      setAuthProgress((prev) => ({
-        ...prev,
-        [event.server_id]: event.remaining_seconds,
-      }));
-    });
-    authPromise.then((unlisten) => unsubscribers.push(unlisten));
-    listenerPromises.push(authPromise);
-
-    // Features updated (always subscribe, use ref to call latest callback)
-    const featuresPromise = onFeaturesUpdated(
-      (event: FeaturesUpdatedEvent) => {
+    const unsubs = [
+      subscribe('server-status-changed', (event: ServerStatusChangedPayload) => {
         if (event.space_id !== spaceId) return;
-        onFeaturesChangeRef.current?.(event);
-      }
-    );
-    featuresPromise.then((unlisten) => unsubscribers.push(unlisten));
-    listenerPromises.push(featuresPromise);
 
-    // Once all listeners are active, re-fetch statuses to close the gap
-    // between the initial fetch and listener activation (startup race fix)
-    Promise.all(listenerPromises).then(() => {
-      refresh();
-    });
+        setStatuses((prev) => {
+          const existing = prev[event.server_id];
+          return {
+            ...prev,
+            [event.server_id]: toServerStatusResponse(event.server_id, {
+              status: event.status,
+              flow_id: existing?.flow_id ?? 0,
+              has_connected_before:
+                event.has_connected_before ??
+                (existing?.has_connected_before ?? false),
+              message: event.message ?? null,
+            }),
+          };
+        });
+
+        if (event.status !== 'authenticating') {
+          setAuthProgress((prev) => {
+            const next = { ...prev };
+            delete next[event.server_id];
+            return next;
+          });
+        }
+      }),
+      subscribe('server-auth-progress', (event: ServerAuthProgressPayload) => {
+        if (event.space_id !== spaceId) return;
+
+        setAuthProgress((prev) => ({
+          ...prev,
+          [event.server_id]: event.remaining_seconds,
+        }));
+      }),
+      subscribe('server-features-refreshed', (event: ServerFeaturesRefreshedPayload) => {
+        if (event.space_id !== spaceId) return;
+
+        void (async () => {
+          const allFeatures = await listServerFeaturesByServer(event.space_id, event.server_id);
+          const features = {
+            tools: allFeatures.filter((f) => f.feature_type === 'tool'),
+            prompts: allFeatures.filter((f) => f.feature_type === 'prompt'),
+            resources: allFeatures.filter((f) => f.feature_type === 'resource'),
+          };
+          onFeaturesChangeRef.current?.({
+            type: 'features_updated',
+            space_id: event.space_id,
+            server_id: event.server_id,
+            features,
+            added: event.added,
+            removed: event.removed,
+          });
+        })();
+      }),
+    ];
+
+    void refresh();
 
     return () => {
-      unsubscribers.forEach((fn) => fn());
+      unsubs.forEach((unsub) => unsub());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spaceId]);
+  }, [spaceId, subscribe, refresh]);
 
-  // Actions
-  const enable = useCallback(
-    (serverId: string) => enableServer(spaceId, serverId),
-    [spaceId]
-  );
+  const enable = useCallback((serverId: string) => enableServer(spaceId, serverId), [spaceId]);
+  const disable = useCallback((serverId: string) => disableServer(spaceId, serverId), [spaceId]);
+  const connect = useCallback((serverId: string) => startAuth(spaceId, serverId), [spaceId]);
+  const cancel = useCallback((serverId: string) => cancelAuth(spaceId, serverId), [spaceId]);
+  const retry = useCallback((serverId: string) => retryConnection(spaceId, serverId), [spaceId]);
 
-  const disable = useCallback(
-    (serverId: string) => disableServer(spaceId, serverId),
-    [spaceId]
-  );
-
-  const connect = useCallback(
-    (serverId: string) => startAuth(spaceId, serverId),
-    [spaceId]
-  );
-
-  const cancel = useCallback(
-    (serverId: string) => cancelAuth(spaceId, serverId),
-    [spaceId]
-  );
-
-  const retry = useCallback(
-    (serverId: string) => retryConnection(spaceId, serverId),
-    [spaceId]
-  );
-
-  // Helpers
   const getButtonLabel = useCallback(
     (serverId: string) => {
       const status = statuses[serverId];
-      if (!status) return "Enable";
+      if (!status) return 'Enable';
       return getConnectButtonLabel(status.status, status.has_connected_before);
     },
     [statuses]
@@ -242,7 +245,7 @@ export function useServerManager({
   const getAction = useCallback(
     (serverId: string) => {
       const status = statuses[serverId];
-      if (!status) return "enable";
+      if (!status) return 'enable' as const;
       return getServerAction(status.status);
     },
     [statuses]

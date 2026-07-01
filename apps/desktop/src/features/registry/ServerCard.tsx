@@ -2,6 +2,7 @@
  * Server card component for displaying a registry server.
  */
 
+import { useTranslation } from 'react-i18next';
 import type { ServerViewModel } from '../../types/registry';
 import { ServerIcon } from '../../components/ServerIcon';
 
@@ -13,6 +14,9 @@ interface ServerCardProps {
   isLoading?: boolean;
 }
 
+/**
+ * Renders a registry server summary card with install/uninstall actions.
+ */
 export function ServerCard({
   server,
   onInstall,
@@ -20,44 +24,61 @@ export function ServerCard({
   onViewDetails,
   isLoading,
 }: ServerCardProps) {
+  const { t } = useTranslation('registry');
+
   const getAuthBadge = () => {
     const authType = server.auth?.type || 'none';
     switch (authType) {
       case 'none':
         return (
           <span className="px-2 py-0.5 text-xs rounded-full bg-[rgb(var(--success))]/20 text-[rgb(var(--success))]">
-            No Auth
+            {t('card.auth.none')}
           </span>
         );
       case 'api_key':
         return (
           <span className="px-2 py-0.5 text-xs rounded-full bg-[rgb(var(--warning))]/20 text-[rgb(var(--warning))]">
-            API Key
+            {t('card.auth.apiKey')}
           </span>
         );
       case 'optional_api_key':
         return (
           <span className="px-2 py-0.5 text-xs rounded-full bg-[rgb(var(--warning))]/30 text-[rgb(var(--warning))]">
-            API Key (Optional)
+            {t('card.auth.optionalApiKey')}
           </span>
         );
       case 'oauth':
         return (
           <span className="px-2 py-0.5 text-xs rounded-full bg-[rgb(var(--info))]/20 text-[rgb(var(--info))]">
-            OAuth
+            {t('card.auth.oauth')}
           </span>
         );
     }
   };
 
   const getTransportBadge = () => {
-    // Use hosting_type if available, otherwise infer from transport
-    const hostingType = server.hosting_type || (server.transport.type === 'stdio' ? 'local' : 'remote');
-    
+    const hostingType =
+      server.hosting_type || (server.transport.type === 'stdio' ? 'local' : 'remote');
+
     const config = {
-      local: { icon: '💻', label: 'Local', bg: 'bg-purple-500/20', text: 'text-purple-600 dark:text-purple-400' },
-      remote: { icon: '☁️', label: 'Cloud', bg: 'bg-blue-500/20', text: 'text-blue-600 dark:text-blue-400' },
-      hybrid: { icon: '🔄', label: 'Hybrid', bg: 'bg-indigo-500/20', text: 'text-indigo-600 dark:text-indigo-400' },
+      local: {
+        icon: '💻',
+        label: t('card.hosting.local'),
+        bg: 'bg-purple-500/20',
+        text: 'text-purple-600 dark:text-purple-400',
+      },
+      remote: {
+        icon: '☁️',
+        label: t('card.hosting.remote'),
+        bg: 'bg-blue-500/20',
+        text: 'text-blue-600 dark:text-blue-400',
+      },
+      hybrid: {
+        icon: '🔄',
+        label: t('card.hosting.hybrid'),
+        bg: 'bg-indigo-500/20',
+        text: 'text-indigo-600 dark:text-indigo-400',
+      },
     }[hostingType];
 
     return (
@@ -69,13 +90,33 @@ export function ServerCard({
 
   const getBadges = () => {
     if (!server.badges || server.badges.length === 0) return null;
-    
+
     const badgeConfig: Record<string, { label: string; bg: string; text: string }> = {
-      official: { label: 'Official', bg: 'bg-blue-500/20', text: 'text-blue-600 dark:text-blue-400' },
-      verified: { label: '✓ Verified', bg: 'bg-green-500/20', text: 'text-green-600 dark:text-green-400' },
-      featured: { label: '⭐ Featured', bg: 'bg-amber-500/20', text: 'text-amber-600 dark:text-amber-400' },
-      sponsored: { label: 'Sponsored', bg: 'bg-yellow-500/20', text: 'text-yellow-600 dark:text-yellow-400' },
-      popular: { label: '🔥 Popular', bg: 'bg-red-500/20', text: 'text-red-600 dark:text-red-400' },
+      official: {
+        label: t('card.badges.official'),
+        bg: 'bg-blue-500/20',
+        text: 'text-blue-600 dark:text-blue-400',
+      },
+      verified: {
+        label: t('card.badges.verified'),
+        bg: 'bg-green-500/20',
+        text: 'text-green-600 dark:text-green-400',
+      },
+      featured: {
+        label: t('card.badges.featured'),
+        bg: 'bg-amber-500/20',
+        text: 'text-amber-600 dark:text-amber-400',
+      },
+      sponsored: {
+        label: t('card.badges.sponsored'),
+        bg: 'bg-yellow-500/20',
+        text: 'text-yellow-600 dark:text-yellow-400',
+      },
+      popular: {
+        label: t('card.badges.popular'),
+        bg: 'bg-red-500/20',
+        text: 'text-red-600 dark:text-red-400',
+      },
     };
 
     return (
@@ -84,7 +125,10 @@ export function ServerCard({
           const config = badgeConfig[badge];
           if (!config) return null;
           return (
-            <span key={badge} className={`px-2 py-0.5 text-xs rounded-full ${config.bg} ${config.text}`}>
+            <span
+              key={badge}
+              className={`px-2 py-0.5 text-xs rounded-full ${config.bg} ${config.text}`}
+            >
               {config.label}
             </span>
           );
@@ -101,7 +145,6 @@ export function ServerCard({
       onClick={() => onViewDetails(server)}
       data-testid={`server-card-${server.id}`}
     >
-      {/* Header */}
       <div className="flex items-start gap-3 mb-3">
         <div className="text-3xl flex-shrink-0 flex items-center justify-center">
           <ServerIcon icon={server.icon} />
@@ -112,37 +155,32 @@ export function ServerCard({
               {server.name}
             </h3>
             {server.publisher?.verified && (
-              <span className="text-[rgb(var(--info))] flex-shrink-0" title="Verified Publisher">
+              <span className="text-[rgb(var(--info))] flex-shrink-0" title={t('card.verifiedPublisher')}>
                 ✓
               </span>
             )}
           </div>
           {server.publisher?.name && (
             <p className="text-xs text-[rgb(var(--muted))] truncate">
-              by {server.publisher.name}
+              {t('card.byPublisher', { name: server.publisher.name })}
             </p>
           )}
         </div>
       </div>
 
-      {/* Description */}
-      <p className="text-sm text-[rgb(var(--muted))] line-clamp-2 mb-4">
-        {server.description}
-      </p>
+      <p className="text-sm text-[rgb(var(--muted))] line-clamp-2 mb-4">{server.description}</p>
 
-      {/* Badges */}
       <div className="flex flex-wrap gap-2 mb-4">
         {getBadges()}
         {getTransportBadge()}
         {getAuthBadge()}
         {server.capabilities?.read_only_mode && (
           <span className="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-600 dark:text-green-400">
-            🛡️ Read-Only
+            {t('card.readOnly')}
           </span>
         )}
       </div>
 
-      {/* Categories */}
       {server.categories.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-4">
           {server.categories.slice(0, 3).map((cat) => (
@@ -161,7 +199,6 @@ export function ServerCard({
         </div>
       )}
 
-      {/* Action Button */}
       <div className="flex justify-end">
         {server.is_installed ? (
           <button
@@ -174,7 +211,7 @@ export function ServerCard({
                        hover:bg-[rgb(var(--error))]/10 transition-colors disabled:opacity-50"
             data-testid={`uninstall-btn-${server.id}`}
           >
-            Uninstall
+            {t('card.uninstall')}
           </button>
         ) : (
           <button
@@ -187,11 +224,10 @@ export function ServerCard({
                        hover:bg-[rgb(var(--primary-hover))] transition-colors disabled:opacity-50"
             data-testid={`install-btn-${server.id}`}
           >
-            Install
+            {t('card.install')}
           </button>
         )}
       </div>
-
     </div>
   );
 }

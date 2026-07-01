@@ -2,11 +2,74 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::ServerDefinition;
+
+/// Per-server package update policy for npx/uvx stdio transports.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdatePolicy {
+    /// Inject `@latest` (npx) or run `uv tool upgrade` (uvx) at spawn time.
+    Auto,
+    /// Default — surface available updates without auto-upgrading (Phase 2 probe).
+    #[default]
+    Notify,
+    /// Lock to `pinned_version` at spawn time (enforced in Phase 3).
+    Pinned,
+}
+
+impl UpdatePolicy {
+    /// Parse a database-stored policy string (`auto` / `notify` / `pinned`).
+    pub fn from_db_str(value: &str) -> Self {
+        match value {
+            "auto" => Self::Auto,
+            "pinned" => Self::Pinned,
+            _ => Self::Notify,
+        }
+    }
+
+    /// Serialize to the `installed_servers.update_policy` column value.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Notify => "notify",
+            Self::Pinned => "pinned",
+        }
+    }
+}
+
+/// Merge strategy when `default_params` and caller-supplied args share a key.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultParamsStrategy {
+    /// Default — caller-supplied args win on collision.
+    #[default]
+    Fill,
+    /// Pre-configured defaults win on collision; caller args only fill missing keys.
+    Override,
+}
+
+impl DefaultParamsStrategy {
+    /// Parse a database-stored strategy string (`fill` / `override`).
+    pub fn from_db_str(value: &str) -> Self {
+        match value {
+            "override" => Self::Override,
+            _ => Self::Fill,
+        }
+    }
+
+    /// Serialize to the `installed_servers.default_params_strategy` column value.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Fill => "fill",
+            Self::Override => "override",
+        }
+    }
+}
 
 /// Tracks how a server was installed (for sync/cleanup decisions)
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -74,12 +137,60 @@ pub struct InstalledServer {
     #[serde(default)]
     pub extra_headers: HashMap<String, String>,
 
+    /// Default tool-call arguments merged into every call routed to this server.
+    ///
+    /// Non-secret values only (e.g. cloudId, projectKey).
+    /// Merge behaviour is controlled by `default_params_strategy`.
+    #[serde(default)]
+    pub default_params: HashMap<String, Value>,
+
+    /// How `default_params` are merged with caller-supplied args.
+    ///
+    /// `fill` (default) — caller wins on collision.
+    /// `override` — defaults win; caller args only fill missing keys.
+    #[serde(default)]
+    pub default_params_strategy: DefaultParamsStrategy,
+
     /// Whether OAuth authentication has been completed
     pub oauth_connected: bool,
 
     /// How this server was installed (for sync/cleanup decisions)
     #[serde(default)]
     pub source: InstallationSource,
+
+    /// Source server ID when this install was cloned from another server in the same space
+    #[serde(default)]
+    pub cloned_from: Option<String>,
+
+    /// User-supplied display label that survives user-config sync.
+    ///
+    /// When set, the UI and meta tools prefer this over `server_name` /
+    /// `cached_definition.name`. The `server_id`, alias, and tool prefixes are
+    /// unaffected.
+    #[serde(default)]
+    pub display_name_override: Option<String>,
+
+    /// Package update policy for npx/uvx stdio transports.
+    #[serde(default)]
+    pub update_policy: UpdatePolicy,
+
+    /// Exact semver pin when `update_policy` is `Pinned` (enforced in Phase 3).
+    #[serde(default)]
+    pub pinned_version: Option<String>,
+
+    /// Latest registry version from the most recent notify-mode probe.
+    #[serde(default)]
+    pub latest_available_version: Option<String>,
+
+    /// Resolved installed version from the most recent probe (npx cache /
+    /// `uv tool list`). Lets the UI badge bare `npx -y pkg` / `uvx pkg`
+    /// installs that carry no `@semver` in their args.
+    #[serde(default)]
+    pub current_version: Option<String>,
+
+    /// When `latest_available_version` was last probed (RFC3339 in DB).
+    #[serde(default)]
+    pub version_checked_at: Option<DateTime<Utc>>,
 
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
@@ -105,8 +216,17 @@ impl InstalledServer {
             env_overrides: HashMap::new(),
             args_append: Vec::new(),
             extra_headers: HashMap::new(),
+            default_params: HashMap::new(),
+            default_params_strategy: DefaultParamsStrategy::default(),
             oauth_connected: false,
             source: InstallationSource::default(),
+            cloned_from: None,
+            display_name_override: None,
+            update_policy: UpdatePolicy::default(),
+            pinned_version: None,
+            latest_available_version: None,
+            current_version: None,
+            version_checked_at: None,
             created_at: now,
             updated_at: now,
         }
@@ -126,14 +246,29 @@ impl InstalledServer {
             .and_then(|json| serde_json::from_str(json).ok())
     }
 
-    /// Get display name (from cached definition or server_id fallback)
+    /// Get effective display name.
+    ///
+    /// Precedence: `display_name_override` (user-supplied) → `server_name`
+    /// (cached at install time) → final segment of `server_id`.
     pub fn display_name(&self) -> &str {
+        if let Some(override_name) = self.display_name_override.as_deref() {
+            return override_name;
+        }
         self.server_name.as_deref().unwrap_or_else(|| {
             self.server_id
                 .split('/')
                 .next_back()
                 .unwrap_or(&self.server_id)
         })
+    }
+
+    /// Set the user-supplied display override (None or empty/whitespace clears it).
+    pub fn with_display_name_override(mut self, value: Option<impl Into<String>>) -> Self {
+        self.display_name_override = value
+            .map(Into::into)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        self
     }
 
     /// Set input values
@@ -154,9 +289,30 @@ impl InstalledServer {
         self
     }
 
+    /// Set the package update policy for this installation.
+    pub fn with_update_policy(mut self, policy: UpdatePolicy) -> Self {
+        self.update_policy = policy;
+        self
+    }
+
+    /// Set the pinned package version (used when policy is `Pinned`).
+    pub fn with_pinned_version(mut self, version: Option<impl Into<String>>) -> Self {
+        self.pinned_version = version
+            .map(Into::into)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        self
+    }
+
     /// Set installation source
     pub fn with_source(mut self, source: InstallationSource) -> Self {
         self.source = source;
+        self
+    }
+
+    /// Set the source server ID when this install is a clone
+    pub fn with_cloned_from(mut self, source_server_id: impl Into<String>) -> Self {
+        self.cloned_from = Some(source_server_id.into());
         self
     }
 
@@ -229,6 +385,10 @@ mod tests {
         assert!(
             server.extra_headers.is_empty(),
             "New server should have empty extra_headers"
+        );
+        assert!(
+            server.default_params.is_empty(),
+            "New server should have empty default_params"
         );
     }
 
@@ -449,5 +609,55 @@ mod tests {
         let deserialized: InstalledServer = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.args_append.len(), 100);
         assert_eq!(deserialized.args_append[99], "--arg-99");
+    }
+
+    #[test]
+    fn test_display_name_override_takes_precedence() {
+        let mut server = InstalledServer::new("space_default", "google.com/calendar");
+        server.server_name = Some("Google Calendar".to_string());
+
+        assert_eq!(server.display_name(), "Google Calendar");
+
+        server.display_name_override = Some("Joe Calendar".to_string());
+        assert_eq!(server.display_name(), "Joe Calendar");
+    }
+
+    #[test]
+    fn test_with_display_name_override_trims_and_clears() {
+        let server = InstalledServer::new("space_default", "test-server")
+            .with_display_name_override(Some("  Work Account  "));
+        assert_eq!(
+            server.display_name_override.as_deref(),
+            Some("Work Account")
+        );
+
+        let cleared = server.with_display_name_override(Some("   "));
+        assert!(cleared.display_name_override.is_none());
+
+        let none_clears = InstalledServer::new("space_default", "test-server")
+            .with_display_name_override(Some("Name"))
+            .with_display_name_override(Option::<String>::None);
+        assert!(none_clears.display_name_override.is_none());
+    }
+
+    #[test]
+    fn test_display_name_override_default_on_deserialize() {
+        let json = r#"{
+            "id": "00000000-0000-0000-0000-000000000001",
+            "space_id": "space_default",
+            "server_id": "test-server",
+            "server_name": "Catalog Name",
+            "cached_definition": null,
+            "input_values": {},
+            "enabled": false,
+            "oauth_connected": false,
+            "source": {"type": "registry"},
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z"
+        }"#;
+
+        let server: InstalledServer = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(server.display_name_override.is_none());
+        assert_eq!(server.display_name(), "Catalog Name");
     }
 }

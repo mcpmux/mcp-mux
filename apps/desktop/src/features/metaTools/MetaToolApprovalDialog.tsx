@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
+import { useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, SlidersHorizontal, XCircle } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
-import { useNavigateTo } from '@/stores';
+import { useBackendEventSubscription } from '@/lib/backend/events';
+import { respondToMetaToolApproval } from '@/lib/api/metaTools';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 
 /**
  * Incoming approval request emitted by the gateway's ApprovalBroker.
@@ -15,19 +16,11 @@ export interface ApprovalRequest {
   payload: {
     tool_name: string;
     summary: string;
-    /**
-     * Name of the Space this write targets. Surfaced as a chip so a change
-     * aimed at a Space other than the one the user expects is obvious — a
-     * client may now pass any `space_id`. Absent for writes with no single
-     * target Space.
-     */
+    /** Target Space name for cross-Space write visibility. */
     space_name?: string | null;
     /**
-     * Tool-list diff the dialog renders. Freeform by design — the backend's
-     * `ApprovalPayload.diff` is an arbitrary JSON value and each write tool
-     * sends a different shape (`mcpmux_create_feature_set` sends
-     * `{ added_tools }`; others may send `{ before, after, added, removed }`).
-     * Read it defensively (see `toStringArray`); never assume a field exists.
+     * Tool-list diff the dialog renders. Freeform by design — read defensively
+     * via `toStringArray`; never assume a field exists.
      */
     diff: null | Record<string, unknown>;
     raw_args: unknown;
@@ -47,40 +40,38 @@ type Decision = 'allow_once' | 'always_for_this_session_and_client' | 'deny';
  * Global listener that renders an approval dialog whenever the gateway
  * asks for permission to run an `mcpmux_*` write tool. Place once, near the
  * root of the app.
- *
- * The dialog queues multiple concurrent requests — if two clients request
- * approval at the same time, the user sees them in order.
  */
 export function MetaToolApprovalDialog() {
+  const { t } = useTranslation('metatools');
+  const navigate = useNavigate();
   const [queue, setQueue] = useState<ApprovalRequest[]>([]);
   const current = queue[0];
-  const navigateTo = useNavigateTo();
 
-  useEffect(() => {
-    const unlistenPromise = listen<ApprovalRequest>(
-      'meta-tool-approval-request',
-      (event) => {
-        setQueue((prev) => [...prev, event.payload]);
-      }
-    );
-    return () => {
-      unlistenPromise.then((fn) => fn()).catch(() => {});
-    };
+  const enqueueApproval = useCallback((payload: ApprovalRequest) => {
+    setQueue((prev) => [...prev, payload]);
   }, []);
+
+  const handleResolved = useCallback((payload: { request_id: string }) => {
+    setQueue((prev) => prev.filter((r) => r.request_id !== payload.request_id));
+  }, []);
+
+  useBackendEventSubscription<ApprovalRequest>('meta-tool-approval-request', enqueueApproval);
+  useBackendEventSubscription<{ request_id: string; decision: string }>(
+    'meta-tool-approval-resolved',
+    handleResolved
+  );
 
   const respond = useCallback(
     async (decision: Decision) => {
       if (!current) return;
       try {
-        await invoke('respond_to_meta_tool_approval', {
-          requestId: current.request_id,
-          clientId: current.client_id,
-          toolName: current.payload.tool_name,
-          decision,
-        });
+        await respondToMetaToolApproval(
+          current.request_id,
+          current.client_id,
+          current.payload.tool_name,
+          decision
+        );
       } catch (e) {
-        // Log but don't block UI — broker will time out and surface
-        // `approval_timed_out` to the tool caller.
         console.warn('respond_to_meta_tool_approval failed', e);
       } finally {
         setQueue((prev) => prev.slice(1));
@@ -89,19 +80,11 @@ export function MetaToolApprovalDialog() {
     [current]
   );
 
-  // "Prefer not to be asked?" escape hatch. Deny the current request first —
-  // fail-closed and immediate, so the calling client isn't left hanging for
-  // the full 60s broker timeout — then jump to the Built-in tab, where the
-  // "Require approval for tool changes" switch lets the user turn these
-  // prompts off entirely.
   const manageApprovals = useCallback(() => {
     void respond('deny');
-    navigateTo('builtin-servers');
-  }, [respond, navigateTo]);
+    navigate('builtin-servers');
+  }, [respond, navigate]);
 
-  // Normalize the freeform diff defensively — a missing field must never
-  // throw (this previously crashed on `mcpmux_create_feature_set`, whose diff
-  // is `{ added_tools }` and has no `after`).
   const rawDiff = current?.payload.diff ?? null;
   const added = useMemo(
     () => [...toStringArray(rawDiff?.added), ...toStringArray(rawDiff?.added_tools)],
@@ -124,9 +107,7 @@ export function MetaToolApprovalDialog() {
       <Card className="w-full max-w-xl shadow-2xl">
         <CardHeader className="flex flex-row items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-amber-500" />
-          <CardTitle className="text-base">
-            An MCP client wants to change your tools
-          </CardTitle>
+          <CardTitle className="text-base">{t('approval.title')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-sm">
@@ -137,11 +118,12 @@ export function MetaToolApprovalDialog() {
                   className="inline-flex items-center gap-1 rounded-full border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-2 py-0.5 text-xs"
                   data-testid="meta-tool-approval-space"
                 >
-                  Space:&nbsp;<span className="font-medium">{current.payload.space_name}</span>
+                  {t('approval.spaceLabel')}&nbsp;
+                  <span className="font-medium">{current.payload.space_name}</span>
                 </span>
               )}
               <span className="text-xs text-[rgb(var(--muted))] font-mono">
-                tool:&nbsp;{current.payload.tool_name}
+                {t('approval.toolLabel')}&nbsp;{current.payload.tool_name}
               </span>
             </div>
           </div>
@@ -153,9 +135,9 @@ export function MetaToolApprovalDialog() {
             >
               <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
               <span>
-                This change affects every connection in this Space — not just
-                the one requesting it. Other connected clients will see a new
-                toolset on their next <code>tools/list</code>.
+                {t('approval.crossClientWarning.before')}
+                <code>tools/list</code>
+                {t('approval.crossClientWarning.after')}
               </span>
             </div>
           )}
@@ -163,26 +145,20 @@ export function MetaToolApprovalDialog() {
           {hasDiff && (
             <div className="border border-[rgb(var(--border-subtle))] rounded text-xs">
               <div className="grid grid-cols-3 divide-x divide-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
-                <Stat label="Before" value={hasBeforeAfter ? beforeCount : '—'} />
-                <Stat label="After" value={afterCount} emphasis />
-                <Stat label="Delta" value={deltaLabel} />
+                <Stat label={t('approval.diff.before')} value={hasBeforeAfter ? beforeCount : '—'} />
+                <Stat label={t('approval.diff.after')} value={afterCount} emphasis />
+                <Stat label={t('approval.diff.delta')} value={deltaLabel} />
               </div>
               {(added.length > 0 || removed.length > 0) && (
                 <div className="max-h-40 overflow-y-auto p-2 space-y-0.5 font-mono">
-                  {added.map((t) => (
-                    <div
-                      key={`+${t}`}
-                      className="text-green-600 dark:text-green-400"
-                    >
-                      + {t}
+                  {added.map((tool) => (
+                    <div key={`+${tool}`} className="text-green-600 dark:text-green-400">
+                      + {tool}
                     </div>
                   ))}
-                  {removed.map((t) => (
-                    <div
-                      key={`-${t}`}
-                      className="text-red-600 dark:text-red-400"
-                    >
-                      − {t}
+                  {removed.map((tool) => (
+                    <div key={`-${tool}`} className="text-red-600 dark:text-red-400">
+                      − {tool}
                     </div>
                   ))}
                 </div>
@@ -197,16 +173,16 @@ export function MetaToolApprovalDialog() {
               onClick={() => respond('deny')}
               data-testid="meta-tool-approval-deny"
             >
-              <XCircle className="h-4 w-4 mr-1" /> Deny
+              <XCircle className="h-4 w-4 mr-1" /> {t('approval.deny')}
             </Button>
             <Button
               variant="secondary"
               size="sm"
               onClick={() => respond('always_for_this_session_and_client')}
-              title="Allow this (client, tool) pair without prompting again until the gateway restarts"
+              title={t('approval.alwaysForSessionTitle')}
               data-testid="meta-tool-approval-always"
             >
-              Always for this session
+              {t('approval.alwaysForSession')}
             </Button>
             <Button
               variant="primary"
@@ -214,7 +190,7 @@ export function MetaToolApprovalDialog() {
               onClick={() => respond('allow_once')}
               data-testid="meta-tool-approval-allow-once"
             >
-              <CheckCircle2 className="h-4 w-4 mr-1" /> Allow once
+              <CheckCircle2 className="h-4 w-4 mr-1" /> {t('approval.allowOnce')}
             </Button>
           </div>
 
@@ -223,15 +199,15 @@ export function MetaToolApprovalDialog() {
               type="button"
               onClick={manageApprovals}
               className="inline-flex items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2.5 py-1.5 text-xs font-medium text-[rgb(var(--foreground))] transition-colors hover:border-primary-400 hover:bg-primary-50 hover:text-primary-700 dark:hover:bg-primary-900/20 dark:hover:text-primary-300"
-              title="Deny this request and open the Built-in tab, where you can turn off approval prompts for tool changes"
+              title={t('approval.manageLinkTitle')}
               data-testid="meta-tool-approval-manage-link"
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
-              Don&apos;t ask again — manage approval prompts
+              {t('approval.manageLink')}
             </button>
             {queue.length > 1 && (
               <span className="text-[11px] text-[rgb(var(--muted))]">
-                {queue.length - 1} more pending…
+                {t('approval.morePending', { count: queue.length - 1 })}
               </span>
             )}
           </div>
@@ -241,6 +217,9 @@ export function MetaToolApprovalDialog() {
   );
 }
 
+/**
+ * Single cell in the approval diff summary grid.
+ */
 function Stat({
   label,
   value,
@@ -255,13 +234,7 @@ function Stat({
       <span className="text-[10px] uppercase tracking-wide text-[rgb(var(--muted))]">
         {label}
       </span>
-      <span
-        className={
-          emphasis
-            ? 'text-base font-semibold'
-            : 'text-sm font-medium'
-        }
-      >
+      <span className={emphasis ? 'text-base font-semibold' : 'text-sm font-medium'}>
         {value}
       </span>
     </div>

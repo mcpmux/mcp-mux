@@ -1,4 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
+/** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
+import { apiCall } from './transport';
 
 /**
  * A WorkspaceBinding maps one normalized filesystem path to one or more
@@ -10,6 +11,14 @@ import { invoke } from '@tauri-apps/api/core';
 export interface WorkspaceBinding {
   id: string;
   workspace_root: string;
+  /** When set, binding applies only to this OAuth client. */
+  client_id?: string | null;
+  /** When set, binding applies only on this machine; null = global canonical. */
+  machine_id: string | null;
+  /** Friendly display name shown instead of the folder path when set. */
+  label: string | null;
+  /** Optional icon: emoji, URL, or local:workspace-icons ref. */
+  icon: string | null;
   space_id: string;
   /**
    * Non-empty by construction. Order is the operator-chosen rendering
@@ -24,13 +33,19 @@ export interface WorkspaceBinding {
 /** Input payload for create / update. `feature_set_ids` must be non-empty. */
 export interface WorkspaceBindingInput {
   workspace_root: string;
+  label?: string | null;
+  icon?: string | null;
   space_id: string;
   feature_set_ids: string[];
+  /** When set, creates a client-scoped binding. */
+  client_id?: string | null;
+  /** When set, scopes the binding to this machine; null = global canonical. */
+  machine_id?: string | null;
 }
 
 /** List every binding (sorted by workspace_root). */
 export async function listWorkspaceBindings(): Promise<WorkspaceBinding[]> {
-  return invoke('list_workspace_bindings');
+  return apiCall('list_workspace_bindings');
 }
 
 /**
@@ -40,7 +55,7 @@ export async function listWorkspaceBindings(): Promise<WorkspaceBinding[]> {
  * tab instead of waiting for the one-shot prompt.
  */
 export async function listReportedWorkspaceRoots(): Promise<string[]> {
-  return invoke('list_reported_workspace_roots');
+  return apiCall('list_reported_workspace_roots');
 }
 
 /**
@@ -51,7 +66,17 @@ export async function listReportedWorkspaceRoots(): Promise<string[]> {
  * the number of roots cleared.
  */
 export async function clearUnmappedReportedRoots(): Promise<number> {
-  return invoke('clear_unmapped_reported_roots');
+  return apiCall('clear_unmapped_reported_roots');
+}
+
+/**
+ * Remove a single reported workspace root from the session registry.
+ * Drops it from every active MCP session that holds it; unlike
+ * `clearUnmappedReportedRoots` this targets one specific path. Returns `true`
+ * when the root was found and removed.
+ */
+export async function forgetReportedRoot(root: string): Promise<boolean> {
+  return apiCall('forget_reported_root', { root });
 }
 
 /**
@@ -65,14 +90,14 @@ export async function clearUnmappedReportedRoots(): Promise<number> {
  * "don't nag yet" from "here's a real error".
  */
 export async function validateWorkspaceRoot(path: string): Promise<string> {
-  return invoke('validate_workspace_root', { path });
+  return apiCall('validate_workspace_root', { path });
 }
 
 /** List bindings whose target Space is the given one. */
 export async function listWorkspaceBindingsForSpace(
   spaceId: string
 ): Promise<WorkspaceBinding[]> {
-  return invoke('list_workspace_bindings_for_space', { spaceId });
+  return apiCall('list_workspace_bindings_for_space', { spaceId });
 }
 
 /**
@@ -82,7 +107,7 @@ export async function listWorkspaceBindingsForSpace(
 export async function createWorkspaceBinding(
   input: WorkspaceBindingInput
 ): Promise<WorkspaceBinding> {
-  return invoke('create_workspace_binding', { input });
+  return apiCall('create_workspace_binding', { input });
 }
 
 /** Update any axis of an existing binding. */
@@ -90,20 +115,24 @@ export async function updateWorkspaceBinding(
   id: string,
   input: WorkspaceBindingInput
 ): Promise<WorkspaceBinding> {
-  return invoke('update_workspace_binding', { id, input });
+  return apiCall('update_workspace_binding', { id, input });
 }
 
 /** Delete a binding by id. */
 export async function deleteWorkspaceBinding(id: string): Promise<void> {
-  return invoke('delete_workspace_binding', { id });
+  return apiCall('delete_workspace_binding', { id });
 }
 
 /** Convenience: build a `WorkspaceBindingInput` from a binding-shaped object. */
 export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
   return {
     workspace_root: b.workspace_root,
+    label: b.label,
+    icon: b.icon,
     space_id: b.space_id,
     feature_set_ids: b.feature_set_ids,
+    client_id: b.client_id,
+    machine_id: b.machine_id,
   };
 }
 
@@ -158,7 +187,7 @@ export interface EffectiveFeatureSetSummary {
 
 export interface WorkspaceEffectiveFeatures {
   workspace_root: string;
-  /** `binding` when a saved WorkspaceBinding matched; `unbound` when no binding matched — an unbound folder falls back to the default Space's Starter FS, so `feature_sets` is what a live session here actually sees until the user attaches a binding. */
+  /** `binding` when a saved WorkspaceBinding matched; `unbound` when no binding matched — caller has zero backend tools by default. Bind to enable access. */
   source: 'binding' | 'unbound';
   binding_id: string | null;
   space_id: string;
@@ -178,7 +207,11 @@ export interface WorkspaceEffectiveFeatures {
  * availability — same view the gateway resolver builds for live sessions.
  */
 export async function getWorkspaceEffectiveFeatures(
-  workspaceRoot: string
+  workspaceRoot: string,
+  machineId?: string | null,
 ): Promise<WorkspaceEffectiveFeatures> {
-  return invoke('get_workspace_effective_features', { workspaceRoot });
+  return apiCall('get_workspace_effective_features', {
+    workspaceRoot,
+    ...(machineId ? { machineId } : {}),
+  });
 }

@@ -21,7 +21,7 @@ export class RegistryPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.heading = page.getByRole('heading', { name: 'Discover' });
+    this.heading = page.getByRole('heading', { name: 'Discover Servers' });
     this.searchInput = page.getByPlaceholder('Search servers...');
     this.serverGrid = page.locator('.grid');
     this.serverCards = page.locator('[class*="ServerCard"], .rounded-xl.border');

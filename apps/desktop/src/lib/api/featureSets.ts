@@ -1,4 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
+/** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
+import { apiCall } from './transport';
 
 /**
  * FeatureSet type.
@@ -47,6 +48,8 @@ export interface FeatureSetMember {
   member_type: MemberType;
   member_id: string;
   mode: MemberMode;
+  /** When true, this member is advertised in tool discovery surfaces. */
+  surfaced?: boolean;
 }
 
 /**
@@ -93,81 +96,61 @@ export interface AddMemberInput {
   mode?: MemberMode;
 }
 
-/**
- * List all feature sets.
- */
+/** List all feature sets. */
 export async function listFeatureSets(): Promise<FeatureSet[]> {
-  return invoke('list_feature_sets');
+  return apiCall('list_feature_sets');
 }
 
-/**
- * List feature sets for a specific space.
- */
+/** List feature sets for a specific space. */
 export async function listFeatureSetsBySpace(spaceId: string): Promise<FeatureSet[]> {
-  return invoke('list_feature_sets_by_space', { spaceId });
+  return apiCall('list_feature_sets_by_space', { spaceId });
 }
 
-/**
- * Get a feature set by ID.
- */
+/** Get a feature set by ID. */
 export async function getFeatureSet(id: string): Promise<FeatureSet | null> {
-  return invoke('get_feature_set', { id });
+  return apiCall('get_feature_set', { id });
 }
 
-/**
- * Create a new feature set.
- */
+/** Create a new feature set. */
 export async function createFeatureSet(input: CreateFeatureSetInput): Promise<FeatureSet> {
-  return invoke('create_feature_set', { input });
+  return apiCall('create_feature_set', { input });
 }
 
-/**
- * Delete a feature set.
- */
+/** Delete a feature set. */
 export async function deleteFeatureSet(id: string): Promise<void> {
-  return invoke('delete_feature_set', { id });
+  return apiCall('delete_feature_set', { id });
 }
 
-/**
- * Get a feature set with its members.
- */
+/** Get a feature set with its members. */
 export async function getFeatureSetWithMembers(id: string): Promise<FeatureSet | null> {
-  return invoke('get_feature_set_with_members', { id });
+  return apiCall('get_feature_set_with_members', { id });
 }
 
-/**
- * Update a feature set.
- */
+/** Update a feature set. */
 export async function updateFeatureSet(id: string, input: UpdateFeatureSetInput): Promise<FeatureSet> {
-  return invoke('update_feature_set', { id, input });
+  return apiCall('update_feature_set', { id, input });
 }
 
-/**
- * Add a member to a feature set.
- */
+/** Add a member to a feature set. */
 export async function addFeatureSetMember(
   featureSetId: string,
   input: AddMemberInput
 ): Promise<FeatureSet> {
-  return invoke('add_feature_set_member', { featureSetId, input });
+  return apiCall('add_feature_set_member', { featureSetId, input });
 }
 
-/**
- * Remove a member from a feature set.
- */
+/** Remove a member from a feature set. */
 export async function removeFeatureSetMember(
   featureSetId: string,
   memberId: string
 ): Promise<FeatureSet> {
-  return invoke('remove_feature_set_member', { featureSetId, memberId });
+  return apiCall('remove_feature_set_member', { featureSetId, memberId });
 }
 
-/**
- * Set all members for a feature set (replaces existing).
- */
+/** Set all members for a feature set (replaces existing). */
 export async function setFeatureSetMembers(
   featureSetId: string,
   members: AddMemberInput[]
 ): Promise<FeatureSet> {
-  return invoke('set_feature_set_members', { featureSetId, members });
+  return apiCall('set_feature_set_members', { featureSetId, members });
 }

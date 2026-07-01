@@ -205,6 +205,19 @@ pub enum DomainEvent {
     /// Server was disabled (will disconnect)
     ServerDisabled { space_id: Uuid, server_id: String },
 
+    /// Version probe completed for a server (fired regardless of whether an update is available).
+    ServerVersionChecked { space_id: Uuid, server_id: String },
+
+    /// Notify-mode probe found a newer package version than the installed/pinned one.
+    ServerUpdateAvailable {
+        space_id: Uuid,
+        server_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_version: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        latest_version: Option<String>,
+    },
+
     // ════════════════════════════════════════════════════════════════════════
     // SERVER CONNECTION STATE (Runtime)
     // ════════════════════════════════════════════════════════════════════════
@@ -410,6 +423,15 @@ pub enum DomainEvent {
     /// different tool list, so the notifier re-pushes `tools/list_changed` to
     /// that Space's peers.
     BuiltinServerConfigChanged { space_id: Uuid },
+
+    // ════════════════════════════════════════════════════════════════════════
+    // WORKSPACE APPEARANCES
+    // ════════════════════════════════════════════════════════════════════════
+    /// A workspace appearance (icon, theme) was upserted or deleted.
+    ///
+    /// The desktop Workspaces tab and space switcher listen for this to
+    /// refresh their icon display without a full reload.
+    WorkspaceAppearanceChanged { workspace_root: String },
 }
 
 // ============================================================================
@@ -428,6 +450,8 @@ impl DomainEvent {
             Self::ServerConfigUpdated { .. } => "server_config_updated",
             Self::ServerEnabled { .. } => "server_enabled",
             Self::ServerDisabled { .. } => "server_disabled",
+            Self::ServerVersionChecked { .. } => "server_version_checked",
+            Self::ServerUpdateAvailable { .. } => "server_update_available",
             Self::ServerStatusChanged { .. } => "server_status_changed",
             Self::ServerAuthProgress { .. } => "server_auth_progress",
             Self::ServerFeaturesRefreshed { .. } => "server_features_refreshed",
@@ -451,6 +475,7 @@ impl DomainEvent {
             Self::SessionRootsChanged => "session_roots_changed",
             Self::MetaToolInvoked { .. } => "meta_tool_invoked",
             Self::BuiltinServerConfigChanged { .. } => "builtin_server_config_changed",
+            Self::WorkspaceAppearanceChanged { .. } => "workspace_appearance_changed",
         }
     }
 
@@ -505,6 +530,8 @@ impl DomainEvent {
             | Self::ServerConfigUpdated { space_id, .. }
             | Self::ServerEnabled { space_id, .. }
             | Self::ServerDisabled { space_id, .. }
+            | Self::ServerVersionChecked { space_id, .. }
+            | Self::ServerUpdateAvailable { space_id, .. }
             | Self::ServerStatusChanged { space_id, .. }
             | Self::ServerAuthProgress { space_id, .. }
             | Self::ServerFeaturesRefreshed { space_id, .. }
@@ -528,7 +555,8 @@ impl DomainEvent {
             | Self::GatewayStarted { .. }
             | Self::GatewayStopped
             | Self::SessionRootsChanged
-            | Self::MetaToolInvoked { .. } => None,
+            | Self::MetaToolInvoked { .. }
+            | Self::WorkspaceAppearanceChanged { .. } => None,
         }
     }
 
@@ -542,6 +570,8 @@ impl DomainEvent {
             | Self::ServerConfigUpdated { server_id, .. }
             | Self::ServerEnabled { server_id, .. }
             | Self::ServerDisabled { server_id, .. }
+            | Self::ServerVersionChecked { server_id, .. }
+            | Self::ServerUpdateAvailable { server_id, .. }
             | Self::ServerStatusChanged { server_id, .. }
             | Self::ServerAuthProgress { server_id, .. }
             | Self::ServerFeaturesRefreshed { server_id, .. }
@@ -755,5 +785,6 @@ mod tests {
         let json = serde_json::to_string(&needs).unwrap();
         assert!(json.contains("\"type\":\"workspace_needs_binding\""));
         assert!(json.contains("\"session_id\":\"s\""));
+        assert!(json.contains("\"space_locked\":true"));
     }
 }

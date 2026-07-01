@@ -1,4 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
+/** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
+import { openSpaceConfigFile as shellOpenSpaceConfigFile } from '@/lib/backend/shell';
+
+import { apiCall } from './transport';
 
 /**
  * A Space represents an isolated environment with its own credentials and
@@ -18,28 +21,34 @@ export interface Space {
   updated_at: string;
 }
 
+/** List all spaces. */
 export async function listSpaces(): Promise<Space[]> {
-  return invoke('list_spaces');
+  return apiCall('list_spaces');
 }
 
+/** Get a space by ID. */
 export async function getSpace(id: string): Promise<Space | null> {
-  return invoke('get_space', { id });
+  return apiCall('get_space', { id });
 }
 
+/** Create a new space. */
 export async function createSpace(name: string, icon?: string): Promise<Space> {
-  return invoke('create_space', { name, icon });
+  return apiCall('create_space', { name, icon });
 }
 
+/** Delete a space by ID. */
 export async function deleteSpace(id: string): Promise<void> {
-  return invoke('delete_space', { id });
+  return apiCall('delete_space', { id });
 }
 
+/** Read the raw space config file contents. */
 export async function readSpaceConfig(spaceId: string): Promise<string> {
-  return invoke('read_space_config', { spaceId });
+  return apiCall('read_space_config', { spaceId });
 }
 
+/** Save raw space config file contents. */
 export async function saveSpaceConfig(spaceId: string, content: string): Promise<void> {
-  return invoke('save_space_config', { spaceId, content });
+  return apiCall('save_space_config', { spaceId, content });
 }
 
 /**
@@ -47,11 +56,12 @@ export async function saveSpaceConfig(spaceId: string, content: string): Promise
  * Returns true if the server was found and removed, false if it wasn't in the config.
  */
 export async function removeServerFromConfig(spaceId: string, serverId: string): Promise<boolean> {
-  return invoke('remove_server_from_config', { spaceId, serverId });
+  return apiCall('remove_server_from_config', { spaceId, serverId });
 }
 
+/** Reveal a space config file in the system editor (desktop only). */
 export async function openSpaceConfigFile(spaceId: string): Promise<void> {
-  return invoke('open_space_config_file', { spaceId });
+  return shellOpenSpaceConfigFile(spaceId);
 }
 
 /**
@@ -70,7 +80,7 @@ export interface SpaceBaseDir {
 
 /** List a Space's base directories. */
 export async function listSpaceBaseDirs(spaceId: string): Promise<SpaceBaseDir[]> {
-  return invoke('list_space_base_dirs', { spaceId });
+  return apiCall('list_space_base_dirs', { spaceId });
 }
 
 /**
@@ -78,10 +88,27 @@ export async function listSpaceBaseDirs(spaceId: string): Promise<SpaceBaseDir[]
  * normalized backend-side; rejects a folder already claimed by another Space.
  */
 export async function addSpaceBaseDir(spaceId: string, path: string): Promise<SpaceBaseDir> {
-  return invoke('add_space_base_dir', { spaceId, path });
+  return apiCall('add_space_base_dir', { spaceId, path });
 }
 
 /** Remove a base directory by its row id. */
 export async function removeSpaceBaseDir(id: string): Promise<void> {
-  return invoke('remove_space_base_dir', { id });
+  return apiCall('remove_space_base_dir', { id });
+}
+
+export interface UpdateSpaceInput {
+  name?: string;
+  icon?: string;
+  description?: string;
+}
+
+/** Update a space's display metadata (name, icon, description). */
+export async function updateSpace(id: string, input: UpdateSpaceInput): Promise<Space> {
+  return apiCall('update_space', {
+    id,
+    name: input.name,
+    icon: input.icon,
+    description: input.description,
+    input,
+  });
 }

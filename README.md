@@ -225,6 +225,10 @@ pnpm build    # Production build
 pnpm test     # Run all tests
 ```
 
+**Remote access (optional):** MCP and web admin can be exposed via Cloudflare Tunnel + Access on separate hostnames (`45818` / `45819` stay loopback). User-facing overview: [`docs/guide/remote-access.mdx`](docs/guide/remote-access.mdx).
+
+**Web admin (browser UI over HTTP):** `pnpm dev:admin` or `pnpm dev:web:admin` — see [`AGENTS.md`](AGENTS.md) for dev commands and port layout (`:1420` / `:45818` / `:45819`).
+
 **Prerequisites:** Rust 1.75+, Node.js 18+, pnpm 9+. Linux also needs `gnome-keyring libsecret-1-dev librsvg2-dev pkg-config`.
 
 Built with **Tauri 2** (Rust + React 19), **Axum** for the gateway, **ring** for encryption, **rmcp** for MCP.

@@ -1,4 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
+/** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
+import { apiCall } from './transport';
 
 /**
  * Type of MCP feature.
@@ -22,37 +23,29 @@ export interface ServerFeature {
   is_available: boolean;
 }
 
-/**
- * List all features for a space.
- */
+/** List all features for a space. */
 export async function listServerFeatures(spaceId: string): Promise<ServerFeature[]> {
-  return invoke('list_server_features', { spaceId });
+  return apiCall('list_server_features', { spaceId });
 }
 
-/**
- * List features for a specific server in a space.
- */
+/** List features for a specific server in a space. */
 export async function listServerFeaturesByServer(
   spaceId: string,
   serverId: string
 ): Promise<ServerFeature[]> {
-  return invoke('list_server_features_by_server', { spaceId, serverId });
+  return apiCall('list_server_features_by_server', { spaceId, serverId });
 }
 
-/**
- * List features by type for a server.
- */
+/** List features by type for a server. */
 export async function listServerFeaturesByType(
   spaceId: string,
   serverId: string,
   featureType: FeatureType
 ): Promise<ServerFeature[]> {
-  return invoke('list_server_features_by_type', { spaceId, serverId, featureType });
+  return apiCall('list_server_features_by_type', { spaceId, serverId, featureType });
 }
 
-/**
- * Get a specific feature by ID.
- */
+/** Get a specific feature by ID. */
 export async function getServerFeature(id: string): Promise<ServerFeature | null> {
-  return invoke('get_server_feature', { id });
+  return apiCall('get_server_feature', { id });
 }

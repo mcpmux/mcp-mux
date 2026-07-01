@@ -7,17 +7,17 @@ test.describe('My Servers Page', () => {
     await dashboard.navigate();
     
     // Click My Servers in sidebar
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     // Check heading
-    await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
   });
 
   test('should display gateway status banner', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     // Gateway status should be visible - either running or stopped
     const runningBanner = page.locator('text=Gateway Running');
@@ -31,8 +31,8 @@ test.describe('My Servers Page', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
-    await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
+    await page.locator('nav button:has-text("My Servers")').click();
+    await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
     
     // Page should have content - either servers or empty state
     const hasServers = await page.locator('[class*="rounded-xl"][class*="border"]').count() > 0;
@@ -45,7 +45,7 @@ test.describe('My Servers Page', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     // Should have gateway-related UI
     const gatewayText = page.locator('text=/Gateway/i');
@@ -58,7 +58,7 @@ test.describe('Server Actions', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     const serverCards = page.locator('[class*="rounded-xl"][class*="border"]');
     const cardCount = await serverCards.count();
@@ -73,7 +73,7 @@ test.describe('Server Actions', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     // Look for server-specific cards (not status banners)
     const serverCards = page.locator('[data-server-card], [class*="rounded"][class*="border"]:has(button)');
@@ -95,7 +95,7 @@ test.describe('Server Action Menu', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
 
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
 
     // Find any server card with a menu button (three-dot / MoreVertical)
     const menuButtons = page.locator('button[aria-label="More actions"]');
@@ -122,7 +122,7 @@ test.describe('Server Toast Notifications', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     const enableBtn = page.getByRole('button', { name: /Enable/i }).first();
     if (await enableBtn.isVisible()) {
@@ -137,7 +137,7 @@ test.describe('Server Toast Notifications', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     // Open log viewer for first server (if available)
     const logButton = page.getByRole('button', { name: /Logs/i }).first();
@@ -164,7 +164,7 @@ test.describe('Server Toast Notifications', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Tools")').click();
+    await page.locator('nav button:has-text("My Servers")').click();
     
     const logButton = page.getByRole('button', { name: /Logs/i }).first();
     if (await logButton.isVisible()) {

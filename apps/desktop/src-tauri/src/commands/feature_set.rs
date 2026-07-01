@@ -391,6 +391,7 @@ pub async fn add_feature_set_member(
         member_type,
         member_id: input.member_id,
         mode,
+        surfaced: false,
     };
 
     feature_set.members.push(member);
@@ -515,6 +516,7 @@ pub async fn set_feature_set_members(
                 member_type,
                 member_id: input.member_id,
                 mode,
+                surfaced: false,
             }
         })
         .collect();

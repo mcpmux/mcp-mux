@@ -1,0 +1,27 @@
+{
+  "dashboard": "Dashboard",
+  "myServers": "My Servers",
+  "search": "Search",
+  "builtin": "Built-in",
+  "bundles": "Bundles",
+  "projects": "Projects",
+  "clients": "Clients",
+  "spaces": "Spaces",
+  "settings": "Settings",
+  "zones": {
+    "library": "Library",
+    "control": "Control"
+  },
+  "hints": {
+    "dashboard": "Gateway connection, server health, and stats at a glance",
+    "myServers": "MCP servers installed in this Space",
+    "search": "Browse and install servers from the registry",
+    "builtin": "Capabilities McpMux itself provides — self-management now; memory & skills next",
+    "bundles": "Curated tool bundles you can grant and map",
+    "bundlesTooltip": "FeatureSets",
+    "projects": "Folder → Bundle mappings",
+    "clients": "AI apps connected through your gateway",
+    "spaces": "Isolated contexts — work, personal, per client",
+    "settings": "Preferences, gateway, and updates"
+  }
+}

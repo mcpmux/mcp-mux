@@ -1,33 +1,61 @@
-/**
- * ServerActionMenu - Overflow menu for server actions
- * 
- * Actions:
- * - Configure: Edit server inputs
- * - Refresh: Quick reconnect with existing credentials
- * - Reconnect: Logout + re-authenticate (OAuth only)
- * - View Logs: Open log viewer
- * - View Definition: View server definition JSON
- * - Uninstall: Remove server
- */
-
-import { useState, useRef, useEffect } from 'react';
-import { MoreVertical, Settings, RefreshCw, RotateCcw, FileText, Code, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import {
+  MoreVertical,
+  Settings,
+  RefreshCw,
+  RotateCcw,
+  FileText,
+  Code,
+  Trash2,
+  Copy,
+  Download,
+  ArrowUpCircle,
+  Search,
+  Lock,
+} from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuAction,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@mcpmux/ui';
+import type { UpdatePolicy } from '@/lib/api/settings';
 
 export interface ServerActionMenuProps {
   serverId: string;
   serverName: string;
+  /** Whether the server has credential / config inputs. Servers with no inputs still show
+   *  Configure so the display name can be edited. */
   hasInputs: boolean;
   isOAuth: boolean;
   isEnabled: boolean;
   isConnected: boolean;
+  /** npx/uvx stdio transport — eligible for package update actions. */
+  isPackageManaged?: boolean;
+  /** Per-server update policy from installed state. */
+  updatePolicy?: UpdatePolicy;
+  /** Whether a newer package version is available. */
+  hasUpdateAvailable?: boolean;
+  /** Latest registry version when an update is available. */
+  latestVersion?: string | null;
+  /** Show "Add another account…" for registry/manual installs (not clones-of-clones). */
+  canCloneAccount?: boolean;
   onConfigure: () => void;
   onRefresh: () => void;
   onReconnect: () => void;
+  onUpdateNow?: () => void;
+  onCheckForUpdate?: () => void;
+  onLockToCurrentVersion?: () => void;
   onViewLogs: () => void;
   onViewDefinition: () => void;
+  onCloneAccount?: () => void;
   onUninstall: () => void;
 }
 
+/**
+ * Overflow menu for per-server actions (configure, logs, uninstall, etc.).
+ */
 export function ServerActionMenu({
   serverId,
   serverName: _serverName,
@@ -35,149 +63,135 @@ export function ServerActionMenu({
   isOAuth,
   isEnabled,
   isConnected: _isConnected,
+  isPackageManaged = false,
+  updatePolicy = 'notify',
+  hasUpdateAvailable = false,
+  latestVersion,
+  canCloneAccount = false,
   onConfigure,
   onRefresh,
   onReconnect,
+  onUpdateNow,
+  onCheckForUpdate,
+  onLockToCurrentVersion,
   onViewLogs,
   onViewDefinition,
+  onCloneAccount,
   onUninstall,
 }: ServerActionMenuProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        menuRef.current &&
-        !menuRef.current.contains(event.target as Node) &&
-        buttonRef.current &&
-        !buttonRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-      }
-    }
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [isOpen]);
-
-  // Close menu on escape
-  useEffect(() => {
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setIsOpen(false);
-      }
-    }
-
-    if (isOpen) {
-      document.addEventListener('keydown', handleEscape);
-      return () => document.removeEventListener('keydown', handleEscape);
-    }
-  }, [isOpen]);
-
-  const handleAction = (action: () => void) => {
-    setIsOpen(false);
-    action();
-  };
+  const { t } = useTranslation('servers');
+  const showUpdateNow =
+    isPackageManaged &&
+    isEnabled &&
+    onUpdateNow != null &&
+    (updatePolicy === 'auto' || hasUpdateAvailable);
+  const showCheckForUpdate =
+    isPackageManaged && onCheckForUpdate != null && updatePolicy !== 'pinned';
+  const showLockToCurrentVersion =
+    isPackageManaged && onLockToCurrentVersion != null && updatePolicy !== 'pinned';
+  const updateLabel = latestVersion
+    ? t('actions.updateAvailableVersion', { version: latestVersion })
+    : t('actions.updateAvailable');
 
   return (
-    <div className="relative">
-      <button
-        ref={buttonRef}
-        onClick={() => setIsOpen(!isOpen)}
-        className="p-2 text-sm rounded-lg bg-[rgb(var(--surface-hover))] border border-[rgb(var(--border))] text-[rgb(var(--foreground))]/70 hover:bg-[rgb(var(--surface-elevated))] hover:text-[rgb(var(--foreground))] transition-colors"
-        title="More actions"
-        aria-label="More actions"
-        aria-expanded={isOpen}
-        aria-haspopup="menu"
-        data-testid={`action-menu-${serverId}`}
-      >
-        <MoreVertical className="h-4 w-4" />
-      </button>
-
-      {isOpen && (
-        <div
-          ref={menuRef}
-          className="absolute right-0 mt-1 w-48 py-1 bg-[rgb(var(--surface-elevated))] border border-[rgb(var(--border))] rounded-lg shadow-lg z-50 animate-in fade-in slide-in-from-top-1 duration-150"
-          role="menu"
+    <DropdownMenu>
+      <DropdownMenuTrigger>
+        <button
+          type="button"
+          className="relative p-2 text-sm rounded-lg bg-[rgb(var(--surface-hover))] border border-[rgb(var(--border))] text-[rgb(var(--foreground))]/70 hover:bg-[rgb(var(--surface-elevated))] hover:text-[rgb(var(--foreground))] transition-colors"
+          title={t('actions.moreActions')}
+          aria-label={t('actions.moreActions')}
+          data-testid={`action-menu-${serverId}`}
         >
-          {/* Configure - visible if server has inputs */}
-          {hasInputs && (
-            <button
-              onClick={() => handleAction(onConfigure)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
-              role="menuitem"
-            >
-              <Settings className="h-4 w-4 text-[rgb(var(--muted))]" />
-              Configure
-            </button>
+          <MoreVertical className="h-4 w-4" />
+          {hasUpdateAvailable && (
+            <span
+              className="absolute top-1 right-1 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-[rgb(var(--surface-hover))]"
+              aria-label={t('actions.updateBadge')}
+              data-testid={`update-badge-${serverId}`}
+            />
           )}
-
-          {/* Refresh - visible when enabled (quick reconnect with existing creds) */}
-          {isEnabled && (
-            <button
-              onClick={() => handleAction(onRefresh)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
-              role="menuitem"
-            >
-              <RefreshCw className="h-4 w-4 text-[rgb(var(--muted))]" />
-              Refresh
-            </button>
-          )}
-
-          {/* Reconnect - OAuth only (logout + re-auth) */}
-          {isOAuth && isEnabled && (
-            <button
-              onClick={() => handleAction(onReconnect)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--warning))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
-              role="menuitem"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Reconnect
-            </button>
-          )}
-
-          {/* View Logs - always visible */}
-          <button
-            onClick={() => handleAction(onViewLogs)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
-            role="menuitem"
-            data-testid={`view-logs-${serverId}`}
-          >
-            <FileText className="h-4 w-4 text-[rgb(var(--muted))]" />
-            View Logs
-          </button>
-
-          {/* View Definition - always visible */}
-          <button
-            onClick={() => handleAction(onViewDefinition)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
-            role="menuitem"
-            data-testid={`view-definition-${serverId}`}
-          >
-            <Code className="h-4 w-4 text-[rgb(var(--muted))]" />
-            View Definition
-          </button>
-
-          {/* Separator */}
-          <div className="my-1 border-t border-[rgb(var(--border-subtle))]" />
-
-          {/* Uninstall - always visible, destructive */}
-          <button
-            onClick={() => handleAction(onUninstall)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--error))] hover:bg-[rgb(var(--error))]/10 transition-colors"
-            role="menuitem"
-            data-testid={`uninstall-menu-${serverId}`}
-          >
-            <Trash2 className="h-4 w-4" />
-            Uninstall
-          </button>
-        </div>
-      )}
-    </div>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56 py-1 p-1">
+        {hasUpdateAvailable && showUpdateNow && (
+          <DropdownMenuAction
+            icon={ArrowUpCircle}
+            label={updateLabel}
+            onSelect={onUpdateNow}
+            data-testid={`update-available-${serverId}`}
+          />
+        )}
+        <DropdownMenuAction
+          icon={Settings}
+          label={hasInputs ? t('actions.configure') : t('actions.settings')}
+          onSelect={onConfigure}
+          data-testid={`configure-server-${serverId}`}
+        />
+        {isEnabled && (
+          <DropdownMenuAction icon={RefreshCw} label={t('actions.refresh')} onSelect={onRefresh} />
+        )}
+        {showUpdateNow && !hasUpdateAvailable && (
+          <DropdownMenuAction
+            icon={Download}
+            label={t('actions.updateNow')}
+            onSelect={onUpdateNow}
+            data-testid={`update-now-${serverId}`}
+          />
+        )}
+        {showCheckForUpdate && (
+          <DropdownMenuAction
+            icon={Search}
+            label={t('actions.checkForUpdate')}
+            onSelect={onCheckForUpdate}
+            data-testid={`check-update-${serverId}`}
+          />
+        )}
+        {showLockToCurrentVersion && (
+          <DropdownMenuAction
+            icon={Lock}
+            label={t('actions.lockVersion')}
+            onSelect={onLockToCurrentVersion}
+            data-testid={`lock-version-${serverId}`}
+          />
+        )}
+        {isOAuth && isEnabled && (
+          <DropdownMenuAction
+            icon={RotateCcw}
+            label={t('actions.reconnect')}
+            onSelect={onReconnect}
+            variant="warning"
+          />
+        )}
+        <DropdownMenuAction
+          icon={FileText}
+          label={t('actions.viewLogs')}
+          onSelect={onViewLogs}
+          data-testid={`view-logs-${serverId}`}
+        />
+        <DropdownMenuAction
+          icon={Code}
+          label={t('actions.viewDefinition')}
+          onSelect={onViewDefinition}
+          data-testid={`view-definition-${serverId}`}
+        />
+        {canCloneAccount && onCloneAccount && (
+          <DropdownMenuAction
+            icon={Copy}
+            label={t('actions.cloneAccount')}
+            onSelect={onCloneAccount}
+            data-testid={`clone-account-${serverId}`}
+          />
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuAction
+          icon={Trash2}
+          label={t('actions.uninstall')}
+          onSelect={onUninstall}
+          variant="danger"
+          data-testid={`uninstall-menu-${serverId}`}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

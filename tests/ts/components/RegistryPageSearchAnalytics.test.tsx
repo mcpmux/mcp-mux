@@ -36,8 +36,8 @@ vi.mock('@/lib/api/registry', () => ({
 
 vi.mock('@/stores', () => ({
   useViewSpace: () => ({ id: 'space-1', name: 'My Space' }),
-  useNavigateTo: () => () => {},
 }));
+vi.mock('@/hooks/use-navigate.hook', () => ({ useNavigate: () => () => {} }));
 
 // Leaf children irrelevant to search analytics — stub to keep the test focused.
 vi.mock('@/features/registry/ServerCard', () => ({ ServerCard: () => null }));
@@ -49,6 +49,7 @@ vi.mock('@/components/Contribute', () => ({
 
 import { RegistryPage } from '@/features/registry/RegistryPage';
 import { useRegistryStore } from '@/stores/registryStore';
+import { renderWithI18n } from '../render-with-i18n.helpers';
 
 function makeServer(overrides: Partial<ServerViewModel> = {}): ServerViewModel {
   return {
@@ -86,7 +87,7 @@ const SERVERS: ServerViewModel[] = [
 
 /** Render, flush the async mount-time loadRegistry, then seed real servers. */
 async function renderSeeded() {
-  render(<RegistryPage />);
+  renderWithI18n(<RegistryPage />);
   // loadRegistry resolves on the microtask queue (api mocks resolve immediately).
   await act(async () => {
     await Promise.resolve();

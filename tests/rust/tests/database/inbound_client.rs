@@ -39,6 +39,7 @@ fn create_test_client(name: &str) -> InboundClient {
         updated_at: now,
         reports_roots: false,
         roots_capability_known: false,
+        machine_id: None,
     }
 }
 

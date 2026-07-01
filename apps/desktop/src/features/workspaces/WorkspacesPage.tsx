@@ -1,16 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
+import {
+  useServerStatusEvents,
+  useWorkspaceEventListener,
+  type WorkspaceEventChannel,
+} from '@/hooks';
 import {
   AlertCircle,
   Check,
   ChevronDown,
   ChevronRight,
   FileText,
-  Folder,
   FolderOpen,
-  FolderSearch,
-  Layers,
   Loader2,
   MessageSquare,
   Package,
@@ -18,10 +30,11 @@ import {
   Radio,
   RefreshCw,
   Search,
-  Server as ServerIcon,
+  Server as ServerGlyph,
   Trash2,
   Wrench,
   X,
+  Monitor,
 } from 'lucide-react';
 import {
   Button,
@@ -33,27 +46,43 @@ import {
 } from '@mcpmux/ui';
 import {
   clearUnmappedReportedRoots,
-  createWorkspaceBinding,
-  deleteWorkspaceBinding,
+  forgetReportedRoot,
   getWorkspaceEffectiveFeatures,
   listReportedWorkspaceRoots,
   listWorkspaceBindings,
-  updateWorkspaceBinding,
-  validateWorkspaceRoot,
   type EffectiveFeature,
   type WorkspaceBinding,
-  type WorkspaceBindingInput,
   type WorkspaceEffectiveFeatures,
 } from '@/lib/api/workspaceBindings';
 import {
-  isStarterFeatureSet,
+  createMachine,
+  getHostname,
+  getLocalMachineId,
+  listMachines,
+  setLocalMachineId as persistLocalMachineId,
+  type Machine,
+} from '@/lib/api/machines';
+import {
+  getMissingMachineProfileField,
+  isMachineProfileComplete,
+  toMachineProfilePayload,
+} from '@/lib/machine-profile.helpers';
+import { listWorkspaceAppearances, type WorkspaceAppearance } from '@/lib/api/workspaceAppearances';
+import {
   listFeatureSets,
   type FeatureSet,
 } from '@/lib/api/featureSets';
-import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
-import { WorkspaceSetupWizard } from './WorkspaceSetupWizard';
-import { useSpaces, usePendingWorkspaceNew, useSetPendingWorkspaceNew } from '@/stores';
+import { ServerIcon } from '@/components/ServerIcon';
+import {
+  useBindingPanelStore,
+  usePendingWorkspaceNew,
+  useSetPendingWorkspaceNew,
+  useSpaces,
+} from '@/stores';
 import type { Space } from '@/lib/api/spaces';
+import { FormField } from './workspace-binding-form.component';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
+import { useViewerIdentity } from '@/hooks/use-viewer-identity.hook';
 
 /**
  * Workspaces page.
@@ -61,54 +90,99 @@ import type { Space } from '@/lib/api/spaces';
  * Mirrors the Clients page's shape for visual consistency:
  *   • Header: title + subtitle + refresh, followed by a single large search.
  *   • Content: responsive cards grid inside a max-w-[2000px] wrapper.
- *   • Inspector: fixed-right side panel with a `fixed inset-0` backdrop-
- *     blur dim + `animate-in slide-in-from-right` entrance.
+ *   • Binding edits: card clicks open the global WorkspaceBindingPanel via
+ *     bindingPanelStore (mounted in App.tsx).
  *
  * Each card is a workspace entry, unioning bindings and live reported roots
  * (dedup'd by normalized path). Status is conveyed with a corner dot + pill:
- *   • LIVE + unmapped → amber
- *   • LIVE + mapped   → emerald
- *   • OFFLINE + mapped → neutral
+ *   • LIVE + unmapped              → amber UNMAPPED
+ *   • LIVE + bound (other machine) → violet BOUND ELSEWHERE
+ *   • LIVE + bound (this machine)  → emerald LIVE
+ *   • OFFLINE + mapped             → neutral
  */
 
-type EntryKind = 'unmapped-live' | 'mapped-live' | 'mapped-offline';
+type EntryKind = 'unmapped-live' | 'live-elsewhere' | 'mapped-live' | 'mapped-offline';
 interface Entry {
   id: string;
   kind: EntryKind;
   root: string;
-  binding: WorkspaceBinding | null;
+  bindings: WorkspaceBinding[];
   isLive: boolean;
 }
-type Selected = { mode: 'new' } | { mode: 'entry'; id: string };
+
+/**
+ * Canonical binding for an entry — global (`machine_id IS NULL`) first,
+ * else first machine-scoped binding.
+ */
+function primaryBinding(entry: Entry): WorkspaceBinding | null {
+  return (
+    entry.bindings.find((b) => b.machine_id == null) ?? entry.bindings[0] ?? null
+  );
+}
+
+/**
+ * True when at least one binding applies on this install: global or scoped to
+ * the local machine.
+ */
+function entryIsBoundForCurrentMachine(
+  entry: Entry,
+  localMachineId: string | null,
+): boolean {
+  return entry.bindings.some(
+    (b) => b.machine_id == null || b.machine_id === localMachineId,
+  );
+}
+
+const WORKSPACE_TABLE_REFRESH_CHANNELS: WorkspaceEventChannel[] = [
+  'session-roots-changed',
+  'workspace-binding-changed',
+];
+
+const EFFECTIVE_FEATURES_REFRESH_CHANNELS: WorkspaceEventChannel[] = ['workspace-binding-changed'];
 
 export function WorkspacesPage() {
+  const { t } = useTranslation(['workspaces', 'common']);
   const spaces = useSpaces();
   const pendingNew = usePendingWorkspaceNew();
   const clearPendingNew = useSetPendingWorkspaceNew();
+  const { machineId: viewerMachineId } = useViewerIdentity();
   const [bindings, setBindings] = useState<WorkspaceBinding[]>([]);
+  const [appearances, setAppearances] = useState<WorkspaceAppearance[]>([]);
   const [reportedRoots, setReportedRoots] = useState<string[]>([]);
   const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [localMachineId, setLocalMachineId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { toasts, success, error: showError, dismiss } = useToast();
   const { confirm, ConfirmDialogElement } = useConfirm();
+  const openBindingPanel = useBindingPanelStore((state) => state.open);
+  const isPanelOpen = useBindingPanelStore((state) => state.isOpen);
 
-  const [selected, setSelected] = useState<Selected | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'live' | 'mapped' | 'unmapped'>('all');
+  const [machineFilter, setMachineFilter] = useState<string>('all');
+  const [identityBannerDismissed, setIdentityBannerDismissed] = useState(false);
+  const [showIdentityModal, setShowIdentityModal] = useState(false);
 
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [b, fs, roots] = await Promise.all([
+      const [b, fs, roots, ap, machineList, localId] = await Promise.all([
         listWorkspaceBindings(),
         listFeatureSets(),
         listReportedWorkspaceRoots().catch(() => [] as string[]),
+        listWorkspaceAppearances().catch(() => [] as WorkspaceAppearance[]),
+        listMachines().catch(() => [] as Machine[]),
+        getLocalMachineId().catch(() => null),
       ]);
       setBindings(b);
       setFeatureSets(fs);
       setReportedRoots(roots);
+      setAppearances(ap);
+      setMachines(machineList);
+      setLocalMachineId(localId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -119,31 +193,25 @@ export function WorkspacesPage() {
     void loadData().finally(() => setIsLoading(false));
   }, [loadData]);
 
-  // Opened from the home "Set up a folder" CTA — launch the create walkthrough.
+  // Opened from the home "Set up a folder" CTA — open global binding panel.
   useEffect(() => {
     if (pendingNew) {
-      setSelected({ mode: 'new' });
+      openBindingPanel({ mode: 'create' });
       clearPendingNew(false);
     }
-  }, [pendingNew, clearPendingNew]);
+  }, [pendingNew, clearPendingNew, openBindingPanel]);
 
   // Refresh whenever something the table reflects changes outside the page:
   //   • `session-roots-changed` — a connected client newly reported a root.
-  //   • `workspace-binding-changed` — a binding was created/updated/deleted
-  //     by another surface (e.g. the new-workspace popup or the meta-tool).
+  //   • `workspace-binding-changed` — binding or appearance write (same channel).
   // Without the binding listener, popup-driven saves leave this page showing
   // the stale "UNMAPPED" badge until the user navigates away and back.
-  useEffect(() => {
-    const reload = () => {
+  useWorkspaceEventListener(
+    useCallback(() => {
       void loadData();
-    };
-    const unRoots = listen('session-roots-changed', reload);
-    const unBinding = listen('workspace-binding-changed', reload);
-    return () => {
-      unRoots.then((fn) => fn());
-      unBinding.then((fn) => fn());
-    };
-  }, [loadData]);
+    }, [loadData]),
+    WORKSPACE_TABLE_REFRESH_CHANNELS
+  );
 
   const refresh = async () => {
     setIsRefreshing(true);
@@ -155,10 +223,22 @@ export function WorkspacesPage() {
   };
 
   const bindingsByRoot = useMemo(() => {
-    const m = new Map<string, WorkspaceBinding>();
-    for (const b of bindings) m.set(b.workspace_root.toLowerCase(), b);
+    const m = new Map<string, WorkspaceBinding[]>();
+    for (const b of bindings) {
+      const key = b.workspace_root.toLowerCase();
+      const list = m.get(key) ?? [];
+      list.push(b);
+      m.set(key, list);
+    }
     return m;
   }, [bindings]);
+  const appearancesByRoot = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const appearance of appearances) {
+      m.set(appearance.workspace_root.toLowerCase(), appearance.icon);
+    }
+    return m;
+  }, [appearances]);
   const fsById = useMemo(() => {
     const m = new Map<string, FeatureSet>();
     for (const f of featureSets) m.set(f.id, f);
@@ -169,6 +249,11 @@ export function WorkspacesPage() {
     for (const s of spaces) m.set(s.id, s);
     return m;
   }, [spaces]);
+  const machinesById = useMemo(() => {
+    const m = new Map<string, Machine>();
+    for (const machine of machines) m.set(machine.id, machine);
+    return m;
+  }, [machines]);
 
   /**
    * Unified list: live-reported roots come first (unmapped amber, then
@@ -181,58 +266,104 @@ export function WorkspacesPage() {
       const key = root.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      const binding = bindingsByRoot.get(key) ?? null;
-      list.push({
-        id: binding?.id ?? `live:${root}`,
-        kind: binding ? 'mapped-live' : 'unmapped-live',
+      const binds = bindingsByRoot.get(key) ?? [];
+      const primary = primaryBinding({
+        id: '',
+        kind: 'unmapped-live',
         root,
-        binding,
+        bindings: binds,
         isLive: true,
       });
+      const entry: Entry = {
+        id: primary?.id ?? `live:${root}`,
+        kind: 'unmapped-live',
+        root,
+        bindings: binds,
+        isLive: true,
+      };
+      if (binds.length > 0 && entryIsBoundForCurrentMachine(entry, viewerMachineId ?? localMachineId)) {
+        entry.kind = 'mapped-live';
+      } else if (binds.length > 0) {
+        entry.kind = 'live-elsewhere';
+      }
+      list.push(entry);
     }
     for (const b of bindings) {
       const key = b.workspace_root.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      list.push({
-        id: b.id,
+      const binds = bindingsByRoot.get(key) ?? [b];
+      const primary = primaryBinding({
+        id: '',
         kind: 'mapped-offline',
         root: b.workspace_root,
-        binding: b,
+        bindings: binds,
+        isLive: false,
+      });
+      list.push({
+        id: primary!.id,
+        kind: 'mapped-offline',
+        root: b.workspace_root,
+        bindings: binds,
         isLive: false,
       });
     }
     const rank: Record<EntryKind, number> = {
       'unmapped-live': 0,
-      'mapped-live': 1,
-      'mapped-offline': 2,
+      'live-elsewhere': 1,
+      'mapped-live': 2,
+      'mapped-offline': 3,
     };
     return list.sort((a, b) => {
       const o = rank[a.kind] - rank[b.kind];
       return o !== 0 ? o : a.root.localeCompare(b.root);
     });
-  }, [bindings, bindingsByRoot, reportedRoots]);
+  }, [bindings, bindingsByRoot, reportedRoots, localMachineId, viewerMachineId]);
+
+  const machinesWithBindings = useMemo(() => {
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      for (const b of entry.bindings) {
+        if (b.machine_id) ids.add(b.machine_id);
+      }
+    }
+    return machines
+      .filter((machine) => ids.has(machine.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [entries, machines]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return entries.filter((e) => {
       if (filter === 'live' && !e.isLive) return false;
-      if (filter === 'mapped' && !e.binding) return false;
+      if (filter === 'mapped' && e.bindings.length === 0) return false;
       if (filter === 'unmapped' && e.kind !== 'unmapped-live') return false;
+      if (
+        machineFilter !== 'all' &&
+        !e.bindings.some((b) => b.machine_id === machineFilter)
+      ) {
+        return false;
+      }
       if (!q) return true;
-      const spaceName = e.binding ? spaceById.get(e.binding.space_id)?.name ?? '' : '';
-      const fsNames = e.binding
-        ? e.binding.feature_set_ids
+      const binding = primaryBinding(e);
+      const spaceName = binding ? spaceById.get(binding.space_id)?.name ?? '' : '';
+      const fsNames = binding
+        ? binding.feature_set_ids
             .map((id) => fsById.get(id)?.name ?? '')
             .join(' ')
         : '';
+      const label = binding?.label?.toLowerCase() ?? '';
       return (
         e.root.toLowerCase().includes(q) ||
+        label.includes(q) ||
         spaceName.toLowerCase().includes(q) ||
         fsNames.toLowerCase().includes(q)
       );
     });
-  }, [entries, searchQuery, filter, spaceById, fsById]);
+  }, [entries, searchQuery, filter, machineFilter, spaceById, fsById]);
+
+  const showIdentityBanner =
+    !localMachineId && bindings.length > 0 && !identityBannerDismissed;
 
   const counts = useMemo(() => {
     let live = 0;
@@ -240,79 +371,82 @@ export function WorkspacesPage() {
     let unmapped = 0;
     for (const e of entries) {
       if (e.isLive) live++;
-      if (e.binding) mapped++;
+      if (e.bindings.length > 0) mapped++;
       if (e.kind === 'unmapped-live') unmapped++;
     }
     return { all: entries.length, live, mapped, unmapped };
   }, [entries]);
 
-  const selectedEntry: Entry | null =
-    selected?.mode === 'entry' ? entries.find((e) => e.id === selected.id) ?? null : null;
-  const selectedIsNew = selected?.mode === 'new';
-  const panelOpen = selected !== null;
+  const resolveEntryIcon = useCallback(
+    (entry: Entry): string | null =>
+      primaryBinding(entry)?.icon ??
+      appearancesByRoot.get(entry.root.toLowerCase()) ??
+      null,
+    [appearancesByRoot]
+  );
 
-  const handleCreate = async (input: WorkspaceBindingInput): Promise<WorkspaceBinding> => {
-    const created = await createWorkspaceBinding(input);
-    setBindings((prev) =>
-      [...prev, created].sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
-    );
-    success('Mapping saved', created.workspace_root);
-    return created;
-  };
-
-  const handleUpdate = async (id: string, input: WorkspaceBindingInput) => {
-    const updated = await updateWorkspaceBinding(id, input);
-    setBindings((prev) =>
-      prev
-        .map((b) => (b.id === id ? updated : b))
-        .sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
-    );
-    success('Mapping updated', updated.workspace_root);
-  };
-
-  const handleDelete = async (binding: WorkspaceBinding) => {
-    const ok = await confirm({
-      title: 'Remove mapping',
-      message: `Apps opening "${binding.workspace_root}" will stop receiving these tools. You can map the folder again anytime.`,
-      confirmLabel: 'Remove',
-      variant: 'danger',
+  // Auto-open binding panel for the first unmapped-live entry on page load.
+  // Catches `workspace-needs-binding` events that fired before the listener was
+  // registered (e.g. Cursor was already connected when this page first rendered).
+  useEffect(() => {
+    if (isLoading || isPanelOpen) return;
+    const firstUnmapped = entries.find((e) => e.kind === 'unmapped-live');
+    if (!firstUnmapped) return;
+    openBindingPanel({
+      mode: 'create-from-live',
+      workspaceRoot: firstUnmapped.root,
+      appearanceIcon: resolveEntryIcon(firstUnmapped) ?? undefined,
     });
-    if (!ok) return;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
+
+  const handleRegisterMachine = async (input: {
+    name: string;
+    icon: string | null;
+    hostname: string | null;
+  }) => {
+    const created = await createMachine(input);
+    await persistLocalMachineId(created.id);
+    const persistedId = await getLocalMachineId();
+    if (persistedId !== created.id) {
+      throw new Error('Machine was created but this install identity was not saved');
+    }
+    setMachines((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+    setLocalMachineId(created.id);
+    setShowIdentityModal(false);
+    setIdentityBannerDismissed(true);
+    success(t('machineIdentity.success'), created.name);
+  };
+
+  const handleForgetRoot = async (root: string) => {
     try {
-      await deleteWorkspaceBinding(binding.id);
-      setBindings((prev) => prev.filter((b) => b.id !== binding.id));
-      setSelected(null);
-      success('Mapping removed', binding.workspace_root);
+      await forgetReportedRoot(root);
+      await loadData();
     } catch (e) {
-      showError('Failed to remove mapping', e instanceof Error ? e.message : String(e));
+      showError(t('clearUnmapped.errorTitle'), String(e));
     }
   };
 
-  // Bulk "clear" for the unmapped (amber) folders. These are live-reported
-  // roots with no binding — clearing drops them from the gateway's in-memory
-  // session-roots registry so this list empties in one action, and the
-  // "map this folder?" prompt is offered again next time those apps report a
-  // folder. Mapped folders are untouched.
   const handleClearUnmapped = async () => {
     const n = counts.unmapped;
     const ok = await confirm({
-      title: 'Clear unmapped folders',
-      message: `Remove ${n} unmapped folder${n === 1 ? '' : 's'} from this list. McpMux will offer to map ${n === 1 ? 'it' : 'them'} again the next time those apps report the folder.`,
-      confirmLabel: 'Clear all',
+      title: t('clearUnmapped.title'),
+      message: t('clearUnmapped.message', { count: n }),
+      confirmLabel: t('clearUnmapped.confirm'),
+      cancelLabel: t('common:actions.cancel'),
+      variant: 'danger',
     });
     if (!ok) return;
     try {
       const cleared = await clearUnmappedReportedRoots();
       await loadData();
       success(
-        cleared > 0
-          ? `Cleared ${cleared} unmapped folder${cleared === 1 ? '' : 's'}`
-          : 'Nothing to clear',
-        cleared > 0 ? "You'll be asked to map them again next time." : undefined
+        cleared > 0 ? t('clearUnmapped.success', { count: cleared }) : t('clearUnmapped.nothing'),
+        cleared > 0 ? t('clearUnmapped.successHint') : undefined
       );
     } catch (e) {
       showError(
-        'Could not clear unmapped folders',
+        t('clearUnmapped.errorTitle'),
         e instanceof Error ? e.message : String(e)
       );
     }
@@ -325,15 +459,10 @@ export function WorkspacesPage() {
           <div className="flex items-start justify-between gap-6 mb-6">
             <div className="min-w-0 flex-1">
               <h1 className="text-3xl font-bold" data-testid="workspaces-title">
-                Workspaces
+                {t('title')}
               </h1>
               <p className="text-base text-[rgb(var(--muted))] mt-2 max-w-2xl">
-                Map a folder to the tools it should get. When you open that
-                folder in a connected app — Cursor, VS Code, Claude — McpMux
-                serves exactly the tools you chose for it. Folders you
-                haven&apos;t mapped fall back to your default Starter set, so
-                they work out of the box — map one only when it should see
-                something different.
+                {t('subtitle')}
               </p>
             </div>
             <div className="flex-shrink-0 flex items-center gap-2">
@@ -345,17 +474,17 @@ export function WorkspacesPage() {
                 className="whitespace-nowrap"
               >
                 <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
+                {t('common:actions.refresh')}
               </Button>
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => setSelected({ mode: 'new' })}
+                onClick={() => openBindingPanel({ mode: 'create' })}
                 data-testid="workspace-binding-create-toggle"
                 className="whitespace-nowrap"
               >
                 <Plus className="h-4 w-4 mr-2" />
-                New mapping
+                {t('actions.newBinding')}
               </Button>
             </div>
           </div>
@@ -365,7 +494,7 @@ export function WorkspacesPage() {
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-[rgb(var(--muted))]" />
               <input
                 type="text"
-                placeholder="Search by path, space, or feature set…"
+                placeholder={t('searchPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-12 pr-4 py-3 text-base bg-[rgb(var(--surface))] border border-[rgb(var(--border))] rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
@@ -376,23 +505,43 @@ export function WorkspacesPage() {
               value={filter}
               onChange={setFilter}
               options={[
-                { value: 'all', label: 'All', count: counts.all },
-                { value: 'live', label: 'Live', count: counts.live },
-                { value: 'mapped', label: 'Mapped', count: counts.mapped },
-                { value: 'unmapped', label: 'Unmapped', count: counts.unmapped },
+                { value: 'all', label: t('filter.all'), count: counts.all },
+                { value: 'live', label: t('filter.live'), count: counts.live },
+                { value: 'mapped', label: t('filter.mapped'), count: counts.mapped },
+                { value: 'unmapped', label: t('filter.unmapped'), count: counts.unmapped },
               ]}
             />
+            {machinesWithBindings.length > 0 ? (
+              <div className="relative min-w-[160px]">
+                <select
+                  value={machineFilter}
+                  onChange={(e) => setMachineFilter(e.target.value)}
+                  className="w-full appearance-none px-3 py-2 pr-9 bg-[rgb(var(--surface))] border border-[rgb(var(--border))] rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  data-testid="workspace-machine-filter"
+                  aria-label={t('filter.machine')}
+                >
+                  <option value="all">{t('filter.allMachines')}</option>
+                  {machinesWithBindings.map((machine) => (
+                    <option key={machine.id} value={machine.id}>
+                      {machine.icon ? `${machine.icon}  ` : ''}
+                      {machine.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))] pointer-events-none" />
+              </div>
+            ) : null}
             {counts.unmapped > 0 && (
               <Button
                 variant="ghost"
                 size="md"
                 onClick={handleClearUnmapped}
-                title="Forget all unmapped folders. McpMux will offer to map them again next time those apps report a folder."
+                title={t('clearUnmapped.message', { count: counts.unmapped })}
                 className="whitespace-nowrap text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20"
                 data-testid="workspaces-clear-unmapped"
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Clear unmapped
+                {t('clearUnmapped.button')}
               </Button>
             )}
           </div>
@@ -409,6 +558,39 @@ export function WorkspacesPage() {
 
       <div className="flex-1 overflow-auto px-8 py-8">
         <div className="max-w-[2000px] mx-auto">
+          {showIdentityBanner ? (
+            <div
+              className="mb-6 flex items-start justify-between gap-3 p-4 rounded-xl border border-primary-200/80 dark:border-primary-800/60 bg-primary-50 dark:bg-primary-900/20"
+              data-testid="machine-identity-banner"
+              role="alert"
+            >
+              <div className="flex items-start gap-3 min-w-0">
+                <Monitor className="h-5 w-5 text-primary-600 dark:text-primary-400 mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-primary-800 dark:text-primary-200">
+                  {t('machineIdentity.bannerMessage')}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setShowIdentityModal(true)}
+                  data-testid="machine-identity-setup-btn"
+                >
+                  {t('machineIdentity.bannerSetup')}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setIdentityBannerDismissed(true)}
+                  className="p-1.5 rounded-lg text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                  aria-label={t('machineIdentity.bannerDismissAria')}
+                  data-testid="machine-identity-banner-dismiss"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : null}
           {isLoading ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
@@ -416,91 +598,69 @@ export function WorkspacesPage() {
           ) : filtered.length === 0 ? (
             <EmptyState
               hasAny={entries.length > 0}
-              hasFilter={searchQuery.length > 0 || filter !== 'all'}
-              onCreate={() => setSelected({ mode: 'new' })}
+              hasFilter={searchQuery.length > 0 || filter !== 'all' || machineFilter !== 'all'}
+              onCreate={() => openBindingPanel({ mode: 'create' })}
+              t={t}
             />
           ) : (
             <div className="grid gap-5 auto-fill-cards">
-              {filtered.map((entry) => {
-                const isSelected =
-                  selected?.mode === 'entry' && selected.id === entry.id;
-                // Mapped entries show their bound Space + FeatureSet names.
-                // Unmapped entries read "Not mapped" — they fall back to the
-                // default Starter set rather than to an explicit binding.
-                const resolvedSpaceName = entry.binding
-                  ? spaceById.get(entry.binding.space_id)?.name
-                  : undefined;
-                const fsNames = entry.binding
-                  ? entry.binding.feature_set_ids.map(
-                      (id) => fsById.get(id)?.name ?? id
-                    )
-                  : [];
-                return (
+              {filtered.map((entry) => (
                   <EntryCard
                     key={entry.id}
                     entry={entry}
-                    spaceName={resolvedSpaceName}
-                    fsNames={fsNames}
-                    selected={isSelected}
-                    onClick={() => setSelected({ mode: 'entry', id: entry.id })}
+                    icon={resolveEntryIcon(entry)}
+                    bindings={entry.bindings}
+                    currentMachineId={viewerMachineId ?? localMachineId}
+                    machinesById={machinesById}
+                    spaceById={spaceById}
+                    fsById={fsById}
+                    onClick={() => {
+                      const primary = primaryBinding(entry);
+                      if (primary) {
+                        openBindingPanel({ mode: 'edit', binding: primary });
+                        return;
+                      }
+                      openBindingPanel({
+                        mode: 'create-from-live',
+                        workspaceRoot: entry.root,
+                        appearanceIcon: resolveEntryIcon(entry) ?? undefined,
+                      });
+                    }}
+                    onMachineRowClick={(bindingId) => {
+                      const rowBinding = entry.bindings.find((b) => b.id === bindingId);
+                      if (rowBinding) {
+                        openBindingPanel({ mode: 'edit', binding: rowBinding });
+                      }
+                    }}
+                    onCreateForCurrentMachine={() => {
+                      openBindingPanel({
+                        mode: 'create-from-live',
+                        workspaceRoot: entry.root,
+                        appearanceIcon: resolveEntryIcon(entry) ?? undefined,
+                      });
+                    }}
+                    onForget={
+                      entry.kind === 'unmapped-live'
+                        ? () => handleForgetRoot(entry.root)
+                        : undefined
+                    }
+                    t={t}
                   />
-                );
-              })}
+              ))}
             </div>
           )}
         </div>
       </div>
 
-      {panelOpen && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40 animate-in fade-in duration-200"
-            onClick={() => setSelected(null)}
-          />
-          {selectedIsNew ? (
-            <WorkspaceSetupWizard
-              spaces={spaces}
-              featureSets={featureSets}
-              reportedRoots={reportedRoots}
-              existingBindings={bindings}
-              onClose={() => setSelected(null)}
-              onCreate={async (input) => {
-                const created = await handleCreate(input);
-                // Land on the new mapping's inspector so its effective features
-                // are shown right after creation.
-                setSelected({ mode: 'entry', id: created.id });
-                return created;
-              }}
-              onError={(msg) => showError('Could not save', msg)}
-            />
-          ) : (
-            <InspectorPanel
-              key={selectedEntry?.id ?? 'entry'}
-              entry={selectedEntry}
-              isNew={false}
-              spaces={spaces}
-              featureSets={featureSets}
-              existingBindings={bindings}
-              onClose={() => setSelected(null)}
-              onSubmit={async (input) => {
-                if (selectedEntry?.binding) {
-                  await handleUpdate(selectedEntry.binding.id, input);
-                } else {
-                  const created = await handleCreate(input);
-                  setSelected({ mode: 'entry', id: created.id });
-                }
-              }}
-              onDelete={async () => {
-                if (selectedEntry?.binding) await handleDelete(selectedEntry.binding);
-              }}
-              onError={(msg) => showError('Could not save', msg)}
-            />
-          )}
-        </>
-      )}
-
       <ToastContainer toasts={toasts} onClose={dismiss} />
       {ConfirmDialogElement}
+      <MachineRegistrationModal
+        open={showIdentityModal}
+        onClose={() => setShowIdentityModal(false)}
+        onSubmit={handleRegisterMachine}
+        onError={(msg) => showError(t('machineIdentity.error'), msg)}
+        t={t}
+      />
     </div>
   );
 }
@@ -522,20 +682,18 @@ function formatFsList(names: string[]): string {
 }
 
 /**
- * Structural equality between two binding inputs. The edit form uses this
- * for its "dirty" check — Apply stays disabled until the current values
- * differ from what was loaded, so there's nothing to save on a no-op edit.
- * `feature_set_ids` order matters (it's the operator-chosen render order,
- * not just a set), so we compare positionally.
+ * Primary title for a workspace entry — label when set, otherwise the path.
  */
-function sameBindingInput(
-  a: WorkspaceBindingInput,
-  b: { workspace_root: string; space_id: string; feature_set_ids: string[] }
-): boolean {
-  if (a.workspace_root.trim() !== b.workspace_root.trim()) return false;
-  if (a.space_id !== b.space_id) return false;
-  if (a.feature_set_ids.length !== b.feature_set_ids.length) return false;
-  return a.feature_set_ids.every((id, i) => id === b.feature_set_ids[i]);
+function entryDisplayTitle(entry: Entry): string {
+  const label = primaryBinding(entry)?.label?.trim();
+  if (label) return label;
+  return entry.root;
+}
+
+/** Compact OAuth client id for card badges. */
+function shortClientId(clientId: string): string {
+  if (clientId.length <= 14) return clientId;
+  return `${clientId.slice(0, 8)}…`;
 }
 
 function SegmentedFilter<T extends string>({
@@ -585,152 +743,369 @@ function SegmentedFilter<T extends string>({
 }
 
 // ---------------------------------------------------------------------------
-// Entry card — a workspace folder and the tools it maps to. Matches the
-// Clients/Servers card template: flat surface icon box + subtle border,
-// w-14 icon, p-6, hover:scale. Folder name leads, full path beneath, and a
-// feature-set summary that collapses to "first + N more" so it stays tidy
-// no matter how many sets a folder maps to.
+// Entry card — matches Clients page card anatomy (56×56 icon, 3xl size, chips)
 // ---------------------------------------------------------------------------
 
-/** Last path segment — the folder's own name (`proj` from `/a/b/proj`). */
-function folderName(path: string): string {
-  const parts = path.split(/[/\\]/).filter(Boolean);
-  return parts[parts.length - 1] || path;
+/**
+ * Resolve a display label for a binding's machine scope.
+ */
+function machineBindingLabel(
+  binding: WorkspaceBinding,
+  machinesById: Map<string, Machine>,
+  t: TFunction<['workspaces', 'common']>
+): string {
+  if (binding.machine_id == null) return t('form.noMachine');
+  return machinesById.get(binding.machine_id)?.name ?? binding.machine_id;
+}
+
+interface EntryCardRoutingRow {
+  key: string;
+  bindingId?: string;
+  /** Opens create panel scoped to the viewer's current machine. */
+  createForCurrentMachine?: boolean;
+  ghost?: boolean;
+  machine?: Machine;
+  machineLabel: string;
+  fsName: string;
+  spaceName: string | undefined;
+  clickable: boolean;
+}
+
+const ROUTING_GRID_COLS =
+  'grid grid-cols-[minmax(0,5.5rem)_minmax(0,1fr)_minmax(0,3.5rem)] gap-x-2';
+
+/**
+ * Routing footer for EntryCard — fixed 3-column headers with each binding row
+ * rendered as an aligned chip pill (solid for real bindings, dashed for ghosts).
+ */
+function EntryCardRoutingTable({
+  rows,
+  onRowClick,
+  onCreateForCurrentMachine,
+  t,
+}: {
+  rows: EntryCardRoutingRow[];
+  onRowClick?: (bindingId: string) => void;
+  onCreateForCurrentMachine?: () => void;
+  t: TFunction<['workspaces', 'common']>;
+}) {
+  const headCls =
+    'text-left text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]';
+  const cellCls = 'min-w-0 text-[11px] text-[rgb(var(--foreground))]';
+
+  return (
+    <div className="text-xs">
+      <div
+        className={`${ROUTING_GRID_COLS} border-b border-[rgb(var(--border-subtle))] pb-1`}
+        aria-hidden
+      >
+        <span className={headCls}>{t('card.machine')}</span>
+        <span className={headCls}>{t('card.routesTo')}</span>
+        <span className={`${headCls} whitespace-nowrap`}>{t('card.in')}</span>
+      </div>
+      <div className="mt-1.5 flex flex-col gap-1">
+        {rows.map((row) => {
+          const fsDisplay = row.fsName || '—';
+          const spaceDisplay = row.spaceName ?? '—';
+          const rowAction = row.createForCurrentMachine
+            ? onCreateForCurrentMachine
+            : row.bindingId
+              ? () => onRowClick?.(row.bindingId!)
+              : undefined;
+          const rowProps = row.clickable && rowAction
+            ? {
+                role: 'button' as const,
+                tabIndex: 0,
+                'aria-label': row.createForCurrentMachine
+                  ? t('card.addBindingForMachine', { machine: row.machineLabel })
+                  : t('card.machineRow', { machine: row.machineLabel }),
+                onClick: (event: ReactMouseEvent<HTMLDivElement>) => {
+                  event.stopPropagation();
+                  rowAction();
+                },
+                onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    rowAction();
+                  }
+                },
+              }
+            : {};
+
+          return (
+            <div
+              key={row.key}
+              className={[
+                ROUTING_GRID_COLS,
+                'items-start rounded-md border px-1.5 py-1',
+                row.ghost
+                  ? 'border-dashed border-[rgb(var(--border-subtle))] opacity-70'
+                  : 'border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))]',
+                row.clickable && rowAction
+                  ? 'cursor-pointer transition-colors hover:bg-[rgb(var(--surface-hover,var(--background)))]'
+                  : '',
+              ].join(' ')}
+              {...rowProps}
+            >
+              <span className={`${cellCls} truncate whitespace-nowrap`} title={row.machineLabel}>
+                <span className="inline-flex max-w-full items-center gap-1">
+                  {row.machine?.icon ? (
+                    <span className="shrink-0 text-[11px] leading-none">{row.machine.icon}</span>
+                  ) : null}
+                  <span className="truncate">{row.machineLabel}</span>
+                </span>
+              </span>
+              <span
+                className={[
+                  cellCls,
+                  'break-words font-medium leading-snug',
+                  row.ghost
+                    ? 'italic text-[rgb(var(--muted))]'
+                    : 'text-primary-700 dark:text-primary-300',
+                ].join(' ')}
+              >
+                {fsDisplay}
+              </span>
+              <span className={`${cellCls} truncate whitespace-nowrap`} title={spaceDisplay}>
+                {spaceDisplay}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /**
- * Compact feature-set summary for the card footer. Lists up to two names,
- * then collapses to "first + N more" so a folder mapped to many sets doesn't
- * blow out the card. Full list is exposed via the `title` tooltip at the call
- * site.
+ * Build routing table rows for an entry — every binding is clickable; when live
+ * on a foreign machine, append a ghost row for the viewer's current machine.
  */
-function summarizeFeatureSets(names: string[]): string {
-  if (names.length === 0) return 'No tools';
-  if (names.length <= 2) return names.join(' + ');
-  return `${names[0]} + ${names.length - 1} more`;
+function buildEntryRoutingRows(
+  entry: Entry,
+  bindings: WorkspaceBinding[],
+  currentMachineId: string | null,
+  machinesById: Map<string, Machine>,
+  spaceById: Map<string, Space>,
+  fsById: Map<string, FeatureSet>,
+  t: TFunction<['workspaces', 'common']>,
+): EntryCardRoutingRow[] {
+  const rows: EntryCardRoutingRow[] = bindings.map((rowBinding) => {
+    const rowMachine = rowBinding.machine_id
+      ? machinesById.get(rowBinding.machine_id)
+      : undefined;
+    return {
+      key: rowBinding.id,
+      bindingId: rowBinding.id,
+      machine: rowMachine,
+      machineLabel: machineBindingLabel(rowBinding, machinesById, t),
+      fsName: formatFsList(
+        rowBinding.feature_set_ids.map((id) => fsById.get(id)?.name ?? id),
+      ),
+      spaceName: spaceById.get(rowBinding.space_id)?.name,
+      clickable: true,
+    };
+  });
+
+  const needsGhostRow =
+    entry.kind === 'live-elsewhere' &&
+    Boolean(currentMachineId) &&
+    !bindings.some(
+      (b) => b.machine_id == null || b.machine_id === currentMachineId,
+    );
+
+  if (needsGhostRow && currentMachineId) {
+    const currentMachine = machinesById.get(currentMachineId);
+    rows.push({
+      key: `ghost:${currentMachineId}`,
+      createForCurrentMachine: true,
+      ghost: true,
+      machine: currentMachine,
+      machineLabel: currentMachine?.name ?? currentMachineId,
+      fsName: t('card.notConfigured'),
+      spaceName: undefined,
+      clickable: true,
+    });
+  }
+
+  if (entry.kind === 'unmapped-live' && bindings.length === 0) {
+    const currentMachine = currentMachineId
+      ? machinesById.get(currentMachineId)
+      : undefined;
+    rows.push({
+      key: 'ghost:unmapped',
+      createForCurrentMachine: true,
+      ghost: true,
+      machine: currentMachine,
+      machineLabel: currentMachine?.name ?? t('card.addBinding'),
+      fsName: '—',
+      spaceName: undefined,
+      clickable: true,
+    });
+  }
+
+  return rows;
 }
 
 /**
- * Per-status color. Soft flat tints (not heavy gradients) + a thin solid
- * accent strip — adds life and at-a-glance status while staying inside the
- * app's tinted-surface design language.
+ * Project card — identity header plus routing table footer.
  */
-const CARD_TONES = {
-  emerald: {
-    strip: 'bg-emerald-500',
-    box: 'bg-emerald-50 text-emerald-600 ring-emerald-200/70 dark:bg-emerald-900/20 dark:text-emerald-400 dark:ring-emerald-800/50',
-  },
-  amber: {
-    strip: 'bg-amber-500',
-    box: 'bg-amber-50 text-amber-600 ring-amber-200/70 dark:bg-amber-900/20 dark:text-amber-400 dark:ring-amber-800/50',
-  },
-  neutral: {
-    strip: 'bg-slate-300 dark:bg-slate-600',
-    box: 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] ring-[rgb(var(--border-subtle))]',
-  },
-} as const;
-
 function EntryCard({
   entry,
-  spaceName,
-  fsNames,
-  selected,
+  icon,
+  bindings,
+  currentMachineId,
+  machinesById,
+  spaceById,
+  fsById,
   onClick,
+  onMachineRowClick,
+  onCreateForCurrentMachine,
+  onForget,
+  t,
 }: {
   entry: Entry;
-  spaceName: string | undefined;
-  /** Resolved FeatureSet names for a mapped folder; empty when unmapped. */
-  fsNames: string[];
-  selected: boolean;
+  icon: string | null;
+  bindings: WorkspaceBinding[];
+  currentMachineId: string | null;
+  machinesById: Map<string, Machine>;
+  spaceById: Map<string, Space>;
+  fsById: Map<string, FeatureSet>;
   onClick: () => void;
+  onMachineRowClick: (bindingId: string) => void;
+  onCreateForCurrentMachine: () => void;
+  onForget?: () => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   const tone =
     entry.kind === 'unmapped-live'
       ? 'amber'
-      : entry.kind === 'mapped-live'
-        ? 'emerald'
-        : 'neutral';
-  const t = CARD_TONES[tone];
-  const name = folderName(entry.root);
+      : entry.kind === 'live-elsewhere'
+        ? 'info'
+        : entry.kind === 'mapped-live'
+          ? 'emerald'
+          : 'neutral';
 
+  const displayTitle = entryDisplayTitle(entry);
+  const binding = primaryBinding(entry);
+  const hasLabel = Boolean(binding?.label?.trim());
+  const routingRows = buildEntryRoutingRows(
+    entry,
+    bindings,
+    currentMachineId,
+    machinesById,
+    spaceById,
+    fsById,
+    t,
+  );
   return (
     <Card
-      className={`relative cursor-pointer overflow-hidden transition-all hover:shadow-lg hover:scale-[1.01] ${
-        selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
-      }`}
+      className="group relative h-full cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01]"
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
     >
-      {/* Status accent strip across the top — a splash of color per state. */}
-      <div className={`absolute inset-x-0 top-0 h-1 ${t.strip}`} />
-      <CardContent className="p-6">
-        <div className="mb-4 flex items-start gap-4">
+      <CardContent className="flex h-full flex-col p-6">
+        {onForget && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onForget();
+            }}
+            title={t('card.forgetRoot')}
+            className="absolute right-3 top-3 z-10 rounded-full p-1 text-[rgb(var(--muted))] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))]"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <div className="mb-4 flex flex-1 items-start gap-4">
           <div className="relative flex-shrink-0">
             <div
-              className={`flex h-14 w-14 items-center justify-center rounded-xl ring-1 ring-inset ${t.box}`}
+              className={[
+                'w-14 h-14 flex items-center justify-center rounded-xl border',
+                tone === 'amber'
+                  ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200/80 dark:border-amber-800/50 text-amber-600 dark:text-amber-400'
+                  : tone === 'info'
+                    ? 'bg-violet-50 dark:bg-violet-900/20 border-violet-200/80 dark:border-violet-800/50 text-violet-600 dark:text-violet-400'
+                    : tone === 'emerald'
+                      ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200/80 dark:border-emerald-800/50 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))]',
+              ].join(' ')}
             >
-              {entry.isLive ? (
-                <FolderOpen className="h-6 w-6" />
+              {icon ? (
+                <ServerIcon icon={icon} className="h-8 w-8 object-contain" fallback="📁" />
               ) : (
-                <Folder className="h-6 w-6" />
+                <FolderOpen className="h-6 w-6" />
               )}
             </div>
             {entry.isLive && (
               <span
-                className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]"
-                title="A client is active in this folder right now"
+                className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[rgb(var(--background))]"
+                title={t('card.liveTooltip')}
               />
             )}
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
-              {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
-              {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="mb-1.5 flex min-h-[1.375rem] flex-wrap items-center gap-2">
+              {entry.kind === 'unmapped-live' && (
+                <Pill tone="amber" title={t('card.deniedTooltip')}>
+                  {t('card.badgeLiveUnbound')}
+                </Pill>
+              )}
+              {entry.kind === 'live-elsewhere' && (
+                <Pill tone="info">{t('card.badgeBoundElsewhere')}</Pill>
+              )}
+              {entry.kind === 'mapped-offline' && <Pill tone="neutral">{t('card.offline')}</Pill>}
+              {entry.kind === 'mapped-live' && <Pill tone="emerald">{t('card.live')}</Pill>}
+              {binding?.client_id && (
+                <Pill tone="neutral" title={binding.client_id}>
+                  {shortClientId(binding.client_id)}
+                </Pill>
+              )}
             </div>
-            <h3 className="truncate text-base font-semibold" title={entry.root}>
-              {name}
-            </h3>
             <p
-              className="truncate font-mono text-xs text-[rgb(var(--muted))]"
-              title={entry.root}
+              className={`line-clamp-2 min-h-[2.5rem] text-sm leading-snug text-[rgb(var(--foreground))] ${
+                hasLabel ? 'font-semibold' : 'break-all font-mono'
+              }`}
+              title={displayTitle}
             >
-              {entry.root}
+              {displayTitle}
             </p>
+            <p
+              className={`mt-0.5 line-clamp-2 min-h-[2rem] font-mono text-xs leading-snug text-[rgb(var(--muted))] ${
+                hasLabel ? 'break-all' : 'invisible'
+              }`}
+              title={hasLabel ? entry.root : undefined}
+              aria-hidden={!hasLabel}
+            >
+              {hasLabel ? entry.root : '\u00A0'}
+            </p>
+            {entry.kind === 'unmapped-live' && (
+              <Button
+                variant="primary"
+                size="sm"
+                className="mt-3 w-full"
+                title={t('card.deniedTooltip')}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClick();
+                }}
+                data-testid="workspace-entry-bind-cta"
+              >
+                {t('card.deniedCta')}
+              </Button>
+            )}
           </div>
         </div>
 
-        <div className="border-t border-[rgb(var(--border-subtle))] pt-4 text-xs">
-          {entry.binding ? (
-            <div className="flex items-center justify-between gap-3">
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <Layers className="h-3.5 w-3.5 flex-shrink-0 text-primary-500" />
-                <span
-                  className="truncate font-medium text-[rgb(var(--foreground))]"
-                  title={fsNames.join(', ')}
-                >
-                  {summarizeFeatureSets(fsNames)}
-                </span>
-                {fsNames.length > 1 && (
-                  <span
-                    className="flex-shrink-0 rounded-full bg-primary-500/10 px-1.5 text-[10px] font-bold tabular-nums text-primary-600 dark:text-primary-300"
-                    title={`${fsNames.length} feature sets`}
-                  >
-                    {fsNames.length}
-                  </span>
-                )}
-              </span>
-              <span className="inline-flex flex-shrink-0 items-center gap-1.5 text-[rgb(var(--muted))]">
-                <span>in</span>
-                <Chip tone="neutral">{spaceName ?? '—'}</Chip>
-              </span>
-            </div>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
-              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-              Not mapped — using your default Starter tools
-            </span>
-          )}
+        <div className="mt-auto -mx-6 -mb-6 rounded-b-xl bg-[rgb(var(--surface))] px-5 py-3 text-xs text-[rgb(var(--muted))]">
+          <EntryCardRoutingTable
+            rows={routingRows}
+            onRowClick={onMachineRowClick}
+            onCreateForCurrentMachine={onCreateForCurrentMachine}
+            t={t}
+          />
         </div>
       </CardContent>
     </Card>
@@ -740,39 +1115,24 @@ function EntryCard({
 function Pill({
   children,
   tone,
+  title,
 }: {
   children: React.ReactNode;
-  tone: 'amber' | 'emerald' | 'neutral';
+  tone: 'amber' | 'emerald' | 'neutral' | 'info';
+  title?: string;
 }) {
   const cls =
     tone === 'amber'
       ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-200/80 dark:border-amber-800/60'
-      : tone === 'emerald'
-        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
-        : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
+      : tone === 'info'
+        ? 'bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-400 border-violet-200/80 dark:border-violet-800/60'
+        : tone === 'emerald'
+          ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
+          : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[10px] font-semibold uppercase tracking-wider ${cls}`}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Chip({
-  children,
-  tone,
-}: {
-  children: React.ReactNode;
-  tone: 'primary' | 'neutral';
-}) {
-  const styles =
-    tone === 'primary'
-      ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 border-primary-200 dark:border-primary-800/60'
-      : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--foreground))]';
-  return (
-    <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[11px] font-medium ${styles}`}
+      title={title}
     >
       {children}
     </span>
@@ -821,30 +1181,45 @@ const SECTION_TONES: Record<SectionTone, SectionToneSpec> = {
   },
 };
 
-function CollapsibleSection({
-  icon,
-  tone = 'primary',
-  title,
-  subtitle,
-  defaultOpen = true,
-  badge,
-  headerExtra,
-  testId,
-  children,
-}: {
-  icon: React.ReactNode;
-  tone?: SectionTone;
-  title: string;
-  subtitle?: React.ReactNode;
-  defaultOpen?: boolean;
-  badge?: number;
-  /** Small element rendered next to the title (e.g. save status). */
-  headerExtra?: React.ReactNode;
-  testId?: string;
-  children: React.ReactNode;
-}) {
+/** Imperative handle for programmatically expanding a collapsible section. */
+export type CollapsibleSectionRef = {
+  expand: () => void;
+};
+
+export const CollapsibleSection = forwardRef<
+  CollapsibleSectionRef,
+  {
+    icon: React.ReactNode;
+    tone?: SectionTone;
+    title: string;
+    subtitle?: React.ReactNode;
+    defaultOpen?: boolean;
+    badge?: number;
+    /** Small element rendered next to the title (e.g. save status). */
+    headerExtra?: React.ReactNode;
+    testId?: string;
+    children: React.ReactNode;
+  }
+>(function CollapsibleSection(
+  {
+    icon,
+    tone = 'primary',
+    title,
+    subtitle,
+    defaultOpen = true,
+    badge,
+    headerExtra,
+    testId,
+    children,
+  },
+  ref,
+) {
   const [open, setOpen] = useState(defaultOpen);
-  const t = SECTION_TONES[tone] ?? SECTION_TONES.primary;
+  const toneSpec = SECTION_TONES[tone] ?? SECTION_TONES.primary;
+
+  useImperativeHandle(ref, () => ({
+    expand: () => setOpen(true),
+  }));
 
   return (
     <div
@@ -857,7 +1232,7 @@ function CollapsibleSection({
         className={[
           'w-full flex items-center justify-between p-4 transition-all',
           open
-            ? t.gradientOpen
+            ? toneSpec.gradientOpen
             : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]',
         ].join(' ')}
         aria-expanded={open}
@@ -866,7 +1241,7 @@ function CollapsibleSection({
           <div
             className={[
               'p-2 rounded-lg flex-shrink-0 transition-colors duration-200',
-              open ? t.iconActive : t.iconQuiet,
+              open ? toneSpec.iconActive : toneSpec.iconQuiet,
             ].join(' ')}
           >
             {icon}
@@ -881,7 +1256,7 @@ function CollapsibleSection({
                   className={[
                     'text-xs px-2 py-0.5 rounded-full font-bold tabular-nums',
                     open
-                      ? t.badgeOpen
+                      ? toneSpec.badgeOpen
                       : 'bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))] border border-[rgb(var(--border-subtle))]',
                   ].join(' ')}
                 >
@@ -911,225 +1286,7 @@ function CollapsibleSection({
       )}
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Inspector side panel
-// ---------------------------------------------------------------------------
-
-type SaveStatus =
-  | { kind: 'idle' }
-  | { kind: 'saving' }
-  | { kind: 'saved' }
-  | { kind: 'error'; message: string };
-
-function InspectorPanel({
-  entry,
-  isNew,
-  spaces,
-  featureSets,
-  existingBindings,
-  onClose,
-  onSubmit,
-  onDelete,
-  onError,
-}: {
-  entry: Entry | null;
-  isNew: boolean;
-  spaces: Space[];
-  featureSets: FeatureSet[];
-  existingBindings: WorkspaceBinding[];
-  onClose: () => void;
-  onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
-  onDelete: () => Promise<void>;
-  onError: (msg: string) => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const isMapped = !!entry?.binding;
-  const mode: 'create' | 'edit' | 'create-from-live' = isNew
-    ? 'create'
-    : isMapped
-      ? 'edit'
-      : 'create-from-live';
-  const title = isNew
-    ? 'New mapping'
-    : isMapped
-      ? 'Workspace mapping'
-      : 'Map this folder';
-  const subtitle = isNew
-    ? 'Choose the tools a folder should get.'
-    : entry?.root ?? '';
-
-  // Auto-save status drives the small pill in the Mapping section header.
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>({ kind: 'idle' });
-
-  // Effective-features count drives the badge in the section header so the
-  // user can see scale without expanding.
-  const [effectiveTotal, setEffectiveTotal] = useState<number | null>(null);
-
-  return (
-    <div className="fixed right-0 top-0 bottom-0 w-full max-w-[480px] min-w-[420px] bg-[rgb(var(--surface))] border-l border-[rgb(var(--border))] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 z-50">
-      <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-11 h-11 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg flex-shrink-0 border border-[rgb(var(--border-subtle))]">
-              <FolderOpen className="h-5 w-5 text-[rgb(var(--muted))]" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                {!isNew && entry?.isLive && <Pill tone="emerald">Live</Pill>}
-                {!isNew && entry && !isMapped && <Pill tone="amber">Unmapped</Pill>}
-                {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">Offline</Pill>}
-              </div>
-              <h2 className="text-lg font-bold truncate">{title}</h2>
-              <p
-                className={`text-xs text-[rgb(var(--muted))] truncate ${!isNew ? 'font-mono' : ''}`}
-                title={subtitle}
-              >
-                {subtitle}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
-            aria-label="Close panel"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
-        <CollapsibleSection
-          icon={<FolderOpen className="h-5 w-5" />}
-          tone="primary"
-          title="Mapping"
-          subtitle={
-            mode === 'create'
-              ? 'Choose the folder and the tools it should get.'
-              : mode === 'create-from-live'
-                ? 'This folder is open in an app and using your default Starter tools — map it to give it a specific set instead.'
-                : isMapped && entry?.binding
-                  ? `Gives ${
-                      formatFsList(
-                        entry.binding!.feature_set_ids.map(
-                          (id) => featureSets.find((f) => f.id === id)?.name ?? id
-                        )
-                      ) || '—'
-                    } from ${
-                      spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—'
-                    }`
-                  : 'Edit what this folder sees, then press Apply.'
-          }
-          defaultOpen={isNew || !isMapped}
-          headerExtra={<SaveStatusPill status={saveStatus} />}
-          testId="workspace-mapping-section"
-        >
-          <BindingForm
-            mode={mode}
-            spaces={spaces}
-            featureSets={featureSets}
-            initial={entry?.binding ?? null}
-            prefillRoot={entry && !isMapped ? entry.root : undefined}
-            existingBindings={existingBindings}
-            onCancel={onClose}
-            onSubmit={onSubmit}
-            onError={onError}
-            onSaveStatusChange={setSaveStatus}
-          />
-        </CollapsibleSection>
-
-        {entry && !isNew && (
-          <CollapsibleSection
-            icon={<Wrench className="h-5 w-5" />}
-            tone="primary"
-            title="Connect apps to this folder"
-            subtitle="Write the McpMux config into this folder for the apps you use, with this folder's workspace header."
-            defaultOpen={!isMapped}
-            testId="workspace-install-section"
-          >
-            <WorkspaceInstallPanel workspaceRoot={entry.root} />
-          </CollapsibleSection>
-        )}
-
-        {entry && !isNew && (
-          <CollapsibleSection
-            icon={<Layers className="h-5 w-5" />}
-            tone="purple"
-            title="Effective Features"
-            subtitle="Tools, prompts, and resources this folder currently sees"
-            defaultOpen={true}
-            badge={effectiveTotal ?? undefined}
-            testId="workspace-effective-features-section"
-          >
-            <EffectiveFeaturesContent
-              root={entry.root}
-              onTotalChange={setEffectiveTotal}
-            />
-          </CollapsibleSection>
-        )}
-      </div>
-
-      {entry?.binding && (
-        <div className="flex-shrink-0 p-4 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void onDelete()}
-            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
-            data-testid={`workspace-binding-delete-${entry.binding.id}`}
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            Remove mapping
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SaveStatusPill({ status }: { status: SaveStatus }) {
-  if (status.kind === 'idle') return null;
-  const base =
-    'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border';
-  if (status.kind === 'saving') {
-    return (
-      <span
-        className={`${base} bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))] border-[rgb(var(--border))]`}
-      >
-        <Loader2 className="h-2.5 w-2.5 animate-spin" />
-        Saving
-      </span>
-    );
-  }
-  if (status.kind === 'saved') {
-    return (
-      <span
-        className={`${base} bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border-green-300/70 dark:border-green-700/70 animate-in fade-in duration-200`}
-      >
-        <Check className="h-2.5 w-2.5" strokeWidth={2.5} />
-        Saved
-      </span>
-    );
-  }
-  return (
-    <span
-      className={`${base} bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800`}
-      title={status.message}
-    >
-      <AlertCircle className="h-2.5 w-2.5" />
-      Error
-    </span>
-  );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Effective features — what tools / prompts / resources this folder sees
@@ -1203,12 +1360,16 @@ function buildServerGroups(data: WorkspaceEffectiveFeatures): ServerGroup[] {
  * Reports the configured-features total to the parent via `onTotalChange`
  * so the section header can show a count badge without re-fetching.
  */
-function EffectiveFeaturesContent({
+export function EffectiveFeaturesContent({
   root,
+  machineId,
   onTotalChange,
+  t,
 }: {
   root: string;
+  machineId?: string | null;
   onTotalChange?: (total: number | null) => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   const [data, setData] = useState<WorkspaceEffectiveFeatures | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1225,7 +1386,7 @@ function EffectiveFeaturesContent({
     setError(null);
     onTotalChange?.(null);
     /* eslint-enable react-hooks/set-state-in-effect */
-    void getWorkspaceEffectiveFeatures(root)
+    void getWorkspaceEffectiveFeatures(root, machineId)
       .then((d) => {
         if (cancelled) return;
         setData(d);
@@ -1245,31 +1406,27 @@ function EffectiveFeaturesContent({
     return () => {
       cancelled = true;
     };
-  }, [root, onTotalChange]);
+  }, [root, machineId, onTotalChange]);
+
+  const reloadEffectiveFeatures = useCallback(() => {
+    void getWorkspaceEffectiveFeatures(root, machineId)
+      .then((d) => {
+        setData(d);
+        onTotalChange?.(d.tools.length + d.prompts.length + d.resources.length);
+      })
+      .catch(() => {
+        /* ignore — initial load already surfaced any error */
+      });
+  }, [root, machineId, onTotalChange]);
 
   // Re-fetch on binding / server-status changes so the panel stays honest
   // without the user reopening it.
-  useEffect(() => {
-    let cancelled = false;
-    const reload = () => {
-      void getWorkspaceEffectiveFeatures(root)
-        .then((d) => {
-          if (cancelled) return;
-          setData(d);
-          onTotalChange?.(d.tools.length + d.prompts.length + d.resources.length);
-        })
-        .catch(() => {
-          /* ignore — initial load already surfaced any error */
-        });
-    };
-    const unBinding = listen('workspace-binding-changed', reload);
-    const unServer = listen('server-status', reload);
-    return () => {
-      cancelled = true;
-      unBinding.then((fn) => fn());
-      unServer.then((fn) => fn());
-    };
-  }, [root, onTotalChange]);
+  useWorkspaceEventListener(
+    reloadEffectiveFeatures,
+    EFFECTIVE_FEATURES_REFRESH_CHANNELS
+  );
+
+  useServerStatusEvents(reloadEffectiveFeatures);
 
   // All hooks must run on every render — keep them above any early
   // returns so React's hook-order invariant holds.
@@ -1306,6 +1463,15 @@ function EffectiveFeaturesContent({
   }
   if (!data) return null;
 
+  if (data.source === 'unbound') {
+    return (
+      <div className="text-center py-8 text-[rgb(var(--muted))]">
+        <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+        <p className="text-sm">{t('effective.unboundEmpty')}</p>
+      </div>
+    );
+  }
+
   const allAvailable = totalCount > 0 && availableCount === totalCount;
   const partialAvailable = availableCount > 0 && availableCount < totalCount;
 
@@ -1316,20 +1482,20 @@ function EffectiveFeaturesContent({
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 space-y-2.5">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[rgb(var(--muted))]">
-            Resolves to
+            {t('effective.resolvesTo')}
           </span>
           <span className="text-sm font-semibold text-[rgb(var(--foreground))] truncate">
             {formatFsList(data.feature_sets.map((fs) => fs.name)) || '—'}
           </span>
-          <span className="text-xs text-[rgb(var(--muted))]">in</span>
+          <span className="text-xs text-[rgb(var(--muted))]">{t('effective.in')}</span>
           <span className="text-sm font-medium text-[rgb(var(--foreground))]">
             {data.space_name}
           </span>
           <span
             title={
               data.source === 'binding'
-                ? 'A workspace binding matched this folder — live sessions reporting it route here.'
-                : 'No binding matches this folder, so it falls back to the default Starter set shown here. Map it to give this folder a different set.'
+                ? t('effective.sourceBindingTooltip')
+                : t('effective.sourceUnboundTooltip')
             }
             className={[
               'ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border',
@@ -1338,7 +1504,7 @@ function EffectiveFeaturesContent({
                 : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300/70 dark:border-amber-700/70',
             ].join(' ')}
           >
-            {data.source === 'binding' ? 'binding' : 'unbound'}
+            {data.source === 'binding' ? t('effective.sourceBinding') : t('effective.sourceUnbound')}
           </span>
         </div>
 
@@ -1347,10 +1513,7 @@ function EffectiveFeaturesContent({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
             <span className="text-[rgb(var(--muted))] tabular-nums">
-              <span className="font-semibold text-[rgb(var(--foreground))]">{availableCount}</span>
-              <span> of </span>
-              <span className="font-semibold text-[rgb(var(--foreground))]">{totalCount}</span>
-              <span> available</span>
+              <span>{t('effective.availableOf', { available: availableCount, total: totalCount })}</span>
             </span>
             {totalCount > 0 && (
               <span
@@ -1363,7 +1526,7 @@ function EffectiveFeaturesContent({
                       : 'text-[rgb(var(--muted))]',
                 ].join(' ')}
               >
-                {allAvailable ? 'All ready' : partialAvailable ? 'Partial' : 'Offline'}
+                {allAvailable ? t('effective.allReady') : partialAvailable ? t('effective.partial') : t('effective.offline')}
               </span>
             )}
           </div>
@@ -1391,7 +1554,7 @@ function EffectiveFeaturesContent({
       {groups.length === 0 ? (
         <div className="text-center py-8 text-[rgb(var(--muted))]">
           <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
-          <p className="text-sm">No features configured in this feature set yet.</p>
+          <p className="text-sm">{t('effective.noFeatures')}</p>
         </div>
       ) : (
         <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] overflow-hidden">
@@ -1402,6 +1565,7 @@ function EffectiveFeaturesContent({
                 group={g}
                 open={openServers.has(g.server_id)}
                 onToggle={() => toggleServer(g.server_id)}
+                t={t}
               />
             ))}
           </div>
@@ -1415,12 +1579,14 @@ function ServerGroupRow({
   group,
   open,
   onToggle,
+  t,
 }: {
   group: ServerGroup;
   open: boolean;
   onToggle: () => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
-  const issue = serverStatusIssue(group.server_status);
+  const issue = serverStatusIssue(group.server_status, t);
   const availableCount = group.mapped - group.unavailable_mapped;
   // Badge denominator is the server's *total* feature count in the Space,
   // not the mapped count — the user wants to see "3 of 10 cloudflare-docs
@@ -1453,7 +1619,7 @@ function ServerGroupRow({
           ) : (
             <ChevronRight className="h-4 w-4 text-[rgb(var(--muted))] flex-shrink-0" />
           )}
-          <ServerIcon className="h-4 w-4 text-blue-500 flex-shrink-0" />
+          <ServerGlyph className="h-4 w-4 text-blue-500 flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               {prefix && (
@@ -1519,9 +1685,9 @@ function ServerGroupRow({
 
       {open && (
         <div className="bg-[rgb(var(--background))] border-t border-[rgb(var(--border))]">
-          <FeatureSubGroup label="tool" items={group.tools} />
-          <FeatureSubGroup label="prompt" items={group.prompts} />
-          <FeatureSubGroup label="resource" items={group.resources} />
+          <FeatureSubGroup label="tool" items={group.tools} t={t} />
+          <FeatureSubGroup label="prompt" items={group.prompts} t={t} />
+          <FeatureSubGroup label="resource" items={group.resources} t={t} />
         </div>
       )}
     </div>
@@ -1536,9 +1702,11 @@ function ServerGroupRow({
 function FeatureSubGroup({
   label,
   items,
+  t,
 }: {
   label: 'tool' | 'prompt' | 'resource';
   items: EffectiveFeature[];
+  t: TFunction<['workspaces', 'common']>;
 }) {
   if (items.length === 0) return null;
   return (
@@ -1564,11 +1732,11 @@ function FeatureSubGroup({
                   getFeatureTypeColor(label),
                 ].join(' ')}
               >
-                {label}
+                {t(`effective.featureType.${label}`)}
               </span>
               {!item.available && (
                 <span className="text-[9px] uppercase tracking-wider font-bold text-[rgb(var(--muted))]">
-                  unavailable
+                  {t('effective.unavailable')}
                 </span>
               )}
             </div>
@@ -1612,660 +1780,189 @@ function getFeatureTypeColor(type: 'tool' | 'prompt' | 'resource'): string {
  * null so the row stays quiet.
  */
 function serverStatusIssue(
-  status: EffectiveFeature['server_status']
+  status: EffectiveFeature['server_status'],
+  t: TFunction<['workspaces', 'common']>
 ): { label: string; tone: 'red' | 'amber' | 'muted' } | null {
   switch (status) {
     case 'connected':
       return null;
     case 'connecting':
-      return { label: 'Connecting', tone: 'amber' };
+      return { label: t('serverStatus.connecting'), tone: 'amber' };
     case 'authenticating':
-      return { label: 'Authenticating', tone: 'amber' };
+      return { label: t('serverStatus.authenticating'), tone: 'amber' };
     case 'refreshing':
-      return { label: 'Refreshing', tone: 'amber' };
+      return { label: t('serverStatus.refreshing'), tone: 'amber' };
     case 'auth_required':
-      return { label: 'Auth needed', tone: 'amber' };
+      return { label: t('serverStatus.authNeeded'), tone: 'amber' };
     case 'error':
-      return { label: 'Error', tone: 'red' };
+      return { label: t('serverStatus.error'), tone: 'red' };
     case 'disconnected':
-      return { label: 'Disconnected', tone: 'muted' };
+      return { label: t('serverStatus.disconnected'), tone: 'muted' };
     case 'unknown':
     default:
-      return { label: 'Offline', tone: 'muted' };
+      return { label: t('serverStatus.offline'), tone: 'muted' };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Binding form
+// Machine registration modal (first-time identity prompt)
 // ---------------------------------------------------------------------------
 
-function BindingForm({
-  mode,
-  spaces,
-  featureSets,
-  initial,
-  prefillRoot,
-  existingBindings,
-  onCancel,
+/**
+ * Small modal for registering this McpMux install as a named machine.
+ */
+function MachineRegistrationModal({
+  open,
+  onClose,
   onSubmit,
   onError,
-  onSaveStatusChange,
+  t,
 }: {
-  mode: 'create' | 'edit' | 'create-from-live';
-  spaces: Space[];
-  featureSets: FeatureSet[];
-  initial?: WorkspaceBinding | null;
-  prefillRoot?: string;
-  /** Every saved mapping, used to flag a folder that's already mapped. */
-  existingBindings: WorkspaceBinding[];
-  onCancel: () => void;
-  onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (input: {
+    name: string;
+    icon: string | null;
+    hostname: string | null;
+  }) => Promise<void>;
   onError: (message: string) => void;
-  /** Surfaced upward so the section header can show a Saving / Saved pill. */
-  onSaveStatusChange?: (status: SaveStatus) => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
-  const defaultSpaceId = useMemo(
-    () => spaces.find((s) => s.is_default)?.id ?? spaces[0]?.id ?? '',
-    [spaces]
-  );
-
-  const rootRef = useRef<HTMLInputElement | null>(null);
-  const [root, setRoot] = useState(initial?.workspace_root ?? prefillRoot ?? '');
-  const [spaceId, setSpaceId] = useState<string>(initial?.space_id ?? defaultSpaceId);
-  // Multi-FS: a binding may resolve to N FeatureSets (the resolver merges
-  // their members into one allow set). Order is preserved so the operator
-  // can rank a "primary" FS first; the resolver itself doesn't care.
-  const [fsIds, setFsIds] = useState<string[]>(initial?.feature_set_ids ?? []);
-  const [fsSearch, setFsSearch] = useState('');
+  const [name, setName] = useState('');
+  const [icon, setIcon] = useState('');
+  const [hostname, setHostname] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const isEdit = mode === 'edit';
-
-  // Holds the timer that clears the transient "Saved" pill after an
-  // explicit Apply. Cleared if another save starts or the panel unmounts.
-  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
-    };
-  }, []);
-
-  // Live validation of the workspace_root field. Edit + create-from-live
-  // modes already have a trusted root (edit: the persisted one; create-from-
-  // live: came from the MCP client), so we skip validation for those — only
-  // manual creates / edits to the path need the live check.
-  const [rootValidation, setRootValidation] = useState<
-    | { state: 'idle' }
-    | { state: 'checking' }
-    | { state: 'ok'; normalized: string }
-    | { state: 'error'; reason: string }
-  >({ state: 'idle' });
-  const validationSeq = useRef(0);
-
-  const rootEditable = mode !== 'create-from-live';
+  const nameRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (!rootEditable) {
-      setRootValidation({ state: 'ok', normalized: root });
-      return;
-    }
-    if (!root.trim()) {
-      setRootValidation({ state: 'idle' });
-      return;
-    }
-    // Debounce a little so we don't hammer the IPC on every keystroke.
-    const seq = ++validationSeq.current;
-    setRootValidation({ state: 'checking' });
-    const handle = setTimeout(() => {
-      void validateWorkspaceRoot(root)
-        .then((normalized) => {
-          if (validationSeq.current !== seq) return;
-          setRootValidation({ state: 'ok', normalized });
-        })
-        .catch((e: unknown) => {
-          if (validationSeq.current !== seq) return;
-          const reason = typeof e === 'string' ? e : String(e);
-          setRootValidation(
-            reason === ''
-              ? { state: 'idle' }
-              : { state: 'error', reason }
-          );
-        });
-    }, 180);
+    if (!open) return;
+    setName('');
+    setIcon('');
+    setSubmitting(false);
+    void getHostname()
+      .then((h) => setHostname(h))
+      .catch(() => setHostname(''));
+    const handle = setTimeout(() => nameRef.current?.focus(), 50);
     return () => clearTimeout(handle);
-  }, [root, rootEditable]);
+  }, [open]);
 
   useEffect(() => {
-    if (mode === 'create') rootRef.current?.focus();
-  }, [mode]);
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
 
-  const availableFs = useMemo(
-    () => featureSets.filter((f) => f.space_id === spaceId && !f.is_deleted),
-    [featureSets, spaceId]
-  );
-
-  // Filter the available FS list by the search query. Search runs against
-  // name + description, case-insensitive — matches the typeahead expectation
-  // most operators bring from the FeatureSets editor.
-  const filteredFs = useMemo(() => {
-    const q = fsSearch.trim().toLowerCase();
-    if (!q) return availableFs;
-    return availableFs.filter((f) => {
-      if (f.name.toLowerCase().includes(q)) return true;
-      if (f.description?.toLowerCase().includes(q)) return true;
-      return false;
-    });
-  }, [availableFs, fsSearch]);
-
-  // When the Space changes, drop selections that aren't in the new Space's
-  // FS list. In CREATE modes only, reseed an empty selection with the default
-  // FS so the operator doesn't have to click anything for the common case.
-  // In EDIT mode we never reseed — an intentionally-empty mapping ("no Space
-  // tools") must survive reopening.
-  useEffect(() => {
-    if (availableFs.length === 0) {
-      if (fsIds.length > 0) setFsIds([]);
+  const handleConfirm = async () => {
+    const missingField = getMissingMachineProfileField({ name, icon, hostname });
+    if (missingField) {
+      onError(t(`machineIdentity.${missingField}Required`));
       return;
-    }
-    const validIds = new Set(availableFs.map((f) => f.id));
-    const filtered = fsIds.filter((id) => validIds.has(id));
-    if (filtered.length !== fsIds.length) {
-      // Cross-space cleanup: drop ids that don't belong to this Space.
-      setFsIds(filtered);
-    } else if (filtered.length === 0 && !initial) {
-      const fallback = availableFs.find(isStarterFeatureSet) ?? availableFs[0];
-      setFsIds([fallback.id]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableFs]);
-
-  const toggleFs = (id: string) => {
-    setFsIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
-  const trimmedRoot = root.trim();
-  // The canonical form the server will store. We prefer the validator's
-  // normalized output (drive-letter case, slash direction, trailing slash
-  // all settled) so the duplicate check matches exactly what a save writes.
-  const effectiveRoot =
-    rootValidation.state === 'ok' ? rootValidation.normalized : trimmedRoot;
-
-  // Has this folder already been mapped? Compare against every saved mapping
-  // (case-insensitively, the app's notion of "same folder"), excluding the
-  // one we're editing. A match means a duplicate — block the save and tell
-  // the user to edit the existing mapping instead of stacking a second one.
-  const duplicate = useMemo(() => {
-    if (!effectiveRoot) return null;
-    const key = effectiveRoot.toLowerCase();
-    return (
-      existingBindings.find(
-        (b) => b.id !== initial?.id && b.workspace_root.toLowerCase() === key
-      ) ?? null
-    );
-  }, [existingBindings, effectiveRoot, initial?.id]);
-
-  // In edit mode, only enable Apply once something actually changed — there's
-  // nothing to save otherwise. Create modes are always "dirty".
-  const dirty = useMemo(() => {
-    if (!isEdit || !initial) return true;
-    return !sameBindingInput(
-      { workspace_root: trimmedRoot, space_id: spaceId, feature_set_ids: fsIds },
-      {
-        workspace_root: initial.workspace_root,
-        space_id: initial.space_id,
-        feature_set_ids: initial.feature_set_ids,
-      }
-    );
-  }, [isEdit, initial, trimmedRoot, spaceId, fsIds]);
-
-  // Note: an empty feature-set selection is a VALID mapping ("no Space tools";
-  // built-in servers still apply per Space), so it does not block Apply.
-  const canSubmit =
-    !submitting &&
-    !!spaceId &&
-    (rootValidation.state === 'ok' || !rootEditable) &&
-    !duplicate &&
-    dirty;
-
-  const handleSubmit = async () => {
-    if (!root.trim()) {
-      onError('Pick a folder first.');
-      return;
-    }
-    if (rootValidation.state === 'error') {
-      onError(rootValidation.reason);
-      return;
-    }
-    if (duplicate) {
-      onError(`That folder is already mapped. Open the existing mapping to change it.`);
-      return;
-    }
-    if (!spaceId) {
-      onError('Pick a Space.');
-      return;
-    }
-    if (savedTimerRef.current) {
-      clearTimeout(savedTimerRef.current);
-      savedTimerRef.current = null;
     }
     setSubmitting(true);
-    onSaveStatusChange?.({ kind: 'saving' });
     try {
-      await onSubmit({
-        workspace_root: root.trim(),
-        space_id: spaceId,
-        feature_set_ids: fsIds,
-      });
-      onSaveStatusChange?.({ kind: 'saved' });
-      savedTimerRef.current = setTimeout(() => {
-        onSaveStatusChange?.({ kind: 'idle' });
-      }, 1800);
+      await onSubmit(toMachineProfilePayload({ name, icon, hostname }));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      onSaveStatusChange?.({ kind: 'error', message: msg });
-      onError(msg);
+      onError(e instanceof Error ? e.message : String(e));
     } finally {
       setSubmitting(false);
     }
   };
 
-  // Saving is now explicit: nothing is written until the user presses
-  // Apply (see `handleSubmit`). The old debounced autosave + flush-on-close
-  // was removed — it fired writes while the user was still deciding and
-  // needed extra reconciliation work to stay correct. Closing the panel now
-  // simply discards unsaved edits.
+  if (!open) return null;
 
-  const submitLabel = isEdit
-    ? 'Apply changes'
-    : mode === 'create-from-live'
-      ? 'Save mapping'
-      : 'Create mapping';
+  const canSubmit = isMachineProfileComplete({ name, icon, hostname });
 
   return (
-    <div className="space-y-5">
-      {/* Plain-language primer for anyone who's never seen McpMux. Explains
-          the whole flow in two sentences before the fields. */}
-      <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-3.5 py-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
-        <span className="font-semibold text-[rgb(var(--foreground))]">
-          What is a mapping?
-        </span>{' '}
-        Pick a folder, then choose the tools it should get. Whenever you open
-        that folder in a connected app — Cursor, VS Code, Claude — McpMux hands
-        it exactly the tools you choose here, and nothing else.
-      </div>
+    <>
+      <div
+        className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4"
+        data-testid="machine-identity-modal-overlay"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <Card
+          className="animate-in fade-in zoom-in-95 w-full max-w-md shadow-2xl duration-200"
+          data-testid="machine-identity-modal"
+        >
+          <CardContent className="p-6 space-y-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold">{t('machineIdentity.modalTitle')}</h2>
+                <p className="text-sm text-[rgb(var(--muted))] mt-1">
+                  {t('machineIdentity.modalSubtitle')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                aria-label={t('panel.closeAria')}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
 
-      <FormField label="Workspace folder">
-        <div className="flex gap-2">
-          <input
-            ref={rootRef}
-            type="text"
-            value={root}
-            onChange={(e) => setRoot(e.target.value)}
-            readOnly={!rootEditable}
-            placeholder="Browse for a folder, or paste an absolute path"
-            className={[
-              'flex-1 min-w-0 px-3 py-2 rounded-lg text-sm font-mono focus:outline-none focus:ring-2',
-              !rootEditable
-                ? 'bg-[rgb(var(--background))] border border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))] cursor-not-allowed focus:ring-primary-500'
-                : rootValidation.state === 'error'
-                  ? 'bg-[rgb(var(--background))] border border-red-500/60 focus:ring-red-500 focus:border-red-500'
-                  : 'bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:ring-primary-500 focus:border-primary-500',
-            ].join(' ')}
-            data-testid="workspace-binding-root-input"
-          />
-          {rootEditable && (
-            <button
-              type="button"
-              onClick={async () => {
-                // Native directory picker — honors each OS's conventions
-                // (NSOpenPanel on macOS, IFileDialog on Windows, portal on
-                // Linux). The selected path is absolute already, so we
-                // just hand it off and let the live validator normalize.
-                try {
-                  const picked = await openDialog({
-                    directory: true,
-                    multiple: false,
-                    title: 'Pick a workspace folder',
-                  });
-                  if (typeof picked === 'string' && picked.length > 0) {
-                    setRoot(picked);
-                  }
-                } catch (e) {
-                  onError(e instanceof Error ? e.message : String(e));
-                }
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] hover:bg-[rgb(var(--surface-hover))] text-sm font-medium text-[rgb(var(--foreground))] transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 flex-shrink-0"
-              title="Pick a folder"
-              data-testid="workspace-binding-browse"
+            <FormField label={t('machineIdentity.nameLabel')}>
+              <input
+                ref={nameRef}
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('machineIdentity.namePlaceholder')}
+                className="w-full px-3 py-2 rounded-lg text-sm bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                data-testid="machine-identity-name-input"
+              />
+            </FormField>
+
+            <FormField label={t('machineIdentity.iconLabel')}>
+              <EmojiPickerButton
+                value={icon}
+                onChange={setIcon}
+                testId="machine-identity-icon-input"
+              />
+            </FormField>
+
+            <FormField
+              label={t('machineIdentity.hostnameLabel')}
+              hint={t('machineIdentity.hostnameHint')}
             >
-              <FolderSearch className="h-4 w-4" />
-              <span className="hidden sm:inline">Browse</span>
-            </button>
-          )}
-        </div>
-        {duplicate ? (
-          <p
-            className="mt-1.5 text-[11px] text-red-600 dark:text-red-400 flex items-start gap-1.5"
-            data-testid="workspace-binding-duplicate-error"
-          >
-            <AlertCircle className="h-3 w-3 flex-shrink-0 mt-px" />
-            <span>
-              This folder is already mapped. Open its existing mapping to change
-              what it sees instead of adding a second one.
-            </span>
-          </p>
-        ) : (
-          <RootValidationHint
-            state={rootValidation}
-            editable={rootEditable}
-            originalValue={root}
-          />
-        )}
-      </FormField>
-
-      <FormField
-        label="Space"
-        hint="A Space is a profile that groups MCP servers. Choose which one this folder draws its tools from."
-      >
-        <Picker
-          value={spaceId}
-          onChange={setSpaceId}
-          placeholder="Pick a Space"
-          options={spaces.map((s) => ({
-            value: s.id,
-            label: s.is_default ? `${s.name} · default` : s.name,
-            icon: s.icon ?? undefined,
-          }))}
-          testId="workspace-binding-space"
-        />
-      </FormField>
-
-      <FormField
-        label={
-          fsIds.length > 1
-            ? `Feature set (${fsIds.length} selected)`
-            : 'Feature set'
-        }
-        hint="A feature set is a curated list of tools, prompts, and resources from that Space — exactly what this folder is allowed to use. Pick one, or combine several into a single set."
-      >
-        {!spaceId ? (
-          <p className="text-xs text-[rgb(var(--muted))] italic px-3 py-2">
-            Pick a Space first.
-          </p>
-        ) : availableFs.length === 0 ? (
-          <p className="text-xs text-[rgb(var(--muted))] italic px-3 py-2">
-            No feature sets in that Space yet.
-          </p>
-        ) : (
-          <div
-            className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))]"
-            data-testid="workspace-binding-fs"
-          >
-            <div className="p-2 border-b border-[rgb(var(--border-subtle))]">
               <input
                 type="text"
-                value={fsSearch}
-                onChange={(e) => setFsSearch(e.target.value)}
-                placeholder={`Search ${availableFs.length} feature set${availableFs.length === 1 ? '' : 's'}…`}
-                className="w-full px-2.5 py-1.5 text-xs bg-[rgb(var(--surface))] border border-[rgb(var(--border-subtle))] rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
-                data-testid="workspace-binding-fs-search"
+                value={hostname}
+                onChange={(e) => setHostname(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-sm font-mono bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                data-testid="machine-identity-hostname-input"
               />
-            </div>
-            <div className="max-h-56 overflow-y-auto p-1.5 space-y-1">
-              {filteredFs.length === 0 ? (
-                <p className="text-xs text-[rgb(var(--muted))] italic px-2 py-3 text-center">
-                  No feature sets match &ldquo;{fsSearch}&rdquo;.
-                </p>
-              ) : (
-                filteredFs.map((f) => {
-                  const isSelected = fsIds.includes(f.id);
-                  const order = isSelected ? fsIds.indexOf(f.id) + 1 : null;
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => toggleFs(f.id)}
-                      className={[
-                        'w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-left text-sm transition-colors',
-                        isSelected
-                          ? 'bg-primary-500/10 hover:bg-primary-500/15'
-                          : 'hover:bg-[rgb(var(--surface-hover))]',
-                      ].join(' ')}
-                      data-testid={`workspace-binding-fs-toggle-${f.id}`}
-                    >
-                      <div
-                        className={[
-                          'h-4 w-4 rounded border flex items-center justify-center flex-shrink-0',
-                          isSelected
-                            ? 'bg-primary-500 border-primary-500'
-                            : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--surface))]',
-                        ].join(' ')}
-                      >
-                        {isSelected ? (
-                          <Check
-                            className="h-3 w-3 text-white"
-                            strokeWidth={3}
-                          />
-                        ) : null}
-                      </div>
-                      {f.icon && (
-                        <span className="text-base leading-none flex-shrink-0">
-                          {f.icon}
-                        </span>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className="font-medium truncate">{f.name}</p>
-                          {isStarterFeatureSet(f) && (
-                            <span
-                              className="text-[9px] uppercase tracking-wide text-[rgb(var(--muted))] bg-[rgb(var(--surface))] px-1 py-0.5 rounded flex-shrink-0"
-                              title="Auto-seeded with this Space."
-                            >
-                              starter
-                            </span>
-                          )}
-                        </div>
-                        {f.description && (
-                          <p className="text-[11px] text-[rgb(var(--muted))] truncate">
-                            {f.description}
-                          </p>
-                        )}
-                      </div>
-                      {order !== null && fsIds.length > 1 && (
-                        <span
-                          className="text-[10px] font-bold text-primary-600 dark:text-primary-300 bg-primary-500/15 rounded-full h-5 w-5 flex items-center justify-center flex-shrink-0"
-                          title="Render order — first FS rendered first; resolver merges all into one set."
-                        >
-                          {order}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-            {fsSearch && filteredFs.length > 0 && filteredFs.length < availableFs.length && (
-              <div className="px-3 py-1.5 text-[11px] text-[rgb(var(--muted))] border-t border-[rgb(var(--border-subtle))]">
-                {filteredFs.length} of {availableFs.length} shown
-              </div>
-            )}
-          </div>
-        )}
-      </FormField>
+            </FormField>
 
-      {/* Saving is explicit in every mode now — nothing is written until
-          Apply is pressed, so the user can keep deciding without half-saved
-          state. In edit mode the button stays disabled until something
-          actually changes. An empty feature-set selection is valid and
-          savable. */}
-      <div className="pt-1 space-y-2">
-        {spaceId && fsIds.length === 0 && (
-          // Empty is allowed — explain what it means rather than blocking.
-          <p className="text-[11px] text-[rgb(var(--muted))]">
-            No feature sets selected — this folder gets <strong>no tools</strong>{' '}
-            from this Space. Built-in servers still apply per Space (see Built-in
-            Servers).
-          </p>
-        )}
-        {isEdit && dirty && !duplicate && (
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
-            Unsaved changes — press <strong>Apply changes</strong> to save.
-          </p>
-        )}
-        <div className="flex items-center gap-2">
-          <Button
-            variant="primary"
-            size="md"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className="flex-1"
-            data-testid="workspace-binding-submit"
-          >
-            {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-            ) : (
-              <Check className="h-4 w-4 mr-1.5" />
-            )}
-            {submitLabel}
-          </Button>
-          <Button variant="secondary" size="md" onClick={onCancel} disabled={submitting}>
-            {isEdit ? 'Close' : 'Cancel'}
-          </Button>
-        </div>
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                variant="primary"
+                size="md"
+                onClick={() => void handleConfirm()}
+                disabled={submitting || !canSubmit}
+                className="flex-1"
+                data-testid="machine-identity-confirm-btn"
+              >
+                {submitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                ) : (
+                  <Check className="h-4 w-4 mr-1.5" />
+                )}
+                {t('machineIdentity.confirm')}
+              </Button>
+              <Button variant="secondary" size="md" onClick={onClose} disabled={submitting}>
+                {t('common:actions.cancel')}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </div>
-  );
-}
-
-/**
- * Inline hint under the workspace_root input. Three visual states:
- *   • idle        — neutral hint about normalization rules
- *   • checking    — subtle spinner + "Checking…"
- *   • ok          — if the normalized form differs from the raw input,
- *                   show it as a preview so the user sees exactly what
- *                   gets saved (drive letter lowercased, URI scheme
- *                   stripped, slashes flipped, etc.). Otherwise silent.
- *   • error       — red message with the server's explanation
- */
-function RootValidationHint({
-  state,
-  editable,
-  originalValue,
-}: {
-  state:
-    | { state: 'idle' }
-    | { state: 'checking' }
-    | { state: 'ok'; normalized: string }
-    | { state: 'error'; reason: string };
-  editable: boolean;
-  originalValue: string;
-}) {
-  if (!editable) {
-    return (
-      <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        This folder was reported by the app that&apos;s open in it, so the path
-        is fixed — just choose its tools below.
-      </p>
-    );
-  }
-  if (state.state === 'idle') {
-    return (
-      <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        Click <strong>Browse</strong> to pick a folder, or paste an absolute path. Accepts{' '}
-        <code>/unix</code>, <code>C:\windows</code>, and <code>file://</code> forms.
-      </p>
-    );
-  }
-  if (state.state === 'checking') {
-    return (
-      <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))] inline-flex items-center gap-1.5">
-        <Loader2 className="h-3 w-3 animate-spin" />
-        Checking…
-      </p>
-    );
-  }
-  if (state.state === 'error') {
-    return (
-      <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">
-        {state.reason}
-      </p>
-    );
-  }
-  // ok
-  const changed = state.normalized !== originalValue.trim();
-  if (!changed) {
-    return (
-      <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        Ready to save.
-      </p>
-    );
-  }
-  return (
-    <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-      Will be saved as{' '}
-      <code className="font-mono text-[rgb(var(--foreground))]">
-        {state.normalized}
-      </code>
-      .
-    </p>
-  );
-}
-
-function FormField({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))] mb-2">
-        {label}
-      </label>
-      {children}
-      {hint && <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">{hint}</p>}
-    </div>
-  );
-}
-
-function Picker({
-  value,
-  onChange,
-  options,
-  placeholder,
-  disabled,
-  testId,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string; icon?: string }>;
-  placeholder: string;
-  disabled?: boolean;
-  testId?: string;
-}) {
-  return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        className="w-full appearance-none px-3 py-2 pr-9 bg-[rgb(var(--background))] border border-[rgb(var(--border))] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        data-testid={testId}
-      >
-        <option value="">{placeholder}</option>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.icon ? `${o.icon}  ` : ''}
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))] pointer-events-none" />
-    </div>
+    </>
   );
 }
 
@@ -2277,19 +1974,21 @@ function EmptyState({
   hasAny,
   hasFilter,
   onCreate,
+  t,
 }: {
   hasAny: boolean;
   hasFilter: boolean;
   onCreate: () => void;
+  t: TFunction<['workspaces', 'common']>;
 }) {
   if (hasFilter && hasAny) {
     return (
       <Card className="max-w-2xl mx-auto">
         <CardContent className="flex flex-col items-center justify-center py-16">
           <Search className="h-16 w-16 text-[rgb(var(--muted))] mb-4" />
-          <h3 className="text-lg font-medium mb-2">No workspaces match</h3>
+          <h3 className="text-lg font-medium mb-2">{t('empty.noMatchTitle')}</h3>
           <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md">
-            Try adjusting the search or filter.
+            {t('empty.noMatchSubtitle')}
           </p>
         </CardContent>
       </Card>
@@ -2301,15 +2000,13 @@ function EmptyState({
         <div className="h-16 w-16 rounded-full bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center mb-4">
           <Radio className="h-8 w-8 text-primary-500" />
         </div>
-        <h3 className="text-lg font-medium mb-2">No folders mapped yet</h3>
+        <h3 className="text-lg font-medium mb-2">{t('empty.nothingTitle')}</h3>
         <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md mb-6">
-          When you open a folder in a connected app, it shows up here so you can
-          choose its tools. You can also map a folder ahead of time — add one
-          now to get started.
+          {t('empty.nothingSubtitle')}
         </p>
         <Button variant="primary" onClick={onCreate}>
           <Plus className="h-4 w-4 mr-2" />
-          Add a mapping
+          {t('empty.addBinding')}
         </Button>
       </CardContent>
     </Card>

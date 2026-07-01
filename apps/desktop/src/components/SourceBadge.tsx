@@ -2,21 +2,34 @@
  * Source Badge component for displaying server installation source.
  */
 
+import { useTranslation } from 'react-i18next';
 import type { InstallationSource } from '@/types/registry';
 
 interface SourceBadgeProps {
   source: InstallationSource | undefined;
+  /** Source server ID when this install is a clone (display-only lineage). */
+  clonedFrom?: string | null;
   className?: string;
 }
 
 /**
  * Badge showing where a server was installed from.
- * 
- * - Registry: Blue badge - installed from official/bundled registry
- * - Config File: Green badge - synced from user's JSON config file
- * - Manual: Gray badge - manually entered via UI
  */
-export function SourceBadge({ source, className = '' }: SourceBadgeProps) {
+export function SourceBadge({ source, clonedFrom, className = '' }: SourceBadgeProps) {
+  const { t } = useTranslation('common');
+
+  if (clonedFrom) {
+    return (
+      <span
+        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 ${className}`}
+        title={t('sourceBadge.cloneTitle', { serverId: clonedFrom })}
+        data-testid="source-badge-clone"
+      >
+        {t('sourceBadge.cloneLabel', { serverId: clonedFrom })}
+      </span>
+    );
+  }
+
   if (!source) {
     return null;
   }
@@ -26,9 +39,9 @@ export function SourceBadge({ source, className = '' }: SourceBadgeProps) {
       return (
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 ${className}`}
-          title="Installed from registry"
+          title={t('sourceBadge.registryTitle')}
         >
-          Registry
+          {t('sourceBadge.registry')}
         </span>
       );
 
@@ -36,9 +49,9 @@ export function SourceBadge({ source, className = '' }: SourceBadgeProps) {
       return (
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 ${className}`}
-          title={`From config: ${source.file_path}`}
+          title={t('sourceBadge.configFileTitle', { path: source.file_path })}
         >
-          Config File
+          {t('sourceBadge.configFile')}
         </span>
       );
 
@@ -46,45 +59,13 @@ export function SourceBadge({ source, className = '' }: SourceBadgeProps) {
       return (
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 ${className}`}
-          title="Manually added"
+          title={t('sourceBadge.manualTitle')}
         >
-          Manual
+          {t('sourceBadge.manual')}
         </span>
       );
 
     default:
       return null;
   }
-}
-
-/**
- * Get the appropriate uninstall action label based on source.
- */
-export function getUninstallLabel(source: InstallationSource | undefined): string {
-  if (!source) {
-    return 'Uninstall';
-  }
-
-  switch (source.type) {
-    case 'user_config':
-      return 'Remove from Config';
-    case 'manual_entry':
-      return 'Remove';
-    case 'registry':
-    default:
-      return 'Uninstall';
-  }
-}
-
-/**
- * Get confirmation message for uninstalling based on source.
- */
-export function getUninstallConfirmMessage(
-  serverName: string,
-  source: InstallationSource | undefined
-): string {
-  if (source?.type === 'user_config') {
-    return `This will remove "${serverName}" from your config file. You can re-add it by editing the config file.`;
-  }
-  return `Are you sure you want to uninstall "${serverName}"? You can reinstall it from the registry.`;
 }

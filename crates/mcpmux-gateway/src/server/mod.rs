@@ -27,7 +27,7 @@ pub use dependencies::{DependenciesBuilder, GatewayDependencies};
 pub use handlers::PendingAuthorization;
 pub use service_container::ServiceContainer;
 pub use startup::{AutoConnectResult, StartupOrchestrator, TokenRefreshResult};
-pub use state::{ClientSession, GatewayState};
+pub use state::{ClientSession, ConsentUiNotifier, GatewayState};
 
 use axum::{
     extract::ConnectInfo,
@@ -42,6 +42,7 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::consumers::MCPNotifier;
 use crate::mcp::{mcp_oauth_middleware, McpMuxGatewayHandler};
@@ -235,17 +236,30 @@ impl GatewayServer {
         let state = Arc::new(RwLock::new(state));
 
         // Set database and services in state (needs async, so we block here)
-        tokio::task::block_in_place(|| {
+        let local_machine_id = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 let mut state_guard = state.write().await;
                 state_guard.set_database(dependencies.database.clone());
                 state_guard
                     .set_client_metadata_service(dependencies.client_metadata_service.clone());
-            });
+
+                if let Some(ref settings_repo) = dependencies.settings_repo {
+                    mcpmux_core::AppSettingsService::new(settings_repo.clone())
+                        .get_local_machine_id()
+                        .await
+                } else {
+                    None
+                }
+            })
         });
 
         // Initialize all services using DI container (pass domain event sender for non-blocking emission)
-        let services = ServiceContainer::initialize(&dependencies, domain_event_tx, state.clone());
+        let services = ServiceContainer::initialize(
+            &dependencies,
+            domain_event_tx,
+            state.clone(),
+            local_machine_id,
+        );
 
         info!("[Gateway] Services initialized successfully");
 
@@ -312,6 +326,16 @@ impl GatewayServer {
     /// one-shot prompt for.
     pub fn session_roots(&self) -> Arc<crate::services::SessionRootsRegistry> {
         self.services.session_roots.clone()
+    }
+
+    /// FeatureSet resolver — used for live machine-identity hot-reload.
+    pub fn feature_set_resolver(&self) -> Arc<crate::services::FeatureSetResolverService> {
+        self.services.feature_set_resolver.clone()
+    }
+
+    /// Hot-reload this install's machine identity without restarting the gateway.
+    pub async fn set_local_machine_id(&self, id: Option<Uuid>) {
+        self.services.set_local_machine_id(id).await;
     }
 
     /// Get the OAuth manager

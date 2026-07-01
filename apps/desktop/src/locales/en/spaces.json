@@ -1,0 +1,60 @@
+{
+  "title": "Workspaces",
+  "subtitle": "Manage isolated environments with their own credentials and server configurations",
+  "createSpace": "Create Space",
+  "searchPlaceholder": "Search workspaces...",
+  "empty": {
+    "noMatchTitle": "No spaces match your search",
+    "noCreatedTitle": "No spaces created",
+    "noMatchDesc": "Try adjusting your search terms",
+    "noCreatedDesc": "Create a workspace to isolate your MCP server configurations and credentials.",
+    "createFirst": "Create First Space"
+  },
+  "card": {
+    "noDescription": "No description",
+    "default": "Default",
+    "defaultTitle": "Default home for sessions whose reported root has no binding",
+    "editTitle": "Edit workspace"
+  },
+  "createModal": {
+    "title": "Create Workspace",
+    "iconLabel": "Icon",
+    "nameLabel": "Name *",
+    "namePlaceholder": "e.g., Personal, Work, Project X",
+    "createSpace": "Create Space"
+  },
+  "toast": {
+    "created": "Space created",
+    "createdBody": "\"{{name}}\" has been created",
+    "createFailed": "Failed to create space"
+  },
+  "baseDirs": {
+    "removeTitle": "Remove this folder"
+  },
+  "panel": {
+    "closeAria": "Close panel",
+    "default": "Default",
+    "icon": "Icon",
+    "name": "Name *",
+    "description": "Description",
+    "descriptionPlaceholder": "Optional description for this workspace",
+    "saveChanges": "Save Changes",
+    "deleteSpace": "Delete Space",
+    "validation": {
+      "nameRequired": "Name is required."
+    },
+    "confirm": {
+      "deleteTitle": "Delete workspace",
+      "deleteMessage": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",
+      "deleteConfirm": "Delete"
+    },
+    "toast": {
+      "updated": "Space updated",
+      "updatedBody": "\"{{name}}\" has been saved",
+      "saveFailed": "Failed to save space",
+      "deleted": "Space deleted",
+      "deletedBody": "\"{{name}}\" has been deleted",
+      "deleteFailed": "Failed to delete space"
+    }
+  }
+}

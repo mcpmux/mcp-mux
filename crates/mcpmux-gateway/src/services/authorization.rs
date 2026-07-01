@@ -33,7 +33,10 @@ impl AuthorizationService {
         _space_id: &Uuid,
         session_id: Option<&str>,
     ) -> Result<Vec<String>> {
-        let resolved = self.resolver.resolve(session_id, Some(client_id)).await?;
+        let resolved = self
+            .resolver
+            .resolve(session_id, Some(client_id), None)
+            .await?;
         Ok(resolved.feature_set_ids)
     }
 
@@ -44,8 +47,11 @@ impl AuthorizationService {
         &self,
         session_id: Option<&str>,
         client_id: Option<&str>,
+        request_machine_id: Option<Uuid>,
     ) -> Result<ResolvedFeatureSet> {
-        self.resolver.resolve(session_id, client_id).await
+        self.resolver
+            .resolve(session_id, client_id, request_machine_id)
+            .await
     }
 
     /// Does this session/client resolve to any FeatureSet?

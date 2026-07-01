@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSContactsUsageDescription</key>
+  <string>McpMux relays MCP servers that may read macOS Contacts (e.g. resolving phone numbers and emails to display names in messaging tools).</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>McpMux relays MCP servers that may read macOS Calendar events.</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>McpMux relays MCP servers that may read macOS Reminders.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>McpMux relays MCP servers that may automate other apps via AppleScript.</string>
+</dict>
+</plist>

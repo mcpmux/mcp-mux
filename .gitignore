@@ -60,6 +60,7 @@ coverage/
 # Test reports & assets
 test-results/
 playwright-report/
+.playwright-mcp/
 blob-report/
 html-report/
 tests/e2e/reports/

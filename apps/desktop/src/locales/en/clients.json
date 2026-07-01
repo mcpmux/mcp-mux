@@ -1,0 +1,138 @@
+{
+  "title": "Connections",
+  "subtitlePrefix": "Approved AI clients. Routing (which Space, which Bundle) is configured in",
+  "subtitleSuffix": "per folder, not per client.",
+  "searchPlaceholder": "Search by name, alias, or id…",
+  "empty": {
+    "noMatchTitle": "No connections match your search",
+    "noMatchDesc": "Try adjusting your search terms."
+  },
+  "lastSeen": {
+    "never": "never",
+    "justNow": "just now",
+    "secondsAgo": "{{count}}s ago",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "daysAgo": "{{count}}d ago",
+    "label": "Last seen {{time}}"
+  },
+  "capability": {
+    "reportsWorkspace": "Reports workspace",
+    "reportsWorkspaceTitle": "This client declares the MCP roots capability. Its sessions route via Workspace bindings; the per-client grant list below applies only to rare rootless reconnects.",
+    "rootless": "Rootless",
+    "rootlessTitle": "This client does NOT declare the MCP roots capability. It always routes via the per-client grants set in this panel — configure them below."
+  },
+  "panel": {
+    "closeAria": "Close panel",
+    "displayName": "Display name",
+    "displayNameHint": "An alias shown in logs and this list. Doesn't affect routing.",
+    "routingTitle": "Routing is workspace-driven",
+    "routingDesc": "When this client reports a folder as an MCP root, mcpmux uses the matching Workspace binding to pick the Space and FeatureSet. If it doesn't report the folder reliably (e.g. Cursor), open the folder in Workspaces and",
+    "routingDescEmphasis": "Connect apps to this folder",
+    "routingDescSuffix": "to auto-write its config with a workspace header.",
+    "openProjects": "Open Projects →",
+    "clientInfo": "Client info",
+    "clientId": "Client ID",
+    "clientName": "Client name",
+    "software": "Software",
+    "version": "Version",
+    "registeredVia": "Registered via",
+    "lastSeen": "Last seen",
+    "revokeConnection": "Revoke connection"
+  },
+  "grants": {
+    "title": "Default for rootless sessions",
+    "badge": "Rootless only",
+    "badgeTitle": "Used only when this client connects without reporting a workspace folder",
+    "description": "This client doesn't declare the MCP roots capability, so its sessions route through the Bundles you pick here instead of through Project bindings. Leaving the list empty denies the client — rootless sessions then see only the built-in mcpmux_* management tools.",
+    "noDefaultSpace": "No default Space configured.",
+    "noBundles": "No Bundles exist in the default Space yet.",
+    "searchPlaceholder_one": "Search {{count}} feature set…",
+    "searchPlaceholder_other": "Search {{count}} feature sets…",
+    "noMatch": "No feature sets match \"{{query}}\".",
+    "shownCount": "{{shown}} of {{total}} shown",
+    "grantedAlwaysVisible": " (granted FSes always visible)",
+    "starterTitle": "Auto-seeded with this Space.",
+    "starter": "starter",
+    "noDefaultsWarning": "No defaults set — rootless sessions from this client are denied. That's the safe default. Pick a Bundle above only if you trust this client to operate without a workspace folder."
+  },
+  "toast": {
+    "reconnected": "Client reconnected",
+    "saved": "Saved",
+    "savedBody": "\"{{name}}\" updated",
+    "saveFailed": "Failed to save",
+    "revokeFailed": "Failed to revoke",
+    "connectionRevoked": "Connection revoked",
+    "connectionRevokedBody": "\"{{name}}\" removed",
+    "loadGrantsFailed": "Failed to load grants",
+    "revoked": "Revoked \"{{name}}\"",
+    "granted": "Granted \"{{name}}\"",
+    "revokeGrantFailed": "Failed to revoke grant",
+    "grantFailed": "Failed to grant"
+  },
+  "confirm": {
+    "revokeTitle": "Revoke connection",
+    "revokeMessage": "Remove \"{{name}}\"? All tokens for this client will be revoked. The client will need to re-approve to connect again.",
+    "revokeLabel": "Revoke"
+  },
+  "gatewayConfirm": {
+    "title": "Gateway port is in use",
+    "portTakenMessage": "{{sourceLabel}} (:{{port}}) is already taken by another process. Start the gateway on a different port that the system picks automatically? Your IDE configs will need to be updated to point at the new port.",
+    "portTakenShortMessage": "{{sourceLabel}} (:{{port}}) is already in use. Start on a different port?",
+    "confirmLabel": "Use another port",
+    "source": {
+      "configured": "Your configured gateway port",
+      "default": "The default gateway port",
+      "override": "The requested gateway port"
+    }
+  },
+  "onboarding": {
+    "title": "Let's hook up your first IDE",
+    "intro": "mcpmux is one connection your AI client uses to reach every MCP server. Three steps and you're done:",
+    "step1Title": "Pick your IDE below and follow its prompt",
+    "step1Body": "Each card tells you exactly what the button does — either one-click install or copy a small config for you to paste.",
+    "step2Title": "Enable mcpmux in your IDE's MCP settings",
+    "step2Body": "One-click install usually wires it up automatically. If you pasted a config, open your IDE's MCP panel and toggle mcpmux on — a restart may be needed for the IDE to pick it up.",
+    "step3Title": "Approve the connection",
+    "step3Badge": "right here",
+    "step3Body": "mcpmux will pop a dialog the moment your IDE reaches the gateway. Until you accept it, nothing is routed.",
+    "gatewayStoppedTitle": "Gateway is stopped",
+    "gatewayStoppedBody": "Start it from the Dashboard first — otherwise the IDE will hang at initialize."
+  },
+  "oauthConsent": {
+    "validating": "Validating authorization request…",
+    "errorTitle": "Authorization Failed",
+    "errorDesc": "Could not process the authorization request",
+    "close": "Close",
+    "errors": {
+      "notFound": "This authorization request was not found. It may have expired or been processed already.",
+      "expired": "This authorization request has expired. Please try again from your application.",
+      "alreadyProcessed": "This authorization request has already been processed.",
+      "gatewayUnavailable": "The gateway service is not running. Please check that MCPMux is fully started."
+    },
+    "allowTitle": "Allow {{clientName}} to connect?",
+    "allowDesc": "It will be able to call tools you enable for this folder.",
+    "allow": "Allow",
+    "allowWait": "Allow (wait…)",
+    "deny": "Deny",
+    "approveFailed": "Failed to approve connection",
+    "denyFailed": "Failed to deny connection",
+    "nameMachine": {
+      "title": "Name this machine",
+      "desc": "{{clientName}} is connecting for the first time. Name this machine so you can identify it in workspace bindings.",
+      "sectionLabel": "Machine",
+      "allowBtn": "Allow & Connect",
+      "allowWait": "Allow & Connect (wait…)",
+      "newMachine": "New machine",
+      "namePlaceholder": "My Laptop",
+      "iconLabel": "Icon",
+      "iconPlaceholder": "e.g. 🏠",
+      "hostnameLabel": "Hostname",
+      "nameRequired": "Enter a name for this machine",
+      "iconRequired": "Icon is required",
+      "hostnameRequired": "Hostname is required",
+      "profileIncomplete": "Selected machine is missing icon or hostname. Complete it in Settings first."
+    }
+  },
+  "fallbackClientName": "Client"
+}

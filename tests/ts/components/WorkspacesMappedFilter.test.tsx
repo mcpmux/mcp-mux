@@ -39,12 +39,42 @@ vi.mock('@/lib/api/featureSets', () => ({
   isStarterFeatureSet: vi.fn(() => false),
 }));
 
-vi.mock('@/stores', () => ({
-  useSpaces: () => [{ id: 's1', name: 'Space One' }],
-  usePendingWorkspaceNew: () => false,
-  useSetPendingWorkspaceNew: () => () => {},
+vi.mock('@/lib/api/workspaceAppearances', () => ({
+  listWorkspaceAppearances: vi.fn().mockResolvedValue([]),
+  deleteWorkspaceAppearance: vi.fn(),
+  upsertWorkspaceAppearance: vi.fn(),
+  uploadWorkspaceIcon: vi.fn(),
 }));
 
+vi.mock('@/lib/api/machines', () => ({
+  listMachines: vi.fn().mockResolvedValue([]),
+  getLocalMachineId: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@/lib/backend/events', () => ({
+  useWorkspaceEvents: () => ({
+    subscribe: vi.fn(() => () => {}),
+    subscribeMany: vi.fn(() => () => {}),
+  }),
+  useWorkspaceEventListener: vi.fn(),
+}));
+
+vi.mock('@/stores', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/stores')>();
+  return {
+    ...actual,
+    useSpaces: () => [{ id: 's1', name: 'Space One' }],
+    usePendingWorkspaceNew: () => false,
+    useSetPendingWorkspaceNew: () => () => {},
+  };
+});
+
+vi.mock('@/hooks/use-viewer-identity.hook', () => ({
+  useViewerIdentity: () => ({ machineId: null, isLoading: false }),
+  ViewerIdentityProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+import { renderWithI18n } from '../render-with-i18n.helpers';
 import { WorkspacesPage } from '@/features/workspaces/WorkspacesPage';
 
 const MAPPED_ROOT = '/home/u/mapped';
@@ -63,14 +93,14 @@ describe('WorkspacesPage – Mapped/Unmapped filter', () => {
   });
 
   it('shows both entries under the default "All" filter', async () => {
-    render(<WorkspacesPage />);
+    renderWithI18n(<WorkspacesPage />);
     expect(await screen.findByTestId(MAPPED_TESTID)).toBeTruthy();
     expect(screen.getByTestId(UNMAPPED_TESTID)).toBeTruthy();
   });
 
   it('"Mapped" shows only the bound folder', async () => {
     const user = userEvent.setup();
-    render(<WorkspacesPage />);
+    renderWithI18n(<WorkspacesPage />);
     await screen.findByTestId(MAPPED_TESTID);
 
     await user.click(screen.getByTestId('workspace-filter-mapped'));
@@ -81,7 +111,7 @@ describe('WorkspacesPage – Mapped/Unmapped filter', () => {
 
   it('"Unmapped" shows only the folder without a binding', async () => {
     const user = userEvent.setup();
-    render(<WorkspacesPage />);
+    renderWithI18n(<WorkspacesPage />);
     await screen.findByTestId(UNMAPPED_TESTID);
 
     await user.click(screen.getByTestId('workspace-filter-unmapped'));

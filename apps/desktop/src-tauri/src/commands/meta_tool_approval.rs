@@ -142,7 +142,6 @@ pub async fn get_meta_tools_require_approval(
 pub async fn set_meta_tools_require_approval(
     required: bool,
     app_state: State<'_, AppState>,
-    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<bool, String> {
     app_state
         .settings_repository
@@ -150,13 +149,13 @@ pub async fn set_meta_tools_require_approval(
         .await
         .map_err(|e| e.to_string())?;
 
-    let broker = {
-        let state = gateway_state.read().await;
-        state.approval_broker.clone()
-    };
-    if let Some(broker) = broker {
-        broker.set_require_approval(required);
-    }
-    warn!(required, "[meta-tool] require-approval switch updated");
+    // ponytail: the split-module ApprovalBroker dropped the global bypass —
+    // its only write tool (`mcpmux_bind_current_workspace`) always prompts.
+    // The setting is still persisted for the Settings UI, but no longer toggles
+    // a live broker. Full removal of this toggle is deferred to the UI phase.
+    warn!(
+        required,
+        "[meta-tool] require-approval preference persisted"
+    );
     Ok(required)
 }

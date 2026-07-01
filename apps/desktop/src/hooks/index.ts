@@ -36,3 +36,14 @@ export { useServerManager } from './useServerManager';
 // Space management
 export { useSpaces } from './useSpaces';
 
+// Event hooks (re-exported shims from @/lib/backend/events)
+export { useMetaToolEvents, useMetaToolEventListener } from './useMetaToolEvents';
+export { useOAuthClientEvents, useOAuthClientEventListener } from './useOAuthClientEvents';
+export type { OAuthClientChangedPayload } from './useOAuthClientEvents';
+export { useWorkspaceEvents, useWorkspaceEventListener } from './useWorkspaceEvents';
+export type {
+  WorkspaceEventChannel,
+  WorkspaceBindingChangedPayload,
+  WorkspaceNeedsBindingPayload,
+} from './useWorkspaceEvents';
+

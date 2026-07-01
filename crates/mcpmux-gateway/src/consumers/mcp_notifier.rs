@@ -26,7 +26,7 @@ use tracing::{debug, info, trace, warn};
 use uuid::Uuid;
 
 use crate::pool::FeatureService;
-use crate::services::FeatureSetResolverService;
+use crate::services::{EmbeddingWarmer, FeatureSetResolverService};
 
 /// MCP Notifier — sends `list_changed` notifications to connected sessions.
 ///
@@ -72,6 +72,9 @@ pub struct MCPNotifier {
     /// When a send is throttled we schedule exactly one retry for the end
     /// of the window; this set dedupes concurrent schedulers.
     pending_retries: Arc<Mutex<HashSet<(Uuid, NotificationType)>>>,
+    /// Optional background embedding warmer, triggered on server connect /
+    /// feature-refresh events so `mcpmux_search_tools` has warm vectors.
+    embedding_warmer: Arc<RwLock<Option<Arc<EmbeddingWarmer>>>>,
 }
 
 /// Type of list_changed notification for throttling
@@ -126,7 +129,14 @@ impl MCPNotifier {
             throttle_tracker: Arc::new(RwLock::new(HashMap::new())),
             state_hashes: Arc::new(RwLock::new(HashMap::new())),
             pending_retries: Arc::new(Mutex::new(HashSet::new())),
+            embedding_warmer: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Attach an embedding warmer that runs on server connect / feature-refresh
+    /// events so the hybrid `mcpmux_search_tools` ranking has warm vectors.
+    pub fn set_embedding_warmer(&self, warmer: Arc<EmbeddingWarmer>) {
+        *self.embedding_warmer.write() = Some(warmer);
     }
 
     /// Calculate hash of all available features of a given type in a space
@@ -633,6 +643,13 @@ impl MCPNotifier {
                         "[MCPNotifier] ServerStatusChanged - transient state, no notify"
                     );
                 }
+
+                if matches!(status, ConnectionStatus::Connected) {
+                    let warmer = self.embedding_warmer.read().clone();
+                    if let Some(warmer) = warmer {
+                        warmer.warm_server(space_id, server_id.clone());
+                    }
+                }
             }
 
             DomainEvent::ServerFeaturesRefreshed {
@@ -651,6 +668,10 @@ impl MCPNotifier {
                     "[MCPNotifier] ServerFeaturesRefreshed"
                 );
                 self.notify_all_list_changed(space_id, false).await;
+                let warmer = self.embedding_warmer.read().clone();
+                if let Some(warmer) = warmer {
+                    warmer.warm_server(space_id, server_id.clone());
+                }
             }
 
             // Other events that affect MCP capabilities are handled above
@@ -915,7 +936,7 @@ impl MCPNotifier {
             }
             match self
                 .feature_set_resolver
-                .resolve(Some(&session_id), Some(&client_id))
+                .resolve(Some(&session_id), Some(&client_id), None)
                 .await
             {
                 Ok(resolved) if resolved.space_id == Some(space_id) => {

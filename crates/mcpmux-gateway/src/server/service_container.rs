@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use uuid::Uuid;
+
 use crate::pool::{PoolServices, ServerManager, ServiceFactory};
 use crate::services::{
     meta_tools, ApprovalBroker, AuthorizationService, ClientMetadataService,
@@ -74,6 +76,7 @@ impl ServiceContainer {
         deps: &GatewayDependencies,
         domain_event_tx: tokio::sync::broadcast::Sender<DomainEvent>,
         gateway_state: Arc<tokio::sync::RwLock<GatewayState>>,
+        local_machine_id: Option<uuid::Uuid>,
     ) -> Self {
         // Create prefix cache service with dependencies
         let prefix_cache_service = Arc::new(PrefixCacheService::new().with_dependencies(
@@ -110,6 +113,7 @@ impl ServiceContainer {
             deps.inbound_client_repo.clone(),
             deps.feature_set_repo.clone(),
             deps.space_base_dir_repo.clone(),
+            local_machine_id,
         ));
 
         // Authorization service is now a thin adapter over the resolver.
@@ -120,6 +124,11 @@ impl ServiceContainer {
         // by the Tauri layer; until then, writes return `approval_required`.
         let approval_broker = Arc::new(ApprovalBroker::new());
 
+        // Persistent embedding cache backing the hybrid `search_tools` ranking.
+        let embedding_repo: Arc<dyn mcpmux_core::EmbeddingRepository> = Arc::new(
+            mcpmux_storage::SqliteEmbeddingRepository::new(deps.database.clone()),
+        );
+
         // Registry of built-in `mcpmux_*` meta tools (introspection + self-
         // management). Each write tool is gated by the broker above.
         let meta_tool_registry = meta_tools::build_default_registry(
@@ -128,13 +137,25 @@ impl ServiceContainer {
             deps.feature_set_repo.clone(),
             deps.workspace_binding_repo.clone(),
             deps.feature_repo.clone(),
+            deps.installed_server_repo.clone(),
             feature_set_resolver.clone(),
             pool_services.feature_service.clone(),
+            Some(meta_tools::routing_as_invoke_backend(
+                pool_services.routing_service.clone(),
+            )),
+            Some(meta_tools::pool_as_disclosure_backend(
+                pool_services.pool_service.clone(),
+            )),
             session_roots.clone(),
             approval_broker.clone(),
             domain_event_tx.clone(),
             deps.settings_repo.clone(),
-            Some(deps.builtin_config_repo.clone()),
+            server_manager.clone(),
+            deps.log_manager.clone(),
+            deps.state_dir
+                .clone()
+                .unwrap_or_else(|| std::env::temp_dir().join("mcpmux")),
+            embedding_repo,
         );
 
         // Space resolver — currently just exposes the active Space, but
@@ -169,5 +190,12 @@ impl ServiceContainer {
             gateway_state,
             dependencies: deps.clone(),
         }
+    }
+}
+
+impl ServiceContainer {
+    /// Hot-reload this install's machine identity on the live resolver.
+    pub async fn set_local_machine_id(&self, id: Option<Uuid>) {
+        self.feature_set_resolver.set_local_machine_id(id).await;
     }
 }

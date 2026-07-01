@@ -32,6 +32,8 @@ interface SidebarItemProps {
   onClick?: () => void;
   /** One-line tooltip explaining the destination. */
   hint?: string;
+  /** Native tooltip override (e.g. alias label → canonical name). */
+  title?: string;
   'data-testid'?: string;
 }
 
@@ -41,13 +43,14 @@ export function SidebarItem({
   active,
   onClick,
   hint,
+  title,
   'data-testid': testId,
 }: SidebarItemProps) {
   return (
     <button
       onClick={onClick}
       data-testid={testId}
-      title={hint}
+      title={title ?? hint}
       className={cn(
         'group relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium',
         'transition-all duration-150',

@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
+use uuid::Uuid;
 
 use crate::Database;
 
@@ -107,6 +108,9 @@ pub struct InboundClient {
     /// that haven't opened a session yet — the UI hides the capability
     /// badge in that state instead of misleadingly showing "Rootless".
     pub roots_capability_known: bool,
+
+    /// Machine this OAuth client is assigned to for per-machine binding lookup.
+    pub machine_id: Option<Uuid>,
 }
 
 /// Authorization code (pending exchange)
@@ -184,6 +188,7 @@ impl InboundClientRepository {
         let approved_int: i32 = row.get::<_, Option<i32>>(19)?.unwrap_or(0);
         let reports_roots_int: i32 = row.get::<_, Option<i32>>(20)?.unwrap_or(0);
         let roots_capability_known_int: i32 = row.get::<_, Option<i32>>(21)?.unwrap_or(0);
+        let machine_id_str: Option<String> = row.get(22)?;
 
         Ok(InboundClient {
             client_id: row.get(0)?,
@@ -217,6 +222,7 @@ impl InboundClientRepository {
             approved: approved_int != 0,
             reports_roots: reports_roots_int != 0,
             roots_capability_known: roots_capability_known_int != 0,
+            machine_id: machine_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
         })
     }
 
@@ -226,7 +232,8 @@ impl InboundClientRepository {
          logo_uri, client_uri, software_id, software_version,
          redirect_uris, grant_types, response_types, token_endpoint_auth_method, scope,
          metadata_url, metadata_cached_at, metadata_cache_ttl,
-         last_seen, created_at, updated_at, approved, reports_roots, roots_capability_known";
+         last_seen, created_at, updated_at, approved, reports_roots, roots_capability_known,
+         machine_id";
 
     // =========================================================================
     // Client Operations (unified inbound_clients table)
@@ -425,6 +432,37 @@ impl InboundClientRepository {
             client_id, merged_uris
         );
         Ok(merged_uris)
+    }
+
+    /// Read the machine id assigned to an inbound OAuth client.
+    pub async fn get_machine_id(&self, client_id: &str) -> Result<Option<Uuid>> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let machine_id_str: Option<String> = conn
+            .query_row(
+                "SELECT machine_id FROM inbound_clients WHERE client_id = ?1",
+                params![client_id],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(machine_id_str.and_then(|s| Uuid::parse_str(&s).ok()))
+    }
+
+    /// Assign or clear the machine id for an inbound OAuth client.
+    pub async fn set_machine_id(&self, client_id: &str, machine_id: Option<Uuid>) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let machine_id_str = machine_id.map(|id| id.to_string());
+        conn.execute(
+            "UPDATE inbound_clients SET machine_id = ?1, updated_at = ?2 WHERE client_id = ?3",
+            params![machine_id_str, now, client_id],
+        )?;
+        debug!(
+            "[OAuth] Set machine_id for client {}: {:?}",
+            client_id, machine_id
+        );
+        Ok(())
     }
 
     /// Update a client's human-facing alias.

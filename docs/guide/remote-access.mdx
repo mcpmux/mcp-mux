@@ -1,0 +1,106 @@
+---
+title: Remote Access (Optional)
+description: High-level overview of optional remote MCP and web admin access via Cloudflare Tunnel and Cloudflare Access. Local loopback remains the default.
+---
+
+By default, McpMux serves MCP on **loopback only** (`http://localhost:45818/mcp`). Remote access is **optional** — for operators who want AI clients or the McpMux UI from another device without exposing the gateway on your LAN.
+
+## What McpMux Supports
+
+| Mode | Default | Port | Typical use |
+| ---- | ------- | ---- | ----------- |
+| **Local MCP** | Yes | `45818` | Cursor, Claude Desktop, VS Code on the same machine |
+| **Web admin UI** | Off | `45819` | Full McpMux dashboard in a browser via a tunnel |
+| **Remote MCP** | Off | `45818` (tunneled) | AI clients connecting to a public HTTPS hostname |
+
+Local and remote MCP share the same gateway process. Remote clients use your **Public gateway URL**; local clients can keep using `localhost`.
+
+## Recommended Layout
+
+Use **two hostnames** — one for MCP traffic, one for the admin UI:
+
+```
+AI clients ──→ https://mcp.example.com/mcp ──→ cloudflared ──→ localhost:45818
+Browser UI ──→ https://mux.example.com/      ──→ cloudflared ──→ localhost:45819
+```
+
+McpMux never binds to `0.0.0.0`. A reverse proxy (commonly [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)) terminates TLS at the edge and forwards to loopback on the machine running McpMux.
+
+## Authentication Layers
+
+Remote setups usually stack three gates:
+
+1. **Cloudflare Access** — service token or SSO at the tunnel edge (recommended for both hostnames)
+2. **McpMux OAuth** — per-client authorization for MCP connections (same as local, with browser consent)
+3. **FeatureSets** — tool/resource permissions inside McpMux (unchanged)
+
+Path-scoped **Bypass** policies on the MCP hostname are required for OAuth discovery (`/.well-known/*`) and the consent redirect flow (`/oauth/*`). Do **not** bypass the entire hostname — keep Access enforced on `/mcp` and everything else.
+
+## Settings (Settings → Gateway)
+
+| Setting | Purpose |
+| ------- | ------- |
+| **Public gateway URL** | HTTPS base for remote MCP (e.g. `https://mcp.example.com`). Drives OAuth metadata when tunnel traffic matches this hostname. |
+| **Web admin mode** | Enables the admin server on `127.0.0.1:45819`. |
+| **Trust Cloudflare Access JWT** | Requires a valid `CF-Access-Jwt-Assertion` on admin API requests when enabled. |
+| **Cloudflare team domain** | Your Zero Trust team slug (e.g. `myteam` → `myteam.cloudflareaccess.com`). |
+
+Build the admin SPA before serving it from the tunnel: `pnpm build:web:admin` from the repo root (or use a release build that includes it).
+
+## Connecting a Remote AI Client
+
+Point the client at your public MCP URL instead of localhost:
+
+```json
+{
+  "mcpServers": {
+    "mcpmux": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "CF-Access-Client-Id": "<service-token-id>",
+        "CF-Access-Client-Secret": "<service-token-secret>",
+        "X-Mcpmux-Machine-Id": "<machine-uuid-from-mcpmux-settings>"
+      }
+    }
+  }
+}
+```
+
+When multiple physical devices (e.g. a Mac Studio and a laptop) share one tunneled gateway, add `X-Mcpmux-Machine-Id` on **each** device's config so machine-scoped workspace bindings resolve correctly. Copy the UUID from **Settings → Machine Identity** in McpMux.
+
+### Per-device identity (shared tunnel)
+
+One gateway install can serve MCP for several physical machines over a tunnel. The gateway host always knows its own identity (`gateway.local_machine_id`), but it cannot tell which laptop made a given request unless the client says so.
+
+| Situation | What to do |
+| --------- | ---------- |
+| MCP on `localhost:45818` on the same box as McpMux | No extra header — `local_machine_id` is enough |
+| Cursor on a **different** machine hitting a tunneled URL | Add `X-Mcpmux-Machine-Id: <that-machine-uuid>` to that device's MCP config |
+| Binding scoped to machine A only | Requests with machine B's header (or no header when B is remote) stay **unbound** until you create a binding for B |
+
+In **Settings → Machine Identity → Manage all machines**, use **Copy MCP header** to get a ready-made JSON snippet for Cursor or other HTTP MCP clients.
+
+Service tokens are created in **Zero Trust → Access → Service auth**. The MCP and admin Access applications each need a policy that accepts your token (or your SSO identity for browser admin use).
+
+After the first connection, approve OAuth in the McpMux consent UI (desktop or web admin, depending on your setup).
+
+## Security Posture
+
+- Gateway and admin servers listen on **loopback only** — not on your LAN interface.
+- Credentials stay encrypted in SQLite + OS keychain; tunneling does not change storage.
+- When CF Access trust is enabled on admin, `/api/v1/health` also requires a JWT — tunnel origin health probes without a JWT will not work as liveness checks.
+
+See [Security](/docs/security/) for encryption and OAuth details.
+
+## What This Guide Does Not Cover
+
+Tunnel creation, DNS, and Cloudflare Access policy wiring are **operator infrastructure** — specific to your account and hostname. McpMux exposes the settings and protocol behavior above; you bring the tunnel and Access apps.
+
+For local gateway behavior (routing, OAuth refresh, connection pooling), see [Gateway](/docs/gateway/). For web admin specifics (ports, CSRF, SPA build), see the **Web admin mode** section there.
+
+## Next Steps
+
+- [Gateway](/docs/gateway/) — local MCP proxy and web admin mode
+- [Clients](/docs/clients/) — access keys and connection modes
+- [Security](/docs/security/) — credential encryption and OAuth consent

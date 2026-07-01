@@ -16,6 +16,7 @@ import type {
   SortOption,
 } from '../types/registry';
 import * as api from '../lib/api/registry';
+import { resolveInstalledDisplayName } from '../features/servers/server-display-name.helpers';
 
 // ============================================
 // State & Actions Types
@@ -61,8 +62,6 @@ interface RegistryActions {
   clearFilters: () => void;
   /** Install server (create DB record) */
   installServer: (id: string, spaceId?: string) => Promise<void>;
-  /** Enable/Disable server */
-  toggleServer: (id: string, enabled: boolean) => Promise<void>;
   /** Uninstall server */
   uninstallServer: (id: string) => Promise<void>;
   /** Set active view space */
@@ -185,19 +184,6 @@ export const useRegistryStore = create<RegistryState & RegistryActions>((set, ge
       });
     } catch (error) {
       set({ error: String(error) });
-    }
-  },
-
-  toggleServer: async (id: string, enabled: boolean) => {
-    const { spaceId } = get();
-    if (!spaceId) return;
-
-    set({ isLoading: true, error: null });
-    try {
-      await api.setServerEnabled(id, enabled, spaceId);
-      await get().loadRegistry(spaceId);
-    } catch (error) {
-      set({ error: String(error), isLoading: false });
     }
   },
 
@@ -369,6 +355,7 @@ function mergeServers(defs: ServerDefinition[], states: InstalledServerState[]):
     
     return {
       ...def,
+      name: state ? resolveInstalledDisplayName(state, def) : def.name,
       is_installed: !!state,
       enabled: state?.enabled ?? false,
       oauth_connected: state?.oauth_connected ?? false,

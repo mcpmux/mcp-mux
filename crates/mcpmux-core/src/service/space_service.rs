@@ -33,6 +33,11 @@ impl SpaceService {
         }
     }
 
+    /// Return a clone of the underlying space repository.
+    pub fn space_repository(&self) -> Arc<dyn SpaceRepository> {
+        self.repository.clone()
+    }
+
     /// List all spaces
     pub async fn list(&self) -> anyhow::Result<Vec<Space>> {
         self.repository.list().await
@@ -89,6 +94,38 @@ impl SpaceService {
             }
         }
         self.repository.delete(id).await
+    }
+
+    /// Update a space's display metadata (name, icon, description).
+    pub async fn update(
+        &self,
+        id: Uuid,
+        name: Option<String>,
+        icon: Option<String>,
+        description: Option<String>,
+    ) -> anyhow::Result<Space> {
+        let mut space = self
+            .repository
+            .get(&id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Space not found: {}", id))?;
+
+        if let Some(name) = name {
+            space.name = name;
+        }
+        if let Some(icon) = icon {
+            space.icon = Some(icon);
+        }
+        if let Some(description) = description {
+            space.description = Some(description);
+        }
+        space.updated_at = chrono::Utc::now();
+
+        self.repository.update(&space).await?;
+
+        info!(space_id = %space.id, name = %space.name, "[SpaceService] Updated space");
+
+        Ok(space)
     }
 
     /// Get the system's default Space (the gateway's routing fallback when

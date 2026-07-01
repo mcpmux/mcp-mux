@@ -142,6 +142,7 @@ impl ClientMetadataService {
             // client.
             reports_roots: false,
             roots_capability_known: false,
+            machine_id: None,
         }
     }
 }

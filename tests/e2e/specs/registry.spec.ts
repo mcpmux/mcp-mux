@@ -6,8 +6,8 @@ test.describe('Registry/Discover Page', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Discover")').click();
-    await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
+    await page.locator('nav button:has-text("Search")').click();
+    await expect(page.getByRole('heading', { name: 'Discover Servers' })).toBeVisible();
   });
 
   test('should display search input', async ({ page }) => {
@@ -15,7 +15,7 @@ test.describe('Registry/Discover Page', () => {
     const registry = new RegistryPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
 
     await expect(registry.searchInput).toBeVisible();
     await expect(registry.searchInput).toHaveAttribute('placeholder', 'Search servers...');
@@ -26,7 +26,7 @@ test.describe('Registry/Discover Page', () => {
     const registry = new RegistryPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
 
     await expect(registry.serverCount).toBeVisible();
   });
@@ -36,7 +36,7 @@ test.describe('Registry/Discover Page', () => {
     const registry = new RegistryPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
 
     // Get initial count
     const initialText = await registry.serverCount.textContent();
@@ -60,7 +60,7 @@ test.describe('Registry/Discover Page', () => {
     const registry = new RegistryPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
 
     await registry.search('xyznonexistent');
     await registry.clearSearch();
@@ -73,7 +73,7 @@ test.describe('Registry/Discover Page', () => {
     const dashboard = new DashboardPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
     
     // Wait for content to load
     await page.waitForTimeout(500);
@@ -91,7 +91,7 @@ test.describe('Registry Server Icon Rendering', () => {
     const dashboard = new DashboardPage(page);
 
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
 
     // Wait for content to load
     await page.waitForTimeout(500);
@@ -134,7 +134,7 @@ test.describe('Registry Server Icon Rendering', () => {
     const registry = new RegistryPage(page);
 
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
     await page.waitForTimeout(500);
 
     // Click first server card to open detail modal
@@ -172,7 +172,7 @@ test.describe('Registry Server Detail Modal', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
 
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
     await page.waitForTimeout(500);
 
     // Click first server card to open detail modal
@@ -195,7 +195,7 @@ test.describe('Registry Filters and Sorting', () => {
     const dashboard = new DashboardPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
     
     // Wait for content to load
     await page.waitForTimeout(500);
@@ -212,7 +212,7 @@ test.describe('Registry Filters and Sorting', () => {
     const dashboard = new DashboardPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
 
     const sortSelect = page.locator('select').last();
     
@@ -234,7 +234,7 @@ test.describe('Registry Pagination', () => {
     const dashboard = new DashboardPage(page);
     
     await dashboard.navigate();
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
 
     const paginationInfo = page.locator('text=/\\d+ \\/ \\d+/');
     
@@ -254,7 +254,7 @@ test.describe('Registry Toast Notifications', () => {
     const registry = new RegistryPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
     await expect(registry.heading).toBeVisible();
     
     await expect(registry.toastContainer).toBeAttached();
@@ -266,7 +266,7 @@ test.describe('Registry Toast Notifications', () => {
     const registry = new RegistryPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
     await expect(registry.heading).toBeVisible();
     
     // Find an uninstalled server's install button
@@ -286,7 +286,7 @@ test.describe('Registry Toast Notifications', () => {
     const registry = new RegistryPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("Discover")').click();
+    await page.locator('nav button:has-text("Search")').click();
     await expect(registry.heading).toBeVisible();
     
     // Find an installed server's uninstall button

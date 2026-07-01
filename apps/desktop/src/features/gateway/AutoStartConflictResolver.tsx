@@ -1,22 +1,15 @@
 import { useEffect } from 'react';
-import {
-  takePendingPortConflict,
-  getGatewayStatus,
-} from '@/lib/api/gateway';
+import { getGatewayStatus, isTauri, takePendingPortConflict } from '@/lib/backend';
+import { useIsLoading } from '@/stores';
 import { useGatewayControl } from './useGatewayControl';
 
 /**
  * Polling schedule (ms after mount). Covers the realistic window for the
  * Rust auto-start task to complete its port probe. Short early polls catch
  * the common case; longer tails catch cold-start machines / slow disks.
- *
- * The tail must outlast the backend's port-conflict wait: on a self-update
- * restart the auto-start task retries a busy port for up to ~6s (riding out
- * the prior process's listener teardown) before it either starts the gateway
- * or records a conflict. If we stopped polling first, a conflict raised at the
- * end of that window would never reach the prompt. Total max wait: ~10s.
+ * Total max wait: ~4.75s before giving up silently.
  */
-const POLL_SCHEDULE_MS = [0, 200, 400, 800, 1500, 2400, 2400, 2400];
+const POLL_SCHEDULE_MS = [0, 150, 300, 600, 1200, 2400];
 
 /**
  * Mounts at the app root and resolves any auto-start port conflict the
@@ -47,8 +40,13 @@ const POLL_SCHEDULE_MS = [0, 200, 400, 800, 1500, 2400, 2400, 2400];
  */
 export function AutoStartConflictResolver() {
   const gatewayControl = useGatewayControl();
+  const isLoadingSpaces = useIsLoading('spaces');
 
   useEffect(() => {
+    if (!isTauri() && isLoadingSpaces) {
+      return;
+    }
+
     let cancelled = false;
 
     (async () => {
@@ -102,10 +100,7 @@ export function AutoStartConflictResolver() {
     return () => {
       cancelled = true;
     };
-    // `gatewayControl` is stable for the lifetime of this component; we
-    // deliberately run this once on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [gatewayControl, isLoadingSpaces]);
 
   return <>{gatewayControl.ConfirmDialogElement}</>;
 }

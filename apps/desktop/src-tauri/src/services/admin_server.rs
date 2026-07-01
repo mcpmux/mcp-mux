@@ -17,6 +17,7 @@ use mcpmux_gateway::admin::ui_events::AdminUiEventBus;
 use mcpmux_gateway::admin::{AdminBridgeCtx, BackendBuildStamp};
 use mcpmux_gateway::pool::ConnectionStatus as GatewayConnectionStatus;
 use mcpmux_gateway::{AdminConfig, AdminServer, AdminServerHandle};
+use mcpmux_storage::SqliteMachineRepository;
 use serde::Deserialize;
 use serde_json::json;
 use std::fs;
@@ -374,6 +375,22 @@ impl GatewayRuntime for DesktopGatewayRuntime {
         }
         Ok(json!(count))
     }
+
+    async fn forget_reported_root(&self, root: String) -> anyhow::Result<serde_json::Value> {
+        let guard = self.gateway_state.read().await;
+        let Some(reg) = guard.session_roots.as_ref() else {
+            return Ok(json!(false));
+        };
+        let found = reg.forget_root(&root);
+        if found {
+            if let Some(ref gw) = guard.gateway_state {
+                gw.read()
+                    .await
+                    .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+            }
+        }
+        Ok(json!(found))
+    }
 }
 
 /// Map gateway pool status to the UI-facing string (`oauth_required`, not `auth_required`).
@@ -498,6 +515,10 @@ pub async fn start_admin_server_if_enabled(
         server_discovery: app_state.server_discovery.clone(),
         settings_repository: app_state.settings_repository.clone(),
         workspace_binding_repository: app_state.workspace_binding_repository.clone(),
+        machine_repository: Arc::new(SqliteMachineRepository::new(app_state.database())),
+        inbound_client_repository: Arc::new(mcpmux_storage::InboundClientRepository::new(
+            app_state.database(),
+        )),
         workspace_appearance_repository: app_state.workspace_appearance_repository.clone(),
         server_feature_repository: app_state.server_feature_repository_core.clone(),
         server_log_manager: app_state.server_log_manager.clone(),

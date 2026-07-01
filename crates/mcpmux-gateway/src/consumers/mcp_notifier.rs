@@ -936,7 +936,7 @@ impl MCPNotifier {
             }
             match self
                 .feature_set_resolver
-                .resolve(Some(&session_id), Some(&client_id))
+                .resolve(Some(&session_id), Some(&client_id), None)
                 .await
             {
                 Ok(resolved) if resolved.space_id == Some(space_id) => {

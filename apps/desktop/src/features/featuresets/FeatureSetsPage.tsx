@@ -33,6 +33,7 @@ import {
 } from '@/lib/api/featureSets';
 import { useViewSpace } from '@/stores';
 import { FeatureSetPanel } from './FeatureSetPanel';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 
 // Get icon for feature set type
 const getFeatureSetIcon = (fs: FeatureSet) => {
@@ -448,13 +449,10 @@ export function FeatureSetsPage() {
               
               <div>
                 <label className="block text-sm font-medium mb-1">{t('createModal.iconLabel')}</label>
-                <input
-                  type="text"
+                <EmojiPickerButton
                   value={createIcon}
-                  onChange={(e) => setCreateIcon(e.target.value)}
-                  placeholder={t('createModal.iconPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  maxLength={2}
+                  onChange={setCreateIcon}
+                  testId="featureset-create-icon"
                 />
               </div>
               

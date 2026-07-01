@@ -8,6 +8,11 @@ import type { ExportConfigRequest } from '@/lib/api/configExport';
 import type { AdminWebSettings } from '@/lib/api/settings';
 
 import { apiCall, isTauri } from '../data/transport';
+import {
+  acquireAdminSseConsumer,
+  releaseAdminSseConsumer,
+  subscribeAdminSseRaw,
+} from '../events/admin-sse-hub';
 
 export { isTauri };
 export type { Event, UnlistenFn, Update };
@@ -201,27 +206,23 @@ export function subscribeOAuthConsentEvents(
     };
   }
 
-  console.log('[OAuth] subscribeOAuthConsentEvents: using SSE /api/v1/events');
-  const source = new EventSource('/api/v1/events');
-  source.onopen = () => console.log('[OAuth] SSE connected');
-  source.onerror = (err) => console.warn('[OAuth] SSE error:', err);
-  const onConsentRequest = (event: MessageEvent<string>) => {
-    console.log('[OAuth] SSE consent event raw:', event.data);
-    try {
-      const payload = JSON.parse(event.data) as OAuthConsentDeepLinkPayload;
-      if (payload.requestId) {
-        console.log('[OAuth] SSE consent event parsed:', payload);
-        handler(payload);
-      }
-    } catch {
-      console.warn('[OAuth] SSE consent event: malformed payload');
+  console.log('[OAuth] subscribeOAuthConsentEvents: using shared admin SSE hub');
+  acquireAdminSseConsumer();
+
+  const onConsentRequest = (payload: unknown) => {
+    const data = payload as OAuthConsentDeepLinkPayload;
+    if (data.requestId) {
+      console.log('[OAuth] SSE consent event parsed:', data);
+      handler(data);
     }
   };
-  source.addEventListener('oauth-consent-request', onConsentRequest);
+
+  const unsubscribe = subscribeAdminSseRaw('oauth-consent-request', onConsentRequest);
+
   return () => {
-    console.log('[OAuth] Closing SSE consent listener');
-    source.removeEventListener('oauth-consent-request', onConsentRequest);
-    source.close();
+    console.log('[OAuth] Unsubscribing shared SSE consent listener');
+    unsubscribe();
+    releaseAdminSseConsumer();
   };
 }
 

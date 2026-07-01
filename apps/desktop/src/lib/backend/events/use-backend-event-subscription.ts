@@ -2,6 +2,11 @@ import { useEffect } from 'react';
 
 import { isTauri } from '../data/transport';
 
+import {
+  acquireAdminSseConsumer,
+  releaseAdminSseConsumer,
+  subscribeAdminSseRaw,
+} from './admin-sse-hub';
 import { listenWhenTauri } from './tauri-adapter';
 
 /** Options for {@link useBackendEventSubscription}. */
@@ -45,19 +50,19 @@ export function useBackendEventSubscription<T>(
       return;
     }
 
-    const source = new EventSource('/api/v1/events');
-    const onMessage = (event: MessageEvent<string>) => {
+    acquireAdminSseConsumer();
+
+    const unsubscribe = subscribeAdminSseRaw(channel, (payload) => {
       try {
-        callback(JSON.parse(event.data) as T);
+        callback(payload as T);
       } catch {
         // ignore malformed frames
       }
-    };
-    source.addEventListener(channel, onMessage);
+    });
 
     return () => {
-      source.removeEventListener(channel, onMessage);
-      source.close();
+      unsubscribe();
+      releaseAdminSseConsumer();
     };
   }, [channel, callback, sse]);
 }

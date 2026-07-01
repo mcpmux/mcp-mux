@@ -85,6 +85,7 @@ pub const CORE_META_TOOLS: &[&str] = &[
     "mcpmux_get_tool_schema",
     "mcpmux_list_servers",
     "mcpmux_set_workspace_root",
+    "mcpmux_bind_current_workspace",
 ];
 
 /// Convenience: is this tool name one of ours?

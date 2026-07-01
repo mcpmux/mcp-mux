@@ -378,11 +378,6 @@ pub enum DomainEvent {
         session_id: String,
         space_id: Uuid,
         workspace_root: String,
-        /// When set, a scoped binding for another OAuth client blocked the
-        /// global binding on this path — the UI should offer to create a
-        /// client-scoped binding for `client_id`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        collision_client_id: Option<String>,
         /// The folder is scoped to `space_id` by a Space base directory, so the
         /// mapping popup locks its Space field to it (the user only picks the
         /// FeatureSet). `false` for an ordinary unmapped folder, where the user
@@ -759,7 +754,6 @@ mod tests {
             session_id: "sess-1".to_string(),
             space_id: Uuid::new_v4(),
             workspace_root: "/proj/foo".to_string(),
-            collision_client_id: None,
             space_locked: false,
         };
         assert!(!e.affects_mcp_capabilities());
@@ -786,12 +780,11 @@ mod tests {
             session_id: "s".into(),
             space_id: Uuid::nil(),
             workspace_root: "/r".into(),
-            collision_client_id: Some("other-client".into()),
             space_locked: true,
         };
         let json = serde_json::to_string(&needs).unwrap();
         assert!(json.contains("\"type\":\"workspace_needs_binding\""));
         assert!(json.contains("\"session_id\":\"s\""));
-        assert!(json.contains("\"collision_client_id\":\"other-client\""));
+        assert!(json.contains("\"space_locked\":true"));
     }
 }

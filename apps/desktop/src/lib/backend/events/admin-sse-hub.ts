@@ -27,6 +27,7 @@ export const ADMIN_SSE_CHANNELS: DomainEventChannel[] = [
 ];
 
 type ChannelHandler = (payload: DomainEventPayload) => void;
+type RawChannelHandler = (payload: unknown) => void;
 
 let sharedSource: EventSource | null = null;
 let consumerCount = 0;
@@ -34,6 +35,10 @@ let sseEnabled = false;
 const channelHandlers = new Map<DomainEventChannel, Set<ChannelHandler>>();
 const allHandlers = new Set<AllEventsCallback>();
 const lastEventListeners = new Set<(event: { channel: DomainEventChannel; payload: DomainEventPayload }) => void>();
+/** Handlers for non-domain channels (workspace, meta-tool, etc.) sharing the same SSE connection. */
+const rawChannelHandlers = new Map<string, Set<RawChannelHandler>>();
+/** Raw channels that already have a single dispatcher on `sharedSource`. */
+const rawChannelsAttached = new Set<string>();
 
 /**
  * Dispatch an SSE frame to all registered handlers.
@@ -66,6 +71,28 @@ function ensureSharedSource(): void {
       }
     });
   }
+
+  for (const channel of rawChannelHandlers.keys()) {
+    attachRawChannelListener(channel);
+  }
+}
+
+/**
+ * Attach one SSE listener per raw channel; dispatches to all handlers in the set.
+ */
+function attachRawChannelListener(channel: string): void {
+  if (!sharedSource || rawChannelsAttached.has(channel)) {
+    return;
+  }
+  rawChannelsAttached.add(channel);
+  sharedSource.addEventListener(channel, (event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data) as unknown;
+      rawChannelHandlers.get(channel)?.forEach((handler) => handler(payload));
+    } catch {
+      // ignore malformed frames
+    }
+  });
 }
 
 /**
@@ -77,10 +104,11 @@ function releaseSharedSource(): void {
   }
   sharedSource.close();
   sharedSource = null;
+  rawChannelsAttached.clear();
 }
 
 /**
- * Open the shared SSE connection after startup sync (listSpaces) has finished.
+ * Open the shared SSE connection once web admin startup sync begins.
  */
 export function enableAdminSse(): void {
   if (isTauri()) {
@@ -151,5 +179,22 @@ export function onAdminSseLastEvent(
   lastEventListeners.add(listener);
   return () => {
     lastEventListeners.delete(listener);
+  };
+}
+
+/**
+ * Subscribe to a non-domain SSE channel on the shared connection (e.g. workspace,
+ * meta-tool, OAuth channels). Attaches to the live source immediately if already
+ * open; otherwise the listener is registered for when the source next opens.
+ */
+export function subscribeAdminSseRaw(channel: string, handler: RawChannelHandler): () => void {
+  if (!rawChannelHandlers.has(channel)) {
+    rawChannelHandlers.set(channel, new Set());
+  }
+  rawChannelHandlers.get(channel)!.add(handler);
+  attachRawChannelListener(channel);
+
+  return () => {
+    rawChannelHandlers.get(channel)?.delete(handler);
   };
 }

@@ -3,6 +3,7 @@ import { builtinsRoutes } from './builtins.routes';
 import { catalogRoutes } from './catalog.routes';
 import { configExportRoutes } from './config-export.routes';
 import { gatewayRoutes } from './gateway.routes';
+import { machinesRoutes } from './machines.routes';
 import { permissionsRoutes } from './permissions.routes';
 import { serversRoutes } from './servers.routes';
 import { spacesRoutes } from './spaces.routes';
@@ -12,6 +13,7 @@ import type { ApiRoute } from '../fetch-api.types';
 const COMMAND_ROUTES = {
   ...gatewayRoutes,
   ...spacesRoutes,
+  ...machinesRoutes,
   ...serversRoutes,
   ...builtinsRoutes,
   ...catalogRoutes,

@@ -6,11 +6,8 @@ import { AppStore, AppState } from './types';
 const initialState: AppState = {
   spaces: [],
   viewSpaceId: null,
-  activeNav: 'dashboard',
-  pendingClientId: null,
   pendingSettingsSection: null,
   pendingWorkspaceNew: false,
-  pendingServersFilter: null,
   sidebarCollapsed: false,
   theme: 'system',
   analyticsEnabled: true,
@@ -70,17 +67,6 @@ export const useAppStore = create<AppStore>()(
           }
         }),
 
-      // Navigation
-      navigateTo: (nav) =>
-        set((state) => {
-          state.activeNav = nav;
-        }),
-
-      setPendingClientId: (id) =>
-        set((state) => {
-          state.pendingClientId = id;
-        }),
-
       setPendingSettingsSection: (section) =>
         set((state) => {
           state.pendingSettingsSection = section;
@@ -89,11 +75,6 @@ export const useAppStore = create<AppStore>()(
       setPendingWorkspaceNew: (v) =>
         set((state) => {
           state.pendingWorkspaceNew = v;
-        }),
-
-      setPendingServersFilter: (filter) =>
-        set((state) => {
-          state.pendingServersFilter = filter;
         }),
 
       // UI

@@ -5,11 +5,15 @@ use http;
 use rmcp::{model::Extensions, service::RequestContext, RoleServer};
 use uuid::Uuid;
 
-/// OAuth claims extracted from JWT token
+/// OAuth claims extracted from JWT token, plus optional per-device machine identity.
 #[derive(Debug, Clone)]
 pub struct OAuthContext {
     pub client_id: String,
     pub space_id: Uuid,
+    /// Physical device identity from the client's `X-Mcpmux-Machine-Id` header.
+    /// Distinct from the gateway's `local_machine_id` when callers reach a shared
+    /// tunneled gateway from multiple machines.
+    pub request_machine_id: Option<Uuid>,
 }
 
 /// Extract OAuth context from extensions
@@ -46,9 +50,16 @@ pub fn extract_oauth_context(extensions: &Extensions) -> Result<OAuthContext> {
     let space_id =
         Uuid::parse_str(space_id_str).map_err(|e| anyhow!("Failed to parse space_id: {}", e))?;
 
+    let request_machine_id = parts
+        .headers
+        .get("x-mcpmux-machine-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| Uuid::parse_str(s).ok());
+
     Ok(OAuthContext {
         client_id,
         space_id,
+        request_machine_id,
     })
 }
 

@@ -43,6 +43,11 @@ impl AdminEventHub {
         self.outbound.subscribe()
     }
 
+    /// True when at least one browser is actively streaming SSE.
+    pub fn has_sse_subscribers(&self) -> bool {
+        self.outbound.receiver_count() > 0
+    }
+
     /// Publish a mapped domain event to SSE subscribers.
     fn publish_domain(&self, event: DomainEvent) {
         let (channel, payload) = map_domain_event_to_ui(&event);

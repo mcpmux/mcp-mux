@@ -29,7 +29,6 @@ export interface GatewayPortSettings {
   configuredPort: number | null;
   defaultPort: number;
   activePort: number | null;
-  publicUrl: string | null;
 }
 
 /** Web admin HTTP server settings (loopback remote UI). */
@@ -111,13 +110,6 @@ export async function setGatewayPort(port: number): Promise<void> {
  */
 export async function resetGatewayPort(): Promise<void> {
   return apiCall('reset_gateway_port');
-}
-
-/**
- * Persist the public HTTPS URL advertised in OAuth metadata for tunnel clients.
- */
-export async function setGatewayPublicUrl(publicUrl: string): Promise<void> {
-  return apiCall('set_gateway_public_url', { publicUrl });
 }
 
 /**

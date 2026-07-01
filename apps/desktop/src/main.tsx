@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { Router } from 'wouter';
 import './i18n';
 import { logWebAdminBuildInfo } from '@/lib/build-info.helpers';
 import { initTauriTestApi } from '@/lib/backend/shell';
@@ -16,7 +17,9 @@ async function bootstrap(): Promise<void> {
 
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
-      <App />
+      <Router>
+        <App />
+      </Router>
     </React.StrictMode>,
   );
 }

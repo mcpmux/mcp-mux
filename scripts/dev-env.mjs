@@ -10,6 +10,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { adminCfProbeHeaders, loadRepoDotEnv } from './cf-access-env.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN_PORT = Number.parseInt(process.env.MCPMUX_ADMIN_PORT ?? '45819', 10);
 const HEALTH_URL = `http://127.0.0.1:${ADMIN_PORT}/api/v1/health`;
@@ -21,7 +23,7 @@ async function adminHealthOk() {
   try {
     const response = await fetch(HEALTH_URL, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...adminCfProbeHeaders() },
       signal: AbortSignal.timeout(3_000),
     });
     return response.ok;
@@ -39,6 +41,8 @@ async function runPrep() {
     console.error('[dev-env] Could not locate repo root.');
     return 1;
   }
+
+  loadRepoDotEnv(REPO_ROOT);
 
   if (await adminHealthOk()) {
     console.log(`[dev-env] Admin API ready at ${HEALTH_URL}`);

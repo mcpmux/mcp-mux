@@ -15,6 +15,7 @@ interface ServerPendingUpdatesListProps {
 /**
  * Row key for per-server update-in-progress tracking.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- helper is tightly coupled to the list component and has no other consumers
 export function pendingUpdateKey(update: ServerPendingUpdate): string {
   return `${update.spaceId}:${update.serverId}`;
 }

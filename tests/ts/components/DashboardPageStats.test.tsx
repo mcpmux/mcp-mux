@@ -37,12 +37,11 @@ vi.mock('@/lib/api/workspaceBindings', () => ({ listWorkspaceBindings: mockListB
 vi.mock('@/lib/api/serverManager', () => ({ getServerStatuses: mockServerStatuses }));
 vi.mock('@/stores', () => ({
   useViewSpace: () => ({ id: 'space-1', name: 'My Space' }),
-  useNavigateTo: () => () => {},
   useSetPendingWorkspaceNew: () => () => {},
   useSpaces: () => [{ id: 'space-1' }],
   useIsLoading: () => false,
-  useSetPendingServersFilter: () => () => {},
 }));
+vi.mock('@/hooks/use-navigate.hook', () => ({ useNavigate: () => () => {} }));
 vi.mock('@/components/ConnectionCard', () => ({ ConnectionCard: () => null }));
 vi.mock('@/hooks/useMetaToolEvents', () => ({ useMetaToolEventListener: () => {} }));
 

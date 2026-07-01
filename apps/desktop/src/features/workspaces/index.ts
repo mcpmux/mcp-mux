@@ -1,2 +1,2 @@
 export { WorkspacesPage } from './WorkspacesPage';
-export { WorkspaceBindingSheet } from './WorkspaceBindingSheet';
+export { WorkspaceBindingPanel } from './workspace-binding-panel.component';

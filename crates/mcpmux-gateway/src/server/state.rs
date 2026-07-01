@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -18,6 +18,9 @@ use crate::services::ClientMetadataService;
 use mcpmux_core::DomainEvent;
 use mcpmux_storage::{Database, InboundClientRepository, JWT_SECRET_SIZE};
 use tokio::sync::broadcast;
+
+/// Notifies the desktop webview and optional admin SSE when OAuth consent is needed.
+pub type ConsentUiNotifier = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Client session in the gateway
 #[derive(Debug, Clone)]
@@ -41,7 +44,7 @@ pub struct ClientSession {
 /// Note: Server connections are managed by PoolService, not here.
 /// This state is for gateway-level concerns only.
 pub struct GatewayState {
-    /// Base URL for this gateway (e.g., "http://localhost:3100")
+    /// Loopback base URL (e.g. "http://localhost:45818")
     pub base_url: String,
     /// Configured public base URL (e.g. an https tunnel origin). When set it is
     /// advertised verbatim in OAuth/MCP metadata; when None the advertised base
@@ -74,6 +77,8 @@ pub struct GatewayState {
     /// the `gateway.auth_disabled` app setting at startup and flipped live by
     /// the desktop toggle. A valid token is still honored when present.
     auth_disabled: bool,
+    /// Desktop Tauri + admin SSE fan-in for inbound OAuth consent prompts.
+    consent_ui_hook: Option<ConsentUiNotifier>,
 }
 
 impl GatewayState {
@@ -93,10 +98,11 @@ impl GatewayState {
             client_metadata_service: None,
             domain_event_tx,
             auth_disabled: false,
+            consent_ui_hook: None,
         }
     }
 
-    /// Set the base URL
+    /// Set the loopback base URL
     pub fn set_base_url(&mut self, base_url: String) {
         info!("[State] Base URL configured: {}", base_url);
         self.base_url = base_url;
@@ -144,6 +150,25 @@ impl GatewayState {
     pub fn emit_domain_event(&self, event: DomainEvent) {
         if let Err(e) = self.domain_event_tx.send(event) {
             debug!("[State] No domain event subscribers: {}", e);
+        }
+    }
+
+    /// Register the host hook that fans OAuth consent into Tauri + admin SSE.
+    pub fn set_consent_ui_hook(&mut self, hook: ConsentUiNotifier) {
+        info!("[State] Consent UI notifier configured");
+        self.consent_ui_hook = Some(hook);
+    }
+
+    /// Publish a consent request to the desktop webview and web admin SSE.
+    pub fn notify_consent_request(&self, request_id: &str) {
+        if let Some(ref hook) = self.consent_ui_hook {
+            info!("[OAuth] Notifying consent UI: request_id='{}'", request_id);
+            hook(request_id);
+        } else {
+            warn!(
+                "[OAuth] Consent UI notifier not configured — modal skipped for request_id='{}'",
+                request_id
+            );
         }
     }
 

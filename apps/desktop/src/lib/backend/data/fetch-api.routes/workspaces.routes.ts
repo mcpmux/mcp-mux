@@ -16,13 +16,21 @@ export const workspacesRoutes: Record<string, RouteHandler> = {
     method: 'POST',
     path: '/api/v1/workspaces/reported-roots/clear-unmapped',
   }),
+  forget_reported_root: (args) => ({
+    method: 'POST',
+    path: '/api/v1/workspaces/reported-roots/forget',
+    body: { root: args.root } as Record<string, unknown>,
+  }),
   validate_workspace_root: (args) => ({
     method: 'GET',
     path: `/api/v1/workspaces/validate-root${buildQuery({ path: args.path })}`,
   }),
   get_workspace_effective_features: (args) => ({
     method: 'GET',
-    path: `/api/v1/workspaces/effective-features${buildQuery({ workspaceRoot: args.workspaceRoot })}`,
+    path: `/api/v1/workspaces/effective-features${buildQuery({
+      workspaceRoot: args.workspaceRoot,
+      machineId: args.machineId,
+    })}`,
   }),
   list_workspace_appearances: () => ({ method: 'GET', path: '/api/v1/workspaces/appearances' }),
   resolve_workspace_icon_path: (args) => ({

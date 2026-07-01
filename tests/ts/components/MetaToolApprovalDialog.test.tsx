@@ -27,7 +27,7 @@ vi.mock('@/lib/api/metaTools', () => ({
   respondToMetaToolApproval: respondToMetaToolApprovalMock,
 }));
 
-vi.mock('@/stores', () => ({ useNavigateTo: () => navigateToSpy }));
+vi.mock('@/hooks/use-navigate.hook', () => ({ useNavigate: () => navigateToSpy }));
 
 import { MetaToolApprovalDialog } from '@/features/metaTools/MetaToolApprovalDialog';
 

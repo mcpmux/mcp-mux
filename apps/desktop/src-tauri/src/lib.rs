@@ -473,7 +473,7 @@ pub fn run() {
                     .with_log_manager(server_log_manager)
                     .with_database(db_for_gateway)
                     .with_state_dir(app_data_dir.clone())
-                    .with_settings_repo(settings_repo);
+                    .with_settings_repo(settings_repo.clone());
 
                 if let Some(secret) = jwt_secret {
                     deps_builder = deps_builder.with_jwt_secret(secret);
@@ -507,6 +507,7 @@ pub fn run() {
                 let event_emitter = server.event_emitter();
                 let grant_service = server.grant_service();
                 let session_roots = server.session_roots();
+                let feature_set_resolver = server.feature_set_resolver();
                 let approval_broker = server.approval_broker();
 
                 // Wire the approval broker to the desktop event bus so
@@ -557,6 +558,31 @@ pub fn run() {
                 state.grant_service = Some(grant_service);
                 state.approval_broker = Some(approval_broker);
                 state.session_roots = Some(session_roots);
+                state.feature_set_resolver = Some(feature_set_resolver);
+
+                // Attach the admin SSE bus so inbound OAuth consent reaches the
+                // web admin (not just the desktop webview) on the auto-start path.
+                let ui_bus = if let Some(admin) =
+                    app_handle_for_sm.try_state::<Arc<RwLock<services::AdminServerState>>>()
+                {
+                    let admin_guard = admin.read().await;
+                    services::admin_server::set_gateway_running(&admin_guard, true);
+                    if let Some(ref gw) = state.gateway_state {
+                        services::admin_server::register_gateway_sse(&admin_guard, gw).await;
+                    }
+                    Some(admin_guard.ui_event_bus.clone())
+                } else {
+                    None
+                };
+
+                if let Some(ref gw) = state.gateway_state {
+                    crate::commands::gateway::wire_consent_ui_notifications(
+                        &app_handle_for_sm,
+                        gw,
+                        ui_bus.clone(),
+                    )
+                    .await;
+                }
 
                 info!(
                     "Gateway auto-started successfully on {} - GrantService initialized: {}",
@@ -962,11 +988,24 @@ pub fn run() {
             commands::create_client,
             commands::delete_client,
             commands::init_preset_clients,
+            // Machine catalog + local install identity
+            commands::list_machines,
+            commands::create_machine,
+            commands::update_machine,
+            commands::delete_machine,
+            commands::get_local_machine_id,
+            commands::set_local_machine_id,
+            commands::get_viewer_machine_id,
+            commands::set_viewer_machine_id,
+            commands::get_client_machine_id,
+            commands::set_client_machine_id,
+            commands::get_hostname,
             // Workspace binding commands (resolver v2)
             commands::list_workspace_bindings,
             commands::list_workspace_bindings_for_space,
             commands::list_reported_workspace_roots,
             commands::clear_unmapped_reported_roots,
+            commands::forget_reported_root,
             commands::create_workspace_binding,
             commands::update_workspace_binding,
             commands::delete_workspace_binding,

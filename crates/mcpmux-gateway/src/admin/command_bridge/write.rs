@@ -7,8 +7,9 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use mcpmux_core::{
     normalize_optional_metadata, validate_workspace_root as validate_workspace_root_path,
-    AppSettingsService, Client, FeatureSet, FeatureSetMember, MemberMode, MemberType, ServerSource,
-    UpdatePolicy, WorkspaceAppearance, WorkspaceBinding, WorkspaceRootValidation,
+    AppSettingsService, Client, DomainEvent, FeatureSet, FeatureSetMember, Machine, MemberMode,
+    MemberType, ServerSource, UpdatePolicy, WorkspaceAppearance, WorkspaceBinding,
+    WorkspaceRootValidation,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -16,7 +17,7 @@ use uuid::Uuid;
 
 use crate::admin::bridge_context::AdminBridgeCtx;
 use crate::admin::command_bridge::read::{
-    as_json, space_ctx, to_client_response, to_feature_set_response,
+    as_json, space_ctx, to_client_response, to_feature_set_response, to_machine_response,
     to_workspace_appearance_response, to_workspace_binding_response,
 };
 use crate::admin::command_bridge::space::{self, UpdateSpaceInput};
@@ -78,6 +79,31 @@ pub struct WorkspaceBindingBody {
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
     pub client_id: Option<String>,
+    pub machine_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateMachineBody {
+    pub name: String,
+    pub icon: Option<String>,
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMachineBody {
+    pub name: Option<String>,
+    pub icon: Option<String>,
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetLocalMachineIdBody {
+    pub machine_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetClientMachineIdBody {
+    pub machine_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -301,6 +327,20 @@ fn local_ref_to_file_name(icon_ref: &str) -> Option<&str> {
         return None;
     }
     Some(file_name)
+}
+
+/// Broadcast a `WorkspaceBindingChanged` domain event so the UI refreshes
+/// without requiring a manual reload. Fire-and-forget — a missing subscriber
+/// is not an error.
+fn emit_binding_changed(ctx: &AdminBridgeCtx, space_id: Uuid, workspace_root: &str) {
+    let _ = ctx
+        .services
+        .event_bus
+        .raw_sender()
+        .send(DomainEvent::WorkspaceBindingChanged {
+            space_id,
+            workspace_root: workspace_root.to_string(),
+        });
 }
 
 async fn maybe_remove_orphaned_icon(ctx: &AdminBridgeCtx, icon_ref: Option<&str>) -> Result<()> {
@@ -534,6 +574,115 @@ pub async fn delete_client(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {
     Ok(json!({ "ok": true }))
 }
 
+pub async fn create_machine(ctx: &AdminBridgeCtx, body: CreateMachineBody) -> Result<Value> {
+    let mut machine = Machine::new(body.name);
+    machine.icon = body.icon;
+    machine.hostname = body.hostname;
+    ctx.machine_repository.create(&machine).await?;
+    Ok(to_machine_response(machine))
+}
+
+pub async fn update_machine(
+    ctx: &AdminBridgeCtx,
+    id: String,
+    body: UpdateMachineBody,
+) -> Result<Value> {
+    let id_uuid = Uuid::parse_str(&id)?;
+    let mut machine = ctx
+        .machine_repository
+        .get(&id_uuid)
+        .await?
+        .ok_or_else(|| anyhow!("machine not found: {id}"))?;
+
+    if let Some(name) = body.name {
+        machine.name = name;
+    }
+    if body.icon.is_some() {
+        machine.icon = body.icon;
+    }
+    if body.hostname.is_some() {
+        machine.hostname = body.hostname;
+    }
+    machine.updated_at = Utc::now();
+    ctx.machine_repository.update(&machine).await?;
+    Ok(to_machine_response(machine))
+}
+
+pub async fn delete_machine(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {
+    let id_uuid = Uuid::parse_str(&id)?;
+    ctx.machine_repository.delete(&id_uuid).await?;
+    Ok(json!({ "ok": true }))
+}
+
+pub async fn set_local_machine_id(
+    ctx: &AdminBridgeCtx,
+    body: SetLocalMachineIdBody,
+) -> Result<Value> {
+    let parsed = match body.machine_id {
+        None => None,
+        Some(value) => Some(Uuid::parse_str(&value)?),
+    };
+
+    if let Some(id) = parsed {
+        let exists = ctx.machine_repository.get(&id).await?.is_some();
+        if !exists {
+            anyhow::bail!("machine not found: {id}");
+        }
+    }
+
+    let settings = AppSettingsService::new(ctx.settings_repository.clone());
+    settings.set_local_machine_id(parsed).await?;
+    ctx.gateway_writes
+        .hot_reload_local_machine_id(parsed)
+        .await?;
+    Ok(json!({ "ok": true }))
+}
+
+pub async fn set_viewer_machine_id(
+    ctx: &AdminBridgeCtx,
+    viewer_id: String,
+    body: SetLocalMachineIdBody,
+) -> Result<Value> {
+    let parsed = match body.machine_id {
+        None => None,
+        Some(value) => Some(Uuid::parse_str(&value)?),
+    };
+
+    if let Some(id) = parsed {
+        let exists = ctx.machine_repository.get(&id).await?.is_some();
+        if !exists {
+            anyhow::bail!("machine not found: {id}");
+        }
+    }
+
+    let settings = AppSettingsService::new(ctx.settings_repository.clone());
+    settings.set_viewer_machine_id(&viewer_id, parsed).await?;
+    Ok(json!({ "ok": true }))
+}
+
+pub async fn set_client_machine_id(
+    ctx: &AdminBridgeCtx,
+    client_id: String,
+    body: SetClientMachineIdBody,
+) -> Result<Value> {
+    let parsed = match body.machine_id {
+        None => None,
+        Some(value) => Some(Uuid::parse_str(&value)?),
+    };
+
+    if let Some(id) = parsed {
+        let exists = ctx.machine_repository.get(&id).await?.is_some();
+        if !exists {
+            anyhow::bail!("machine not found: {id}");
+        }
+    }
+
+    ctx.inbound_client_repository
+        .set_machine_id(&client_id, parsed)
+        .await?;
+    Ok(json!({ "ok": true }))
+}
+
 pub async fn init_preset_clients(ctx: &AdminBridgeCtx) -> Result<Value> {
     let existing = ctx.services.client().list().await?;
     if !existing.iter().any(|c| c.client_type == "cursor") {
@@ -562,6 +711,14 @@ pub async fn init_preset_clients(ctx: &AdminBridgeCtx) -> Result<Value> {
 
 // --- Workspace bindings ---
 
+fn parse_optional_machine_id(value: Option<&str>) -> Result<Option<Uuid>> {
+    match value {
+        None => Ok(None),
+        Some("") => Ok(None),
+        Some(raw) => Ok(Some(Uuid::parse_str(raw)?)),
+    }
+}
+
 pub async fn create_workspace_binding(
     ctx: &AdminBridgeCtx,
     body: WorkspaceBindingBody,
@@ -574,10 +731,12 @@ pub async fn create_workspace_binding(
     binding.label = normalize_label(&body.label);
     binding.icon = resolve_binding_icon(ctx, &normalized, &body.icon, None).await?;
     binding.client_id = body.client_id.clone();
+    binding.machine_id = parse_optional_machine_id(body.machine_id.as_deref())?;
 
     ctx.workspace_binding_repository.create(&binding).await?;
     clear_appearance_for_bound_root(ctx, &normalized).await?;
 
+    emit_binding_changed(ctx, space_id, &normalized);
     Ok(to_workspace_binding_response(binding))
 }
 
@@ -606,10 +765,13 @@ pub async fn update_workspace_binding(
     let previous_icon = existing.icon.clone();
     let icon = resolve_binding_icon(ctx, &normalized, &body.icon, existing.icon.clone()).await?;
 
+    let machine_id = parse_optional_machine_id(body.machine_id.as_deref())?;
+
     let updated = WorkspaceBinding {
         id: existing.id,
         workspace_root: normalized.clone(),
         client_id: body.client_id.or(existing.client_id),
+        machine_id,
         label,
         icon,
         space_id,
@@ -625,6 +787,7 @@ pub async fn update_workspace_binding(
         maybe_remove_orphaned_icon(ctx, previous_icon.as_deref()).await?;
     }
 
+    emit_binding_changed(ctx, space_id, &normalized);
     Ok(to_workspace_binding_response(updated))
 }
 
@@ -636,8 +799,11 @@ pub async fn delete_workspace_binding(ctx: &AdminBridgeCtx, id: String) -> Resul
         .await?
         .ok_or_else(|| anyhow!("binding not found: {id}"))?;
     let previous_icon = existing.icon.clone();
+    let space_id = existing.space_id;
+    let root = existing.workspace_root.clone();
     ctx.workspace_binding_repository.delete(&id_uuid).await?;
     maybe_remove_orphaned_icon(ctx, previous_icon.as_deref()).await?;
+    emit_binding_changed(ctx, space_id, &root);
     Ok(json!({ "ok": true }))
 }
 
@@ -896,13 +1062,32 @@ pub async fn set_gateway_port(ctx: &AdminBridgeCtx, body: GatewayPortBody) -> Re
 }
 
 pub async fn set_gateway_public_url(
-    _ctx: &AdminBridgeCtx,
-    _body: GatewayPublicUrlBody,
+    ctx: &AdminBridgeCtx,
+    body: GatewayPublicUrlBody,
 ) -> Result<Value> {
-    // ponytail: public URL persistence lands in Phase 5 (AppSettingsService extension)
-    Err(anyhow!(
-        "Gateway public URL configuration not yet available"
-    ))
+    let normalized = crate::public_base_url::normalize_public_url(&body.public_url)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let settings = mcpmux_core::AppSettingsService::new(ctx.settings_repository.clone());
+
+    if normalized.is_empty() {
+        settings.clear_gateway_public_url().await?;
+    } else {
+        settings.set_gateway_public_url(&normalized).await?;
+    }
+
+    let stored = if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.clone())
+    };
+    if let Some(gateway_state) = ctx.gateway_writes.gateway_state().await {
+        let mut state = gateway_state.write().await;
+        state.set_public_base_url(stored.clone());
+    }
+
+    Ok(json!({
+        "publicUrl": stored,
+    }))
 }
 
 pub async fn enable_server_v2(ctx: &AdminBridgeCtx, body: ServerConnectionBody) -> Result<Value> {
@@ -1162,6 +1347,18 @@ pub async fn clear_unmapped_reported_roots(ctx: &AdminBridgeCtx) -> Result<Value
     ctx.gateway_runtime
         .clear_unmapped_reported_roots(bound.into_iter().collect())
         .await
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ForgetReportedRootBody {
+    pub root: String,
+}
+
+pub async fn forget_reported_root(
+    ctx: &AdminBridgeCtx,
+    body: ForgetReportedRootBody,
+) -> Result<Value> {
+    ctx.gateway_runtime.forget_reported_root(body.root).await
 }
 
 pub async fn set_meta_tools_require_approval(

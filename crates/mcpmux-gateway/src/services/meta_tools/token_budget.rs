@@ -159,7 +159,7 @@ mod tests {
         );
         println!("{line}");
 
-        assert_eq!(CORE_META_TOOLS.len(), 5);
+        assert_eq!(CORE_META_TOOLS.len(), 6);
         assert_eq!(ALL_REGISTERED_META_TOOL_NAMES.len(), 12);
         assert!(
             budget.core_claude_est < budget.full_claude_est,

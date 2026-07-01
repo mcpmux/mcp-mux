@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useSearch, useLocation } from 'wouter';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { useClientEvents, useOAuthClientEventListener } from '@/lib/backend/events';
@@ -43,12 +44,9 @@ import {
   type FeatureSet,
 } from '@/lib/api/featureSets';
 import { Card, CardContent, Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
-import {
-  useDefaultSpace,
-  useNavigateTo,
-  usePendingClientId,
-  useSetPendingClientId,
-} from '@/stores';
+import { useDefaultSpace } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
+import { NAV_PATH_MAP } from '@/lib/navigation';
 
 // Bundled icons for well-known AI clients.
 const CLIENT_ICON_ASSETS: Record<string, string> = {
@@ -130,9 +128,10 @@ export default function ClientsPage() {
 
   const { toasts, success, error: showError, info, dismiss } = useToast();
   const { confirm, ConfirmDialogElement } = useConfirm();
-  const pendingClientId = usePendingClientId();
-  const setPendingClientId = useSetPendingClientId();
-  const navigateTo = useNavigateTo();
+  const search = useSearch();
+  const [, setLocation] = useLocation();
+  const selectClientId = new URLSearchParams(search).get('select');
+  const navigate = useNavigate();
   const defaultSpace = useDefaultSpace();
 
   const loadClients = async () => {
@@ -167,14 +166,14 @@ export default function ClientsPage() {
   }, []);
 
   useEffect(() => {
-    if (!pendingClientId || isLoading) return;
-    const client = clients.find((c) => c.client_id === pendingClientId);
+    if (!selectClientId || isLoading) return;
+    const client = clients.find((c) => c.client_id === selectClientId);
     if (client) {
       openPanel(client);
-      setPendingClientId(null);
+      setLocation(NAV_PATH_MAP.clients, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingClientId, isLoading, clients]);
+  }, [selectClientId, isLoading, clients]);
 
   useClientEvents(
     useCallback(
@@ -273,7 +272,7 @@ export default function ClientsPage() {
               <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
                 {t('subtitlePrefix')}{' '}
                 <button
-                  onClick={() => navigateTo('workspaces')}
+                  onClick={() => navigate('workspaces')}
                   className="font-medium text-[rgb(var(--accent))] hover:underline"
                   data-testid="clients-workspaces-link"
                 >
@@ -405,7 +404,7 @@ export default function ClientsPage() {
             onRevoke={() => handleRevoke(selected)}
             onOpenWorkspaces={() => {
               setSelected(null);
-              navigateTo('workspaces');
+              navigate('workspaces');
             }}
             onToastError={showError}
             onToastSuccess={success}

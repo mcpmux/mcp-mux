@@ -406,7 +406,6 @@ pub fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, Value) {
             session_id,
             space_id,
             workspace_root,
-            collision_client_id,
             space_locked,
         } => (
             "workspace-needs-binding",
@@ -415,7 +414,6 @@ pub fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, Value) {
                 "session_id": session_id,
                 "space_id": space_id,
                 "workspace_root": workspace_root,
-                "collision_client_id": collision_client_id,
                 "space_locked": space_locked,
             }),
         ),

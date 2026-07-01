@@ -8,8 +8,9 @@ use tauri::{AppHandle, Manager};
 use tokio::sync::RwLock;
 
 use crate::commands::gateway::{
-    connect_all_enabled_servers, disconnect_server, refresh_oauth_tokens_on_startup,
-    restart_gateway, set_gateway_port, start_gateway, stop_gateway, GatewayAppState,
+    connect_all_enabled_servers, disconnect_server, hot_reload_local_machine_id,
+    refresh_oauth_tokens_on_startup, restart_gateway, set_gateway_port, start_gateway,
+    stop_gateway, GatewayAppState,
 };
 use crate::commands::meta_tool_approval::{respond_to_meta_tool_approval, revoke_meta_tool_grant};
 use crate::commands::oauth::{
@@ -301,6 +302,14 @@ impl GatewayWriteRuntime for DesktopGatewayWriteRuntime {
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
         Ok(json!({ "ok": true }))
+    }
+
+    async fn hot_reload_local_machine_id(
+        &self,
+        machine_id: Option<uuid::Uuid>,
+    ) -> anyhow::Result<()> {
+        hot_reload_local_machine_id(&self.app_gateway_state, machine_id).await;
+        Ok(())
     }
 
     async fn gateway_state(&self) -> Option<Arc<RwLock<mcpmux_gateway::GatewayState>>> {

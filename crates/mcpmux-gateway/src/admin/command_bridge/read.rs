@@ -67,12 +67,24 @@ pub(crate) fn to_workspace_binding_response(binding: mcpmux_core::WorkspaceBindi
         "id": binding.id.to_string(),
         "workspace_root": binding.workspace_root,
         "client_id": binding.client_id,
+        "machine_id": binding.machine_id.map(|id| id.to_string()),
         "label": binding.label,
         "icon": binding.icon,
         "space_id": binding.space_id.to_string(),
         "feature_set_ids": binding.feature_set_ids,
         "created_at": binding.created_at.to_rfc3339(),
         "updated_at": binding.updated_at.to_rfc3339(),
+    })
+}
+
+pub(crate) fn to_machine_response(machine: mcpmux_core::Machine) -> Value {
+    json!({
+        "id": machine.id.to_string(),
+        "name": machine.name,
+        "icon": machine.icon,
+        "hostname": machine.hostname,
+        "created_at": machine.created_at.to_rfc3339(),
+        "updated_at": machine.updated_at.to_rfc3339(),
     })
 }
 
@@ -189,12 +201,7 @@ pub async fn take_pending_port_conflict(ctx: &AdminBridgeCtx) -> Result<Value> {
 }
 
 pub async fn get_gateway_port_settings(ctx: &AdminBridgeCtx) -> Result<Value> {
-    let mut value = ctx.gateway_runtime.get_gateway_port_settings().await?;
-    // ponytail: get_gateway_public_url lands in Phase 5; return null for now
-    if let Some(obj) = value.as_object_mut() {
-        obj.insert("publicUrl".to_string(), json!(null));
-    }
-    Ok(value)
+    ctx.gateway_runtime.get_gateway_port_settings().await
 }
 
 pub async fn reset_gateway_port(ctx: &AdminBridgeCtx) -> Result<Value> {
@@ -257,6 +264,48 @@ pub async fn list_clients(ctx: &AdminBridgeCtx) -> Result<Value> {
             .map(to_client_response)
             .collect::<Vec<_>>(),
     ))
+}
+
+pub async fn list_machines(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let machines = ctx.machine_repository.list().await?;
+    Ok(Value::Array(
+        machines
+            .into_iter()
+            .map(to_machine_response)
+            .collect::<Vec<_>>(),
+    ))
+}
+
+pub async fn get_local_machine_id(ctx: &AdminBridgeCtx) -> Result<Value> {
+    let settings = AppSettingsService::new(ctx.settings_repository.clone());
+    Ok(settings
+        .get_local_machine_id()
+        .await
+        .map(|id| json!(id.to_string()))
+        .unwrap_or(Value::Null))
+}
+
+pub async fn get_viewer_machine_id(ctx: &AdminBridgeCtx, viewer_id: String) -> Result<Value> {
+    let settings = AppSettingsService::new(ctx.settings_repository.clone());
+    Ok(settings
+        .get_viewer_machine_id(&viewer_id)
+        .await
+        .map(|id| json!(id.to_string()))
+        .unwrap_or(Value::Null))
+}
+
+pub fn get_hostname() -> Result<Value> {
+    let name = hostname::get()?.to_string_lossy().into_owned();
+    Ok(json!(name))
+}
+
+pub async fn get_client_machine_id(ctx: &AdminBridgeCtx, client_id: String) -> Result<Value> {
+    Ok(ctx
+        .inbound_client_repository
+        .get_machine_id(&client_id)
+        .await?
+        .map(|id| json!(id.to_string()))
+        .unwrap_or(Value::Null))
 }
 
 pub async fn get_client(ctx: &AdminBridgeCtx, id: String) -> Result<Value> {
@@ -338,6 +387,7 @@ pub async fn validate_workspace_root(path: String) -> Result<Value> {
 pub async fn get_workspace_effective_features(
     ctx: &AdminBridgeCtx,
     workspace_root: String,
+    machine_id: Option<String>,
 ) -> Result<Value> {
     let normalized = match validate_workspace_root_path(&workspace_root) {
         WorkspaceRootValidation::Empty => return Err(anyhow!("workspace_root cannot be empty")),
@@ -351,10 +401,25 @@ pub async fn get_workspace_effective_features(
         .await?
         .ok_or_else(|| anyhow!("No default Space configured"))?;
 
-    let binding = ctx
-        .workspace_binding_repository
-        .find_longest_prefix_match(&default_space.id, None, std::slice::from_ref(&normalized))
-        .await?;
+    let binding = if let Some(ref raw) = machine_id {
+        let id = Uuid::parse_str(raw)?;
+        match ctx
+            .workspace_binding_repository
+            .find_exact_for_machine(&id, &normalized, None)
+            .await?
+        {
+            Some(b) => Some(b),
+            None => {
+                ctx.workspace_binding_repository
+                    .find_exact_global(&normalized)
+                    .await?
+            }
+        }
+    } else {
+        ctx.workspace_binding_repository
+            .find_exact_for_roots(std::slice::from_ref(&normalized))
+            .await?
+    };
 
     let (source, binding_id, space_id, feature_set_ids) = match binding {
         Some(binding) => (
@@ -363,23 +428,12 @@ pub async fn get_workspace_effective_features(
             binding.space_id,
             binding.feature_set_ids,
         ),
-        None => {
-            let sets = ctx
-                .services
-                .permission()
-                .list_feature_sets_for_space(&default_space.id.to_string())
-                .await?;
-            let fallback = sets
-                .into_iter()
-                .find(|set| set.feature_set_type.as_str() == "starter")
-                .ok_or_else(|| anyhow!("Default Space has no Starter FeatureSet"))?;
-            (
-                "unbound".to_string(),
-                None,
-                default_space.id,
-                vec![fallback.id],
-            )
-        }
+        None => (
+            "unbound".to_string(),
+            None,
+            default_space.id,
+            vec![],
+        ),
     };
 
     let space = ctx

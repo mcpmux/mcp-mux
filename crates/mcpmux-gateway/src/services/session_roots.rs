@@ -291,6 +291,17 @@ impl SessionRootsRegistry {
         out
     }
 
+    /// Drop a single root from the registry regardless of binding status.
+    /// Removes it from every session that holds it; sessions left empty are
+    /// evicted (same as [`Self::forget_unmapped_roots`]). Returns `true` when
+    /// the root was found and removed from at least one session.
+    pub fn forget_root(&self, root: &str) -> bool {
+        let normalized = normalize_workspace_root(root);
+        !self
+            .forget_unmapped_roots(|r| r != normalized.as_str())
+            .is_empty()
+    }
+
     /// Forget every reported root that is **not** currently mapped, so the
     /// Workspaces tab's "Unmapped" list clears and the gateway re-offers the
     /// "map this folder?" prompt the next time those sessions report a root.

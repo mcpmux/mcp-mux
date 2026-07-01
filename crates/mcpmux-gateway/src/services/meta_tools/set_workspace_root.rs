@@ -77,7 +77,7 @@ impl MetaTool for SetWorkspaceRootTool {
         let resolved = call
             .ctx
             .resolver
-            .resolve(Some(session_id), Some(call.client_id))
+            .resolve(Some(session_id), Some(call.client_id), call.request_machine_id)
             .await?;
 
         let space_id = resolved

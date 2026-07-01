@@ -46,10 +46,32 @@ vi.mock('@/lib/api/workspaceAppearances', () => ({
   uploadWorkspaceIcon: vi.fn(),
 }));
 
-vi.mock('@/stores', () => ({
-  useSpaces: () => [{ id: 's1', name: 'Space One' }],
-  usePendingWorkspaceNew: () => false,
-  useSetPendingWorkspaceNew: () => () => {},
+vi.mock('@/lib/api/machines', () => ({
+  listMachines: vi.fn().mockResolvedValue([]),
+  getLocalMachineId: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@/lib/backend/events', () => ({
+  useWorkspaceEvents: () => ({
+    subscribe: vi.fn(() => () => {}),
+    subscribeMany: vi.fn(() => () => {}),
+  }),
+  useWorkspaceEventListener: vi.fn(),
+}));
+
+vi.mock('@/stores', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/stores')>();
+  return {
+    ...actual,
+    useSpaces: () => [{ id: 's1', name: 'Space One' }],
+    usePendingWorkspaceNew: () => false,
+    useSetPendingWorkspaceNew: () => () => {},
+  };
+});
+
+vi.mock('@/hooks/use-viewer-identity.hook', () => ({
+  useViewerIdentity: () => ({ machineId: null, isLoading: false }),
+  ViewerIdentityProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 import { renderWithI18n } from '../render-with-i18n.helpers';

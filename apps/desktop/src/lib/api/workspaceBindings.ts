@@ -13,6 +13,8 @@ export interface WorkspaceBinding {
   workspace_root: string;
   /** When set, binding applies only to this OAuth client. */
   client_id?: string | null;
+  /** When set, binding applies only on this machine; null = global canonical. */
+  machine_id: string | null;
   /** Friendly display name shown instead of the folder path when set. */
   label: string | null;
   /** Optional icon: emoji, URL, or local:workspace-icons ref. */
@@ -37,6 +39,8 @@ export interface WorkspaceBindingInput {
   feature_set_ids: string[];
   /** When set, creates a client-scoped binding. */
   client_id?: string | null;
+  /** When set, scopes the binding to this machine; null = global canonical. */
+  machine_id?: string | null;
 }
 
 /** List every binding (sorted by workspace_root). */
@@ -63,6 +67,16 @@ export async function listReportedWorkspaceRoots(): Promise<string[]> {
  */
 export async function clearUnmappedReportedRoots(): Promise<number> {
   return apiCall('clear_unmapped_reported_roots');
+}
+
+/**
+ * Remove a single reported workspace root from the session registry.
+ * Drops it from every active MCP session that holds it; unlike
+ * `clearUnmappedReportedRoots` this targets one specific path. Returns `true`
+ * when the root was found and removed.
+ */
+export async function forgetReportedRoot(root: string): Promise<boolean> {
+  return apiCall('forget_reported_root', { root });
 }
 
 /**
@@ -118,6 +132,7 @@ export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
     space_id: b.space_id,
     feature_set_ids: b.feature_set_ids,
     client_id: b.client_id,
+    machine_id: b.machine_id,
   };
 }
 
@@ -172,7 +187,7 @@ export interface EffectiveFeatureSetSummary {
 
 export interface WorkspaceEffectiveFeatures {
   workspace_root: string;
-  /** `binding` when a saved WorkspaceBinding matched; `unbound` when no binding matched — an unbound folder falls back to the default Space's Starter FS, so `feature_sets` is what a live session here actually sees until the user attaches a binding. */
+  /** `binding` when a saved WorkspaceBinding matched; `unbound` when no binding matched — caller has zero backend tools by default. Bind to enable access. */
   source: 'binding' | 'unbound';
   binding_id: string | null;
   space_id: string;
@@ -192,7 +207,11 @@ export interface WorkspaceEffectiveFeatures {
  * availability — same view the gateway resolver builds for live sessions.
  */
 export async function getWorkspaceEffectiveFeatures(
-  workspaceRoot: string
+  workspaceRoot: string,
+  machineId?: string | null,
 ): Promise<WorkspaceEffectiveFeatures> {
-  return apiCall('get_workspace_effective_features', { workspaceRoot });
+  return apiCall('get_workspace_effective_features', {
+    workspaceRoot,
+    ...(machineId ? { machineId } : {}),
+  });
 }

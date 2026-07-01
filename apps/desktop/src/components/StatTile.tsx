@@ -1,6 +1,6 @@
 import { ArrowUpRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useNavigateTo } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import type { NavItem } from '@/stores/types';
 
 export interface StatTileProps {
@@ -30,11 +30,11 @@ export function StatTile({
   navTarget,
   navHint,
 }: StatTileProps) {
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   return (
     <button
       type="button"
-      onClick={() => navigateTo(navTarget)}
+      onClick={() => navigate(navTarget)}
       title={navHint}
       data-testid={testId}
       className="group relative overflow-hidden rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] p-4 text-left shadow transition-all duration-200 hover:-translate-y-0.5 hover:border-[rgb(var(--border))] hover:shadow-md"

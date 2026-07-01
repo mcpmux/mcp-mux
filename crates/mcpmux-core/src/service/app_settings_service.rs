@@ -5,8 +5,10 @@
 //! for persistence.
 
 use serde::{de::DeserializeOwned, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::AppSettingsRepository;
 
@@ -30,6 +32,12 @@ pub mod keys {
         pub const ADMIN_TRUST_CF_ACCESS: &str = "gateway.admin_trust_cf_access";
         /// Cloudflare team domain for JWT issuer verification
         pub const ADMIN_CF_TEAM_DOMAIN: &str = "gateway.admin_cf_team_domain";
+        /// UUID of the [`Machine`](crate::domain::Machine) this install identifies as.
+        pub const LOCAL_MACHINE_ID: &str = "gateway.local_machine_id";
+        /// Public HTTPS URL for remote MCP clients (string, e.g. https://mcp.example.com).
+        /// Shares the desktop app's `gateway.public_base_url` key so the admin API and
+        /// the desktop Settings page read/write the same setting.
+        pub const PUBLIC_URL: &str = "gateway.public_base_url";
     }
 
     /// OAuth callback settings namespace
@@ -56,6 +64,12 @@ pub mod keys {
     pub mod registry {
         /// Cached ETag from last bundle fetch
         pub const BUNDLE_ETAG: &str = "registry.bundle_etag";
+    }
+
+    /// Browser/app viewer profiles mapped to machine catalog rows.
+    pub mod viewer {
+        /// JSON map of viewer_device_id → machine UUID string.
+        pub const DEVICES: &str = "viewer.devices";
     }
 }
 
@@ -270,6 +284,91 @@ impl AppSettingsService {
         self.repository
             .set(keys::gateway::ADMIN_CF_TEAM_DOMAIN, value)
             .await
+    }
+
+    /// Public HTTPS URL advertised in OAuth metadata for tunnel clients.
+    pub async fn get_gateway_public_url(&self) -> Option<String> {
+        self.get_string(keys::gateway::PUBLIC_URL)
+            .await
+            .filter(|value| !value.is_empty())
+    }
+
+    /// Persist the public gateway URL (empty clears).
+    pub async fn set_gateway_public_url(&self, url: &str) -> anyhow::Result<()> {
+        info!("[Settings] Setting gateway public_url");
+        self.repository
+            .set(keys::gateway::PUBLIC_URL, url.trim())
+            .await
+    }
+
+    /// Clear the configured public gateway URL.
+    pub async fn clear_gateway_public_url(&self) -> anyhow::Result<()> {
+        info!("[Settings] Clearing gateway public_url");
+        self.repository.delete(keys::gateway::PUBLIC_URL).await
+    }
+
+    // =========================================================================
+    // Machine identity
+    // =========================================================================
+
+    /// Get the machine id this install is registered as, if any.
+    pub async fn get_local_machine_id(&self) -> Option<Uuid> {
+        self.get_string(keys::gateway::LOCAL_MACHINE_ID)
+            .await
+            .and_then(|value| Uuid::parse_str(&value).ok())
+    }
+
+    /// Set or clear the machine id for this install.
+    pub async fn set_local_machine_id(&self, id: Option<Uuid>) -> anyhow::Result<()> {
+        match id {
+            Some(uuid) => {
+                info!("[Settings] Setting local_machine_id to {}", uuid);
+                self.repository
+                    .set(keys::gateway::LOCAL_MACHINE_ID, &uuid.to_string())
+                    .await
+            }
+            None => {
+                info!("[Settings] Clearing local_machine_id");
+                self.repository
+                    .delete(keys::gateway::LOCAL_MACHINE_ID)
+                    .await
+            }
+        }
+    }
+
+    /// Get the machine id linked to a viewer device profile, if any.
+    pub async fn get_viewer_machine_id(&self, viewer_id: &str) -> Option<Uuid> {
+        let map: HashMap<String, String> = self
+            .get_or_default(keys::viewer::DEVICES, HashMap::new())
+            .await;
+        map.get(viewer_id)
+            .and_then(|value| Uuid::parse_str(value).ok())
+    }
+
+    /// Link or unlink a viewer device profile to a machine catalog row.
+    pub async fn set_viewer_machine_id(
+        &self,
+        viewer_id: &str,
+        machine_id: Option<Uuid>,
+    ) -> anyhow::Result<()> {
+        let mut map: HashMap<String, String> = self
+            .get_or_default(keys::viewer::DEVICES, HashMap::new())
+            .await;
+
+        match machine_id {
+            Some(id) => {
+                map.insert(viewer_id.to_string(), id.to_string());
+            }
+            None => {
+                map.remove(viewer_id);
+            }
+        }
+
+        if map.is_empty() {
+            self.repository.delete(keys::viewer::DEVICES).await
+        } else {
+            self.set_typed(keys::viewer::DEVICES, &map).await
+        }
     }
 
     // =========================================================================

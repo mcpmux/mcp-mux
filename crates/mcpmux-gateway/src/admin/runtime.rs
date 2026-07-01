@@ -23,6 +23,7 @@ pub trait GatewayRuntime: Send + Sync {
         -> Result<Value>;
     async fn get_server_statuses(&self, _space_id: String) -> Result<Value>;
     async fn clear_unmapped_reported_roots(&self, bound_roots_lower: Vec<String>) -> Result<Value>;
+    async fn forget_reported_root(&self, root: String) -> Result<Value>;
 }
 
 /// Test/default runtime that returns empty or safe defaults.
@@ -106,5 +107,9 @@ impl GatewayRuntime for StubGatewayRuntime {
         _bound_roots_lower: Vec<String>,
     ) -> Result<Value> {
         Ok(json!(0))
+    }
+
+    async fn forget_reported_root(&self, _root: String) -> Result<Value> {
+        Ok(json!(false))
     }
 }

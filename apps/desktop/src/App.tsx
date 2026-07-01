@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Route, Switch, Redirect, useLocation } from 'wouter';
 import { Sun, Moon, Download, X } from 'lucide-react';
 import { AppShell, Sidebar, SidebarItem, SidebarSection } from '@mcpmux/ui';
 import { ThemeProvider } from '@/components/ThemeProvider';
@@ -8,6 +9,8 @@ import { OAuthConsentModal } from '@/components/OAuthConsentModal';
 import { ServerInstallModal } from '@/components/ServerInstallModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
 import { StaleBuildBanner } from '@/components/StaleBuildBanner';
+import { ViewerIdentityModal, ViewerIdentityStatusItem } from '@/components/ViewerIdentity';
+import { ViewerIdentityProvider } from '@/hooks/use-viewer-identity.hook';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { startMetaToolActivityListener } from '@/stores/metaToolActivityStore';
@@ -17,12 +20,11 @@ import {
   useViewSpace,
   useTheme,
   useAnalyticsEnabled,
-  useActiveNav,
-  useNavigateTo,
   useSetPendingSettingsSection,
   useIsLoading,
 } from '@/stores';
-import { NAV_ZONES, NAV_SETTINGS } from '@/lib/navigation';
+import { NAV_ZONES, NAV_SETTINGS, navItemFromPath } from '@/lib/navigation';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import { spaceAccentColor } from '@/lib/spaceAccent';
 import { DashboardPage } from '@/features/dashboard';
 import { RegistryPage } from '@/features/registry';
@@ -30,11 +32,10 @@ import { FeatureSetsPage } from '@/features/featuresets';
 import { ClientsPage } from '@/features/clients';
 import { ServersPage } from '@/features/servers';
 import { SpacesPage } from '@/features/spaces';
-import { WorkspacesPage } from '@/features/workspaces';
+import { WorkspacesPage, WorkspaceBindingPanel } from '@/features/workspaces';
 import { SettingsPage } from '@/features/settings';
 import { BuiltinServersPage } from '@/features/builtinServers';
 import { AutoStartConflictResolver } from '@/features/gateway/AutoStartConflictResolver';
-import { WorkspaceBindingSheet } from '@/features/workspaces';
 import { MetaToolApprovalDialog } from '@/features/metaTools';
 import { useGatewayEvents } from '@/hooks/useDomainEvents';
 import { getVersion } from '@/lib/api/app';
@@ -100,8 +101,8 @@ function AppContent() {
 
   useDataSync();
 
-  const activeNav = useActiveNav();
-  const navigateTo = useNavigateTo();
+  const [location] = useLocation();
+  const navigate = useNavigate();
   const setPendingSettingsSection = useSetPendingSettingsSection();
   const [availableUpdate, setAvailableUpdate] = useState<{ version: string } | null>(null);
 
@@ -182,8 +183,8 @@ function AppContent() {
   useAnalytics();
 
   useEffect(() => {
-    capture('page_viewed', { page: activeNav });
-  }, [activeNav]);
+    capture('page_viewed', { page: navItemFromPath(location) });
+  }, [location]);
 
   const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);
   const loadGatewayUrl = useCallback(async () => {
@@ -233,8 +234,8 @@ function AppContent() {
           icon={<NAV_SETTINGS.icon className="h-4 w-4" />}
           label={t(NAV_SETTINGS.labelKey)}
           hint={t(NAV_SETTINGS.hintKey)}
-          active={activeNav === NAV_SETTINGS.key}
-          onClick={() => navigateTo(NAV_SETTINGS.key)}
+          active={location === NAV_SETTINGS.path}
+          onClick={() => navigate(NAV_SETTINGS.key)}
           data-testid={NAV_SETTINGS.testId}
         />
       }
@@ -248,8 +249,8 @@ function AppContent() {
               label={t(entry.labelKey)}
               hint={t(entry.hintKey)}
               title={entry.labelTitleKey ? t(entry.labelTitleKey) : undefined}
-              active={activeNav === entry.key}
-              onClick={() => navigateTo(entry.key)}
+              active={location === entry.path}
+              onClick={() => navigate(entry.key)}
               data-testid={entry.testId}
             />
           ))}
@@ -263,7 +264,7 @@ function AppContent() {
       <div className="flex items-center gap-4">
         <button
           type="button"
-          onClick={() => navigateTo('dashboard')}
+          onClick={() => navigate('dashboard')}
           className="flex items-center gap-1.5 transition-colors hover:text-[rgb(var(--foreground))]"
           data-testid="statusbar-gateway"
           title={tDashboard('statusbar.gatewayTitle')}
@@ -289,6 +290,7 @@ function AppContent() {
             name: viewSpace?.name || tCommon('none'),
           })}
         </span>
+        <ViewerIdentityStatusItem />
       </div>
       {appVersion && (
         <span className="opacity-70" data-testid="statusbar-version">
@@ -351,9 +353,8 @@ function AppContent() {
               </span>
               <button
                 onClick={() => {
-                  // Land on (and flash) the Updates section, not the top of Settings.
                   setPendingSettingsSection('updates');
-                  navigateTo('settings');
+                  navigate('settings');
                   setAvailableUpdate(null);
                 }}
                 className="font-medium text-blue-500 underline underline-offset-2 hover:text-blue-400"
@@ -372,15 +373,20 @@ function AppContent() {
           </div>
         )}
         <StaleBuildBanner />
-        {activeNav === 'dashboard' && <DashboardPage />}
-        {activeNav === 'registry' && <RegistryPage />}
-        {activeNav === 'servers' && <ServersPage />}
-        {activeNav === 'spaces' && <SpacesPage />}
-        {activeNav === 'featuresets' && <FeatureSetsPage />}
-        {activeNav === 'workspaces' && <WorkspacesPage />}
-        {activeNav === 'clients' && <ClientsPage />}
-        {activeNav === 'builtin-servers' && <BuiltinServersPage />}
-        {activeNav === 'settings' && <SettingsPage />}
+        <Switch>
+          <Route path="/">
+            <Redirect to="/dashboard" />
+          </Route>
+          <Route path="/dashboard" component={DashboardPage} />
+          <Route path="/registry" component={RegistryPage} />
+          <Route path="/servers" component={ServersPage} />
+          <Route path="/spaces" component={SpacesPage} />
+          <Route path="/featuresets" component={FeatureSetsPage} />
+          <Route path="/workspaces" component={WorkspacesPage} />
+          <Route path="/clients" component={ClientsPage} />
+          <Route path="/builtin-servers" component={BuiltinServersPage} />
+          <Route path="/settings" component={SettingsPage} />
+        </Switch>
       </div>
     </AppShell>
   );
@@ -389,12 +395,15 @@ function AppContent() {
 function App() {
   return (
     <ThemeProvider>
-      <AppContent />
-      <AutoStartConflictResolver />
-      <OAuthConsentModal />
-      <WorkspaceBindingSheet />
-      <ServerInstallModal />
-      <MetaToolApprovalDialog />
+      <ViewerIdentityProvider>
+        <AppContent />
+        <AutoStartConflictResolver />
+        <OAuthConsentModal />
+        <ViewerIdentityModal />
+        <WorkspaceBindingPanel />
+        <ServerInstallModal />
+        <MetaToolApprovalDialog />
+      </ViewerIdentityProvider>
     </ThemeProvider>
   );
 }

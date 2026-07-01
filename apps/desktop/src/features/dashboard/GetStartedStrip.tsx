@@ -1,12 +1,12 @@
 import { Compass, Monitor, Server, ArrowRight } from 'lucide-react';
-import { useNavigateTo } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import type { NavItem } from '@/stores/types';
 
 /**
  * Three-step onboarding shown until the Space has its first installed server.
  */
 export function GetStartedStrip() {
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   const steps = [
     {
       n: 1,
@@ -43,7 +43,7 @@ export function GetStartedStrip() {
           <button
             key={s.n}
             type="button"
-            onClick={() => navigateTo(s.nav)}
+            onClick={() => navigate(s.nav)}
             className="group flex items-start gap-3 p-4 text-left transition-colors hover:bg-[rgb(var(--primary))]/10"
           >
             <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/15 text-sm font-bold text-[rgb(var(--primary))]">

@@ -12,6 +12,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { adminCfProbeHeaders, loadRepoDotEnv } from './cf-access-env.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN_PORT = Number.parseInt(process.env.MCPMUX_ADMIN_PORT ?? '45819', 10);
 const HEALTH_URL = `http://127.0.0.1:${ADMIN_PORT}/api/v1/health`;
@@ -47,7 +49,7 @@ async function adminHealthOk() {
   try {
     const response = await fetch(HEALTH_URL, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...adminCfProbeHeaders() },
     });
     return response.ok;
   } catch {
@@ -64,6 +66,7 @@ function startBackendDetached() {
     ...process.env,
     MCPMUX_DEV_PREP_DONE: '1',
     MCPMUX_DEV_ADMIN: '1',
+    VITE_ADMIN_WEB: 'true',
   };
   const child = spawn(pnpm, ['dev'], {
     cwd: REPO_ROOT,
@@ -114,6 +117,8 @@ async function main() {
     console.error('[dev-web-admin] Could not locate repo root.');
     process.exit(1);
   }
+
+  loadRepoDotEnv(REPO_ROOT);
 
   if (!(await adminHealthOk())) {
     startBackendDetached();

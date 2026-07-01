@@ -101,9 +101,12 @@ impl McpMuxGatewayHandler {
         client_id: &str,
         session_id: Option<&str>,
         root_for_prompt: Option<&str>,
+        request_machine_id: Option<uuid::Uuid>,
     ) {
         let resolver = &services.feature_set_resolver;
-        match resolver.resolve(session_id, Some(client_id)).await {
+        match resolver
+            .resolve(session_id, Some(client_id), request_machine_id)
+            .await {
             Ok(resolved) => {
                 info!(
                     %client_id,
@@ -143,6 +146,7 @@ impl McpMuxGatewayHandler {
                     resolved.source,
                     crate::services::ResolutionSource::Deny
                         | crate::services::ResolutionSource::SpaceDefault
+                        | crate::services::ResolutionSource::Unbound
                 );
                 if let (true, Some(sid), Some(space_id), Some(root)) = (
                     should_prompt,
@@ -164,7 +168,6 @@ impl McpMuxGatewayHandler {
                             session_id: sid.to_string(),
                             space_id,
                             workspace_root: root.to_string(),
-                            collision_client_id: resolved.collision_client_id.clone(),
                             space_locked,
                         },
                     );
@@ -192,11 +195,12 @@ impl McpMuxGatewayHandler {
         &self,
         session_id: Option<&str>,
         client_id: &str,
+        request_machine_id: Option<uuid::Uuid>,
     ) -> Result<(uuid::Uuid, Vec<String>), McpError> {
         let resolved = self
             .services
             .authorization_service
-            .resolve(session_id, Some(client_id))
+            .resolve(session_id, Some(client_id), request_machine_id)
             .await
             .map_err(|e| McpError::internal_error(format!("Failed to resolve: {e}"), None))?;
         let space_id = resolved.space_id.ok_or_else(|| {
@@ -226,6 +230,7 @@ impl McpMuxGatewayHandler {
         peer: &rmcp::service::Peer<RoleServer>,
         session_id: Option<&str>,
         client_id: &str,
+        request_machine_id: Option<uuid::Uuid>,
     ) {
         let Some(sid) = session_id else { return };
         // Fast path: already have a definitive answer (Some(roots),
@@ -318,6 +323,7 @@ impl McpMuxGatewayHandler {
                         &client_id,
                         Some(&session_id),
                         root_for_prompt.as_deref(),
+                        request_machine_id,
                     )
                     .await;
                 });
@@ -532,6 +538,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                 let notifier = self.notification_bridge.clone();
                 let client_id_str = oauth_ctx.client_id.clone();
                 let session_id_for_task = session_id.clone();
+                let request_machine_id = oauth_ctx.request_machine_id;
                 tokio::spawn(async move {
                     // Retry list_roots() on transport errors with bounded
                     // backoff. Without roots a roots-capable session is
@@ -605,7 +612,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                     // normalized them on insert. Passing `Some(root)`
                     // lets log_and_notify_resolution emit
                     // `WorkspaceNeedsBinding` if the resolver ended
-                    // up at `source = Deny` (i.e. no binding yet).
+                    // up at `source = Deny | Unbound` (i.e. no binding yet).
                     let root_for_prompt =
                         session_roots.get(&session_id_for_task).and_then(|roots| {
                             roots
@@ -620,6 +627,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                         &client_id_str,
                         Some(&session_id_for_task),
                         root_for_prompt.as_deref(),
+                        request_machine_id,
                     )
                     .await;
                 });
@@ -632,6 +640,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                     &oauth_ctx.client_id,
                     Some(&session_id),
                     None,
+                    oauth_ctx.request_machine_id,
                 )
                 .await;
             }
@@ -671,6 +680,7 @@ impl ServerHandler for McpMuxGatewayHandler {
         let notifier = self.notification_bridge.clone();
         let client_id_str = oauth_ctx.client_id.clone();
         let session_id_for_task = session_id.clone();
+        let request_machine_id = oauth_ctx.request_machine_id;
         tokio::spawn(async move {
             match peer.list_roots().await {
                 Ok(result) => {
@@ -702,6 +712,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                         &client_id_str,
                         Some(&session_id_for_task),
                         root_for_prompt.as_deref(),
+                        request_machine_id,
                     )
                     .await;
                 }
@@ -734,13 +745,18 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         // Resolve routing once: the resolver returns the authoritative
         // (Space, FS) for this session — this may differ from oauth_ctx
         // when a WorkspaceBinding redirects to another space.
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
         // Get advertised (surfaced) tools only — full invokable set is reachable
@@ -810,14 +826,14 @@ impl ServerHandler for McpMuxGatewayHandler {
         // connection). Without the probe it resolves to empty FS ids and
         // fails "not allowed by the current grants" — breaking the
         // list==call invariant the list handlers already uphold.
-        self.ensure_roots_probed(&context.peer, session_id, &oauth_ctx.client_id)
+        self.ensure_roots_probed(&context.peer, session_id, &oauth_ctx.client_id, oauth_ctx.request_machine_id)
             .await;
 
         // Resolve routing once — the binding's target space is authoritative
         // (may differ from oauth_ctx.space_id). Needed both to gate the
         // per-Space meta tools below and to route a normal tool call.
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id, &oauth_ctx.client_id)
+            .resolve_routing(session_id, &oauth_ctx.client_id, oauth_ctx.request_machine_id)
             .await?;
 
         // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering, gated
@@ -839,7 +855,13 @@ impl ServerHandler for McpMuxGatewayHandler {
             return match self
                 .services
                 .meta_tool_registry
-                .call(&params.name, &oauth_ctx.client_id, session_id, args)
+                .call_from_device(
+                    &params.name,
+                    &oauth_ctx.client_id,
+                    session_id,
+                    args,
+                    oauth_ctx.request_machine_id,
+                )
                 .await
             {
                 Ok(result) => Ok(result),
@@ -1032,10 +1054,15 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
         // Get advertised (surfaced) prompts only — full fetchable set is reachable
@@ -1086,10 +1113,15 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
         let (server_id, prompt_name) = self
@@ -1180,10 +1212,15 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
         // Get advertised (surfaced) resources only — full readable set is reachable
@@ -1232,10 +1269,15 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
         let authorized_resources = self

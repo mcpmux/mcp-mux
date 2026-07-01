@@ -34,6 +34,7 @@ pub struct ValidateRootQuery {
 #[serde(rename_all = "camelCase")]
 pub struct EffectiveFeaturesQuery {
     pub workspace_root: String,
+    pub machine_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -274,6 +275,48 @@ pub async fn list_clients(State(state): State<AdminState>) -> Result<Json<Value>
         .map_err(ApiError::from_bridge)
 }
 
+pub async fn list_machines(State(state): State<AdminState>) -> Result<Json<Value>, ApiError> {
+    bridge::list_machines(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_local_machine_id(
+    State(state): State<AdminState>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::get_local_machine_id(&state.bridge)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_viewer_machine_id(
+    State(state): State<AdminState>,
+    Path(viewer_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::get_viewer_machine_id(&state.bridge, viewer_id)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_hostname() -> Result<Json<Value>, ApiError> {
+    bridge::get_hostname()
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn get_client_machine_id(
+    State(state): State<AdminState>,
+    Path(client_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::get_client_machine_id(&state.bridge, client_id)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
 pub async fn get_client(
     State(state): State<AdminState>,
     Path(id): Path<String>,
@@ -362,10 +405,14 @@ pub async fn get_workspace_effective_features(
     State(state): State<AdminState>,
     Query(query): Query<EffectiveFeaturesQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    bridge::get_workspace_effective_features(&state.bridge, query.workspace_root)
-        .await
-        .map(ok)
-        .map_err(ApiError::from_bridge)
+    bridge::get_workspace_effective_features(
+        &state.bridge,
+        query.workspace_root,
+        query.machine_id,
+    )
+    .await
+    .map(ok)
+    .map_err(ApiError::from_bridge)
 }
 
 pub async fn list_workspace_appearances(

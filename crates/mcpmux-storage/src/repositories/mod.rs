@@ -7,6 +7,7 @@ mod feature_set_repository;
 mod inbound_client_repository;
 mod inbound_mcp_client_repository;
 mod installed_server_repository;
+mod machine_repository;
 mod outbound_oauth_client_repository;
 mod server_feature_repository;
 mod space_base_dir_repository;
@@ -25,6 +26,7 @@ pub use inbound_client_repository::{
 };
 pub use inbound_mcp_client_repository::SqliteInboundMcpClientRepository;
 pub use installed_server_repository::SqliteInstalledServerRepository;
+pub use machine_repository::SqliteMachineRepository;
 pub use outbound_oauth_client_repository::SqliteOutboundOAuthRepository;
 pub use server_feature_repository::{
     FeatureType, ServerFeature, ServerFeatureRepository, SqliteServerFeatureRepository,

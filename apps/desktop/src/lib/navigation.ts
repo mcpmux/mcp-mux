@@ -10,9 +10,9 @@
  * To add a future surface, append an entry to the right zone — the sidebar
  * renders from this data and nothing else.
  *
- * NOTE: `key` values are NavItem store keys and `testId`s are the e2e selector
- * contract (ADR-003) — both are stable identifiers. Only `labelKey`/`hintKey`/
- * `icon` are presentation and safe to change.
+ * NOTE: `key` values are NavItem identifiers and `path` values are URL routes.
+ * `testId`s are the e2e selector contract (ADR-003) — both are stable identifiers.
+ * Only `labelKey`/`hintKey`/`icon` are presentation and safe to change.
  */
 import type { ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
@@ -43,6 +43,8 @@ export type NavIcon = LucideIcon | ComponentType<{ className?: string }>;
 
 export interface NavEntry {
   key: NavItem;
+  /** Browser path for wouter routing (e.g. `/dashboard`). */
+  path: string;
   /** i18n key under the `nav` namespace (e.g. `dashboard` → nav:dashboard). */
   labelKey: NavLabelKey;
   icon: NavIcon;
@@ -64,6 +66,7 @@ export const NAV_ZONES: NavZone[] = [
     entries: [
       {
         key: 'dashboard',
+        path: '/dashboard',
         labelKey: 'dashboard',
         icon: LayoutDashboard,
         testId: 'nav-dashboard',
@@ -76,6 +79,7 @@ export const NAV_ZONES: NavZone[] = [
     entries: [
       {
         key: 'servers',
+        path: '/servers',
         labelKey: 'myServers',
         icon: McpNavIcon,
         testId: 'nav-my-servers',
@@ -83,6 +87,7 @@ export const NAV_ZONES: NavZone[] = [
       },
       {
         key: 'builtin-servers',
+        path: '/builtin-servers',
         labelKey: 'builtin',
         icon: Sparkles,
         testId: 'nav-builtin-servers',
@@ -90,6 +95,7 @@ export const NAV_ZONES: NavZone[] = [
       },
       {
         key: 'registry',
+        path: '/registry',
         labelKey: 'search',
         icon: Search,
         testId: 'nav-discover',
@@ -102,6 +108,7 @@ export const NAV_ZONES: NavZone[] = [
     entries: [
       {
         key: 'clients',
+        path: '/clients',
         labelKey: 'clients',
         icon: Monitor,
         testId: 'nav-clients',
@@ -109,6 +116,7 @@ export const NAV_ZONES: NavZone[] = [
       },
       {
         key: 'workspaces',
+        path: '/workspaces',
         labelKey: 'projects',
         icon: FolderOpen,
         testId: 'nav-workspaces',
@@ -116,6 +124,7 @@ export const NAV_ZONES: NavZone[] = [
       },
       {
         key: 'featuresets',
+        path: '/featuresets',
         labelKey: 'bundles',
         icon: ShoppingBasket,
         testId: 'nav-featuresets',
@@ -124,6 +133,7 @@ export const NAV_ZONES: NavZone[] = [
       },
       {
         key: 'spaces',
+        path: '/spaces',
         labelKey: 'spaces',
         icon: Globe,
         testId: 'nav-spaces',
@@ -136,8 +146,28 @@ export const NAV_ZONES: NavZone[] = [
 /** Pinned to the sidebar footer, below the scrolling zones. */
 export const NAV_SETTINGS: NavEntry = {
   key: 'settings',
+  path: '/settings',
   labelKey: 'settings',
   icon: Settings,
   testId: 'nav-settings',
   hintKey: 'hints.settings',
 };
+
+/** Flat list of every sidebar nav entry (zones + settings). */
+export const ALL_NAV_ENTRIES: NavEntry[] = [
+  ...NAV_ZONES.flatMap((zone) => zone.entries),
+  NAV_SETTINGS,
+];
+
+/** NavItem key → browser path. */
+export const NAV_PATH_MAP: Record<NavItem, string> = Object.fromEntries(
+  ALL_NAV_ENTRIES.map((entry) => [entry.key, entry.path])
+) as Record<NavItem, string>;
+
+/**
+ * Resolve a NavItem from a wouter pathname, defaulting to dashboard for unknown paths.
+ */
+export function navItemFromPath(pathname: string): NavItem {
+  const match = ALL_NAV_ENTRIES.find((entry) => entry.path === pathname);
+  return match?.key ?? 'dashboard';
+}

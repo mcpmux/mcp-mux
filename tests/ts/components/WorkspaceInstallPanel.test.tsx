@@ -43,8 +43,11 @@ vi.mock('@/lib/api/gateway', () => ({
   getGatewayStatus: gatewayStatusMock,
 }));
 
+vi.mock('@/hooks/use-navigate.hook', () => ({
+  useNavigate: () => navigateMock,
+}));
+
 vi.mock('@/stores', () => ({
-  useNavigateTo: () => navigateMock,
   useSetPendingSettingsSection: () => setSectionMock,
 }));
 

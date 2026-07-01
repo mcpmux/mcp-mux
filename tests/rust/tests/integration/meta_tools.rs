@@ -13,9 +13,9 @@ use futures::FutureExt;
 use mcpmux_core::{
     normalize_workspace_root, Client, DomainEvent, EmbeddingRecord, EmbeddingRepository,
     FeatureSet, FeatureSetMember, FeatureSetRepository, InboundMcpClientRepository,
-    InputDefinition, InstalledServer, InstalledServerRepository, LogConfig, MemberMode, MemberType,
-    ServerDefinition, ServerFeature, ServerFeatureRepository, ServerLogManager, ServerSource,
-    SpaceRepository, TransportConfig, TransportMetadata, WorkspaceBinding,
+    InputDefinition, InstalledServer, InstalledServerRepository, LogConfig, Machine, MachineRepository,
+    MemberMode, MemberType, ServerDefinition, ServerFeature, ServerFeatureRepository, ServerLogManager,
+    ServerSource, SpaceRepository, TransportConfig, TransportMetadata, WorkspaceBinding,
     WorkspaceBindingRepository,
 };
 use mcpmux_gateway::pool::{
@@ -31,8 +31,8 @@ use mcpmux_gateway::MCPNotifier;
 use mcpmux_storage::{
     generate_master_key, Database, FieldEncryptor, InboundClientRepository,
     SqliteEmbeddingRepository, SqliteFeatureSetRepository, SqliteInboundMcpClientRepository,
-    SqliteInstalledServerRepository, SqliteServerFeatureRepository, SqliteSpaceBaseDirRepository,
-    SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
+    SqliteInstalledServerRepository, SqliteMachineRepository, SqliteServerFeatureRepository,
+    SqliteSpaceBaseDirRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
 };
 use serde_json::{json, Value};
 use tests::mocks::{MockCredentialRepository, MockOutboundOAuthRepository};
@@ -42,6 +42,7 @@ use uuid::Uuid;
 pub(crate) struct Fixture {
     pub(crate) registry: Arc<MetaToolRegistry>,
     broker: Arc<ApprovalBroker>,
+    db: Arc<Mutex<Database>>,
     #[allow(dead_code)]
     client_repo: Arc<dyn InboundMcpClientRepository>,
     pub(crate) feature_set_repo: Arc<dyn FeatureSetRepository>,
@@ -175,10 +176,23 @@ async fn seed_diagnose_servers(f: &Fixture) {
 
 impl Fixture {
     pub(crate) async fn new() -> Self {
-        Self::new_with_db(Arc::new(Mutex::new(Database::open_in_memory().unwrap()))).await
+        Self::new_with_db(Arc::new(Mutex::new(Database::open_in_memory().unwrap())), None).await
     }
 
-    pub(crate) async fn new_with_db(db: Arc<Mutex<Database>>) -> Self {
+    /// Gateway fixture with `local_machine_id` set (machine row seeded in DB).
+    pub(crate) async fn new_with_local_machine(machine_name: &str) -> Self {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let machine_repo = SqliteMachineRepository::new(db.clone());
+        let machine = Machine::new(machine_name);
+        let machine_id = machine.id;
+        machine_repo.create(&machine).await.unwrap();
+        Self::new_with_db(db, Some(machine_id)).await
+    }
+
+    pub(crate) async fn new_with_db(
+        db: Arc<Mutex<Database>>,
+        local_machine_id: Option<Uuid>,
+    ) -> Self {
         let space_repo: Arc<dyn SpaceRepository> = Arc::new(SqliteSpaceRepository::new(db.clone()));
         let feature_set_repo: Arc<dyn FeatureSetRepository> =
             Arc::new(SqliteFeatureSetRepository::new(db.clone()));
@@ -237,6 +251,7 @@ impl Fixture {
             inbound_client_repo.clone(),
             feature_set_repo.clone(),
             Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
+            local_machine_id,
         ));
 
         let prefix_cache = Arc::new(PrefixCacheService::new());
@@ -278,6 +293,7 @@ impl Fixture {
         Self {
             registry,
             broker,
+            db,
             client_repo,
             feature_set_repo,
             server_feature_repo,
@@ -293,6 +309,15 @@ impl Fixture {
             event_rx,
             server_manager,
         }
+    }
+
+    /// Insert a machine catalog row for multi-device bind tests.
+    pub(crate) async fn seed_machine(&self, name: &str) -> Uuid {
+        let machine_repo = SqliteMachineRepository::new(self.db.clone());
+        let machine = Machine::new(name);
+        let id = machine.id;
+        machine_repo.create(&machine).await.unwrap();
+        id
     }
 
     /// Attach a publisher that always auto-approves with the given decision.
@@ -987,7 +1012,7 @@ async fn search_tools_reuses_global_embeddings_across_sessions_without_reembeddi
 #[tokio::test(flavor = "multi_thread")]
 async fn search_tools_reuses_persisted_embeddings_after_registry_restart() {
     let shared_db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-    let seeded = Fixture::new_with_db(shared_db.clone()).await;
+    let seeded = Fixture::new_with_db(shared_db.clone(), None).await;
     let _ = bind_github_only_to_session_root(&seeded).await;
     let content_hash = mcpmux_gateway::services::EmbeddingService::content_hash(
         "create_issue",
@@ -1010,7 +1035,7 @@ async fn search_tools_reuses_persisted_embeddings_after_registry_restart() {
         .await
         .unwrap();
 
-    let restarted = Fixture::new_with_db(shared_db).await;
+    let restarted = Fixture::new_with_db(shared_db, None).await;
     let root = "/tmp/mcpmux-list-servers-test";
     restarted
         .session_roots
@@ -1837,6 +1862,76 @@ async fn bind_current_workspace_rebind_is_idempotent() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn bind_current_workspace_writes_machine_scoped_when_local_machine_set() {
+    let f = Fixture::new_with_local_machine("Gondor").await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    let input = if cfg!(windows) {
+        "D:\\Projects\\MachineScoped\\"
+    } else {
+        "/home/me/projects/machine-scoped/"
+    };
+    f.session_roots.set(&f.session_id, [input]);
+
+    let result = f
+        .registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "feature_set_id": f.fs_android_id.to_string() }),
+        )
+        .await
+        .unwrap();
+    assert!(!Fixture::is_error(&result));
+    let body = Fixture::result_json(&result);
+    assert_eq!(body.get("active"), Some(&json!(true)));
+    assert_eq!(body.get("already_bound"), Some(&json!(false)));
+
+    let bindings = f.binding_repo.list_for_space(&f.space_id).await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert!(bindings[0].client_id.is_none());
+    assert!(bindings[0].machine_id.is_some());
+    assert_eq!(
+        bindings[0].feature_set_ids,
+        vec![f.fs_android_id.to_string()]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_current_workspace_header_targets_caller_machine_not_gateway_local() {
+    let f = Fixture::new_with_local_machine("Gondor").await;
+    f.attach_auto_publisher(ApprovalDecision::AllowOnce);
+    let rohan_id = f.seed_machine("Rohan").await;
+    let input = if cfg!(windows) {
+        "D:\\Projects\\TunnelScoped\\"
+    } else {
+        "/home/me/projects/tunnel-scoped/"
+    };
+    f.session_roots.set(&f.session_id, [input]);
+
+    let result = f
+        .registry
+        .call_from_device(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "feature_set_id": f.fs_android_id.to_string() }),
+            Some(rohan_id),
+        )
+        .await
+        .unwrap();
+    assert!(!Fixture::is_error(&result));
+    let body = Fixture::result_json(&result);
+    assert_eq!(body.get("machine_id"), Some(&json!(rohan_id)));
+    assert_eq!(body.get("active"), Some(&json!(true)));
+
+    let bindings = f.binding_repo.list_for_space(&f.space_id).await.unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].machine_id, Some(rohan_id));
+    assert!(bindings[0].client_id.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn bind_current_workspace_second_session_inherits_binding() {
     let f = Fixture::new().await;
     f.attach_auto_publisher(ApprovalDecision::AllowOnce);
@@ -1867,7 +1962,7 @@ async fn bind_current_workspace_second_session_inherits_binding() {
         .registry
         .context()
         .resolver
-        .resolve(Some(new_session), Some(&f.client_id))
+        .resolve(Some(new_session), Some(&f.client_id), None)
         .await
         .unwrap();
     assert!(
@@ -1922,7 +2017,6 @@ async fn registry_advertises_core_tools_read_only_in_list() {
     }
     for hidden in [
         "mcpmux_list_feature_sets",
-        "mcpmux_bind_current_workspace",
         "mcpmux_search_resources",
         "mcpmux_read_resource",
         "mcpmux_search_prompts",
@@ -1940,6 +2034,14 @@ async fn registry_advertises_core_tools_read_only_in_list() {
             .as_ref()
             .and_then(|a| a.destructive_hint)
             .unwrap_or(false);
+        if tool.name.as_ref() == "mcpmux_bind_current_workspace" {
+            assert!(
+                destructive,
+                "bind must be annotated as a write tool: {:?}",
+                tool.name
+            );
+            continue;
+        }
         assert!(
             !destructive,
             "advertised core tools must be read-only hints: {:?}",
@@ -1949,7 +2051,62 @@ async fn registry_advertises_core_tools_read_only_in_list() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn hidden_bind_tool_callable_but_not_advertised() {
+async fn unbound_session_lists_bind_current_workspace() {
+    let f = Fixture::new().await;
+    let root = "/tmp/mcpmux-unbound-list-tools";
+    f.session_roots.set_roots_capable(&f.session_id, true);
+    f.session_roots.set(&f.session_id, [root]);
+
+    let advertised: Vec<_> = f
+        .registry
+        .list_as_tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(
+        advertised.iter().any(|n| n == "mcpmux_bind_current_workspace"),
+        "Unbound sessions must advertise bind in tools/list: {advertised:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unbound_session_invoke_tool_returns_bind_denial_hint() {
+    let f = Fixture::new().await;
+    let root = "/tmp/mcpmux-unbound-invoke-denial";
+    f.session_roots.set_roots_capable(&f.session_id, true);
+    f.session_roots.set(&f.session_id, [root]);
+
+    let result = f
+        .registry
+        .call(
+            "mcpmux_invoke_tool",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "server_id": "github", "tool": "create_issue" }),
+        )
+        .await
+        .unwrap();
+    assert!(
+        Fixture::is_error(&result),
+        "backend invoke must be denied for Unbound sessions"
+    );
+    let body = Fixture::result_json(&result);
+    assert_eq!(
+        body.get("error").and_then(|v| v.as_str()),
+        Some("not_ready")
+    );
+    assert_eq!(
+        body.get("reason").and_then(|v| v.as_str()),
+        Some("inactive")
+    );
+    assert_eq!(
+        body.get("tool").and_then(|v| v.as_str()),
+        Some("mcpmux_bind_current_workspace")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hidden_list_feature_sets_callable_but_not_advertised() {
     let f = Fixture::new().await;
     let advertised: Vec<_> = f
         .registry
@@ -1957,10 +2114,11 @@ async fn hidden_bind_tool_callable_but_not_advertised() {
         .iter()
         .map(|t| t.name.to_string())
         .collect();
-    assert!(!advertised
-        .iter()
-        .any(|n| n == "mcpmux_bind_current_workspace"));
-    assert!(f.registry.contains("mcpmux_bind_current_workspace"));
+    assert!(
+        !advertised.iter().any(|n| n == "mcpmux_list_feature_sets"),
+        "list_feature_sets stays off tools/list"
+    );
+    assert!(f.registry.contains("mcpmux_list_feature_sets"));
 
     let result = f
         .registry
@@ -2044,6 +2202,7 @@ async fn bare_registry(
         inbound_client_repo.clone(),
         feature_set_repo.clone(),
         Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
+        None,
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());
     let feature_service = Arc::new(FeatureService::new(
@@ -2170,6 +2329,7 @@ async fn master_switch_toggles_registry_visibility() {
         inbound_client_repo.clone(),
         feature_set_repo.clone(),
         Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
+        None,
     ));
     let prefix_cache = Arc::new(PrefixCacheService::new());
     let feature_service = Arc::new(FeatureService::new(

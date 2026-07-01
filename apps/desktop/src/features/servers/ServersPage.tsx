@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
+import { useSearch } from 'wouter';
 import { useTranslation } from 'react-i18next';
 import i18n from '@/i18n';
 import { pickPath } from '@/lib/backend/shell';
@@ -47,6 +48,7 @@ import {
   computeServerCountSummary,
   groupFeaturesByServerId,
   serverMatchesFilters,
+  STATUS_FILTER_IDS,
   type ServerActionKey,
   type StatusFilterKey,
   type TransportFilter,
@@ -56,7 +58,8 @@ import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverMan
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
 import { checkServerVersion } from '@/lib/api/settings';
 import type { UpdatePolicy } from '@/lib/api/settings';
-import { useViewSpace, useNavigateTo, usePendingServersFilter, useSetPendingServersFilter } from '@/stores';
+import { useViewSpace } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import { useServerManager } from '@/hooks/useServerManager';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { useGatewayEvents, useDomainEvents } from '@/hooks/useDomainEvents';
@@ -246,17 +249,28 @@ interface ConfigModalState {
   initialPinnedVersion: string;
 }
 
+/**
+ * Parse an optional status filter from the servers page URL search string.
+ */
+function statusFilterFromSearch(search: string): StatusFilterKey | null {
+  const filter = new URLSearchParams(search).get('filter');
+  if (!filter || !STATUS_FILTER_IDS.includes(filter as StatusFilterKey)) {
+    return null;
+  }
+  return filter as StatusFilterKey;
+}
+
 export function ServersPage() {
   const { t } = useTranslation(['servers', 'common']);
   const { t: tCommon } = useTranslation('common');
   const updatePolicyOptions = getUpdatePolicyOptions(t);
+  const search = useSearch();
+  const initialStatusFilter = statusFilterFromSearch(search);
   const [installedServers, setInstalledServers] = useState<ServerViewModelWithClone[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [transportFilter, setTransportFilter] = useState<TransportFilter>('all');
-  const pendingServersFilter = usePendingServersFilter();
-  const setPendingServersFilter = useSetPendingServersFilter();
-  const [activeStatusFilters, setActiveStatusFilters] = useState<Set<StatusFilterKey>>(
-    pendingServersFilter ? new Set([pendingServersFilter as StatusFilterKey]) : new Set()
+  const [activeStatusFilters, setActiveStatusFilters] = useState<Set<StatusFilterKey>>(() =>
+    initialStatusFilter ? new Set([initialStatusFilter]) : new Set()
   );
   const [gatewayRunning, setGatewayRunning] = useState(false);
   const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);
@@ -306,7 +320,7 @@ export function ServersPage() {
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
   
   const viewSpace = useViewSpace();
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
 
   // Event-driven server status management
   const {
@@ -460,13 +474,6 @@ export function ServersPage() {
       setIsLoading(false);
     }
   }, [viewSpace?.id, showToast, t]);
-
-  // Clear any pending filter that was consumed during initialisation
-  useEffect(() => {
-    if (pendingServersFilter) {
-      setPendingServersFilter(null);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void loadData();
@@ -1519,7 +1526,7 @@ export function ServersPage() {
                 </>
               )}
               <AddServerMenu
-                onDiscover={() => navigateTo('registry')}
+                onDiscover={() => navigate('registry')}
                 onCustom={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
               />
             </div>
@@ -1559,7 +1566,7 @@ export function ServersPage() {
           {viewSpace && (
             <div className="flex justify-center">
               <AddServerMenu
-                onDiscover={() => navigateTo('registry')}
+                onDiscover={() => navigate('registry')}
                 onCustom={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
               />
             </div>

@@ -39,11 +39,11 @@ describe('CreateSpaceModal', () => {
     expect(screen.getByTestId('create-space-submit-btn')).toBeEnabled();
   });
 
-  it('selecting an icon updates the preview and the custom field', () => {
+  it('selecting an icon updates the preview and the emoji picker trigger', () => {
     render(<CreateSpaceModal open onClose={() => {}} />);
     fireEvent.click(screen.getByTestId('create-space-icon-🚀'));
     expect(screen.getByTestId('create-space-preview-icon')).toHaveTextContent('🚀');
-    expect(screen.getByTestId('create-space-icon-custom')).toHaveValue('🚀');
+    expect(screen.getByTestId('create-space-icon-custom')).toHaveTextContent('🚀');
   });
 
   it('creates with the chosen name + icon, then fires onCreated and onClose', async () => {

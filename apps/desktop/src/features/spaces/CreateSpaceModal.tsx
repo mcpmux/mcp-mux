@@ -11,6 +11,7 @@ import {
 } from '@mcpmux/ui';
 import { useAppStore } from '@/stores';
 import { createSpace, type Space } from '@/lib/api/spaces';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 
 const DEFAULT_ICON = '🌐';
 
@@ -168,15 +169,11 @@ export function CreateSpaceModal({ open, onClose, onCreated }: CreateSpaceModalP
                 ))}
               </div>
               <div className="mt-2 flex items-center gap-2">
-                <span className="text-xs text-[rgb(var(--muted))]">Or paste any emoji</span>
-                <input
-                  type="text"
+                <span className="text-xs text-[rgb(var(--muted))]">Or pick any</span>
+                <EmojiPickerButton
                   value={icon}
-                  onChange={(e) => setIcon(e.target.value)}
-                  maxLength={8}
-                  aria-label="Custom emoji"
-                  className="w-14 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1 text-center text-lg focus:outline-none focus:ring-2 focus:ring-[rgb(var(--primary))]"
-                  data-testid="create-space-icon-custom"
+                  onChange={setIcon}
+                  testId="create-space-icon-custom"
                 />
               </div>
             </div>

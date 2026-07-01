@@ -217,6 +217,17 @@ impl GatewayRuntime for LiveGatewayRuntime {
         }
         Ok(json!(count))
     }
+
+    async fn forget_reported_root(&self, root: String) -> Result<Value> {
+        let found = self.session_roots.forget_root(&root);
+        if found {
+            self.gateway_state
+                .read()
+                .await
+                .emit_domain_event(mcpmux_core::DomainEvent::SessionRootsChanged);
+        }
+        Ok(json!(found))
+    }
 }
 
 fn connection_status_to_ui(status: ConnectionStatus) -> &'static str {

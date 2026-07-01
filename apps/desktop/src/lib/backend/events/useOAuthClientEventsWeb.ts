@@ -6,10 +6,16 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { isTauri } from '../data/transport';
 
+import {
+  acquireAdminSseConsumer,
+  releaseAdminSseConsumer,
+  subscribeAdminSseRaw,
+} from './admin-sse-hub';
+
 import type { OAuthClientChangedPayload } from './useOAuthClientEvents';
 
 /**
- * Subscribe to `oauth-client-changed` over SSE in web admin mode.
+ * Subscribe to `oauth-client-changed` over the shared admin SSE hub in web admin mode.
  */
 export function useOAuthClientEventsWeb() {
   const handlersRef = useRef<Set<(payload: OAuthClientChangedPayload) => void>>(new Set());
@@ -18,18 +24,22 @@ export function useOAuthClientEventsWeb() {
     if (isTauri()) {
       return;
     }
-    const source = new EventSource('/api/v1/events');
 
-    source.addEventListener('oauth-client-changed', (event: MessageEvent<string>) => {
+    acquireAdminSseConsumer();
+
+    const unsubscribe = subscribeAdminSseRaw('oauth-client-changed', (payload) => {
       try {
-        const payload = JSON.parse(event.data) as OAuthClientChangedPayload;
-        handlersRef.current.forEach((handler) => handler(payload));
+        const data = payload as OAuthClientChangedPayload;
+        handlersRef.current.forEach((handler) => handler(data));
       } catch {
         // ignore malformed frames
       }
     });
 
-    return () => source.close();
+    return () => {
+      unsubscribe();
+      releaseAdminSseConsumer();
+    };
   }, []);
 
   /**

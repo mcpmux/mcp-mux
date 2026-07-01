@@ -4,7 +4,7 @@ import type { TFunction } from 'i18next';
 import { AlertCircle, CheckCircle2, KeyRound, Loader2, Settings2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
 import { ServerLogViewer } from '@/components/ServerLogViewer';
-import { useNavigateTo, useSetPendingServersFilter } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import type { AttentionKind, AttentionServer } from './dashboard.helpers';
 
 interface DashboardServerHealthProps {
@@ -53,8 +53,7 @@ export function DashboardServerHealth({
   isLoading,
 }: DashboardServerHealthProps) {
   const { t } = useTranslation('dashboard');
-  const navigateTo = useNavigateTo();
-  const setPendingServersFilter = useSetPendingServersFilter();
+  const navigate = useNavigate();
   const hasIssues = attentionServers.length > 0;
   const [logServer, setLogServer] = useState<{ id: string; name: string } | null>(null);
 
@@ -124,8 +123,11 @@ export function DashboardServerHealth({
           <button
             type="button"
             onClick={() => {
-              if (hasIssues) setPendingServersFilter('error');
-              navigateTo('servers');
+              if (hasIssues) {
+                navigate('servers', { filter: 'error' });
+                return;
+              }
+              navigate('servers');
             }}
             className="mt-4 text-sm font-medium text-primary-500 hover:text-primary-400"
             data-testid="dashboard-view-all-servers"

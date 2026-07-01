@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
- * Tauri dev with web admin enabled for the session (MCPMUX_DEV_ADMIN=1).
+ * Tauri dev with web admin enabled for the session (MCPMUX_DEV_ADMIN=1,
+ * VITE_ADMIN_WEB=1). Vite proxies /api → :45819 so the browser tab at :1420
+ * uses the same REST + SSE transport as production web admin.
+ * Also runs `vite build --watch` so apps/desktop/dist/ stays fresh for :45819
+ * and the CF tunnel (mux.joe-hassio.com) without a manual build:web:admin.
  * Opens the HMR URL in the default browser after the admin health check passes.
  *
  * Usage (repo root): pnpm dev:admin
@@ -11,9 +15,10 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadRepoDotEnv } from './cf-access-env.mjs';
+import { adminCfProbeHeaders, loadRepoDotEnv } from './cf-access-env.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DESKTOP_DIR = path.join(REPO_ROOT, 'apps', 'desktop');
 const ADMIN_PORT = Number.parseInt(process.env.MCPMUX_ADMIN_PORT ?? '45819', 10);
 const GATEWAY_PORT = Number.parseInt(process.env.MCPMUX_GATEWAY_PORT ?? '45818', 10);
 const HEALTH_URL = `http://127.0.0.1:${ADMIN_PORT}/api/v1/health`;
@@ -41,7 +46,7 @@ async function adminHealthOk() {
   try {
     const response = await fetch(HEALTH_URL, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...adminCfProbeHeaders() },
     });
     return response.ok;
   } catch {
@@ -71,7 +76,7 @@ async function waitForStableGateway(deadlineMs) {
         ticks++;
         const connected = body.servers_connected ?? '?';
         console.log(
-          `[dev-admin] Gateway health tick ${ticks}/${GATEWAY_STABLE_TICKS} — servers_connected=${connected}`,
+          `[dev-admin] Gateway health tick ${ticks}/${GATEWAY_STABLE_TICKS} — servers_connected=${connected}`
         );
         if (ticks >= GATEWAY_STABLE_TICKS) return true;
         await sleep(GATEWAY_STABLE_INTERVAL_MS);
@@ -111,7 +116,9 @@ async function waitThenOpenBrowser() {
     await sleep(POLL_MS);
   }
   if (Date.now() >= deadline) {
-    console.warn(`[dev-admin] Timed out waiting for ${HEALTH_URL}; open ${VITE_URL} manually when ready.`);
+    console.warn(
+      `[dev-admin] Timed out waiting for ${HEALTH_URL}; open ${VITE_URL} manually when ready.`
+    );
     return;
   }
 
@@ -120,15 +127,39 @@ async function waitThenOpenBrowser() {
   const gatewayStable = await waitForStableGateway(deadline);
   if (!gatewayStable) {
     console.warn(
-      `[dev-admin] Gateway did not stabilise before timeout; open ${VITE_URL} manually. Reload MCP in Cursor once :${GATEWAY_PORT} is up.`,
+      `[dev-admin] Gateway did not stabilise before timeout; open ${VITE_URL} manually. Reload MCP in Cursor once :${GATEWAY_PORT} is up.`
     );
     return;
   }
 
   console.log(`[dev-admin] Gateway stable — opening ${VITE_URL} (HMR + /api proxy).`);
-  console.log(`[dev-admin] Production-parity UI: http://127.0.0.1:${ADMIN_PORT}/ after pnpm build:web:admin`);
+  console.log(
+    `[dev-admin] CF tunnel / :45819 static UI: dist/ auto-rebuilds on save — hard-refresh remote tabs after edits`
+  );
   console.log(`[dev-admin] Reminder: reload MCP in Cursor (Settings → MCP) if tools are stale.`);
   openBrowser(VITE_URL);
+}
+
+/**
+ * Rebuild apps/desktop/dist/ on frontend changes so :45819 and the CF tunnel
+ * serve the same code as local HMR (hard refresh required in the tunnel tab).
+ * @returns {import('node:child_process').ChildProcess}
+ */
+function spawnAdminSpaWatch() {
+  const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  console.log(
+    '[dev-admin] Admin SPA watch — rebuilding dist/ on save (:45819 + CF tunnel; hard-refresh remote tabs)'
+  );
+  return spawn(pnpm, ['exec', 'vite', 'build', '--watch'], {
+    cwd: DESKTOP_DIR,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      VITE_ADMIN_WEB: 'true',
+      MCPMUX_DEV_ADMIN: '1',
+    },
+    shell: process.platform === 'win32',
+  });
 }
 
 async function main() {
@@ -139,20 +170,40 @@ async function main() {
 
   loadRepoDotEnv(REPO_ROOT);
 
-  void waitThenOpenBrowser();
-
   const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const result = spawnSync(pnpm, ['dev'], {
+  const spaWatchChild = spawnAdminSpaWatch();
+  // Async spawn (not spawnSync): spawnSync blocks the event loop for the whole
+  // life of `pnpm dev`, which would starve the health-check + browser-open
+  // below so they never run until the app exits.
+  const child = spawn(pnpm, ['dev'], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
     env: {
       ...process.env,
       MCPMUX_DEV_ADMIN: '1',
       MCPMUX_DEV_PREP_DONE: '1',
+      VITE_ADMIN_WEB: 'true',
     },
     shell: process.platform === 'win32',
   });
-  process.exit(result.status ?? 0);
+
+  void waitThenOpenBrowser();
+
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => {
+      child.kill(signal);
+      spaWatchChild.kill(signal);
+    });
+  }
+  child.on('exit', (code) => {
+    spaWatchChild.kill();
+    process.exit(code ?? 0);
+  });
+  spaWatchChild.on('exit', (code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[dev-admin] Admin SPA watch exited with code ${code}`);
+    }
+  });
 }
 
 main();

@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, SlidersHorizontal, XCircle } from 'lucide-
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
 import { useBackendEventSubscription } from '@/lib/backend/events';
 import { respondToMetaToolApproval } from '@/lib/api/metaTools';
-import { useNavigateTo } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 
 /**
  * Incoming approval request emitted by the gateway's ApprovalBroker.
@@ -43,7 +43,7 @@ type Decision = 'allow_once' | 'always_for_this_session_and_client' | 'deny';
  */
 export function MetaToolApprovalDialog() {
   const { t } = useTranslation('metatools');
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   const [queue, setQueue] = useState<ApprovalRequest[]>([]);
   const current = queue[0];
 
@@ -82,8 +82,8 @@ export function MetaToolApprovalDialog() {
 
   const manageApprovals = useCallback(() => {
     void respond('deny');
-    navigateTo('builtin-servers');
-  }, [respond, navigateTo]);
+    navigate('builtin-servers');
+  }, [respond, navigate]);
 
   const rawDiff = current?.payload.diff ?? null;
   const added = useMemo(

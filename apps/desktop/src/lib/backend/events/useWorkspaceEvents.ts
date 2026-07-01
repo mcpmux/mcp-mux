@@ -32,8 +32,6 @@ export interface WorkspaceNeedsBindingPayload {
   session_id: string;
   space_id: string;
   workspace_root: string;
-  /** Set when another client's scoped binding blocked the global route. */
-  collision_client_id?: string | null;
   /** When true, the Space picker is locked to `space_id`. */
   space_locked?: boolean;
 }

@@ -8,8 +8,14 @@ import type { MetaToolAuditEvent } from '@/lib/api/metaTools';
 
 import { isTauri } from '../data/transport';
 
+import {
+  acquireAdminSseConsumer,
+  releaseAdminSseConsumer,
+  subscribeAdminSseRaw,
+} from './admin-sse-hub';
+
 /**
- * Subscribe to `meta-tool-invoked` over SSE in web admin mode.
+ * Subscribe to `meta-tool-invoked` over the shared admin SSE hub in web admin mode.
  */
 export function useMetaToolEventsWeb() {
   const handlersRef = useRef<Set<(event: MetaToolAuditEvent) => void>>(new Set());
@@ -18,18 +24,22 @@ export function useMetaToolEventsWeb() {
     if (isTauri()) {
       return;
     }
-    const source = new EventSource('/api/v1/events');
 
-    source.addEventListener('meta-tool-invoked', (event: MessageEvent<string>) => {
+    acquireAdminSseConsumer();
+
+    const unsubscribe = subscribeAdminSseRaw('meta-tool-invoked', (payload) => {
       try {
-        const payload = JSON.parse(event.data) as MetaToolAuditEvent;
-        handlersRef.current.forEach((handler) => handler(payload));
+        const data = payload as MetaToolAuditEvent;
+        handlersRef.current.forEach((handler) => handler(data));
       } catch {
         // ignore malformed frames
       }
     });
 
-    return () => source.close();
+    return () => {
+      unsubscribe();
+      releaseAdminSseConsumer();
+    };
   }, []);
 
   /**

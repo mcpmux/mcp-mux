@@ -21,6 +21,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tracing::debug;
+use uuid::Uuid;
 
 use super::approval::ApprovalBroker;
 use super::disclosure_backend::DisclosureBackend;
@@ -104,6 +105,10 @@ pub struct MetaToolCall<'a> {
     /// Write tools set this before returning `Ok` to override the default
     /// `"allow_once"` audit decision (e.g. workspace bind).
     pub audit_decision: Arc<Mutex<Option<&'static str>>>,
+    /// Physical device identity from the caller's `X-Mcpmux-Machine-Id`
+    /// header, when the transport carries one. `None` for local/stdio
+    /// callers and for tests that don't exercise per-device routing.
+    pub request_machine_id: Option<Uuid>,
 }
 
 /// Errors a meta tool can surface that map cleanly to `CallToolResult::error`.
@@ -280,6 +285,22 @@ impl MetaToolRegistry {
         session_id: Option<&str>,
         args: Value,
     ) -> Result<CallToolResult, MetaToolError> {
+        self.call_from_device(name, client_id, session_id, args, None)
+            .await
+    }
+
+    /// Like [`Self::call`] but threads through the caller's physical device
+    /// identity (`X-Mcpmux-Machine-Id`) when the transport has one, so
+    /// device-scoped meta tools (workspace binding) write and resolve
+    /// against the same machine the resolver would pick for this caller.
+    pub async fn call_from_device(
+        &self,
+        name: &str,
+        client_id: &str,
+        session_id: Option<&str>,
+        args: Value,
+        request_machine_id: Option<Uuid>,
+    ) -> Result<CallToolResult, MetaToolError> {
         let tool = self
             .tools
             .get(name)
@@ -292,6 +313,7 @@ impl MetaToolRegistry {
             args: args.clone(),
             ctx: &self.ctx,
             audit_decision: audit_decision.clone(),
+            request_machine_id,
         };
         let result = tool.call(call).await;
 

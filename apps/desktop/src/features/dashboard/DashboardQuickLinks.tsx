@@ -3,7 +3,7 @@ import { FolderOpen, Globe, Monitor, Search, Settings, ShoppingBasket } from 'lu
 import { McpNavIcon } from '@/components/McpNavIcon';
 import { useTranslation } from 'react-i18next';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
-import { useNavigateTo } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import type { NavItem } from '@/stores/types';
 
 type QuickLinkConfig = {
@@ -77,7 +77,7 @@ const QUICK_LINK_CONFIG: QuickLinkConfig[] = [
  * Compact navigation grid covering every sidebar destination except Dashboard.
  */
 export function DashboardQuickLinks() {
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   const { t: tNav } = useTranslation('nav');
   const { t: tDashboard } = useTranslation('dashboard');
 
@@ -93,7 +93,7 @@ export function DashboardQuickLinks() {
             <button
               key={link.nav}
               type="button"
-              onClick={() => navigateTo(link.nav)}
+              onClick={() => navigate(link.nav)}
               data-testid={link.testId}
               className="flex items-start gap-3 rounded-lg border border-[rgb(var(--border-subtle))] px-3 py-2.5 text-left transition-colors hover:border-[rgb(var(--primary))/30] hover:bg-[rgb(var(--surface-hover))]"
             >

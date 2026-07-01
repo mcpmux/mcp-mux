@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use crate::domain::{
     path_is_within, Client, Credential, CredentialType, FeatureSet, FeatureSetMember,
-    InstalledServer, MemberMode, OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir,
-    WorkspaceAppearance, WorkspaceBinding,
+    InstalledServer, Machine, MemberMode, OutboundOAuthRegistration, ServerFeature, Space,
+    SpaceBaseDir, WorkspaceAppearance, WorkspaceBinding,
 };
 
 /// Result type for repository operations
@@ -254,6 +254,25 @@ pub trait InboundMcpClientRepository: Send + Sync {
     async fn delete(&self, id: &Uuid) -> RepoResult<()>;
 }
 
+/// Machine repository trait — catalog of hosts that report workspace roots.
+#[async_trait]
+pub trait MachineRepository: Send + Sync {
+    /// List all registered machines.
+    async fn list(&self) -> RepoResult<Vec<Machine>>;
+
+    /// Get a machine by id.
+    async fn get(&self, id: &Uuid) -> RepoResult<Option<Machine>>;
+
+    /// Insert a new machine.
+    async fn create(&self, machine: &Machine) -> RepoResult<()>;
+
+    /// Update an existing machine.
+    async fn update(&self, machine: &Machine) -> RepoResult<()>;
+
+    /// Delete a machine by id.
+    async fn delete(&self, id: &Uuid) -> RepoResult<()>;
+}
+
 /// Workspace binding repository trait
 ///
 /// Bindings map normalized filesystem paths to FeatureSets on a per-Space basis.
@@ -291,6 +310,27 @@ pub trait WorkspaceBindingRepository: Send + Sync {
         &self,
         candidate_roots: &[String],
     ) -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Exact match for a machine-scoped binding on `workspace_root`.
+    ///
+    /// Matches bindings where `machine_id` equals the given value AND either:
+    /// - `client_id` is `None` (canonical machine binding), or
+    /// - `client_id` equals the given `client_id` (client+machine scoped binding).
+    ///
+    /// A client+machine scoped binding wins over a machine-only canonical binding
+    /// because it is more specific. Pass `client_id: None` to match canonical
+    /// machine bindings only.
+    async fn find_exact_for_machine(
+        &self,
+        machine_id: &Uuid,
+        workspace_root: &str,
+        client_id: Option<&str>,
+    ) -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Exact match for a global canonical binding (`machine_id` and `client_id`
+    /// both unset) on `workspace_root`.
+    async fn find_exact_global(&self, workspace_root: &str)
+        -> RepoResult<Option<WorkspaceBinding>>;
 
     /// Resolve which binding applies for a set of candidate workspace roots by
     /// longest-prefix containment.

@@ -201,6 +201,23 @@ pub fn build_admin_router(state: AdminState) -> Router {
             get(read::get_client).delete(write::delete_client),
         )
         .route(
+            "/api/v1/machines",
+            get(read::list_machines).post(write::create_machine),
+        )
+        .route(
+            "/api/v1/machines/local",
+            get(read::get_local_machine_id).put(write::set_local_machine_id),
+        )
+        .route("/api/v1/machines/hostname", get(read::get_hostname))
+        .route(
+            "/api/v1/machines/viewer/{viewer_id}",
+            get(read::get_viewer_machine_id).put(write::set_viewer_machine_id),
+        )
+        .route(
+            "/api/v1/machines/{id}",
+            put(write::update_machine).delete(write::delete_machine),
+        )
+        .route(
             "/api/v1/clients/init-presets",
             post(write::init_preset_clients),
         )
@@ -249,6 +266,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/api/v1/workspaces/reported-roots/clear-unmapped",
             post(write::clear_unmapped_reported_roots),
+        )
+        .route(
+            "/api/v1/workspaces/reported-roots/forget",
+            post(write::forget_reported_root),
         )
         .route(
             "/api/v1/workspaces/validate-root",
@@ -319,6 +340,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/api/v1/oauth/clients/{client_id}",
             put(write::update_oauth_client).delete(write::delete_oauth_client),
+        )
+        .route(
+            "/api/v1/oauth/clients/{client_id}/machine",
+            get(read::get_client_machine_id).put(write::set_client_machine_id),
         )
         .route(
             "/api/v1/oauth/clients/{client_id}/grants",

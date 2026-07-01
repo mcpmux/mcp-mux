@@ -8,10 +8,10 @@
 //! 1. `WorkspaceBindingChanged` + `WorkspaceNeedsBinding` round-trip through
 //!    JSON with the shape the Tauri bridge and the frontend consumers expect.
 //! 2. The resolver's decision table: roots + no binding → `source =
-//!    SpaceDefault` (the folder falls back to the default Starter FS, and the
-//!    same condition still triggers the `WorkspaceNeedsBinding` prompt).
+//!    Unbound` (deny by default — zero backend tools, and the same condition
+//!    still triggers the `WorkspaceNeedsBinding` prompt).
 //! 3. Creating / updating a binding flips the next resolution from
-//!    SpaceDefault to WorkspaceBinding — the behaviour that justifies firing
+//!    Unbound to WorkspaceBinding — the behaviour that justifies firing
 //!    list_changed.
 
 use std::sync::Arc;
@@ -60,6 +60,7 @@ impl Ctx {
             inbound_client_repo.clone(),
             fs_repo.clone(),
             Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
+            None,
         );
 
         Self {
@@ -73,13 +74,12 @@ impl Ctx {
 }
 
 /// After creating a binding for the root the next resolve flips from
-/// `SpaceDefault` (roots reported, nothing bound — the unmapped folder falls
-/// back to the default Starter FS, and `handler.rs::log_and_notify_resolution`
-/// still turns this into a `WorkspaceNeedsBinding` prompt) to
-/// `WorkspaceBinding`. In production the flip is what triggers the
-/// `WorkspaceBindingChanged` → `list_changed` broadcast. (The standalone
-/// "unbound → SpaceDefault" case is covered by the resolver decision-table in
-/// `feature_set_resolver.rs`.)
+/// `Unbound` (roots reported, nothing bound — deny by default, and
+/// `handler.rs::log_and_notify_resolution` still turns this into a
+/// `WorkspaceNeedsBinding` prompt) to `WorkspaceBinding`. In production the
+/// flip is what triggers the `WorkspaceBindingChanged` → `list_changed`
+/// broadcast. (The standalone "unbound" case is covered by the resolver
+/// decision-table in `feature_set_resolver.rs`.)
 #[tokio::test(flavor = "multi_thread")]
 async fn creating_binding_flips_next_resolution_source() {
     let ctx = Ctx::new().await;
@@ -95,27 +95,25 @@ async fn creating_binding_flips_next_resolution_source() {
     ctx.session_roots.set("sess-1", [raw]);
     ctx.session_roots.set_roots_capable("sess-1", true);
 
-    let before = ctx.resolver.resolve(Some("sess-1"), None).await.unwrap();
-    assert_eq!(before.source, ResolutionSource::SpaceDefault);
-    // Unmapped folder gets a non-empty fallback FS (the Starter), so the
-    // fingerprint is `Some(..)` and flips to the bound FS below — that
-    // change is exactly what fires the per-peer `list_changed`.
-    assert!(!before.feature_set_ids.is_empty());
+    let before = ctx.resolver.resolve(Some("sess-1"), None, None).await.unwrap();
+    assert_eq!(before.source, ResolutionSource::Unbound);
+    // Unmapped folder gets empty ids; binding flips to a non-empty FS below —
+    // that change is exactly what fires the per-peer `list_changed`.
+    assert!(before.feature_set_ids.is_empty());
 
     let binding = WorkspaceBinding::new(root, ctx.space_id, ctx.fs_custom_id.clone());
     ctx.binding_repo.create(&binding).await.unwrap();
 
-    let after = ctx.resolver.resolve(Some("sess-1"), None).await.unwrap();
+    let after = ctx.resolver.resolve(Some("sess-1"), None, None).await.unwrap();
     assert_eq!(after.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(after.feature_set_ids, vec![ctx.fs_custom_id.clone()]);
 }
 
-/// Rootless session without client grants resolves to `SpaceDefault` (the
-/// default Starter FS) — but *silently*: no `WorkspaceNeedsBinding` is
-/// appropriate here (rootless = nothing to bind). The handler enforces that
-/// silence by passing `root_for_prompt = None` for rootless sessions; this
-/// test pins the resolver half — a rootless session never lands on a
-/// folder-bearing source.
+/// Rootless session without client grants resolves to `Unbound` (deny by
+/// default) — but *silently*: no `WorkspaceNeedsBinding` is appropriate here
+/// (rootless = nothing to bind). The handler enforces that silence by passing
+/// `root_for_prompt = None` for rootless sessions; this test pins the resolver
+/// half — a rootless session never lands on a folder-bearing source.
 #[tokio::test(flavor = "multi_thread")]
 async fn rootless_session_without_grants_defaults_silently() {
     let ctx = Ctx::new().await;
@@ -123,10 +121,11 @@ async fn rootless_session_without_grants_defaults_silently() {
     ctx.session_roots.set_roots_capable("rootless", false);
     let resolved = ctx
         .resolver
-        .resolve(Some("rootless"), Some("unknown-client"))
+        .resolve(Some("rootless"), Some("unknown-client"), None)
         .await
         .unwrap();
-    assert_eq!(resolved.source, ResolutionSource::SpaceDefault);
+    assert_eq!(resolved.source, ResolutionSource::Unbound);
+    assert!(resolved.feature_set_ids.is_empty());
 }
 
 /// Binding → different Space should actually route the session to that
@@ -161,6 +160,7 @@ async fn binding_to_non_default_space_reroutes_session() {
         inbound_client_repo.clone(),
         fs_repo.clone(),
         Arc::new(SqliteSpaceBaseDirRepository::new(db.clone())),
+        None,
     );
 
     let raw = if cfg!(windows) {
@@ -172,18 +172,19 @@ async fn binding_to_non_default_space_reroutes_session() {
     session_roots.set("sess-X", [raw]);
     session_roots.set_roots_capable("sess-X", true);
 
-    // Before binding: roots reported, no binding → SpaceDefault scoped to the
+    // Before binding: roots reported, no binding → Unbound scoped to the
     // default space (the resolver still reports a space_id so the upstream
     // prompt knows where to scope the binding sheet).
-    let before = resolver.resolve(Some("sess-X"), None).await.unwrap();
-    assert_eq!(before.source, ResolutionSource::SpaceDefault);
+    let before = resolver.resolve(Some("sess-X"), None, None).await.unwrap();
+    assert_eq!(before.source, ResolutionSource::Unbound);
     assert_eq!(before.space_id, Some(default_space.id));
+    assert!(before.feature_set_ids.is_empty());
 
     // Create a binding targeting `other` space's Custom FS.
     let b = WorkspaceBinding::new(root, other_id, other_fs.id.clone());
     binding_repo.create(&b).await.unwrap();
 
-    let after = resolver.resolve(Some("sess-X"), None).await.unwrap();
+    let after = resolver.resolve(Some("sess-X"), None, None).await.unwrap();
     assert_eq!(after.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(after.space_id, Some(other_id));
     assert_eq!(after.feature_set_ids, vec![other_fs.id]);
@@ -209,7 +210,6 @@ fn event_json_payloads_are_stable() {
         session_id: "s-9".to_string(),
         space_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
         workspace_root: "/abs/path".to_string(),
-        collision_client_id: None,
         space_locked: false,
     };
     let v: serde_json::Value = serde_json::to_value(&needs).unwrap();

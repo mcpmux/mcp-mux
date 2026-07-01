@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use uuid::Uuid;
+
 use crate::pool::{PoolServices, ServerManager, ServiceFactory};
 use crate::services::{
     meta_tools, ApprovalBroker, AuthorizationService, ClientMetadataService,
@@ -74,6 +76,7 @@ impl ServiceContainer {
         deps: &GatewayDependencies,
         domain_event_tx: tokio::sync::broadcast::Sender<DomainEvent>,
         gateway_state: Arc<tokio::sync::RwLock<GatewayState>>,
+        local_machine_id: Option<uuid::Uuid>,
     ) -> Self {
         // Create prefix cache service with dependencies
         let prefix_cache_service = Arc::new(PrefixCacheService::new().with_dependencies(
@@ -110,6 +113,7 @@ impl ServiceContainer {
             deps.inbound_client_repo.clone(),
             deps.feature_set_repo.clone(),
             deps.space_base_dir_repo.clone(),
+            local_machine_id,
         ));
 
         // Authorization service is now a thin adapter over the resolver.
@@ -186,5 +190,12 @@ impl ServiceContainer {
             gateway_state,
             dependencies: deps.clone(),
         }
+    }
+}
+
+impl ServiceContainer {
+    /// Hot-reload this install's machine identity on the live resolver.
+    pub async fn set_local_machine_id(&self, id: Option<Uuid>) {
+        self.feature_set_resolver.set_local_machine_id(id).await;
     }
 }

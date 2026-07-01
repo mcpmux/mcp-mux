@@ -11,7 +11,8 @@ import { useToast, ToastContainer } from '@mcpmux/ui';
 import { useRegistryStore } from '../../stores/registryStore';
 import { ServerCard } from './ServerCard';
 import { ServerDetailModal } from './ServerDetailModal';
-import { useViewSpace, useNavigateTo } from '@/stores';
+import { useViewSpace } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import { capture } from '@/lib/analytics';
 import { RequestServerCTA, ContributeMenu } from '@/components/Contribute';
 
@@ -42,7 +43,7 @@ export function RegistryPage() {
 
   const [localSearch, setLocalSearch] = useState('');
   const viewSpace = useViewSpace();
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   const { toasts, success, error: showToastError, dismiss } = useToast();
 
   const itemsPerPage = uiConfig?.items_per_page ?? 24;
@@ -120,7 +121,7 @@ export function RegistryPage() {
         duration: 6000,
         action: {
           label: t('toast.goToServers'),
-          onClick: () => navigateTo('servers'),
+          onClick: () => navigate('servers'),
         },
       });
     } catch {

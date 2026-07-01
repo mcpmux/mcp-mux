@@ -1,5 +1,6 @@
 import { ArrowRight, FolderPlus } from 'lucide-react';
-import { useNavigateTo, useSetPendingWorkspaceNew } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
+import { useSetPendingWorkspaceNew } from '@/stores';
 
 /**
  * Per-folder setup entry point. ConnectionCard connects an app to the
@@ -7,14 +8,14 @@ import { useNavigateTo, useSetPendingWorkspaceNew } from '@/stores';
  * specific project and write its per-folder config.
  */
 export function SetUpFolderCard() {
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   const openWizard = useSetPendingWorkspaceNew();
   return (
     <button
       type="button"
       onClick={() => {
         openWizard(true);
-        navigateTo('workspaces');
+        navigate('workspaces');
       }}
       data-testid="dashboard-setup-folder"
       className="group flex w-full items-center gap-3 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] p-4 text-left shadow transition-all duration-200 hover:-translate-y-0.5 hover:border-[rgb(var(--border))] hover:shadow-md"

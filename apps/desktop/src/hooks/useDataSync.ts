@@ -16,6 +16,9 @@ export function useDataSync() {
   useEffect(() => {
     async function syncData() {
       console.log('[useDataSync] Starting data sync...');
+      if (!isTauri()) {
+        enableAdminSse();
+      }
       setLoading('spaces', true);
       try {
         // Refresh OAuth tokens first (before connecting servers)
@@ -38,9 +41,6 @@ export function useDataSync() {
         console.error('[useDataSync] Failed to sync:', error);
       } finally {
         setLoading('spaces', false);
-        if (!isTauri()) {
-          enableAdminSse();
-        }
         console.log('[useDataSync] Data sync complete');
       }
     }

@@ -75,6 +75,8 @@ pub trait GatewayWriteRuntime: Send + Sync {
         space_id: String,
         feature_set_id: String,
     ) -> Result<Value>;
+    /// Hot-reload the live resolver after `gateway.local_machine_id` changes.
+    async fn hot_reload_local_machine_id(&self, machine_id: Option<uuid::Uuid>) -> Result<()>;
     /// Live gateway state for inbound OAuth consent (web admin).
     async fn gateway_state(&self) -> Option<Arc<RwLock<GatewayState>>>;
 }
@@ -89,6 +91,7 @@ pub struct LiveGatewayWriteRuntime {
     pool_service: Arc<PoolService>,
     server_manager: Arc<ServerManager>,
     feature_service: Arc<FeatureService>,
+    feature_set_resolver: Arc<crate::services::FeatureSetResolverService>,
     installed_server_repo: Arc<dyn InstalledServerRepository>,
     data_dir: PathBuf,
     version_probe: Arc<ServerVersionProbeService>,
@@ -107,6 +110,7 @@ impl LiveGatewayWriteRuntime {
             pool_service: server.pool_service(),
             server_manager: server.server_manager(),
             feature_service: server.feature_service(),
+            feature_set_resolver: server.feature_set_resolver(),
             installed_server_repo,
             data_dir,
             version_probe,
@@ -301,6 +305,13 @@ impl GatewayWriteRuntime for LiveGatewayWriteRuntime {
         Err(gateway_write_unavailable())
     }
 
+    async fn hot_reload_local_machine_id(&self, machine_id: Option<Uuid>) -> Result<()> {
+        self.feature_set_resolver
+            .set_local_machine_id(machine_id)
+            .await;
+        Ok(())
+    }
+
     async fn gateway_state(&self) -> Option<Arc<RwLock<GatewayState>>> {
         Some(self.gateway_state.clone())
     }
@@ -449,6 +460,10 @@ impl GatewayWriteRuntime for StubGatewayWriteRuntime {
         _feature_set_id: String,
     ) -> Result<Value> {
         Err(gateway_not_running())
+    }
+
+    async fn hot_reload_local_machine_id(&self, _machine_id: Option<Uuid>) -> Result<()> {
+        Ok(())
     }
 
     async fn gateway_state(&self) -> Option<Arc<RwLock<GatewayState>>> {

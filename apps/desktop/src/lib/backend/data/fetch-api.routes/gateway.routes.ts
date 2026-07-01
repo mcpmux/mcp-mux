@@ -54,9 +54,4 @@ export const gatewayRoutes: Record<string, RouteHandler> = {
     path: '/api/v1/gateway/port',
     body: { port: args.port },
   }),
-  set_gateway_public_url: (args) => ({
-    method: 'PUT',
-    path: '/api/v1/gateway/public-url',
-    body: { publicUrl: args.publicUrl },
-  }),
 };

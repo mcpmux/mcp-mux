@@ -36,8 +36,8 @@ vi.mock('@/lib/api/registry', () => ({
 
 vi.mock('@/stores', () => ({
   useViewSpace: () => ({ id: 'space-1', name: 'My Space' }),
-  useNavigateTo: () => () => {},
 }));
+vi.mock('@/hooks/use-navigate.hook', () => ({ useNavigate: () => () => {} }));
 
 // Leaf children irrelevant to search analytics — stub to keep the test focused.
 vi.mock('@/features/registry/ServerCard', () => ({ ServerCard: () => null }));

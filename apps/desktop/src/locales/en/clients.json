@@ -116,7 +116,23 @@
     "allowWait": "Allow (wait…)",
     "deny": "Deny",
     "approveFailed": "Failed to approve connection",
-    "denyFailed": "Failed to deny connection"
+    "denyFailed": "Failed to deny connection",
+    "nameMachine": {
+      "title": "Name this machine",
+      "desc": "{{clientName}} is connecting for the first time. Name this machine so you can identify it in workspace bindings.",
+      "sectionLabel": "Machine",
+      "allowBtn": "Allow & Connect",
+      "allowWait": "Allow & Connect (wait…)",
+      "newMachine": "New machine",
+      "namePlaceholder": "My Laptop",
+      "iconLabel": "Icon",
+      "iconPlaceholder": "e.g. 🏠",
+      "hostnameLabel": "Hostname",
+      "nameRequired": "Enter a name for this machine",
+      "iconRequired": "Icon is required",
+      "hostnameRequired": "Hostname is required",
+      "profileIncomplete": "Selected machine is missing icon or hostname. Complete it in Settings first."
+    }
   },
   "fallbackClientName": "Client"
 }

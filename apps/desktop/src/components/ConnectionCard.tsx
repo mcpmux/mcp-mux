@@ -11,7 +11,8 @@ import {
   Sliders,
 } from 'lucide-react';
 import { Card, Button } from '@mcpmux/ui';
-import { useViewSpace, useNavigateTo, useSetPendingSettingsSection } from '@/stores';
+import { useViewSpace, useSetPendingSettingsSection } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { useGatewayEvents } from '@/hooks/useDomainEvents';
 import {
@@ -41,7 +42,7 @@ function extractPort(url: string | null): string {
 export function ConnectionCard() {
   const { t } = useTranslation('dashboard');
   const viewSpace = useViewSpace();
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   const setPendingSettingsSection = useSetPendingSettingsSection();
   const gatewayControl = useGatewayControl();
 
@@ -192,9 +193,8 @@ export function ConnectionCard() {
             <button
               type="button"
               onClick={() => {
-                // Land on (and flash) the Gateway section where the port lives.
                 setPendingSettingsSection('gateway');
-                navigateTo('settings');
+                navigate('settings');
               }}
               className="group inline-flex items-center gap-1 text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
               data-testid="connection-port-settings-link"
@@ -255,7 +255,7 @@ export function ConnectionCard() {
         {pendingApprovals > 0 && (
           <button
             type="button"
-            onClick={() => navigateTo('clients')}
+            onClick={() => navigate('clients')}
             className="w-full flex items-center justify-between gap-3 rounded-lg border border-amber-300/60 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 px-4 py-2.5 text-left hover:bg-amber-100/80 dark:hover:bg-amber-900/30 transition-colors"
             data-testid="connection-pending-approvals"
           >

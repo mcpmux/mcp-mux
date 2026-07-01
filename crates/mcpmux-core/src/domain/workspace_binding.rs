@@ -33,10 +33,9 @@ use uuid::Uuid;
 pub struct WorkspaceBinding {
     pub id: Uuid,
     pub workspace_root: String,
-    /// Optional OAuth client scope. `None` is a global binding (the only kind
-    /// produced today — resolution stays exact-match-global). The column
-    /// exists for a later per-client routing phase; it is persisted but does
-    /// not affect resolution yet.
+    /// Optional OAuth client scope. `None` is a global binding. When set
+    /// together with `machine_id`, resolution prefers the client+machine pair
+    /// over a machine-only canonical binding on the same path.
     #[serde(default)]
     pub client_id: Option<String>,
     /// Optional machine scope. `None` is a global canonical binding shared
@@ -80,7 +79,7 @@ impl WorkspaceBinding {
 
     /// Construct a binding optionally scoped to an OAuth `client_id`. A `None`
     /// scope is a global binding; `Some(client_id)` restricts the binding to
-    /// that client during resolution.
+    /// that client during resolution when no machine identity is registered.
     pub fn new_scoped_multi(
         workspace_root: impl Into<String>,
         space_id: Uuid,
@@ -93,6 +92,30 @@ impl WorkspaceBinding {
             workspace_root: workspace_root.into(),
             client_id,
             machine_id: None,
+            label: None,
+            icon: None,
+            space_id,
+            feature_set_ids,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Construct a machine-scoped binding (`client_id` unset). Used when this
+    /// install or the caller's `X-Mcpmux-Machine-Id` header identifies the
+    /// physical host that owns the workspace folder.
+    pub fn new_machine_scoped_multi(
+        workspace_root: impl Into<String>,
+        space_id: Uuid,
+        machine_id: Uuid,
+        feature_set_ids: Vec<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            workspace_root: workspace_root.into(),
+            client_id: None,
+            machine_id: Some(machine_id),
             label: None,
             icon: None,
             space_id,

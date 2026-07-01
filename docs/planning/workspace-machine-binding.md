@@ -45,6 +45,12 @@ See [`per-device-machine-header.md`](./per-device-machine-header.md) for full de
 
 ---
 
+## Update — Jun 30, 2026 (meta-tools machine-scoped binding)
+
+`mcpmux_bind_current_workspace` and `mcpmux_set_workspace_root` now thread `X-Mcpmux-Machine-Id` through `MetaToolCall.request_machine_id` and write machine-scoped bindings (`machine_id` set, `client_id` unset) when any machine identity is available. See [`meta-tools-machine-scoped-binding.md`](./meta-tools-machine-scoped-binding.md).
+
+---
+
 ## Problem
 
 McpMux runs as a single central gateway (Box 1 / Gondor in the homelab). Remote machines (Box 4 MacBook, cloud agents) connect into it and report workspace roots. Today the Projects page has no concept of which physical machine a project lives on — all 13 bindings look identical regardless of origin box, and the same path can't exist more than once even if it belongs to a different machine.

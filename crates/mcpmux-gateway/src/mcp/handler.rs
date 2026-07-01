@@ -855,7 +855,13 @@ impl ServerHandler for McpMuxGatewayHandler {
             return match self
                 .services
                 .meta_tool_registry
-                .call(&params.name, &oauth_ctx.client_id, session_id, args)
+                .call_from_device(
+                    &params.name,
+                    &oauth_ctx.client_id,
+                    session_id,
+                    args,
+                    oauth_ctx.request_machine_id,
+                )
                 .await
             {
                 Ok(result) => Ok(result),

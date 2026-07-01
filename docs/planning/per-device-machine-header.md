@@ -2,7 +2,6 @@
 
 **Last Updated:** Jun 30, 2026
 **Status:** Implemented (Jun 30, 2026)
-**Branch:** `feat/workspace-machine-binding`
 **Depends on:** `workspace-machine-binding.md`, `deny-by-default-bindable-callers.md`
 **Unblocks:** Machine-scoped bindings work when multiple physical devices share one tunneled gateway
 
@@ -51,8 +50,10 @@ Client and gateway-local machine tags are skipped when the header is set, so a t
 | `apps/desktop/src/hooks/use-viewer-identity.hook.tsx` | `linkMachineById` for paste-to-link existing catalog rows |
 | `apps/desktop/src/locales/en/common.json` | Viewer modal machine ID + copy/link strings |
 | `apps/desktop/src/locales/en/settings.json` | Copy header + copy UUID toast strings |
-| `crates/mcpmux-gateway/src/services/meta_tools/meta_tool_common.rs` | Pass `None` for header (meta tools have no HTTP context) |
-| `crates/mcpmux-gateway/src/services/meta_tools/set_workspace_root.rs` | Pass `None` for header |
+| `crates/mcpmux-gateway/src/services/meta_tools/meta_tool_common.rs` | Thread `request_machine_id` from `MetaToolCall` into resolver calls |
+| `crates/mcpmux-gateway/src/services/meta_tools/set_workspace_root.rs` | Pass `call.request_machine_id` into `resolve()` |
+| `crates/mcpmux-gateway/src/services/meta_tools/bind_workspace.rs` | Machine-scoped writes via `effective_machine_id()`; `active` in response |
+| `crates/mcpmux-gateway/src/mcp/handler.rs` | Meta-tool intercept uses `call_from_device(..., oauth_ctx.request_machine_id)` |
 | `crates/mcpmux-gateway/src/consumers/mcp_notifier.rs` | Pass `None` for header (session fan-out) |
 | `docs/guide/remote-access.mdx` | Example config with optional machine header |
 

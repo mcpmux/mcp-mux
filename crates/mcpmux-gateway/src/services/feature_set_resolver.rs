@@ -228,6 +228,29 @@ impl FeatureSetResolverService {
         *self.local_machine_id.write().await = id;
     }
 
+    /// The machine identity that should govern a *binding write* for this
+    /// caller — mirrors Tier 1's read-side priority (request header, then the
+    /// OAuth client's registered machine, then this gateway's own local
+    /// machine identity) so a bind and the resolve that follows it never
+    /// disagree about whose binding it is. `None` means no machine identity
+    /// exists anywhere yet (fresh install with nothing registered) — callers
+    /// should fall back to the pre-machine, client-scoped binding shape.
+    pub async fn effective_machine_id(
+        &self,
+        client_id: Option<&str>,
+        request_machine_id: Option<Uuid>,
+    ) -> Result<Option<Uuid>> {
+        if let Some(id) = request_machine_id {
+            return Ok(Some(id));
+        }
+        if let Some(cid) = client_id {
+            if let Some(client_machine) = self.client_repo.get_machine_id(cid).await? {
+                return Ok(Some(client_machine));
+            }
+        }
+        Ok(*self.local_machine_id.read().await)
+    }
+
     /// Tier 1 exact binding lookup: request machine header, then client machine,
     /// then local machine, then global.
     async fn find_binding_for_roots(

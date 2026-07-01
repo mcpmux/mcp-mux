@@ -902,3 +902,53 @@ async fn request_machine_header_enables_deny_when_only_other_machine_bound() {
     assert_eq!(r.source, ResolutionSource::Unbound);
     assert!(r.feature_set_ids.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// effective_machine_id — shared bind-write / resolve-read priority
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn effective_machine_id_prefers_header_then_client_then_local() {
+    let f = Fixture::new().await;
+    let gondor_id = f.make_machine("Gondor").await;
+    let rohan_id = f.make_machine("Rohan").await;
+    let client_id = "cursor.example/shared";
+
+    f.make_client(client_id).await;
+    f.client_repo
+        .set_machine_id(client_id, Some(gondor_id))
+        .await
+        .unwrap();
+
+    let resolver = f.resolver_with_local_machine(gondor_id);
+
+    assert_eq!(
+        resolver
+            .effective_machine_id(Some(client_id), Some(rohan_id))
+            .await
+            .unwrap(),
+        Some(rohan_id),
+    );
+    assert_eq!(
+        resolver
+            .effective_machine_id(Some(client_id), None)
+            .await
+            .unwrap(),
+        Some(gondor_id),
+    );
+    assert_eq!(
+        resolver.effective_machine_id(None, None).await.unwrap(),
+        Some(gondor_id),
+    );
+    assert_eq!(
+        f.resolver
+            .effective_machine_id(Some(client_id), None)
+            .await
+            .unwrap(),
+        Some(gondor_id),
+    );
+    assert_eq!(
+        f.resolver.effective_machine_id(None, None).await.unwrap(),
+        None,
+    );
+}

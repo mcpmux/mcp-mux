@@ -536,13 +536,27 @@ impl GatewayServer {
         );
 
         // Wrap MCP service with OAuth middleware
-        let mcp_routes =
+        let mut mcp_routes =
             Router::new()
                 .nest_service("/mcp", mcp_service)
                 .layer(middleware::from_fn_with_state(
                     Arc::new(self.services.clone()),
                     mcp_oauth_middleware,
                 ));
+
+        // On a network bind, cap /mcp per (peer-IP, credential) and damp
+        // credential stuffing. Layered OUTSIDE the OAuth middleware so it
+        // observes the 401 a rejected request produces. Loopback binds stay
+        // unlimited (local bulk workflows must not be throttled). The
+        // Extension carries the limiter into the middleware.
+        if self.config.is_network_bind() {
+            let mcp_limiter =
+                rate_limit::McpRateLimiter::new(rate_limit::McpRateLimitConfig::default());
+            info!("[Gateway] Per-peer /mcp rate limiting active (network bind)");
+            mcp_routes = mcp_routes
+                .layer(middleware::from_fn(rate_limit::mcp_rate_limit_middleware))
+                .layer(axum::Extension(mcp_limiter));
+        }
 
         // Client features endpoint (needs services, public)
         // Supports both DCR (simple IDs) and CIMD (URL-encoded IDs)

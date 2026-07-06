@@ -45,6 +45,8 @@ vi.mock('@/stores', () => ({
   useSpaces: () => [],
   usePendingWorkspaceNew: () => false,
   useSetPendingWorkspaceNew: () => () => {},
+  usePendingWorkspaceRoot: () => null,
+  useSetPendingWorkspaceRoot: () => () => {},
 }));
 
 import { WorkspacesPage } from '@/features/workspaces/WorkspacesPage';

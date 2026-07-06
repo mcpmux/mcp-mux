@@ -576,6 +576,96 @@ fn enrich_feature(
     }
 }
 
+/// Resolved (Space, FeatureSets) for a workspace key, plus the key to echo back
+/// to the UI. The output of [`resolve_effective_binding`].
+struct ResolvedBinding {
+    /// `binding` (an explicit mapping matched) or `unbound` (default Starter).
+    source: String,
+    binding_id: Option<String>,
+    space_id: Uuid,
+    fs_ids: Vec<String>,
+    /// What to surface back as `workspace_root`: the verbatim id key for an id
+    /// binding, or the normalized folder path otherwise.
+    effective_root: String,
+}
+
+/// Resolve the mapping for a workspace key the same way the live gateway
+/// resolver does: **id-keyed (client) bindings win first**.
+///
+/// An id binding (e.g. the clientId mapping `auto_map_api_key_client` writes,
+/// keyed by `mcp_xxxx`) is matched verbatim via `find_by_id_key` and MUST NOT
+/// pass through `validate_root` — a clientId is not an absolute path, so path
+/// validation would reject it with "Path must be absolute…" (the P1 bug). Only
+/// when no id binding matches do we treat the key as a folder path: validate +
+/// normalize, look for an exact path binding, then fall back to the default
+/// Space's Starter FS for an unmapped folder.
+///
+/// Path and id bindings live in disjoint namespaces in the repo, so id-first
+/// never double-matches a real folder. Mirrors
+/// `FeatureSetResolverService::mapping_binding_for_roots`.
+async fn resolve_effective_binding(
+    workspace_root: &str,
+    binding_repo: &Arc<dyn mcpmux_core::WorkspaceBindingRepository>,
+    fs_repo: &Arc<dyn mcpmux_core::FeatureSetRepository>,
+    default_space_id: Uuid,
+) -> Result<ResolvedBinding, String> {
+    // Id binding (client mapping): exact verbatim match, no path
+    // validation/normalization. This is the branch the P1 bug skipped.
+    if let Some(b) = binding_repo
+        .find_by_id_key(workspace_root)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(ResolvedBinding {
+            source: "binding".to_string(),
+            binding_id: Some(b.id.to_string()),
+            space_id: b.space_id,
+            fs_ids: b.feature_set_ids,
+            effective_root: b.workspace_root,
+        });
+    }
+
+    // No id binding → treat the key as a folder path and normalize it the same
+    // way the resolver does.
+    let normalized = match validate_root(workspace_root) {
+        WorkspaceRootValidation::Empty => return Err("workspace_root cannot be empty".into()),
+        WorkspaceRootValidation::Ok { normalized } => normalized,
+        WorkspaceRootValidation::Invalid { reason } => return Err(reason),
+    };
+
+    // Tier 1: exact path binding.
+    if let Some(b) = binding_repo
+        .find_exact_for_roots(std::slice::from_ref(&normalized))
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(ResolvedBinding {
+            source: "binding".to_string(),
+            binding_id: Some(b.id.to_string()),
+            space_id: b.space_id,
+            fs_ids: b.feature_set_ids,
+            effective_root: normalized,
+        });
+    }
+
+    // Unbound: mirror the resolver — an unmapped folder falls back to the
+    // default Space's Starter FS. This is the active routing target a live
+    // session here resolves to, not a hypothetical preview; the user can attach
+    // a binding to give the folder something other than the default.
+    let starter_fs = fs_repo
+        .get_starter_for_space(&default_space_id.to_string())
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Default Space has no Starter FeatureSet")?;
+    Ok(ResolvedBinding {
+        source: "unbound".to_string(),
+        binding_id: None,
+        space_id: default_space_id,
+        fs_ids: vec![starter_fs.id],
+        effective_root: normalized,
+    })
+}
+
 /// Compute the resolved (Space, FeatureSet) for a workspace root and return
 /// its full configured feature list with per-feature availability.
 ///
@@ -589,14 +679,9 @@ pub async fn get_workspace_effective_features(
     state: State<'_, AppState>,
     sm_state: State<'_, Arc<RwLock<ServerManagerState>>>,
 ) -> Result<WorkspaceEffectiveFeaturesDto, String> {
-    // 1. Normalize the input the same way the resolver does.
-    let normalized = match validate_root(&workspace_root) {
-        WorkspaceRootValidation::Empty => return Err("workspace_root cannot be empty".into()),
-        WorkspaceRootValidation::Ok { normalized } => normalized,
-        WorkspaceRootValidation::Invalid { reason } => return Err(reason),
-    };
-
-    // 2. Default Space — the routing fallback.
+    // Default Space — the routing fallback. Fetched up front: the resolver
+    // needs its id for the unbound-Starter branch, and a missing default Space
+    // is a hard error regardless of which binding matches.
     let default_space = state
         .space_service
         .get_default()
@@ -604,40 +689,20 @@ pub async fn get_workspace_effective_features(
         .map_err(|e| e.to_string())?
         .ok_or("No default Space configured")?;
 
-    // 3. Tier 1: longest-prefix workspace binding match.
-    let binding = state
-        .workspace_binding_repository
-        .find_exact_for_roots(std::slice::from_ref(&normalized))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let (source, binding_id, space_id, fs_ids) = match binding {
-        Some(b) => (
-            "binding".to_string(),
-            Some(b.id.to_string()),
-            b.space_id,
-            b.feature_set_ids,
-        ),
-        None => {
-            // Source = `unbound` mirrors the resolver: an unmapped folder
-            // falls back to the default Space's Starter FS. This is the
-            // active routing target a live session here resolves to, not a
-            // hypothetical preview — the user can attach a binding to give
-            // the folder something other than the default.
-            let starter_fs = state
-                .feature_set_repository
-                .get_starter_for_space(&default_space.id.to_string())
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("Default Space has no Starter FeatureSet")?;
-            (
-                "unbound".to_string(),
-                None,
-                default_space.id,
-                vec![starter_fs.id],
-            )
-        }
-    };
+    // Resolve id-key-first, then by path (see `resolve_effective_binding`).
+    let ResolvedBinding {
+        source,
+        binding_id,
+        space_id,
+        fs_ids,
+        effective_root,
+    } = resolve_effective_binding(
+        &workspace_root,
+        &state.workspace_binding_repository,
+        &state.feature_set_repository,
+        default_space.id,
+    )
+    .await?;
 
     let space = state
         .space_service
@@ -792,7 +857,7 @@ pub async fn get_workspace_effective_features(
         .collect();
 
     Ok(WorkspaceEffectiveFeaturesDto {
-        workspace_root: normalized,
+        workspace_root: effective_root,
         source,
         binding_id,
         space_id: space_id.to_string(),
@@ -803,4 +868,73 @@ pub async fn get_workspace_effective_features(
         resources,
         server_totals,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_effective_binding;
+    use mcpmux_core::{
+        FeatureSet, FeatureSetRepository, SpaceRepository, WorkspaceBinding,
+        WorkspaceBindingRepository,
+    };
+    use mcpmux_storage::{
+        Database, SqliteFeatureSetRepository, SqliteSpaceRepository,
+        SqliteWorkspaceBindingRepository,
+    };
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    /// P1 regression: an id-keyed root (a client mapping, e.g. `mcp_xxxx`) must
+    /// resolve via `find_by_id_key` FIRST — never through `validate_root` — so
+    /// the Effective Features command no longer errors with "Path must be
+    /// absolute…", AND it returns the binding's own FeatureSets (source =
+    /// "binding"), not the default Space's Starter (the latent second bug).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn id_keyed_root_resolves_to_binding_without_path_error() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let space_repo: Arc<dyn SpaceRepository> = Arc::new(SqliteSpaceRepository::new(db.clone()));
+        let fs_repo: Arc<dyn FeatureSetRepository> =
+            Arc::new(SqliteFeatureSetRepository::new(db.clone()));
+        let binding_repo: Arc<dyn WorkspaceBindingRepository> =
+            Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
+
+        let space = space_repo.get_default().await.unwrap().unwrap();
+        let space_id = space.id;
+
+        // A custom FeatureSet distinct from the Space's Starter, so resolving to
+        // the Starter (the bug's latent fallback) would be observably wrong.
+        let fs = FeatureSet::new_custom("Client FS", space_id.to_string());
+        fs_repo.create(&fs).await.unwrap();
+
+        // An id binding keyed by a clientId — exactly what
+        // `auto_map_api_key_client` writes. The key is NOT an absolute path.
+        let client_id = "mcp_test_client_0001";
+        binding_repo
+            .create(&WorkspaceBinding::new_id(
+                client_id,
+                space_id,
+                vec![fs.id.clone()],
+            ))
+            .await
+            .unwrap();
+
+        let resolved = resolve_effective_binding(client_id, &binding_repo, &fs_repo, space_id)
+            .await
+            .expect("id-keyed root must resolve without a path-validation error");
+
+        assert_eq!(
+            resolved.source, "binding",
+            "id mapping must resolve as a binding"
+        );
+        assert_eq!(resolved.space_id, space_id);
+        assert_eq!(
+            resolved.fs_ids,
+            vec![fs.id],
+            "must resolve the binding's own FeatureSet, not the default Starter"
+        );
+        assert_eq!(
+            resolved.effective_root, client_id,
+            "id key is echoed back verbatim, un-normalized"
+        );
+    }
 }

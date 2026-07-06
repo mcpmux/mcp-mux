@@ -6,6 +6,7 @@ export const useSpaces = () => useAppStore((state) => state.spaces);
 export const useViewSpaceId = () => useAppStore((state) => state.viewSpaceId);
 export const useActiveNav = () => useAppStore((state) => state.activeNav);
 export const useNavigateTo = () => useAppStore((state) => state.navigateTo);
+export const useSetViewSpace = () => useAppStore((state) => state.setViewSpace);
 export const usePendingClientId = () => useAppStore((state) => state.pendingClientId);
 export const useSetPendingClientId = () => useAppStore((state) => state.setPendingClientId);
 export const usePendingSettingsSection = () =>
@@ -15,6 +16,12 @@ export const useSetPendingSettingsSection = () =>
 export const usePendingWorkspaceNew = () => useAppStore((state) => state.pendingWorkspaceNew);
 export const useSetPendingWorkspaceNew = () =>
   useAppStore((state) => state.setPendingWorkspaceNew);
+export const usePendingWorkspaceRoot = () => useAppStore((state) => state.pendingWorkspaceRoot);
+export const useSetPendingWorkspaceRoot = () =>
+  useAppStore((state) => state.setPendingWorkspaceRoot);
+export const usePendingFeatureSetNew = () => useAppStore((state) => state.pendingFeatureSetNew);
+export const useSetPendingFeatureSetNew = () =>
+  useAppStore((state) => state.setPendingFeatureSetNew);
 export const useTheme = () => useAppStore((state) => state.theme);
 export const useSidebarCollapsed = () => useAppStore((state) => state.sidebarCollapsed);
 export const useAnalyticsEnabled = () => useAppStore((state) => state.analyticsEnabled);

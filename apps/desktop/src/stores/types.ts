@@ -30,6 +30,20 @@ export interface AppState {
   pendingSettingsSection: string | null;
   /** When true, the Workspaces page opens the New-mapping walkthrough on arrival. */
   pendingWorkspaceNew: boolean;
+  /**
+   * When true, the FeatureSets page opens its Create dialog on arrival. Set by
+   * the "Create a new feature set" shortcut on the Mapping surfaces so a user
+   * who only has the auto-seeded Starter set can jump straight into making a
+   * new one for the Space they're mapping.
+   */
+  pendingFeatureSetNew: boolean;
+  /**
+   * A `workspace_root` (folder path or client-id key) to auto-select in the
+   * Workspaces Mapping inspector on arrival. Set when another surface (e.g. the
+   * Clients page "Open this client's mapping" link) wants to deep-link to a
+   * specific binding rather than the generic Mapping tab.
+   */
+  pendingWorkspaceRoot: string | null;
 
   // UI state
   sidebarCollapsed: boolean;
@@ -56,6 +70,8 @@ export interface AppActions {
   setPendingClientId: (id: string | null) => void;
   setPendingSettingsSection: (section: string | null) => void;
   setPendingWorkspaceNew: (v: boolean) => void;
+  setPendingWorkspaceRoot: (root: string | null) => void;
+  setPendingFeatureSetNew: (v: boolean) => void;
 
   // UI
   toggleSidebar: () => void;

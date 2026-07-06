@@ -37,6 +37,7 @@ export default defineConfig({
       // source code imports from apps/desktop/src/.
       '@tauri-apps/api': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/api'),
       '@tauri-apps/plugin-updater': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-updater'),
+      '@tauri-apps/plugin-dialog': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-dialog'),
       '@tauri-apps/plugin-process': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-process'),
       '@tauri-apps/plugin-opener': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-opener'),
     },

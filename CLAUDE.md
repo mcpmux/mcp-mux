@@ -165,3 +165,18 @@ The pre-commit hook runs `cargo clippy --workspace -- -D warnings` locally, but 
 ## CI
 
 GitHub Actions runs on push/PR to main: Rust format + clippy + check, ESLint + typecheck, cargo nextest, vitest, desktop E2E (Windows/macOS/Linux), web E2E (Playwright). Releases use release-please for semantic versioning with multi-platform Tauri builds.
+
+<!-- BEGIN mr-weny team: mcpmux (managed by /team-setup — edit the roster in .claude/team.md) -->
+## Team: mcpmux
+
+This project has a committed Claude Code agent team. Roster: lead (opus), dev (opus), qa (opus).
+
+- **Spawn it** from the Mr.Weny workspace: `/spawn mcpmux` — opens the lead in a Windows Terminal + psmux
+  (tmux) session, with members as split panes, remote-controllable from the Claude app.
+- **Definition:** `.claude/team.md` (roster + spawn prompts) and `.claude/agents/*.md` (per-member behavior).
+- **Team brain / memory:** `.claude/agent-memory/<role>/` — lessons the team records to improve over time.
+  Read these for accumulated, hard-won project knowledge.
+- **Self-improvement:** the lead and members record lessons on every correction/milestone and evolve the team's
+  own prompts; durable knowledge is committed here so it survives across sessions.
+<!-- END mr-weny team: mcpmux -->
+

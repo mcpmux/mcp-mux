@@ -55,6 +55,7 @@ import {
   useNavigateTo,
   usePendingClientId,
   useSetPendingClientId,
+  useSetPendingWorkspaceRoot,
 } from '@/stores';
 import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
 import { ClientApiKeysSection } from './ClientApiKeysSection';
@@ -141,6 +142,7 @@ export default function ClientsPage() {
   const { confirm, ConfirmDialogElement } = useConfirm();
   const pendingClientId = usePendingClientId();
   const setPendingClientId = useSetPendingClientId();
+  const setPendingWorkspaceRoot = useSetPendingWorkspaceRoot();
   const navigateTo = useNavigateTo();
   const defaultSpace = useDefaultSpace();
 
@@ -418,6 +420,15 @@ export default function ClientsPage() {
               setSelected(null);
               navigateTo('workspaces');
             }}
+            onOpenClientMapping={() => {
+              // Deep-link to THIS client's auto-created mapping: its binding is
+              // keyed by the client id (see `auto_map_api_key_client`). The
+              // Workspaces page selects that binding's inspector on arrival, or
+              // falls back to the Mapping tab if it no longer exists.
+              setSelected(null);
+              setPendingWorkspaceRoot(selected.client_id);
+              navigateTo('workspaces');
+            }}
             onToastError={showError}
             onToastSuccess={success}
           />
@@ -513,6 +524,7 @@ interface SidePanelProps {
   onSaveAlias: () => void;
   onRevoke: () => void;
   onOpenWorkspaces: () => void;
+  onOpenClientMapping: () => void;
   onToastError: (title: string, body?: string) => void;
   onToastSuccess: (title: string, body?: string) => void;
 }
@@ -527,6 +539,7 @@ function SidePanel({
   onSaveAlias,
   onRevoke,
   onOpenWorkspaces,
+  onOpenClientMapping,
   onToastError,
   onToastSuccess,
 }: SidePanelProps) {
@@ -604,31 +617,61 @@ function SidePanel({
           />
         )}
 
-        <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--accent))]/10">
-              <FolderOpen className="h-5 w-5 text-[rgb(var(--accent))]" />
+        {/* How this client is routed depends on how it authenticates.
+            API-key clients (registered here, registration_type
+            'preregistered') are identified by their key and routed via a
+            dedicated per-client mapping. DCR/OAuth clients (Cursor, VS Code,
+            …) are routed by the project folder they report. */}
+        {client.registration_type === 'preregistered' ? (
+          <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--accent))]/10">
+                <KeyRound className="h-5 w-5 text-[rgb(var(--accent))]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Routing follows this client&apos;s API key</p>
+                <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                  mcpmux identifies this client by its API key and routes it to its own mapping
+                  automatically — no workspace folder needed. Open that mapping to choose the Space
+                  and FeatureSet it gets.
+                </p>
+                <button
+                  onClick={onOpenClientMapping}
+                  className="mt-2 text-xs font-medium text-[rgb(var(--accent))] hover:underline"
+                  data-testid="open-client-mapping-btn"
+                >
+                  Open this client&apos;s mapping →
+                </button>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Routing is workspace-driven</p>
-              <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                When this client reports a folder as an MCP root, mcpmux uses the matching Workspace
-                binding to pick the Space and FeatureSet. If it doesn&apos;t report the folder
-                reliably (e.g. Cursor), open the folder in Workspaces and{' '}
-                <span className="font-medium text-[rgb(var(--foreground))]">
-                  Connect apps to this folder
-                </span>{' '}
-                to auto-write its config with a workspace header.
-              </p>
-              <button
-                onClick={onOpenWorkspaces}
-                className="mt-2 text-xs font-medium text-[rgb(var(--accent))] hover:underline"
-              >
-                Open Workspaces →
-              </button>
+          </section>
+        ) : (
+          <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--accent))]/10">
+                <FolderOpen className="h-5 w-5 text-[rgb(var(--accent))]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Routing follows the project you open</p>
+                <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                  mcpmux reads the folder this client reports as its workspace and serves the
+                  matching Mapping&apos;s Space and FeatureSet. Some clients (e.g. Cursor) don&apos;t
+                  report it reliably — for those, open the project in Mapping and use{' '}
+                  <span className="font-medium text-[rgb(var(--foreground))]">
+                    Connect to this project
+                  </span>{' '}
+                  to write a config with the workspace header.
+                </p>
+                <button
+                  onClick={onOpenWorkspaces}
+                  className="mt-2 text-xs font-medium text-[rgb(var(--accent))] hover:underline"
+                >
+                  Open Mapping →
+                </button>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Per-client grants only matter for clients that explicitly do
             NOT declare the MCP `roots` capability — Claude.ai web,

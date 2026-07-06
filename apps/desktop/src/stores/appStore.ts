@@ -10,6 +10,8 @@ const initialState: AppState = {
   pendingClientId: null,
   pendingSettingsSection: null,
   pendingWorkspaceNew: false,
+  pendingWorkspaceRoot: null,
+  pendingFeatureSetNew: false,
   sidebarCollapsed: false,
   theme: 'system',
   analyticsEnabled: true,
@@ -88,6 +90,16 @@ export const useAppStore = create<AppStore>()(
       setPendingWorkspaceNew: (v) =>
         set((state) => {
           state.pendingWorkspaceNew = v;
+        }),
+
+      setPendingWorkspaceRoot: (root) =>
+        set((state) => {
+          state.pendingWorkspaceRoot = root;
+        }),
+
+      setPendingFeatureSetNew: (v) =>
+        set((state) => {
+          state.pendingFeatureSetNew = v;
         }),
 
       // UI

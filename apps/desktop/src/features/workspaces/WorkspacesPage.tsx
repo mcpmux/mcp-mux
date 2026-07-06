@@ -6,10 +6,12 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   FileText,
   Folder,
   FolderOpen,
   FolderSearch,
+  KeyRound,
   Layers,
   Loader2,
   MessageSquare,
@@ -39,9 +41,25 @@ import {
   type WorkspaceEffectiveFeatures,
 } from '@/lib/api/workspaceBindings';
 import { isStarterFeatureSet, listFeatureSets, type FeatureSet } from '@/lib/api/featureSets';
+import { getGatewayStatus, listOAuthClients, type OAuthClient } from '@/lib/api/gateway';
+import { getGatewayAuthDisabled } from '@/lib/api/workspaceInstall';
 import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
 import { WorkspaceSetupWizard } from './WorkspaceSetupWizard';
-import { useSpaces, usePendingWorkspaceNew, useSetPendingWorkspaceNew } from '@/stores';
+import { CreateFeatureSetLink } from './CreateFeatureSetLink';
+import {
+  buildMcpConfig,
+  COPIED_LABEL,
+  COPY_CONFIG_BEARER_LABEL,
+  COPY_CONFIG_LABEL,
+  DEFAULT_MCP_ENDPOINT,
+} from './connectConfig';
+import {
+  useSpaces,
+  usePendingWorkspaceNew,
+  useSetPendingWorkspaceNew,
+  usePendingWorkspaceRoot,
+  useSetPendingWorkspaceRoot,
+} from '@/stores';
 import type { Space } from '@/lib/api/spaces';
 
 /**
@@ -74,9 +92,15 @@ export function WorkspacesPage() {
   const spaces = useSpaces();
   const pendingNew = usePendingWorkspaceNew();
   const clearPendingNew = useSetPendingWorkspaceNew();
+  const pendingRoot = usePendingWorkspaceRoot();
+  const clearPendingRoot = useSetPendingWorkspaceRoot();
   const [bindings, setBindings] = useState<WorkspaceBinding[]>([]);
   const [reportedRoots, setReportedRoots] = useState<string[]>([]);
   const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
+  // Registered inbound clients — used to recognise the id-binding McpMux
+  // auto-creates per API-key client (its identifier is the client_id) so the
+  // UI can show the client's name and lock that managed mapping down.
+  const [clients, setClients] = useState<OAuthClient[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,14 +114,16 @@ export function WorkspacesPage() {
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [b, fs, roots] = await Promise.all([
+      const [b, fs, roots, cl] = await Promise.all([
         listWorkspaceBindings(),
         listFeatureSets(),
         listReportedWorkspaceRoots().catch(() => [] as string[]),
+        listOAuthClients().catch(() => [] as OAuthClient[]),
       ]);
       setBindings(b);
       setFeatureSets(fs);
       setReportedRoots(roots);
+      setClients(Array.isArray(cl) ? cl : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -108,13 +134,28 @@ export function WorkspacesPage() {
     void loadData().finally(() => setIsLoading(false));
   }, [loadData]);
 
-  // Opened from the home "Set up a folder" CTA — launch the create walkthrough.
+  // Opened from the home "Set up a mapping" CTA — launch the create walkthrough.
   useEffect(() => {
     if (pendingNew) {
       setSelected({ mode: 'new' });
       clearPendingNew(false);
     }
   }, [pendingNew, clearPendingNew]);
+
+  // Deep-linked from another surface (e.g. the Clients page "Open this client's
+  // mapping" link) to a specific binding. Wait until bindings have loaded, then
+  // open that binding's inspector. Match the `workspace_root` verbatim — id
+  // keys (client ids) are case-sensitive, and path roots are pre-normalized.
+  useEffect(() => {
+    if (!pendingRoot || isLoading) return;
+    const target = bindings.find((b) => b.workspace_root === pendingRoot);
+    if (target) {
+      setSelected({ mode: 'entry', id: target.id });
+    }
+    // Clear regardless: if the binding no longer exists there's nothing to
+    // select, and the user still lands on the Mapping tab (the fallback).
+    clearPendingRoot(null);
+  }, [pendingRoot, isLoading, bindings, clearPendingRoot]);
 
   // Refresh whenever something the table reflects changes outside the page:
   //   • `session-roots-changed` — a connected client newly reported a root.
@@ -128,9 +169,12 @@ export function WorkspacesPage() {
     };
     const unRoots = listen('session-roots-changed', reload);
     const unBinding = listen('workspace-binding-changed', reload);
+    // A client rename/delete changes the name shown for its managed id mapping.
+    const unClient = listen('client-changed', reload);
     return () => {
       unRoots.then((fn) => fn());
       unBinding.then((fn) => fn());
+      unClient.then((fn) => fn());
     };
   }, [loadData]);
 
@@ -158,6 +202,23 @@ export function WorkspacesPage() {
     for (const s of spaces) m.set(s.id, s);
     return m;
   }, [spaces]);
+  // client_id -> display name (alias preferred, else self-reported name). Used
+  // to recognise an auto-created client mapping and label it by client name.
+  const clientNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of clients) m.set(c.client_id, c.client_alias || c.client_name);
+    return m;
+  }, [clients]);
+  // An id binding whose identifier matches a registered client is the mapping
+  // McpMux auto-created for that API-key client: it carries the client's name,
+  // its identifier is fixed, and it's removed with the client (not by hand).
+  const clientNameForBinding = useCallback(
+    (binding: WorkspaceBinding | null): string | null =>
+      binding?.binding_type === 'id'
+        ? (clientNameById.get(binding.workspace_root) ?? null)
+        : null,
+    [clientNameById]
+  );
 
   /**
    * Unified list: live-reported roots come first (unmapped amber, then
@@ -237,6 +298,7 @@ export function WorkspacesPage() {
     selected?.mode === 'entry' ? (entries.find((e) => e.id === selected.id) ?? null) : null;
   const selectedIsNew = selected?.mode === 'new';
   const panelOpen = selected !== null;
+  const selectedClientName = clientNameForBinding(selectedEntry?.binding ?? null);
 
   const handleCreate = async (input: WorkspaceBindingInput): Promise<WorkspaceBinding> => {
     const created = await createWorkspaceBinding(input);
@@ -260,7 +322,7 @@ export function WorkspacesPage() {
   const handleDelete = async (binding: WorkspaceBinding) => {
     const ok = await confirm({
       title: 'Remove mapping',
-      message: `Apps opening "${binding.workspace_root}" will stop receiving these tools. You can map the folder again anytime.`,
+      message: `Apps opening "${binding.workspace_root}" will stop receiving these tools. You can map the project again anytime.`,
       confirmLabel: 'Remove',
       variant: 'danger',
     });
@@ -312,9 +374,9 @@ export function WorkspacesPage() {
                 Workspaces
               </h1>
               <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
-                Map a folder to the tools it should get. When you open that folder in a connected
+                Map a project to the tools it should get. When you open that project in a connected
                 app — Cursor, VS Code, Claude — McpMux serves exactly the tools you chose for it.
-                Folders you haven&apos;t mapped fall back to your default Starter set, so they work
+                Projects you haven&apos;t mapped fall back to your default Starter set, so they work
                 out of the box — map one only when it should see something different.
               </p>
             </div>
@@ -420,6 +482,7 @@ export function WorkspacesPage() {
                     entry={entry}
                     spaceName={resolvedSpaceName}
                     fsNames={fsNames}
+                    clientName={clientNameForBinding(entry.binding)}
                     selected={isSelected}
                     onClick={() => setSelected({ mode: 'entry', id: entry.id })}
                   />
@@ -457,6 +520,7 @@ export function WorkspacesPage() {
               key={selectedEntry?.id ?? 'entry'}
               entry={selectedEntry}
               isNew={false}
+              clientName={selectedClientName}
               spaces={spaces}
               featureSets={featureSets}
               existingBindings={bindings}
@@ -613,6 +677,7 @@ function EntryCard({
   entry,
   spaceName,
   fsNames,
+  clientName,
   selected,
   onClick,
 }: {
@@ -620,13 +685,18 @@ function EntryCard({
   spaceName: string | undefined;
   /** Resolved FeatureSet names for a mapped folder; empty when unmapped. */
   fsNames: string[];
+  /** Set when this is an id binding McpMux auto-created for a registered
+   *  client — its name is shown in place of the raw identifier. */
+  clientName: string | null;
   selected: boolean;
   onClick: () => void;
 }) {
   const tone =
     entry.kind === 'unmapped-live' ? 'amber' : entry.kind === 'mapped-live' ? 'emerald' : 'neutral';
   const t = CARD_TONES[tone];
-  const name = folderName(entry.root);
+  // For a client mapping the heading is the client's name; the raw identifier
+  // stays on the mono line below for reference.
+  const name = clientName ?? folderName(entry.root);
 
   return (
     <Card
@@ -658,6 +728,12 @@ function EntryCard({
               {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
+              {clientName && (
+                <Pill tone="neutral">
+                  <KeyRound className="mr-1 h-2.5 w-2.5" />
+                  Client
+                </Pill>
+              )}
             </div>
             <h3 className="truncate text-base font-semibold" title={entry.root}>
               {name}
@@ -880,6 +956,7 @@ type SaveStatus =
 function InspectorPanel({
   entry,
   isNew,
+  clientName,
   spaces,
   featureSets,
   existingBindings,
@@ -890,6 +967,8 @@ function InspectorPanel({
 }: {
   entry: Entry | null;
   isNew: boolean;
+  /** Non-null when this is the managed id mapping for a registered client. */
+  clientName: string | null;
   spaces: Space[];
   featureSets: FeatureSet[];
   existingBindings: WorkspaceBinding[];
@@ -907,13 +986,26 @@ function InspectorPanel({
   }, [onClose]);
 
   const isMapped = !!entry?.binding;
+  // An id-keyed binding routes by header, not a folder path. When that id also
+  // names a registered client (`clientName` set), the mapping is host-managed:
+  // its identifier is read-only and it's removed with the client, not by hand.
+  const isIdBinding = entry?.binding?.binding_type === 'id';
+  const isManagedClient = !!clientName;
   const mode: 'create' | 'edit' | 'create-from-live' = isNew
     ? 'create'
     : isMapped
       ? 'edit'
       : 'create-from-live';
-  const title = isNew ? 'New mapping' : isMapped ? 'Workspace mapping' : 'Map this folder';
-  const subtitle = isNew ? 'Choose the tools a folder should get.' : (entry?.root ?? '');
+  const title = isNew
+    ? 'New mapping'
+    : isManagedClient
+      ? 'Client mapping'
+      : isMapped
+        ? 'Workspace mapping'
+        : 'Map this project';
+  const subtitle = isNew
+    ? 'Choose the tools a project should get.'
+    : (clientName ?? entry?.root ?? '');
 
   // Auto-save status drives the small pill in the Mapping section header.
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ kind: 'idle' });
@@ -964,9 +1056,9 @@ function InspectorPanel({
           title="Mapping"
           subtitle={
             mode === 'create'
-              ? 'Choose the folder and the tools it should get.'
+              ? 'Choose the project and the tools it should get.'
               : mode === 'create-from-live'
-                ? 'This folder is open in an app and using your default Starter tools — map it to give it a specific set instead.'
+                ? 'This project is open in an app and using your default Starter tools — map it to give it a specific set instead.'
                 : isMapped && entry?.binding
                   ? `Gives ${
                       formatFsList(
@@ -988,6 +1080,7 @@ function InspectorPanel({
             initial={entry?.binding ?? null}
             prefillRoot={entry && !isMapped ? entry.root : undefined}
             existingBindings={existingBindings}
+            managedClientName={clientName}
             onCancel={onClose}
             onSubmit={onSubmit}
             onError={onError}
@@ -999,12 +1092,48 @@ function InspectorPanel({
           <CollapsibleSection
             icon={<Wrench className="h-5 w-5" />}
             tone="primary"
-            title="Connect apps to this folder"
-            subtitle="Write the McpMux config into this folder for the apps you use, with this folder's workspace header."
-            defaultOpen={!isMapped}
+            title={
+              isIdBinding
+                ? isManagedClient
+                  ? 'Connect this client'
+                  : 'Connect a client'
+                : 'Connect to this project'
+            }
+            subtitle={
+              isIdBinding
+                ? isManagedClient
+                  ? 'How this client reaches the gateway — its API key already routes it here.'
+                  : 'Copy a ready-to-paste MCP config — its workspace header is pinned to this identifier.'
+                : 'See what this project applies, copy a ready-to-paste config, or write it into the project for the apps you use.'
+            }
+            defaultOpen={true}
             testId="workspace-install-section"
           >
-            <WorkspaceInstallPanel workspaceRoot={entry.root} />
+            {isIdBinding ? (
+              <ConnectConfigPanel
+                variant={isManagedClient ? 'client' : 'id'}
+                headerValue={entry.binding!.workspace_root}
+              />
+            ) : (
+              <div className="space-y-4">
+                {entry.binding && (
+                  <>
+                    <AppliedSettings
+                      spaceName={spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—'}
+                      fsNames={
+                        formatFsList(
+                          entry.binding!.feature_set_ids.map(
+                            (id) => featureSets.find((f) => f.id === id)?.name ?? id
+                          )
+                        ) || '—'
+                      }
+                    />
+                    <ConnectConfigPanel variant="path" headerValue={entry.root} />
+                  </>
+                )}
+                <WorkspaceInstallPanel workspaceRoot={entry.root} />
+              </div>
+            )}
           </CollapsibleSection>
         )}
 
@@ -1023,7 +1152,21 @@ function InspectorPanel({
         )}
       </div>
 
-      {entry?.binding && (
+      {entry?.binding && isManagedClient && (
+        <div className="flex-shrink-0 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
+          <p
+            className="flex items-start gap-2 text-xs text-[rgb(var(--muted))]"
+            data-testid="workspace-binding-managed-note"
+          >
+            <KeyRound className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              Managed by the client <strong>{clientName}</strong>. Remove it by deleting the client
+              from the Clients tab.
+            </span>
+          </p>
+        </div>
+      )}
+      {entry?.binding && !isManagedClient && (
         <div className="flex-shrink-0 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
           <Button
             variant="ghost"
@@ -1073,6 +1216,199 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
       <AlertCircle className="h-2.5 w-2.5" />
       Error
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Connect-config panel + applied-settings summary for explicitly-targeted
+// mappings (id, client, or a project addressed by header)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compact "what this mapping applies" summary — the resolved Space + FeatureSet
+ * names — shown at the top of a project mapping's connect section so the user
+ * sees the routing outcome before the copy / install controls.
+ */
+function AppliedSettings({ spaceName, fsNames }: { spaceName: string; fsNames: string }) {
+  return (
+    <div
+      className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3"
+      data-testid="workspace-applied-settings"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[rgb(var(--muted))]">
+          Applies
+        </span>
+        <span className="inline-flex min-w-0 items-center gap-1.5">
+          <Layers className="text-primary-500 h-3.5 w-3.5 flex-shrink-0" />
+          <span className="truncate text-sm font-semibold text-[rgb(var(--foreground))]">
+            {fsNames}
+          </span>
+        </span>
+        <span className="text-xs text-[rgb(var(--muted))]">in</span>
+        <span className="text-sm font-medium text-[rgb(var(--foreground))]">{spaceName}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Connect surface for a mapping a client targets explicitly. Hands over a
+ * ready-to-paste MCP config plus a SECOND copy variant, framed by the routing
+ * model:
+ *
+ *   • `client` — the API key identifies the client, so mcpmux routes it here
+ *     automatically (even with inbound auth off). Shows ONLY the Bearer config;
+ *     this mapping is the client's default when it sends no workspace override.
+ *   • `id` / `path` — routed by the `X-Mcpmux-Workspace` header pinned to this
+ *     mapping's identifier (an id string) or project path. Primary copy is the
+ *     header config; the secondary adds a Bearer key for when inbound auth is on.
+ *
+ * Falls back to the default local endpoint when the gateway isn't running so
+ * the snippet is still copy-paste useful. The copied text is the `"mcpmux": …`
+ * server entry, ready to drop into a client's existing `mcpServers` block.
+ */
+function ConnectConfigPanel({
+  headerValue,
+  variant,
+}: {
+  /** The `X-Mcpmux-Workspace` value this mapping matches (project path or id). */
+  headerValue: string;
+  variant: 'id' | 'path' | 'client';
+}) {
+  const [mcpUrl, setMcpUrl] = useState<string | null>(null);
+  const [authDisabled, setAuthDisabled] = useState<boolean | null>(null);
+  const [copied, setCopied] = useState<'primary' | 'secondary' | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [status, disabled] = await Promise.all([
+        getGatewayStatus().catch(() => null),
+        getGatewayAuthDisabled().catch(() => null),
+      ]);
+      if (cancelled) return;
+      setMcpUrl(status?.url ? `${status.url}/mcp` : null);
+      setAuthDisabled(disabled);
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const endpoint = mcpUrl ?? DEFAULT_MCP_ENDPOINT;
+  const isClient = variant === 'client';
+
+  // Client: just the Bearer config (the API key already routes it here).
+  // id/path: the header config is primary, the Bearer variant the "auth is
+  // on" add-on (second copy button).
+  const primaryConfig = useMemo(
+    () =>
+      isClient
+        ? buildMcpConfig({ endpoint, bearer: true })
+        : buildMcpConfig({ endpoint, workspace: headerValue }),
+    [endpoint, headerValue, isClient]
+  );
+  const secondaryConfig = useMemo(
+    () => buildMcpConfig({ endpoint, workspace: headerValue, bearer: true }),
+    [endpoint, headerValue]
+  );
+
+  const copy = async (which: 'primary' | 'secondary') => {
+    try {
+      await navigator.clipboard.writeText(which === 'primary' ? primaryConfig : secondaryConfig);
+      setCopied(which);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  };
+
+  return (
+    <div className="space-y-3" data-testid="workspace-id-config-panel">
+      {isClient ? (
+        <p className="text-sm text-[rgb(var(--muted))]">
+          Your API key identifies this client, so mcpmux routes it to this mapping automatically — no
+          workspace header needed (works even with inbound auth disabled).
+        </p>
+      ) : variant === 'path' ? (
+        <p className="text-sm text-[rgb(var(--muted))]">
+          This project is matched automatically when your client reports its folder as an MCP root.
+          To target it explicitly from any client, paste this config — its{' '}
+          <code className="text-xs">X-Mcpmux-Workspace</code> header is pinned to this project&apos;s
+          path, so the client routes here even without reporting the folder.
+        </p>
+      ) : (
+        <p className="text-sm text-[rgb(var(--muted))]">
+          This mapping routes by a header. Paste this into your client&apos;s MCP config — its{' '}
+          <code className="text-xs">X-Mcpmux-Workspace</code> header is pinned to this mapping, so
+          the client gets exactly these tools.
+        </p>
+      )}
+
+      {isClient && (
+        <p className="text-xs text-[rgb(var(--muted))]">
+          This mapping is used when no <code className="text-xs">X-Mcpmux-Workspace</code> header is
+          passed for this API client.
+        </p>
+      )}
+
+      {authDisabled === false && !isClient && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300">
+          Authentication is on — use <strong>{COPY_CONFIG_BEARER_LABEL}</strong> and swap in this
+          client&apos;s API key.
+        </p>
+      )}
+
+      <pre className="overflow-x-auto rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-3 font-mono text-xs leading-relaxed">
+        {primaryConfig}
+      </pre>
+
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="primary"
+          size="sm"
+          className="flex-1"
+          onClick={() => void copy('primary')}
+          disabled={loading}
+          data-testid="workspace-id-config-copy"
+        >
+          {copied === 'primary' ? (
+            <Check className="mr-2 h-4 w-4" />
+          ) : (
+            <Copy className="mr-2 h-4 w-4" />
+          )}
+          {copied === 'primary'
+            ? COPIED_LABEL
+            : // The client variant's single button copies the Bearer config, so
+              // it reads "Copy with Bearer" to match the shared pattern (a
+              // bearer config is always "Copy with Bearer"). The header/path
+              // variants' primary is the plain config → "Copy config".
+              isClient
+              ? COPY_CONFIG_BEARER_LABEL
+              : COPY_CONFIG_LABEL}
+        </Button>
+        {!isClient && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className="flex-1"
+            onClick={() => void copy('secondary')}
+            disabled={loading}
+            data-testid="workspace-id-config-copy-bearer"
+          >
+            {copied === 'secondary' ? (
+              <Check className="mr-2 h-4 w-4" />
+            ) : (
+              <Copy className="mr-2 h-4 w-4" />
+            )}
+            {copied === 'secondary' ? COPIED_LABEL : COPY_CONFIG_BEARER_LABEL}
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1271,8 +1607,8 @@ function EffectiveFeaturesContent({
           <span
             title={
               data.source === 'binding'
-                ? 'A workspace binding matched this folder — live sessions reporting it route here.'
-                : 'No binding matches this folder, so it falls back to the default Starter set shown here. Map it to give this folder a different set.'
+                ? 'A workspace binding matched this project — live sessions reporting it route here.'
+                : 'No binding matches this project, so it falls back to the default Starter set shown here. Map it to give this project a different set.'
             }
             className={[
               'ml-auto rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider',
@@ -1578,6 +1914,7 @@ function BindingForm({
   initial,
   prefillRoot,
   existingBindings,
+  managedClientName,
   onCancel,
   onSubmit,
   onError,
@@ -1590,6 +1927,9 @@ function BindingForm({
   prefillRoot?: string;
   /** Every saved mapping, used to flag a folder that's already mapped. */
   existingBindings: WorkspaceBinding[];
+  /** Set when editing the managed id mapping of a registered client — its
+   *  identifier becomes read-only (it's fixed at client registration). */
+  managedClientName?: string | null;
   onCancel: () => void;
   onSubmit: (input: WorkspaceBindingInput) => Promise<void>;
   onError: (message: string) => void;
@@ -1615,6 +1955,9 @@ function BindingForm({
   // re-validated as a filesystem path.
   const bindingType = initial?.binding_type ?? 'path';
   const isId = bindingType === 'id';
+  // A managed client mapping owns its identifier (it's the client_id, set at
+  // registration) — show it read-only so it can't drift out of sync.
+  const isManagedClient = !!managedClientName;
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isEdit = mode === 'edit';
@@ -1640,7 +1983,9 @@ function BindingForm({
   >({ state: 'idle' });
   const validationSeq = useRef(0);
 
-  const rootEditable = mode !== 'create-from-live';
+  // A live-reported folder has a fixed path; a managed client mapping has a
+  // fixed identifier. Both are surfaced read-only.
+  const rootEditable = mode !== 'create-from-live' && !isManagedClient;
 
   useEffect(() => {
     if (!rootEditable) {
@@ -1767,7 +2112,7 @@ function BindingForm({
 
   const handleSubmit = async () => {
     if (!root.trim()) {
-      onError(isId ? 'Enter an id or label.' : 'Pick a folder first.');
+      onError(isId ? 'Enter a workspace identifier.' : 'Pick a project first.');
       return;
     }
     if (!isId && rootValidation.state === 'error') {
@@ -1777,8 +2122,8 @@ function BindingForm({
     if (duplicate) {
       onError(
         isId
-          ? 'That id is already mapped. Open its existing mapping to change it.'
-          : `That folder is already mapped. Open the existing mapping to change it.`
+          ? 'That identifier is already mapped. Open its existing mapping to change it.'
+          : `That project is already mapped. Open the existing mapping to change it.`
       );
       return;
     }
@@ -1831,11 +2176,11 @@ function BindingForm({
       <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-3.5 py-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
         <span className="font-semibold text-[rgb(var(--foreground))]">What is a mapping?</span>{' '}
         {isId
-          ? 'Enter an id or label (a client id, machine name, or any string), then choose the tools it gets. A headless or remote client that sends this exact value in the X-Mcpmux-Workspace header receives exactly those tools.'
-          : 'Pick a folder, then choose the tools it should get. Whenever you open that folder in a connected app — Cursor, VS Code, Claude — McpMux hands it exactly the tools you choose here, and nothing else.'}
+          ? 'Enter any string you choose, then choose the tools it gets. A client that sends this value in the X-Mcpmux-Workspace header receives exactly those tools.'
+          : 'Pick a project, then choose the tools it should get. Whenever you open that project in a connected app — Cursor, VS Code, Claude — McpMux hands it exactly the tools you choose here, and nothing else.'}
       </div>
 
-      <FormField label={isId ? 'Mapping ID / label' : 'Workspace folder'}>
+      <FormField label={isId ? 'Workspace identifier' : 'Project'}>
         <div className="flex gap-2">
           <input
             ref={rootRef}
@@ -1844,9 +2189,7 @@ function BindingForm({
             onChange={(e) => setRoot(e.target.value)}
             readOnly={!rootEditable}
             placeholder={
-              isId
-                ? 'Any exact-match label — a client id, machine name, etc.'
-                : 'Browse for a folder, or paste an absolute path'
+              isId ? 'Any string you choose' : 'Browse for a project, or paste an absolute path'
             }
             className={[
               'min-w-0 flex-1 rounded-lg px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2',
@@ -1870,7 +2213,7 @@ function BindingForm({
                   const picked = await openDialog({
                     directory: true,
                     multiple: false,
-                    title: 'Pick a workspace folder',
+                    title: 'Pick a project folder',
                   });
                   if (typeof picked === 'string' && picked.length > 0) {
                     setRoot(picked);
@@ -1895,14 +2238,24 @@ function BindingForm({
           >
             <AlertCircle className="mt-px h-3 w-3 flex-shrink-0" />
             <span>
-              This folder is already mapped. Open its existing mapping to change what it sees
-              instead of adding a second one.
+              {isId
+                ? 'That identifier is already mapped. Open its existing mapping to change what it sees instead of adding a second one.'
+                : 'This project is already mapped. Open its existing mapping to change what it sees instead of adding a second one.'}
             </span>
           </p>
         ) : isId ? (
           <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-            Matched exactly (case-sensitive). A client sends this value in the{' '}
-            <code className="font-mono">X-Mcpmux-Workspace</code> header.
+            {isManagedClient ? (
+              <>
+                Managed by the client <strong>{managedClientName}</strong> — this identifier is set
+                when the client is registered and can&apos;t be changed here.
+              </>
+            ) : (
+              <>
+                Matched exactly (case-sensitive). A client sends this value in the{' '}
+                <code className="font-mono">X-Mcpmux-Workspace</code> header.
+              </>
+            )}
           </p>
         ) : (
           <RootValidationHint state={rootValidation} editable={rootEditable} originalValue={root} />
@@ -2026,6 +2379,14 @@ function BindingForm({
             )}
           </div>
         )}
+        {/* Escape hatch to the FeatureSets editor — a Space starts with only its
+            auto-seeded Starter set, so this points the user at where new sets
+            are made when Starter isn't what this folder should get. */}
+        {spaceId && (
+          <div className="mt-2">
+            <CreateFeatureSetLink spaceId={spaceId} />
+          </div>
+        )}
       </FormField>
 
       {/* Saving is explicit in every mode now — nothing is written until
@@ -2097,7 +2458,7 @@ function RootValidationHint({
   if (!editable) {
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        This folder was reported by the app that&apos;s open in it, so the path is fixed — just
+        This project was reported by the app that&apos;s open in it, so the path is fixed — just
         choose its tools below.
       </p>
     );
@@ -2105,7 +2466,7 @@ function RootValidationHint({
   if (state.state === 'idle') {
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        Click <strong>Browse</strong> to pick a folder, or paste an absolute path. Accepts{' '}
+        Click <strong>Browse</strong> to pick a project, or paste an absolute path. Accepts{' '}
         <code>/unix</code>, <code>C:\windows</code>, and <code>file://</code> forms.
       </p>
     );
@@ -2223,10 +2584,10 @@ function EmptyState({
         <div className="bg-primary-50 dark:bg-primary-900/20 mb-4 flex h-16 w-16 items-center justify-center rounded-full">
           <Radio className="text-primary-500 h-8 w-8" />
         </div>
-        <h3 className="mb-2 text-lg font-medium">No folders mapped yet</h3>
+        <h3 className="mb-2 text-lg font-medium">No projects mapped yet</h3>
         <p className="mb-6 max-w-md text-center text-sm text-[rgb(var(--muted))]">
-          When you open a folder in a connected app, it shows up here so you can choose its tools.
-          You can also map a folder ahead of time — add one now to get started.
+          When you open a project in a connected app, it shows up here so you can choose its tools.
+          You can also map a project ahead of time — add one now to get started.
         </p>
         <Button variant="primary" onClick={onCreate}>
           <Plus className="mr-2 h-4 w-4" />

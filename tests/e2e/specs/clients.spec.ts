@@ -95,9 +95,10 @@ test.describe('Connection Details', () => {
     if (count > 0) {
       await clientCards.first().click();
 
-      // The side panel's "routing is workspace-driven" callout exposes a
-      // button that sends the user to Workspaces.
-      await expect(page.getByRole('button', { name: /Open Workspaces/ })).toBeVisible();
+      // The side panel's routing callout exposes a button that sends the user
+      // to the Mapping tab. The label is client-type-specific: DCR clients show
+      // "Open Mapping", API-key clients "Open this client's mapping".
+      await expect(page.getByRole('button', { name: /Open .*apping/ })).toBeVisible();
 
       // Legacy per-client controls MUST NOT be present any more.
       await expect(page.locator('text=Quick Settings')).toHaveCount(0);

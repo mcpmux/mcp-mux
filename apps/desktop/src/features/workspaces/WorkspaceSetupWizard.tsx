@@ -20,20 +20,35 @@ import {
   type WorkspaceBindingInput,
 } from '@/lib/api/workspaceBindings';
 import { isStarterFeatureSet, type FeatureSet } from '@/lib/api/featureSets';
+import { getGatewayStatus } from '@/lib/api/gateway';
+import { getGatewayAuthDisabled } from '@/lib/api/workspaceInstall';
 import type { Space } from '@/lib/api/spaces';
 import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
+import { CreateFeatureSetLink } from './CreateFeatureSetLink';
+import {
+  buildMcpConfig,
+  COPIED_LABEL,
+  COPY_CONFIG_BEARER_LABEL,
+  COPY_CONFIG_LABEL,
+  DEFAULT_MCP_ENDPOINT,
+} from './connectConfig';
 
 /**
- * Guided "set up a folder" walkthrough (the create path; editing an existing
- * mapping still uses the inspector). Three steps, by deliberate UX order:
+ * Guided "set up a mapping" walkthrough (the create path; editing an existing
+ * mapping still uses the inspector). The step sequence is binding-type-aware:
  *
- *   1. Folder       — required; pick via dialog or a detected workspace.
- *   2. Connect apps — OPTIONAL; write the per-workspace config (header) so
- *                     apps route here even without reporting roots.
+ *   1. Identify     — required; pick a project folder via dialog / a detected
+ *                     workspace, or enter an arbitrary identifier.
+ *   2. Connect apps — PROJECT mappings only; write the per-workspace config so
+ *                     apps route here even without reporting roots. ID/virtual
+ *                     mappings skip this — there's no project to write config
+ *                     for, and step 1's ConnectPreview already shows the exact
+ *                     config to paste — so they jump straight to tools.
  *   3. Tools        — defaults to the Space's Starter so Finish is one click;
- *                     creating the binding here is what "maps" the folder.
+ *                     creating the binding here is what "maps" the project.
  *
- * Abandoning before Finish is safe: the folder simply uses the default Starter
+ * So a project mapping is 3 steps; an ID mapping is 2 (identify → tools).
+ * Abandoning before Finish is safe: the project simply uses the default Starter
  * set until it's mapped, and any installed config still points at it.
  */
 export function WorkspaceSetupWizard({
@@ -53,10 +68,12 @@ export function WorkspaceSetupWizard({
   onCreate: (input: WorkspaceBindingInput) => Promise<WorkspaceBinding>;
   onError: (msg: string) => void;
 }) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  // A mapping is keyed by a folder PATH (the default) or an arbitrary ID/label
-  // (a client id, machine name, … — for headless/remote clients). `folder`
-  // holds whichever value the user enters.
+  // Position within the (binding-type-aware) step sequence, not a fixed 1|2|3 —
+  // see `sequence` below. 0-based; the identify step is always index 0.
+  const [stepIndex, setStepIndex] = useState(0);
+  // A mapping is keyed by a folder PATH (the default) or an arbitrary workspace
+  // identifier (any string a client sends in the X-Mcpmux-Workspace header).
+  // `folder` holds whichever value the user enters.
   const [bindingType, setBindingType] = useState<'path' | 'id'>('path');
   const isId = bindingType === 'id';
   const [folder, setFolder] = useState('');
@@ -143,9 +160,26 @@ export function WorkspaceSetupWizard({
     }
   };
 
-  const TITLES = isId
-    ? (['Choose an id', 'How clients connect', 'Choose its tools'] as const)
-    : (['Choose a folder', 'Connect your apps', 'Choose its tools'] as const);
+  // The step sequence depends on the binding type: an ID/virtual mapping skips
+  // the "connect apps" step (step 1's ConnectPreview already covers how to wire
+  // a client), so it's identify → tools; a project mapping keeps all three. The
+  // indicator + nav are driven from the position in this sequence rather than a
+  // hardcoded 1|2|3, so they stay correct as the type toggle (only reachable on
+  // the identify step) flips the length. `safeIndex` clamps defensively so a
+  // shrinking sequence can never point past its end.
+  type StepName = 'identify' | 'apps' | 'tools';
+  const sequence: StepName[] = isId ? ['identify', 'tools'] : ['identify', 'apps', 'tools'];
+  const safeIndex = Math.min(stepIndex, sequence.length - 1);
+  const currentStep = sequence[safeIndex];
+  const isLastStep = safeIndex === sequence.length - 1;
+  const title =
+    currentStep === 'identify'
+      ? isId
+        ? 'Choose an identifier'
+        : 'Select a project'
+      : currentStep === 'apps'
+        ? 'Connect your apps'
+        : 'Choose its tools';
 
   return (
     <div
@@ -157,9 +191,10 @@ export function WorkspaceSetupWizard({
         <div className="flex items-start justify-between">
           <div className="min-w-0">
             <div className="text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              {isId ? 'Set up an ID mapping' : 'Set up a folder'} · Step {step} of 3
+              {isId ? 'Set up an ID mapping' : 'Set up a mapping'} · Step {safeIndex + 1} of{' '}
+              {sequence.length}
             </div>
-            <h2 className="mt-0.5 text-lg font-bold">{TITLES[step - 1]}</h2>
+            <h2 className="mt-0.5 text-lg font-bold">{title}</h2>
           </div>
           <button
             onClick={onClose}
@@ -170,11 +205,11 @@ export function WorkspaceSetupWizard({
           </button>
         </div>
         <div className="mt-3 flex gap-1.5">
-          {[1, 2, 3].map((n) => (
+          {sequence.map((name, i) => (
             <div
-              key={n}
+              key={name}
               className={`h-1 flex-1 rounded-full ${
-                n <= step ? 'bg-primary-500' : 'bg-[rgb(var(--border))]'
+                i <= safeIndex ? 'bg-primary-500' : 'bg-[rgb(var(--border))]'
               }`}
             />
           ))}
@@ -182,16 +217,28 @@ export function WorkspaceSetupWizard({
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {step === 1 && (
+        {currentStep === 'identify' && (
           <div className="space-y-4" data-testid="wizard-step-folder">
-            {/* Folder vs ID — a folder routes editors by the path they open; an
-                id routes a headless/remote client by an exact label it sends. */}
+            {/* Project vs identifier — a project routes editors by the folder
+                path they open; an identifier routes a client by the exact
+                string it sends in the X-Mcpmux-Workspace header. */}
             <div className="flex gap-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-1">
               {(['path', 'id'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setBindingType(t)}
+                  onClick={() => {
+                    if (t === bindingType) return;
+                    // Switching modes starts the new tab clean. `folder` holds
+                    // the value for whichever mode is active, so carrying it (and
+                    // any "already mapped" warning it raised) into the other tab
+                    // would surface stale state. Reset the value and the transient
+                    // validating flag; `alreadyMapped` is derived from `folder`,
+                    // so clearing it dismisses the warning too.
+                    setBindingType(t);
+                    setFolder('');
+                    setValidating(false);
+                  }}
                   className={[
                     'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                     bindingType === t
@@ -200,41 +247,45 @@ export function WorkspaceSetupWizard({
                   ].join(' ')}
                   data-testid={`wizard-type-${t}`}
                 >
-                  {t === 'path' ? 'Folder' : 'ID / label'}
+                  {t === 'path' ? 'Project' : 'Identifier'}
                 </button>
               ))}
             </div>
 
             {isId ? (
               <>
-                <p className="text-sm text-[rgb(var(--muted))]">
-                  Enter an id or label — a client id, machine name, or any string. A headless or
-                  remote client that sends this exact value in the{' '}
-                  <code className="font-mono text-xs">X-Mcpmux-Workspace</code> header gets the
-                  tools you choose next.
-                </p>
-                <input
-                  type="text"
-                  value={folder}
-                  onChange={(e) => setFolder(e.target.value)}
-                  placeholder="e.g. a client id or machine name"
-                  className="focus:ring-primary-500 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2"
-                  data-testid="wizard-id-input"
-                />
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+                    Workspace identifier
+                  </label>
+                  <p className="text-sm text-[rgb(var(--muted))]">
+                    Any string you choose. A client that sends this value in the{' '}
+                    <code className="font-mono text-xs">X-Mcpmux-Workspace</code> header gets the
+                    tools you select next.
+                  </p>
+                  <input
+                    type="text"
+                    value={folder}
+                    onChange={(e) => setFolder(e.target.value)}
+                    placeholder="e.g. my-workspace"
+                    className="focus:ring-primary-500 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2"
+                    data-testid="wizard-id-input"
+                  />
+                </div>
                 {alreadyMapped && (
                   <p
                     className="text-xs text-amber-700 dark:text-amber-400"
                     data-testid="wizard-folder-mapped-error"
                   >
-                    That id is already mapped — edit it from the Mapping list instead.
+                    That identifier is already mapped — edit it from the Mapping list instead.
                   </p>
                 )}
               </>
             ) : (
               <>
                 <p className="text-sm text-[rgb(var(--muted))]">
-                  Which project folder do you want to map? Pick one, or choose a folder an app
-                  already opened.
+                  Which project do you want to map? Pick one, or choose a project an app already
+                  opened.
                 </p>
                 <Button variant="primary" size="sm" onClick={pickFolder} disabled={validating}>
                   {validating ? (
@@ -242,7 +293,7 @@ export function WorkspaceSetupWizard({
                   ) : (
                     <FolderOpen className="mr-2 h-4 w-4" />
                   )}
-                  Choose folder…
+                  Select a project…
                 </Button>
 
                 {folder && (
@@ -268,7 +319,7 @@ export function WorkspaceSetupWizard({
                     className="text-xs text-amber-700 dark:text-amber-400"
                     data-testid="wizard-folder-mapped-error"
                   >
-                    This folder is already mapped — edit it from the Workspaces list instead.
+                    This project is already mapped — edit it from the Mapping list instead.
                   </p>
                 )}
 
@@ -299,47 +350,29 @@ export function WorkspaceSetupWizard({
                 )}
               </>
             )}
+
+            {/* Fill the step's empty space with a live preview of how a client
+                actually uses this mapping — the exact MCP config to paste. */}
+            <ConnectPreview mode={bindingType} value={folder} />
           </div>
         )}
 
-        {step === 2 && (
+        {/* PROJECT mappings only — an ID/virtual mapping's sequence omits this
+            step (its ConnectPreview on step 1 already shows the config to paste). */}
+        {currentStep === 'apps' && (
           <div className="space-y-3" data-testid="wizard-step-apps">
-            {isId ? (
-              <div className="space-y-3">
-                <p className="text-sm text-[rgb(var(--muted))]">
-                  A headless or remote client routes here by sending this id in the{' '}
-                  <code className="font-mono text-xs">X-Mcpmux-Workspace</code> header. There&apos;s
-                  no folder to auto-write app config for — copy the value into your client.
-                </p>
-                <div className="flex items-stretch gap-2">
-                  <code className="flex-1 select-all break-all rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-xs">
-                    {folder || '—'}
-                  </code>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => void navigator.clipboard.writeText(folder).catch(() => {})}
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <WorkspaceInstallPanel workspaceRoot={folder} />
-                <p className="text-center text-xs text-[rgb(var(--muted))]">
-                  Optional — you can connect apps later from this folder&apos;s mapping.
-                </p>
-              </>
-            )}
+            <WorkspaceInstallPanel workspaceRoot={folder} />
+            <p className="text-center text-xs text-[rgb(var(--muted))]">
+              Optional — you can connect apps later from this project&apos;s mapping.
+            </p>
           </div>
         )}
 
-        {step === 3 && (
+        {currentStep === 'tools' && (
           <div className="space-y-4" data-testid="wizard-step-tools">
             <p className="text-sm text-[rgb(var(--muted))]">
-              Pick the tools this folder gets. The default Starter set works out of the box — change
-              it only if this folder should see something different.
+              Pick the tools this project gets. The default Starter set works out of the box — change
+              it only if this project should see something different.
             </p>
 
             <div>
@@ -395,6 +428,11 @@ export function WorkspaceSetupWizard({
                   ))
                 )}
               </div>
+              {/* Only Starter ships with a new Space — point the user at where
+                  they can make another set if it needs different tools. */}
+              <div className="mt-2">
+                <CreateFeatureSetLink spaceId={spaceId} />
+              </div>
             </div>
           </div>
         )}
@@ -405,10 +443,10 @@ export function WorkspaceSetupWizard({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => (step === 1 ? onClose() : setStep((s) => (s - 1) as 1 | 2 | 3))}
+          onClick={() => (safeIndex === 0 ? onClose() : setStepIndex((i) => Math.max(0, i - 1)))}
           data-testid="wizard-back"
         >
-          {step === 1 ? (
+          {safeIndex === 0 ? (
             'Cancel'
           ) : (
             <>
@@ -418,15 +456,15 @@ export function WorkspaceSetupWizard({
           )}
         </Button>
 
-        {step < 3 ? (
+        {!isLastStep ? (
           <Button
             variant="primary"
             size="sm"
-            onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
-            disabled={step === 1 && (!folder || alreadyMapped)}
+            onClick={() => setStepIndex((i) => i + 1)}
+            disabled={currentStep === 'identify' && (!folder || alreadyMapped)}
             data-testid="wizard-next"
           >
-            {step === 2 ? 'Next' : 'Continue'}
+            {currentStep === 'apps' ? 'Next' : 'Continue'}
             <ArrowRight className="ml-1.5 h-4 w-4" />
           </Button>
         ) : (
@@ -446,6 +484,118 @@ export function WorkspaceSetupWizard({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Live "how a client connects" preview for step 1 — shows the exact MCP client
+ * config the user will paste, so the abstract project-vs-identifier choice has a
+ * concrete payoff on screen. Derived purely from `mode` + `value`, so it
+ * updates as the user types and resets cleanly when the binding-type toggle
+ * clears the value.
+ *
+ * Both modes pin the `X-Mcpmux-Workspace` header to the entered value (or a
+ * templated placeholder until one is supplied) — an identifier matches
+ * verbatim, a project matches its folder path. A note reminds the user this
+ * header is only ONE of three ways to route here (OAuth approval, a Bearer API
+ * key, or this header). Two copy buttons are offered: the plain header config,
+ * and a "with Bearer" variant for clients sending an API key (required when
+ * inbound auth is on).
+ */
+function ConnectPreview({ mode, value }: { mode: 'path' | 'id'; value: string }) {
+  const isId = mode === 'id';
+  const [mcpUrl, setMcpUrl] = useState<string | null>(null);
+  const [authDisabled, setAuthDisabled] = useState<boolean | null>(null);
+  const [copied, setCopied] = useState<'header' | 'bearer' | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [status, disabled] = await Promise.all([
+        getGatewayStatus().catch(() => null),
+        getGatewayAuthDisabled().catch(() => null),
+      ]);
+      if (cancelled) return;
+      setMcpUrl(status?.url ? `${status.url}/mcp` : null);
+      setAuthDisabled(disabled);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const endpoint = mcpUrl ?? DEFAULT_MCP_ENDPOINT;
+  // Show a templated placeholder until the user supplies a value — keeps the
+  // header readable as a fill-in rather than an empty string.
+  const workspace = value.trim() || (isId ? '<your-identifier>' : '<your-project-path>');
+  const headerConfig = useMemo(() => buildMcpConfig({ endpoint, workspace }), [endpoint, workspace]);
+  const bearerConfig = useMemo(
+    () => buildMcpConfig({ endpoint, workspace, bearer: true }),
+    [endpoint, workspace]
+  );
+
+  const copy = async (variant: 'header' | 'bearer') => {
+    try {
+      await navigator.clipboard.writeText(variant === 'header' ? headerConfig : bearerConfig);
+      setCopied(variant);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  };
+
+  return (
+    <div
+      className="space-y-2 border-t border-[rgb(var(--border-subtle))] pt-4"
+      data-testid="wizard-connect-preview"
+    >
+      <span className="text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+        How a client connects
+      </span>
+      <p className="text-xs text-[rgb(var(--muted))]">
+        Route here with either the OAuth approval flow, a Bearer API key, or this workspace header.
+      </p>
+      <pre
+        className="overflow-x-auto rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-3 font-mono text-[11px] leading-relaxed"
+        data-testid="wizard-connect-preview-json"
+      >
+        {headerConfig}
+      </pre>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => void copy('header')}
+          className="inline-flex items-center gap-1 rounded-md border border-[rgb(var(--border))] px-2 py-1 text-[11px] font-medium text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))]"
+          data-testid="wizard-connect-preview-copy"
+        >
+          {copied === 'header' ? (
+            <Check className="h-3 w-3 text-green-600" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+          {copied === 'header' ? COPIED_LABEL : COPY_CONFIG_LABEL}
+        </button>
+        <button
+          type="button"
+          onClick={() => void copy('bearer')}
+          className="inline-flex items-center gap-1 rounded-md border border-[rgb(var(--border))] px-2 py-1 text-[11px] font-medium text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))]"
+          data-testid="wizard-connect-preview-copy-bearer"
+        >
+          {copied === 'bearer' ? (
+            <Check className="h-3 w-3 text-green-600" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+          {copied === 'bearer' ? COPIED_LABEL : COPY_CONFIG_BEARER_LABEL}
+        </button>
+      </div>
+      {authDisabled === false && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300">
+          Authentication is on — use the <strong>Copy with Bearer</strong> variant and swap in this
+          client&apos;s API key.
+        </p>
+      )}
     </div>
   );
 }

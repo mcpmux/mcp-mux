@@ -31,7 +31,7 @@ import {
   getFeatureSetWithMembers,
   isStarterFeatureSet,
 } from '@/lib/api/featureSets';
-import { useViewSpace } from '@/stores';
+import { useViewSpace, usePendingFeatureSetNew, useSetPendingFeatureSetNew } from '@/stores';
 import { FeatureSetPanel } from './FeatureSetPanel';
 
 // Get icon for feature set type
@@ -65,6 +65,8 @@ const getFeatureSetTypeName = (type: string) => {
 export function FeatureSetsPage() {
   const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
   const viewSpace = useViewSpace();
+  const pendingCreate = usePendingFeatureSetNew();
+  const clearPendingCreate = useSetPendingFeatureSetNew();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -102,6 +104,18 @@ export function FeatureSetsPage() {
     setShowCreateModal(false);
     loadData(viewSpace?.id);
   }, [viewSpace?.id, loadData]);
+
+  // Redirected here from a "Create a new feature set" shortcut on the Mapping
+  // surfaces — open the Create dialog on arrival, once a Space is available to
+  // create the set in. Runs after the viewSpace effect above (which resets the
+  // dialog on Space change), so the open wins. Clears the flag so a later visit
+  // doesn't re-open it.
+  useEffect(() => {
+    if (pendingCreate && viewSpace) {
+      setShowCreateModal(true);
+      clearPendingCreate(false);
+    }
+  }, [pendingCreate, viewSpace, clearPendingCreate]);
 
   // Refresh when a feature set changes outside this page — most importantly
   // the `mcpmux_manage_feature_set` meta-tool (create/update/delete) invoked by

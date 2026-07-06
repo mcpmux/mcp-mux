@@ -162,12 +162,12 @@ function GetStartedStrip() {
 }
 
 /**
- * Per-folder setup entry point. The ConnectionCard above connects an app to
- * the gateway globally; this routes into the Mapping walkthrough (the create
- * wizard, in folder mode) to map a specific project and write its per-folder
- * config.
+ * Mapping setup entry point. The ConnectionCard above connects an app to the
+ * gateway globally; this routes into the Mapping walkthrough (the create
+ * wizard) to map a specific project — or an arbitrary identifier — to its tools
+ * and write its per-project config.
  */
-function SetUpFolderCard() {
+function SetUpMappingCard() {
   const navigateTo = useNavigateTo();
   const openWizard = useSetPendingWorkspaceNew();
   return (
@@ -184,10 +184,10 @@ function SetUpFolderCard() {
         <FolderPlus className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold">Set up a folder</span>
+        <span className="block text-sm font-semibold">Set up a mapping</span>
         <span className="block text-xs text-[rgb(var(--muted))]">
-          Map a project to its tools and connect your apps to it — even ones that don&apos;t report
-          the folder.
+          Map a project (or any identifier) to its tools and connect your apps to it — even ones
+          that don&apos;t report their folder.
         </span>
       </span>
       <ArrowRight className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))] transition-transform group-hover:translate-x-0.5" />
@@ -276,8 +276,8 @@ export function HomePage() {
           pending-approval nudge. */}
       <ConnectionCard />
 
-      {/* Per-folder setup — opens the Mapping walkthrough (folder mode). */}
-      <SetUpFolderCard />
+      {/* Mapping setup — opens the Mapping walkthrough (project or identifier). */}
+      <SetUpMappingCard />
 
       {/* Stat tiles — each is a shortcut into the page that manages it. */}
       <div

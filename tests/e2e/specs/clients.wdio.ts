@@ -41,9 +41,13 @@ describe('Connections - Page shell', () => {
 
       const pageSource = await browser.getPageSource();
 
-      // Positive: the new panel exposes the Workspaces entry point.
+      // Positive: the new panel exposes the Mapping entry point. The routing
+      // callout copy is client-type-specific ("Routing follows …") with an
+      // "Open Mapping" / "Open this client's mapping" link to the Mapping tab.
       const hasWorkspacesLink =
-        pageSource.includes('Open Workspaces') || pageSource.includes('workspace-driven');
+        pageSource.includes('Open Mapping') ||
+        pageSource.includes('Open this client') ||
+        pageSource.includes('Routing follows');
       expect(hasWorkspacesLink).toBe(true);
 
       // Negative: all removed per-client routing sections must be gone.

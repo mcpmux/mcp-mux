@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from '@/lib/events';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import {
   AlertCircle,

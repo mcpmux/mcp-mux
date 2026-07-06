@@ -27,6 +27,26 @@ Verify it's up:
 curl http://localhost:45818/health        # {"status":"ok","version":"..."}
 ```
 
+## Web admin
+
+The container image (and a `--features embed-ui` build) serves the **full McpMux
+admin UI** — the same React app the desktop uses — at **`/app`**. Open
+`http://<host>:45818/app/` (or your TLS origin), sign in with the admin token
+printed at startup (or `MCPMUX_ADMIN_TOKEN`), and manage Spaces, FeatureSets,
+clients, and mappings from the browser. It drives the management API's
+command-mirror RPC (`POST /admin/api/rpc/<command>`); OS-only desktop features
+(tray, updater, on-disk client-config editing) are unavailable in the browser.
+
+There is also a lightweight standalone console at `/admin` (no build step
+needed) covering the core read/write loop.
+
+Build the binary with the embedded UI locally:
+
+```bash
+cd apps/desktop && MCPMUX_WEB_BASE=/app/ pnpm build:web   # produces dist/
+cargo build --release -p mcpmux-serve --features embed-ui
+```
+
 ## Configuration
 
 Precedence: **defaults < TOML file < environment variables.**

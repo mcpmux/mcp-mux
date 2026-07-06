@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from '@/lib/events';
 import { Download, Check, X, AlertCircle, Loader2, Info } from 'lucide-react';
 import {
   Button,

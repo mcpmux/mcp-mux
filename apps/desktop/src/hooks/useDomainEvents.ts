@@ -41,7 +41,7 @@
  */
 
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { listen, UnlistenFn, Event } from '@tauri-apps/api/event';
+import { listen, UnlistenFn, Event } from '@/lib/events';
 
 // ============================================================================
 // TYPES

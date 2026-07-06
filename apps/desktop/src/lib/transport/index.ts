@@ -28,8 +28,20 @@ function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-/** The active transport for this runtime. */
-export const transport: Transport = isTauri() ? tauriTransport : createHttpTransport();
+/** Storage key for the web-admin session token (set by the login gate). */
+export const WEB_ADMIN_TOKEN_KEY = 'mcpmux_admin_token';
+
+/** The active transport for this runtime. In the browser (web admin) the HTTP
+ *  transport authenticates with the admin token the login gate stored. */
+export const transport: Transport = isTauri()
+  ? tauriTransport
+  : createHttpTransport({
+      getToken: () =>
+        typeof localStorage !== 'undefined' ? localStorage.getItem(WEB_ADMIN_TOKEN_KEY) : null,
+    });
+
+/** True when running as the browser web admin (not the Tauri shell). */
+export const isWebAdmin = !isTauri();
 
 /** Convenience re-exports so call sites can `import { call, subscribe }`. */
 export const call: Transport['call'] = (cmd, args) => transport.call(cmd, args);

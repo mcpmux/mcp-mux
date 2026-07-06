@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { call as invoke } from '@/lib/transport';
-import { emit } from '@tauri-apps/api/event';
+import { emit } from '@/lib/events';
 import App from './App';
+import { WebAdminGate } from './WebAdminGate';
 import './index.css';
 
 // Expose Tauri API for E2E testing
@@ -21,6 +22,8 @@ window.__TAURI_TEST_API__ = { invoke, emit };
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <WebAdminGate>
+      <App />
+    </WebAdminGate>
   </React.StrictMode>
 );

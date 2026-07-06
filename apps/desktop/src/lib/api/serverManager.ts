@@ -8,7 +8,7 @@
  */
 
 import { call as invoke } from "@/lib/transport";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { listen, UnlistenFn } from "@/lib/events";
 
 /**
  * Connection status - matches backend ConnectionStatus enum

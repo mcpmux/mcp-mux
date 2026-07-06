@@ -11,6 +11,13 @@ rust-version.workspace = true
 name = "mcpmux"
 path = "src/main.rs"
 
+[features]
+# Off by default so `cargo build --workspace` never requires a prebuilt
+# frontend. Enable to embed the desktop React UI (needs apps/desktop/dist,
+# produced by `pnpm build:web`): `cargo build -p mcpmux-serve --features embed-ui`.
+default = []
+embed-ui = ["dep:rust-embed", "dep:mime_guess"]
+
 [dependencies]
 mcpmux-core = { path = "../mcpmux-core" }
 mcpmux-gateway = { path = "../mcpmux-gateway" }
@@ -23,3 +30,6 @@ toml = "0.8"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid = { workspace = true }
+axum = { workspace = true }
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }

@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { call as invoke } from '@/lib/transport';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from '@/lib/events';
 import { AlertCircle, Check, Loader2, X } from 'lucide-react';
 import {
   Button,

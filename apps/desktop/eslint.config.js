@@ -34,14 +34,19 @@ export default tseslint.config(
               message:
                 "Import { call } from '@/lib/transport' instead of raw Tauri invoke (keeps the UI transport-independent).",
             },
+            {
+              name: '@tauri-apps/api/event',
+              message:
+                "Import { listen } from '@/lib/events' instead of raw Tauri events (routes via SSE in the web admin).",
+            },
           ],
         },
       ],
     },
   },
   {
-    // The Tauri transport is the ONE place allowed to touch raw IPC.
-    files: ['src/lib/transport/tauri.ts'],
+    // The Tauri transport + events shim are the ONLY places allowed raw IPC.
+    files: ['src/lib/transport/tauri.ts', 'src/lib/events.ts'],
     rules: { 'no-restricted-imports': 'off' },
   }
 );

@@ -430,9 +430,35 @@ async fn admin_delete_binding(
 // Events (SSE)
 // ---------------------------------------------------------------------------
 
+/// Map a domain event to the UI event name the React app listens for (the same
+/// grouped names the desktop's Tauri bridge emits), so the web admin's `listen`
+/// subscriptions fire on SSE. Unmapped events fall back to a hyphenated
+/// type name.
+fn ui_event_name(event: &mcpmux_core::DomainEvent) -> String {
+    use mcpmux_core::DomainEvent as E;
+    match event {
+        E::SpaceCreated { .. } | E::SpaceUpdated { .. } | E::SpaceDeleted { .. } => {
+            "space-changed".into()
+        }
+        E::FeatureSetCreated { .. }
+        | E::FeatureSetUpdated { .. }
+        | E::FeatureSetDeleted { .. }
+        | E::FeatureSetMembersChanged { .. } => "feature-set-changed".into(),
+        E::WorkspaceBindingChanged { .. } => "workspace-binding-changed".into(),
+        E::ClientRegistered { .. }
+        | E::ClientReconnected { .. }
+        | E::ClientUpdated { .. }
+        | E::ClientDeleted { .. }
+        | E::ClientTokenIssued { .. }
+        | E::ClientGrantChanged { .. } => "client-changed".into(),
+        E::ServerStatusChanged { .. } => "server-status".into(),
+        other => other.type_name().replace('_', "-"),
+    }
+}
+
 /// `GET /admin/api/events` — server-sent stream of domain change events, so the
-/// web admin re-fetches on change without polling. Each SSE `event:` is the
-/// domain event's name; `data:` is its JSON.
+/// web admin re-fetches on change without polling. Each SSE `event:` is the UI
+/// event name the app listens for; `data:` is the event JSON.
 async fn admin_events(
     State(app_state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
@@ -445,7 +471,7 @@ async fn admin_events(
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    let name = event.type_name().to_string();
+                    let name = ui_event_name(&event);
                     let data = serde_json::to_string(&event)
                         .unwrap_or_else(|_| "{}".to_string());
                     yield Ok(Event::default().event(name).data(data));

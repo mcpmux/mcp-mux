@@ -49,7 +49,9 @@ export function createHttpTransport(opts: HttpTransportOptions = {}): Transport 
     subscribe(event: string, handler: (payload: unknown) => void): () => void {
       // A single shared EventSource per subscribe keeps this simple; the
       // server fans out event names. Reconnect is handled by EventSource.
-      const url = `${baseUrl}/admin/api/events`;
+      // EventSource can't set headers, so the token rides as a query param.
+      const t = opts.getToken?.();
+      const url = `${baseUrl}/admin/api/events${t ? `?token=${encodeURIComponent(t)}` : ''}`;
       const es = new EventSource(url, { withCredentials: true });
       const listener = (e: MessageEvent) => {
         try {

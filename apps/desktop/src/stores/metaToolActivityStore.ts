@@ -10,7 +10,7 @@
  */
 
 import { create } from 'zustand';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { listen, type UnlistenFn } from '@/lib/events';
 import type { MetaToolAuditEvent } from '@/lib/api/metaTools';
 
 /** Ring-buffer size — most recent N invocations kept in memory. */

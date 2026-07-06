@@ -7,6 +7,8 @@
 //! key) can be injected via `MCPMUX_MASTER_KEY` for stateless key management.
 
 mod config;
+#[cfg(feature = "embed-ui")]
+mod webui;
 
 use std::sync::Arc;
 
@@ -181,11 +183,17 @@ async fn run(config: Config) -> Result<()> {
             .filter(|t| !t.trim().is_empty())
             .unwrap_or_else(generate_admin_token),
     );
-    let management_router = mcpmux_gateway::server::management::management_router(
+    let extra_router = mcpmux_gateway::server::management::management_router(
         server.app_state(),
         admin_token.clone(),
     );
-    // Print the token once so the operator can reach the admin API.
+    // Embedded web admin (the desktop React app served headless at /app).
+    #[cfg(feature = "embed-ui")]
+    let extra_router = {
+        info!("[serve] Web admin mounted at /app");
+        extra_router.merge(webui::router())
+    };
+    // Print the token once so the operator can reach the admin API + sign in.
     info!(
         "[serve] Admin API mounted at /admin/api (token: {})",
         admin_token
@@ -205,7 +213,7 @@ async fn run(config: Config) -> Result<()> {
     // port cleanly (important for container restarts). The management router is
     // merged into the gateway's own router.
     server
-        .run_with_shutdown_and_router(management_router, shutdown_signal())
+        .run_with_shutdown_and_router(extra_router, shutdown_signal())
         .await
         .context("gateway server error")
 }

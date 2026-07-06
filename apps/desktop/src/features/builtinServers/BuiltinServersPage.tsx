@@ -16,7 +16,7 @@
 import { useEffect, useState } from 'react';
 import { Switch, useToast, ToastContainer } from '@mcpmux/ui';
 import { Sparkles, Brain, Wrench, Eye, Pencil, Boxes, Loader2, ShieldCheck } from 'lucide-react';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from '@/lib/events';
 import {
   listBuiltinServers,
   setBuiltinServerEnabled,

@@ -8,7 +8,18 @@
 # Build context is the workspace root (mcp-mux/):
 #   docker build -f crates/mcpmux-serve/Dockerfile -t mcpmux/gateway .
 
-# ---- build stage ----
+# ---- web UI build stage ----
+# Build the desktop React app for the web (base /app/), so the Rust build can
+# embed it (feature `embed-ui`) and serve the full admin UI at /app.
+FROM node:20-bookworm AS webbuild
+WORKDIR /src
+RUN corepack enable
+COPY . .
+RUN pnpm install --frozen-lockfile=false \
+    && cd apps/desktop \
+    && MCPMUX_WEB_BASE=/app/ pnpm build:web
+
+# ---- Rust build stage ----
 # Needs a recent toolchain: some transitive deps require edition2024 (Rust 1.85+).
 FROM rust:1-bookworm AS build
 WORKDIR /src
@@ -22,9 +33,11 @@ RUN apt-get update \
 
 # Copy the whole workspace (the serve crate depends on the sibling crates).
 COPY . .
+# Bring in the built web UI so `embed-ui` can embed it.
+COPY --from=webbuild /src/apps/desktop/dist ./apps/desktop/dist
 
-# Build only the serve binary in release mode.
-RUN cargo build --release -p mcpmux-serve
+# Build the serve binary with the embedded web admin.
+RUN cargo build --release -p mcpmux-serve --features embed-ui
 
 # ---- runtime stage ----
 FROM debian:bookworm-slim AS runtime

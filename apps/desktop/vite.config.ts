@@ -7,6 +7,13 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // Public base path. Default `/` (Tauri desktop bundle). For the headless web
+  // admin the app is served under `/app/`, set via MCPMUX_WEB_BASE at build
+  // time (an env value, so it isn't mangled by MSYS path conversion the way a
+  // `--base=/app/` CLI arg is).
+  // @ts-expect-error process is a nodejs global
+  base: process.env.MCPMUX_WEB_BASE || '/',
+
   plugins: [react()],
 
   // Path aliases

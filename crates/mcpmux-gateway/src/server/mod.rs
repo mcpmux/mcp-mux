@@ -8,6 +8,7 @@ mod dependencies;
 mod handlers;
 pub mod logging_middleware;
 pub mod management;
+pub mod management_rpc;
 pub mod pairing;
 pub mod rate_limit;
 mod service_container;

@@ -496,6 +496,12 @@ pub fn management_router(app_state: AppState, admin_token: Arc<String>) -> Route
     let api = Router::new()
         .route("/admin/api/info", get(admin_info))
         .route("/admin/api/status", get(admin_status))
+        // Command-mirror JSON-RPC — the desktop React UI served headless drives
+        // this with the same command names/payloads it sends over Tauri IPC.
+        .route(
+            "/admin/api/rpc/{command}",
+            axum::routing::post(super::management_rpc::rpc),
+        )
         .route(
             "/admin/api/spaces",
             get(admin_list_spaces).post(admin_create_space),

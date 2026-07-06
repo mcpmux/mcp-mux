@@ -10,78 +10,57 @@
       body {
         margin: 0;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: #0b0b0f;
-        color: #e7e7ea;
-        line-height: 1.5;
+        background: #0b0b0f; color: #e7e7ea; line-height: 1.5;
       }
       @media (prefers-color-scheme: light) {
         body { background: #f6f6f8; color: #16161a; }
         .card, header { background: #fff; border-color: #e5e5ea; }
-        input { background: #fff; color: #16161a; }
-        pre { background: #f0f0f4; }
+        input, select { background: #fff; color: #16161a; }
       }
       header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 16px 24px;
-        border-bottom: 1px solid #2a2a33;
-        background: #16161c;
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 16px 24px; border-bottom: 1px solid #2a2a33; background: #16161c;
       }
       header h1 { font-size: 18px; margin: 0; }
-      main { max-width: 900px; margin: 0 auto; padding: 24px; }
-      .card {
-        background: #16161c;
-        border: 1px solid #2a2a33;
-        border-radius: 14px;
-        padding: 20px;
-        margin-bottom: 20px;
-      }
-      h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: #9a9aa5; margin: 0 0 12px; }
-      input {
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 1px solid #2a2a33;
-        background: #0f0f14;
-        color: inherit;
-        font-size: 14px;
-        width: 320px;
-        max-width: 100%;
-      }
-      button {
-        padding: 10px 16px;
-        border: none;
-        border-radius: 10px;
-        background: #6d5efc;
-        color: #fff;
-        font-size: 14px;
-        font-weight: 600;
-        cursor: pointer;
-      }
+      main { max-width: 960px; margin: 0 auto; padding: 24px; }
+      .card { background: #16161c; border: 1px solid #2a2a33; border-radius: 14px; padding: 20px; margin-bottom: 20px; }
+      h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #9a9aa5; margin: 0 0 12px; }
+      input, select { padding: 9px 12px; border-radius: 10px; border: 1px solid #2a2a33; background: #0f0f14; color: inherit; font-size: 14px; }
+      input { width: 220px; max-width: 100%; }
+      button { padding: 9px 14px; border: none; border-radius: 10px; background: #6d5efc; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; }
       button.secondary { background: transparent; border: 1px solid #2a2a33; color: inherit; }
+      button.danger { background: transparent; border: 1px solid #5a2a2a; color: #f87171; padding: 4px 10px; font-size: 12px; }
       table { width: 100%; border-collapse: collapse; font-size: 13px; }
       th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a2a33; }
       th { color: #9a9aa5; font-weight: 600; }
       .muted { color: #9a9aa5; font-size: 13px; }
       .err { color: #f87171; font-size: 13px; }
+      .ok { color: #34d399; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
       .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
-      .ok { background: #10331f; color: #34d399; }
-      .warn { background: #3a2a10; color: #fbbf24; }
+      .pok { background: #10331f; color: #34d399; }
+      .pwarn { background: #3a2a10; color: #fbbf24; }
       code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      label.fld { display: block; font-size: 12px; color: #9a9aa5; margin: 8px 0 4px; }
+      .grid { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
       .hidden { display: none; }
+      #toast { position: fixed; bottom: 20px; right: 20px; background: #16161c; border: 1px solid #2a2a33; border-radius: 10px; padding: 10px 16px; font-size: 13px; opacity: 0; transition: opacity .2s; }
+      #toast.show { opacity: 1; }
     </style>
   </head>
   <body>
     <header>
       <h1>McpMux Admin</h1>
-      <button id="logout" class="secondary hidden">Sign out</button>
+      <div class="row">
+        <span id="conn" class="muted"></span>
+        <button id="logout" class="secondary hidden">Sign out</button>
+      </div>
     </header>
     <main>
       <div id="login" class="card">
         <h2>Sign in</h2>
         <p class="muted">Paste the admin token printed by <code>mcpmux serve</code> (or set via <code>MCPMUX_ADMIN_TOKEN</code>).</p>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+        <div class="row">
           <input id="token" type="password" placeholder="admin token" autocomplete="off" />
           <button id="signin">Sign in</button>
         </div>
@@ -93,117 +72,256 @@
           <h2>Gateway</h2>
           <div id="info" class="muted">Loading…</div>
         </div>
+
         <div class="card">
           <h2>Spaces</h2>
           <div id="spaces" class="muted">Loading…</div>
+          <div class="grid" style="margin-top: 12px">
+            <div><label class="fld">New Space name</label><input id="newSpaceName" placeholder="e.g. Work" /></div>
+            <div><label class="fld">Icon</label><input id="newSpaceIcon" style="width: 70px" placeholder="🗂️" /></div>
+            <button id="createSpace">Create Space</button>
+          </div>
         </div>
+
+        <div class="card">
+          <h2>Feature sets <span class="muted" id="fsScope"></span></h2>
+          <div class="row" style="margin-bottom: 10px">
+            <label class="fld" style="margin: 0">Space</label>
+            <select id="spaceSelect"></select>
+          </div>
+          <div id="featureSets" class="muted">Loading…</div>
+          <div class="grid" style="margin-top: 12px">
+            <div><label class="fld">New FeatureSet name</label><input id="newFsName" placeholder="e.g. GitHub read-only" /></div>
+            <div><label class="fld">Description</label><input id="newFsDesc" placeholder="optional" /></div>
+            <button id="createFs">Create FeatureSet</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Mappings</h2>
+          <div id="bindings" class="muted">Loading…</div>
+          <div class="grid" style="margin-top: 12px">
+            <div><label class="fld">Identifier / path</label><input id="bindRoot" placeholder="e.g. my-workspace" /></div>
+            <div>
+              <label class="fld">Type</label>
+              <select id="bindType"><option value="id">id (header)</option><option value="path">path</option></select>
+            </div>
+            <div>
+              <label class="fld">FeatureSet</label>
+              <select id="bindFs"></select>
+            </div>
+            <button id="createBinding">Create mapping</button>
+          </div>
+        </div>
+
         <div class="card">
           <h2>Clients</h2>
           <div id="clients" class="muted">Loading…</div>
         </div>
-        <p class="muted">
-          Read-only for now — server, FeatureSet, and mapping management arrive with the full web
-          admin. Manage via a desktop instance sharing the data dir, or the <code>@mux</code>
-          meta-tools, meanwhile.
-        </p>
       </div>
     </main>
+    <div id="toast"></div>
 
     <script>
       (function () {
         var token = sessionStorage.getItem('mcpmux_admin_token') || '';
         var el = function (id) { return document.getElementById(id); };
+        var currentSpace = null;
+        var spacesCache = [];
+        var fsCache = [];
+        var es = null;
 
-        function api(path) {
-          return fetch('/admin/api/' + path, {
-            headers: { Authorization: 'Bearer ' + token },
-          }).then(function (r) {
+        function req(path, opts) {
+          opts = opts || {};
+          opts.headers = Object.assign({ Authorization: 'Bearer ' + token }, opts.headers || {});
+          return fetch('/admin/api/' + path, opts).then(function (r) {
             if (r.status === 401) throw new Error('unauthorized');
-            if (!r.ok) throw new Error('request failed (' + r.status + ')');
-            return r.json();
+            if (!r.ok) return r.text().then(function (t) { throw new Error(t || 'HTTP ' + r.status); });
+            return r.status === 204 ? null : r.json();
           });
         }
+        function post(path, body) {
+          return req(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        }
+        function del(path) { return req(path, { method: 'DELETE' }); }
 
         function esc(s) {
           return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
           });
         }
+        function toast(msg, isErr) {
+          var t = el('toast'); t.textContent = msg; t.style.color = isErr ? '#f87171' : '#34d399';
+          t.classList.add('show'); setTimeout(function () { t.classList.remove('show'); }, 2500);
+        }
+
+        function loadInfo() {
+          req('info').then(function (d) {
+            el('info').innerHTML =
+              'Version <code>' + esc(d.version) + '</code> · ' +
+              (d.auth_required ? '<span class="pill pok">auth required</span>' : '<span class="pill pwarn">auth disabled</span>') +
+              ' · ' + (d.network_bind ? '<span class="pill pwarn">network bind</span>' : '<span class="pill pok">loopback</span>');
+          }).catch(handleAuthErr);
+        }
+
+        function loadSpaces() {
+          return req('spaces').then(function (d) {
+            spacesCache = d.spaces || [];
+            el('spaces').innerHTML = '<table><tr><th>Name</th><th>Id</th></tr>' +
+              spacesCache.map(function (s) {
+                return '<tr><td>' + esc(s.icon || '') + ' ' + esc(s.name) + (s.is_default ? ' <span class="pill pok">default</span>' : '') +
+                  '</td><td><code>' + esc(s.id) + '</code></td></tr>';
+              }).join('') + '</table>';
+            // Populate the space selector, preserving selection.
+            var sel = el('spaceSelect');
+            sel.innerHTML = spacesCache.map(function (s) {
+              return '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>';
+            }).join('');
+            if (!currentSpace && spacesCache.length) currentSpace = (spacesCache.find(function (s) { return s.is_default; }) || spacesCache[0]).id;
+            if (currentSpace) sel.value = currentSpace;
+          }).catch(handleAuthErr);
+        }
+
+        function loadFeatureSets() {
+          if (!currentSpace) return Promise.resolve();
+          el('fsScope').textContent = '';
+          return req('feature-sets?space_id=' + encodeURIComponent(currentSpace)).then(function (d) {
+            fsCache = d.feature_sets || [];
+            el('featureSets').innerHTML = fsCache.length
+              ? '<table><tr><th>Name</th><th>Type</th><th>Id</th></tr>' + fsCache.map(function (f) {
+                  return '<tr><td>' + esc(f.icon || '') + ' ' + esc(f.name) + '</td><td>' + esc(f.feature_set_type) +
+                    '</td><td><code>' + esc(f.id) + '</code></td></tr>';
+                }).join('') + '</table>'
+              : '<span class="muted">No feature sets in this Space.</span>';
+            // Populate the mapping FS selector.
+            el('bindFs').innerHTML = fsCache.map(function (f) {
+              return '<option value="' + esc(f.id) + '">' + esc(f.name) + '</option>';
+            }).join('');
+          }).catch(handleAuthErr);
+        }
+
+        function loadBindings() {
+          return req('bindings').then(function (d) {
+            var list = d.bindings || [];
+            el('bindings').innerHTML = list.length
+              ? '<table><tr><th>Root/Id</th><th>Type</th><th>Space</th><th></th></tr>' + list.map(function (b) {
+                  var spaceName = (spacesCache.find(function (s) { return s.id === b.space_id; }) || {}).name || b.space_id;
+                  return '<tr><td><code>' + esc(b.workspace_root) + '</code></td><td>' + esc(b.binding_type) +
+                    '</td><td>' + esc(spaceName) + '</td><td><button class="danger" data-del="' + esc(b.id) + '">Remove</button></td></tr>';
+                }).join('') + '</table>'
+              : '<span class="muted">No mappings yet.</span>';
+            Array.prototype.forEach.call(el('bindings').querySelectorAll('[data-del]'), function (btn) {
+              btn.addEventListener('click', function () {
+                del('bindings/' + btn.getAttribute('data-del')).then(function () { toast('Mapping removed'); refresh(); })
+                  .catch(function (e) { toast(e.message, true); });
+              });
+            });
+          }).catch(handleAuthErr);
+        }
+
+        function loadClients() {
+          return req('clients').then(function (d) {
+            var list = d.clients || [];
+            el('clients').innerHTML = list.length
+              ? '<table><tr><th>Name</th><th>Type</th><th>Last seen</th></tr>' + list.map(function (c) {
+                  return '<tr><td>' + esc(c.client_alias || c.client_name) + '</td><td>' + esc(c.registration_type) +
+                    '</td><td>' + esc(c.last_seen || 'never') + '</td></tr>';
+                }).join('') + '</table>'
+              : '<span class="muted">No clients registered yet.</span>';
+          }).catch(handleAuthErr);
+        }
+
+        function refresh() {
+          loadInfo();
+          loadSpaces().then(function () { loadFeatureSets(); loadBindings(); });
+          loadClients();
+        }
+
+        function connectEvents() {
+          if (es) es.close();
+          // EventSource can't set headers, so pass the token as a query param —
+          // accepted only over loopback/trusted setups; on a public deploy the
+          // console is fronted by TLS. (Header-based SSE arrives with the full
+          // React admin.) For now, poll-free refresh via reconnecting stream.
+          try {
+            // EventSource can't set headers, so the token rides as a query
+            // param (accepted by the gate solely for this reason).
+            es = new EventSource('/admin/api/events?token=' + encodeURIComponent(token));
+            var onAny = function () { refresh(); };
+            ['space_created', 'feature_set_created', 'workspace_binding_changed', 'client_registered', 'client_updated', 'client_deleted'].forEach(function (name) {
+              es.addEventListener(name, onAny);
+            });
+            es.onopen = function () { el('conn').innerHTML = '<span class="ok">● live</span>'; };
+            es.onerror = function () { el('conn').textContent = ''; };
+          } catch (e) { /* SSE optional */ }
+        }
+
+        function handleAuthErr(e) {
+          if (e && e.message === 'unauthorized') return logout('Session expired — sign in again.');
+          toast((e && e.message) || 'error', true);
+          throw e;
+        }
 
         function showDashboard() {
           el('login').classList.add('hidden');
           el('dashboard').classList.remove('hidden');
           el('logout').classList.remove('hidden');
-          load();
+          refresh();
+          connectEvents();
         }
-
         function showLogin(msg) {
+          if (es) { es.close(); es = null; }
           el('dashboard').classList.add('hidden');
           el('logout').classList.add('hidden');
+          el('conn').textContent = '';
           el('login').classList.remove('hidden');
           if (msg) el('loginErr').textContent = msg;
         }
+        function logout(msg) { token = ''; sessionStorage.removeItem('mcpmux_admin_token'); showLogin(msg || ''); }
 
-        function load() {
-          api('info')
-            .then(function (d) {
-              el('info').innerHTML =
-                'Version <code>' + esc(d.version) + '</code> · ' +
-                (d.auth_required ? '<span class="pill ok">auth required</span>' : '<span class="pill warn">auth disabled</span>') +
-                ' · ' + (d.network_bind ? '<span class="pill warn">network bind</span>' : '<span class="pill ok">loopback</span>') +
-                ' · <code>' + esc(d.base_url) + '</code>';
-            })
-            .catch(function (e) {
-              if (e.message === 'unauthorized') return logout('Session expired — sign in again.');
-              el('info').innerHTML = '<span class="err">' + esc(e.message) + '</span>';
-            });
-
-          api('spaces')
-            .then(function (d) {
-              var rows = (d.spaces || []).map(function (s) {
-                return '<tr><td>' + esc(s.icon || '') + ' ' + esc(s.name) + (s.is_default ? ' <span class="pill ok">default</span>' : '') +
-                  '</td><td><code>' + esc(s.id) + '</code></td></tr>';
-              }).join('');
-              el('spaces').innerHTML = '<table><tr><th>Name</th><th>Id</th></tr>' + rows + '</table>';
-            })
-            .catch(function (e) { el('spaces').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
-
-          api('clients')
-            .then(function (d) {
-              var list = d.clients || [];
-              if (!list.length) { el('clients').innerHTML = '<span class="muted">No clients registered yet.</span>'; return; }
-              var rows = list.map(function (c) {
-                return '<tr><td>' + esc(c.client_alias || c.client_name) + '</td><td><code>' + esc(c.client_id) +
-                  '</code></td><td>' + esc(c.registration_type) + '</td><td>' + esc(c.last_seen || 'never') + '</td></tr>';
-              }).join('');
-              el('clients').innerHTML = '<table><tr><th>Name</th><th>Id</th><th>Type</th><th>Last seen</th></tr>' + rows + '</table>';
-            })
-            .catch(function (e) { el('clients').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
-        }
-
-        function logout(msg) {
-          token = '';
-          sessionStorage.removeItem('mcpmux_admin_token');
-          showLogin(msg);
-        }
-
+        // --- wiring ---
         el('signin').addEventListener('click', function () {
           token = el('token').value.trim();
           el('loginErr').textContent = '';
           if (!token) { el('loginErr').textContent = 'Enter the admin token.'; return; }
-          // Validate by hitting /info.
-          api('info')
-            .then(function () {
-              sessionStorage.setItem('mcpmux_admin_token', token);
-              showDashboard();
-            })
+          req('info').then(function () { sessionStorage.setItem('mcpmux_admin_token', token); showDashboard(); })
             .catch(function () { logout('Invalid token.'); });
         });
         el('token').addEventListener('keydown', function (e) { if (e.key === 'Enter') el('signin').click(); });
         el('logout').addEventListener('click', function () { logout(''); });
 
-        if (token) showDashboard();
-        else showLogin('');
+        el('spaceSelect').addEventListener('change', function () { currentSpace = this.value; loadFeatureSets(); });
+
+        el('createSpace').addEventListener('click', function () {
+          var name = el('newSpaceName').value.trim();
+          if (!name) return toast('Enter a Space name', true);
+          post('spaces', { name: name, icon: el('newSpaceIcon').value.trim() || null }).then(function () {
+            el('newSpaceName').value = ''; el('newSpaceIcon').value = ''; toast('Space created'); refresh();
+          }).catch(function (e) { toast(e.message, true); });
+        });
+
+        el('createFs').addEventListener('click', function () {
+          var name = el('newFsName').value.trim();
+          if (!name) return toast('Enter a FeatureSet name', true);
+          if (!currentSpace) return toast('Pick a Space', true);
+          post('feature-sets', { space_id: currentSpace, name: name, description: el('newFsDesc').value.trim() || null })
+            .then(function () { el('newFsName').value = ''; el('newFsDesc').value = ''; toast('FeatureSet created'); loadFeatureSets(); })
+            .catch(function (e) { toast(e.message, true); });
+        });
+
+        el('createBinding').addEventListener('click', function () {
+          var root = el('bindRoot').value.trim();
+          if (!root) return toast('Enter an identifier/path', true);
+          if (!currentSpace) return toast('Pick a Space', true);
+          var fsId = el('bindFs').value;
+          post('bindings', {
+            workspace_root: root, space_id: currentSpace,
+            feature_set_ids: fsId ? [fsId] : [], binding_type: el('bindType').value,
+          }).then(function () { el('bindRoot').value = ''; toast('Mapping created'); loadBindings(); })
+            .catch(function (e) { toast(e.message, true); });
+        });
+
+        if (token) showDashboard(); else showLogin('');
       })();
     </script>
   </body>

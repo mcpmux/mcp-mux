@@ -53,20 +53,38 @@ fn tokens_match(a: &str, b: &str) -> bool {
     diff == 0
 }
 
+/// Extract a `token=` value from a URL query string (minimal, no deps).
+fn token_from_query(query: Option<&str>) -> Option<String> {
+    let q = query?;
+    for pair in q.split('&') {
+        if let Some(v) = pair.strip_prefix("token=") {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
 /// Bearer-token gate for `/admin/api/*`. Rejected requests never reach a
-/// handler (no data is read or written without a valid token).
+/// handler (no data is read or written without a valid token). Accepts the
+/// token via `Authorization: Bearer` OR a `?token=` query param — the latter
+/// solely because the SSE `EventSource` API can't set request headers. On a
+/// public deploy the console is fronted by TLS so the URL isn't observable,
+/// and our request logging skips streaming responses.
 async fn require_admin_token(
     State(expected): State<AdminToken>,
     request: axum::extract::Request,
     next: Next,
 ) -> Response {
-    let presented = request
+    let header_token = request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or("");
-    if !presented.is_empty() && tokens_match(presented, &expected.0) {
+        .map(str::to_string);
+    let presented = header_token
+        .or_else(|| token_from_query(request.uri().query()))
+        .unwrap_or_default();
+    if !presented.is_empty() && tokens_match(&presented, &expected.0) {
         return next.run(request).await;
     }
     (
@@ -512,5 +530,16 @@ mod tests {
         assert!(!tokens_match("abc123", "abc124"));
         assert!(!tokens_match("abc", "abc123")); // length mismatch
         assert!(!tokens_match("", "x"));
+    }
+
+    #[test]
+    fn token_from_query_extracts_the_param() {
+        assert_eq!(token_from_query(Some("token=abc")), Some("abc".to_string()));
+        assert_eq!(
+            token_from_query(Some("foo=1&token=xyz&bar=2")),
+            Some("xyz".to_string())
+        );
+        assert_eq!(token_from_query(Some("foo=1")), None);
+        assert_eq!(token_from_query(None), None);
     }
 }

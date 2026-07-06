@@ -10,6 +10,7 @@ mod auth_disable;
 mod auth_oauth_e2e;
 mod device_pairing;
 mod gateway_notifications;
+mod management_api;
 mod mcp_rate_limit;
 mod network_advertising;
 mod notifications;

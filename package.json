@@ -24,6 +24,8 @@
     "test:e2e:video": "cross-env MCPMUX_REGISTRY_URL=http://localhost:8787 SAVE_ALL_VIDEOS=true pnpm exec wdio run tests/e2e/wdio.conf.ts",
     "test:e2e:web": "pnpm exec playwright test -c tests/e2e/playwright.config.ts",
     "test:e2e:web:headed": "pnpm exec playwright test -c tests/e2e/playwright.config.ts --headed",
+    "build:web-admin": "cross-env MCPMUX_WEB_BASE=/app/ pnpm --filter @mcpmux/desktop build:web && cargo build -p mcpmux-serve --features embed-ui",
+    "test:e2e:web-admin": "pnpm build:web-admin && pnpm exec playwright test -c tests/e2e-web-admin/playwright.config.ts",
     "test:ci": "pnpm test",
     "test:coverage": "cargo llvm-cov --workspace --html && vitest run -c tests/ts/vitest.config.ts --coverage",
     "lint": "pnpm -r lint && cargo clippy --workspace -- -D warnings",

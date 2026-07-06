@@ -1,28 +1,37 @@
-//! Authenticated management API (read-only slice).
+//! Authenticated management API for the headless gateway.
 //!
 //! A distinct, bearer-token-gated router mounted under `/admin/api/`, separate
-//! from the MCP + OAuth surface. It lets a headless `mcpmux serve` be inspected
-//! over HTTP (the desktop app manages via Tauri IPC instead). This is the
-//! foundation for the full management surface + web admin (cloud-support M1-07 /
-//! M1-09): today it exposes the read endpoints web-admin-v0 needs; write
-//! endpoints and an SSE event stream layer on next.
+//! from the MCP + OAuth surface, so a headless `mcpmux serve` can be inspected
+//! and managed over HTTP (the desktop app manages via Tauri IPC instead). It
+//! covers the core web-admin loop: read Spaces / servers / FeatureSets /
+//! bindings / clients, create a Space, a FeatureSet, and a workspace mapping,
+//! delete a mapping, and subscribe to live change events over SSE.
 //!
 //! Auth: every `/admin/api/*` route requires `Authorization: Bearer <token>`,
 //! compared in constant time. On a network bind this is the ONLY gate, so the
 //! token must be strong (the serve binary generates 256 bits when the operator
-//! doesn't supply one).
+//! doesn't supply one). The `/admin` console page is public (its data calls
+//! carry the operator-entered token).
 
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     middleware::Next,
-    response::{IntoResponse, Json, Response},
-    routing::get,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Json, Response,
+    },
+    routing::{delete, get},
     Router,
 };
+use futures::Stream;
+use serde::Deserialize;
 use serde_json::json;
+use uuid::Uuid;
+
+use mcpmux_core::{DomainEvent, FeatureSet, Space, WorkspaceBinding};
 
 use super::handlers::AppState;
 
@@ -30,7 +39,7 @@ use super::handlers::AppState;
 #[derive(Clone)]
 pub struct AdminToken(pub Arc<String>);
 
-/// Constant-time-ish string comparison (length-independent early-out avoided).
+/// Constant-time string comparison (no length-independent early-out).
 fn tokens_match(a: &str, b: &str) -> bool {
     let a = a.as_bytes();
     let b = b.as_bytes();
@@ -45,7 +54,7 @@ fn tokens_match(a: &str, b: &str) -> bool {
 }
 
 /// Bearer-token gate for `/admin/api/*`. Rejected requests never reach a
-/// handler (no data is read without a valid token).
+/// handler (no data is read or written without a valid token).
 async fn require_admin_token(
     State(expected): State<AdminToken>,
     request: axum::extract::Request,
@@ -67,6 +76,22 @@ async fn require_admin_token(
         .into_response()
 }
 
+fn internal_error(msg: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+fn bad_request(msg: &str) -> Response {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
+
 /// `GET /admin/api/info` — gateway identity + posture.
 async fn admin_info(State(app_state): State<AppState>) -> Response {
     let state = app_state.gateway_state.read().await;
@@ -79,10 +104,83 @@ async fn admin_info(State(app_state): State<AppState>) -> Response {
     .into_response()
 }
 
+/// `GET /admin/api/status` — lightweight runtime status (active sessions).
+async fn admin_status(State(app_state): State<AppState>) -> Response {
+    let state = app_state.gateway_state.read().await;
+    Json(json!({
+        "active_sessions": state.sessions.len(),
+        "network_bind": state.network_bind,
+        "auth_required": !state.auth_disabled(),
+    }))
+    .into_response()
+}
+
 /// `GET /admin/api/spaces` — all Spaces.
 async fn admin_list_spaces(State(app_state): State<AppState>) -> Response {
     match app_state.services.dependencies.space_repo.list().await {
         Ok(spaces) => Json(json!({ "spaces": spaces })).into_response(),
+        Err(e) => internal_error(&e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SpaceIdQuery {
+    space_id: Option<String>,
+}
+
+/// `GET /admin/api/servers?space_id=…` — installed servers for a Space
+/// (defaults to the default Space when `space_id` is omitted).
+async fn admin_list_servers(
+    State(app_state): State<AppState>,
+    Query(q): Query<SpaceIdQuery>,
+) -> Response {
+    let space_id = match resolve_space_id(&app_state, q.space_id).await {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    match app_state
+        .services
+        .dependencies
+        .installed_server_repo
+        .list_for_space(&space_id.to_string())
+        .await
+    {
+        Ok(servers) => Json(json!({ "servers": servers })).into_response(),
+        Err(e) => internal_error(&e.to_string()),
+    }
+}
+
+/// `GET /admin/api/feature-sets?space_id=…` — FeatureSets for a Space.
+async fn admin_list_feature_sets(
+    State(app_state): State<AppState>,
+    Query(q): Query<SpaceIdQuery>,
+) -> Response {
+    let space_id = match resolve_space_id(&app_state, q.space_id).await {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    match app_state
+        .services
+        .dependencies
+        .feature_set_repo
+        .list_by_space(&space_id.to_string())
+        .await
+    {
+        Ok(sets) => Json(json!({ "feature_sets": sets })).into_response(),
+        Err(e) => internal_error(&e.to_string()),
+    }
+}
+
+/// `GET /admin/api/bindings` — all workspace mappings.
+async fn admin_list_bindings(State(app_state): State<AppState>) -> Response {
+    match app_state
+        .services
+        .dependencies
+        .workspace_binding_repo
+        .list()
+        .await
+    {
+        Ok(bindings) => Json(json!({ "bindings": bindings })).into_response(),
         Err(e) => internal_error(&e.to_string()),
     }
 }
@@ -115,42 +213,292 @@ async fn admin_list_clients(State(app_state): State<AppState>) -> Response {
     }
 }
 
-fn internal_error(msg: &str) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": msg })),
-    )
-        .into_response()
+// ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct CreateSpaceRequest {
+    name: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
-/// `GET /admin` — the minimal web admin console. Self-contained HTML (no
-/// external assets) that signs in with the admin token and renders the
-/// read-only management data. Public: the page itself holds no secrets; every
-/// data call it makes carries the token the operator pastes.
+/// `POST /admin/api/spaces` — create a Space.
+async fn admin_create_space(
+    State(app_state): State<AppState>,
+    Json(req): Json<CreateSpaceRequest>,
+) -> Response {
+    let name = req.name.trim();
+    if name.is_empty() {
+        return bad_request("name is required");
+    }
+    let mut space = Space::new(name);
+    if let Some(icon) = req.icon.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        space = space.with_icon(icon);
+    }
+    if let Some(desc) = req
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        space = space.with_description(desc);
+    }
+    let space_id = space.id;
+    let space_name = space.name.clone();
+    let icon = space.icon.clone();
+    if let Err(e) = app_state
+        .services
+        .dependencies
+        .space_repo
+        .create(&space)
+        .await
+    {
+        return internal_error(&e.to_string());
+    }
+    app_state
+        .gateway_state
+        .read()
+        .await
+        .emit_domain_event(DomainEvent::SpaceCreated {
+            space_id,
+            name: space_name,
+            icon,
+        });
+    (StatusCode::CREATED, Json(json!({ "space": space }))).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateFeatureSetRequest {
+    space_id: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
+}
+
+/// `POST /admin/api/feature-sets` — create a custom FeatureSet in a Space.
+async fn admin_create_feature_set(
+    State(app_state): State<AppState>,
+    Json(req): Json<CreateFeatureSetRequest>,
+) -> Response {
+    let name = req.name.trim();
+    if name.is_empty() {
+        return bad_request("name is required");
+    }
+    let space_uuid = match Uuid::parse_str(req.space_id.trim()) {
+        Ok(u) => u,
+        Err(_) => return bad_request("space_id must be a UUID"),
+    };
+    let mut fs = FeatureSet::new_custom(name, req.space_id.trim());
+    fs.description = req
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    fs.icon = req
+        .icon
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let fs_id = fs.id.clone();
+    let fs_name = fs.name.clone();
+    if let Err(e) = app_state
+        .services
+        .dependencies
+        .feature_set_repo
+        .create(&fs)
+        .await
+    {
+        return internal_error(&e.to_string());
+    }
+    app_state
+        .gateway_state
+        .read()
+        .await
+        .emit_domain_event(DomainEvent::FeatureSetCreated {
+            space_id: space_uuid,
+            feature_set_id: fs_id,
+            name: fs_name,
+            feature_set_type: Some("custom".to_string()),
+        });
+    (StatusCode::CREATED, Json(json!({ "feature_set": fs }))).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateBindingRequest {
+    workspace_root: String,
+    space_id: String,
+    #[serde(default)]
+    feature_set_ids: Vec<String>,
+    /// "path" (default) or "id" (verbatim key match).
+    #[serde(default)]
+    binding_type: Option<String>,
+}
+
+/// `POST /admin/api/bindings` — create a workspace mapping.
+async fn admin_create_binding(
+    State(app_state): State<AppState>,
+    Json(req): Json<CreateBindingRequest>,
+) -> Response {
+    let root = req.workspace_root.trim();
+    if root.is_empty() {
+        return bad_request("workspace_root is required");
+    }
+    let space_uuid = match Uuid::parse_str(req.space_id.trim()) {
+        Ok(u) => u,
+        Err(_) => return bad_request("space_id must be a UUID"),
+    };
+    let is_id = req.binding_type.as_deref() == Some("id");
+    let binding = if is_id {
+        WorkspaceBinding::new_id(root, space_uuid, req.feature_set_ids.clone())
+    } else {
+        WorkspaceBinding::new_multi(root, space_uuid, req.feature_set_ids.clone())
+    };
+    let workspace_root = binding.workspace_root.clone();
+    if let Err(e) = app_state
+        .services
+        .dependencies
+        .workspace_binding_repo
+        .create(&binding)
+        .await
+    {
+        return internal_error(&e.to_string());
+    }
+    app_state
+        .gateway_state
+        .read()
+        .await
+        .emit_domain_event(DomainEvent::WorkspaceBindingChanged {
+            space_id: space_uuid,
+            workspace_root,
+        });
+    (StatusCode::CREATED, Json(json!({ "binding": binding }))).into_response()
+}
+
+/// `DELETE /admin/api/bindings/:id` — remove a workspace mapping.
+async fn admin_delete_binding(
+    State(app_state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let binding_id = match Uuid::parse_str(id.trim()) {
+        Ok(u) => u,
+        Err(_) => return bad_request("binding id must be a UUID"),
+    };
+    let repo = &app_state.services.dependencies.workspace_binding_repo;
+    // Look up first so we can emit a precise change event.
+    let existing = repo.get(&binding_id).await.ok().flatten();
+    if let Err(e) = repo.delete(&binding_id).await {
+        return internal_error(&e.to_string());
+    }
+    if let Some(b) = existing {
+        app_state.gateway_state.read().await.emit_domain_event(
+            DomainEvent::WorkspaceBindingChanged {
+                space_id: b.space_id,
+                workspace_root: b.workspace_root,
+            },
+        );
+    }
+    (StatusCode::OK, Json(json!({ "deleted": true }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Events (SSE)
+// ---------------------------------------------------------------------------
+
+/// `GET /admin/api/events` — server-sent stream of domain change events, so the
+/// web admin re-fetches on change without polling. Each SSE `event:` is the
+/// domain event's name; `data:` is its JSON.
+async fn admin_events(
+    State(app_state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let mut rx = app_state
+        .gateway_state
+        .read()
+        .await
+        .subscribe_domain_events();
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(event) => {
+                    let name = event.type_name().to_string();
+                    let data = serde_json::to_string(&event)
+                        .unwrap_or_else(|_| "{}".to_string());
+                    yield Ok(Event::default().event(name).data(data));
+                }
+                // Lagged: skip missed events and keep streaming.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                // Sender gone → end the stream.
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+// ---------------------------------------------------------------------------
+// Console page + router
+// ---------------------------------------------------------------------------
+
+/// Resolve a `space_id` query param to a UUID, defaulting to the default Space.
+async fn resolve_space_id(app_state: &AppState, raw: Option<String>) -> Result<Uuid, Response> {
+    if let Some(s) = raw.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        return Uuid::parse_str(s).map_err(|_| bad_request("space_id must be a UUID"));
+    }
+    match app_state
+        .services
+        .dependencies
+        .space_repo
+        .get_default()
+        .await
+    {
+        Ok(Some(space)) => Ok(space.id),
+        Ok(None) => Err(bad_request("no default Space; pass space_id")),
+        Err(e) => Err(internal_error(&e.to_string())),
+    }
+}
+
+/// `GET /admin` — the web admin console. Self-contained HTML (no external
+/// assets) that signs in with the admin token and drives the read/write API.
 async fn admin_console() -> Response {
     let html = include_str!("admin_console.html");
-    (
-        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        html,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
 
-/// Build the management router: the token-gated `/admin/api/*` read endpoints
-/// plus the public `/admin` console page. Compose into the gateway (or the
-/// serve binary) with the app state and the required admin token.
+/// Build the management router: the token-gated `/admin/api/*` endpoints plus
+/// the public `/admin` console page. Compose into the gateway (or the serve
+/// binary) with the app state and the required admin token.
 pub fn management_router(app_state: AppState, admin_token: Arc<String>) -> Router {
-    // Token-gated JSON API.
     let api = Router::new()
         .route("/admin/api/info", get(admin_info))
-        .route("/admin/api/spaces", get(admin_list_spaces))
+        .route("/admin/api/status", get(admin_status))
+        .route(
+            "/admin/api/spaces",
+            get(admin_list_spaces).post(admin_create_space),
+        )
+        .route("/admin/api/servers", get(admin_list_servers))
+        .route(
+            "/admin/api/feature-sets",
+            get(admin_list_feature_sets).post(admin_create_feature_set),
+        )
+        .route(
+            "/admin/api/bindings",
+            get(admin_list_bindings).post(admin_create_binding),
+        )
+        .route("/admin/api/bindings/{id}", delete(admin_delete_binding))
         .route("/admin/api/clients", get(admin_list_clients))
+        .route("/admin/api/events", get(admin_events))
         .with_state(app_state)
         .layer(axum::middleware::from_fn_with_state(
             AdminToken(admin_token),
             require_admin_token,
         ));
-    // Public console page (its API calls carry the operator-entered token).
     Router::new().route("/admin", get(admin_console)).merge(api)
 }
 

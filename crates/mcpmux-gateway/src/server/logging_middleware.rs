@@ -286,6 +286,19 @@ pub async fn http_logging_middleware(request: Request, next: Next) -> Result<Res
             // Call next middleware/handler
             let response = next.run(request).await;
 
+            // Streaming (SSE) responses are infinite — never buffer them, or
+            // `collect()` blocks forever and the client sees nothing (this hit
+            // the /admin/api/events stream). Log entry only and pass through.
+            let is_streaming = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|ct| ct.contains("text/event-stream"));
+            if is_streaming {
+                RequestSpan::log_exit(&ctx, response.status().as_u16(), None);
+                return Ok(response);
+            }
+
             // Extract and log response
             let (parts, body) = response.into_parts();
             let status = parts.status;

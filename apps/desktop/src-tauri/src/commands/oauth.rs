@@ -979,6 +979,69 @@ pub struct ApiKeyInfo {
     pub created_at: String,
 }
 
+/// A freshly-minted device-pairing token plus everything the desktop UI needs
+/// to render a QR code and a copyable link.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingTokenInfo {
+    /// The single-use token (also embedded in `claim_url`).
+    pub token: String,
+    /// Full URL a device opens (or scans) to claim its key — points at this
+    /// machine's LAN address so it resolves from another device.
+    pub claim_url: String,
+    /// The LAN base the URL was built from, surfaced so the UI can explain
+    /// "make sure the other device is on the same network as <host>".
+    pub lan_base_url: String,
+    /// Seconds until the token expires.
+    pub expires_in_secs: u64,
+}
+
+/// Best-effort primary LAN IPv4 of this machine, for building a pairing URL a
+/// *different* device can reach. Falls back to `localhost` (still valid on the
+/// same machine) when no non-loopback interface is found.
+fn primary_lan_host() -> String {
+    match local_ip_address::local_ip() {
+        Ok(ip) if !ip.is_loopback() => ip.to_string(),
+        _ => "localhost".to_string(),
+    }
+}
+
+/// Mint a short-lived, single-use device-pairing token and the URL a new device
+/// opens to claim its own API key. The gateway must be running; the URL targets
+/// this machine's LAN address and the gateway's bound port.
+#[tauri::command]
+pub async fn mint_pairing_token(
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<PairingTokenInfo, String> {
+    let app_state = gateway_state.read().await;
+    if !app_state.running {
+        return Err("Start the gateway before pairing a device.".to_string());
+    }
+    let Some(port) = app_state.bound_port else {
+        return Err("Gateway port is not known yet — try again in a moment.".to_string());
+    };
+    let Some(ref gw_state) = app_state.gateway_state else {
+        return Err("Gateway not running".to_string());
+    };
+
+    let ttl = mcpmux_gateway::server::pairing::DEFAULT_PAIRING_TTL;
+    let token = gw_state.read().await.pairing_tokens().mint(ttl);
+
+    let lan_base_url = format!("http://{}:{}", primary_lan_host(), port);
+    let claim_url = format!("{}/pair?token={}", lan_base_url, token);
+
+    info!(
+        "[Pair] Minted pairing token (expires in {}s)",
+        ttl.as_secs()
+    );
+    Ok(PairingTokenInfo {
+        token,
+        claim_url,
+        lan_base_url,
+        expires_in_secs: ttl.as_secs(),
+    })
+}
+
 /// Generate a strong API key: `mcpk_` + 256 bits of v4-UUID randomness.
 /// Returns `(key_id, plaintext, key_prefix)`. Only the hash is ever stored.
 fn generate_api_key() -> (String, String, String) {

@@ -7,6 +7,7 @@
 mod dependencies;
 mod handlers;
 pub mod logging_middleware;
+pub mod pairing;
 pub mod rate_limit;
 mod service_container;
 mod startup;
@@ -20,7 +21,7 @@ mod state;
 pub(crate) use handlers::effective_base_url;
 pub use handlers::{
     oauth_authorize, oauth_consent_approve, oauth_metadata, oauth_register, oauth_token,
-    resource_metadata, AppState,
+    pair_claim, pair_page, resource_metadata, AppState,
 };
 
 pub use dependencies::{DependenciesBuilder, GatewayDependencies};
@@ -600,6 +601,11 @@ impl GatewayServer {
             // Consent approval now happens exclusively via Tauri IPC command
             // (approve_oauth_consent), which can only be invoked by the desktop
             // app's own WebView—not by external HTTP clients, scripts, or bots.
+            // Device pairing (public but token-gated): the claim page + the
+            // token-exchange endpoint. Reachable on a network bind so a paired
+            // device can claim its key; the single-use token is the gate.
+            .route("/pair", get(handlers::pair_page))
+            .route("/pair/claim", post(handlers::pair_claim))
             // Client registration (DCR - public)
             .route("/oauth/register", post(handlers::oauth_register))
             // Client management (for desktop app)

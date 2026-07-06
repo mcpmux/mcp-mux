@@ -92,6 +92,10 @@ pub struct GatewayState {
     /// the `gateway.auth_disabled` app setting at startup and flipped live by
     /// the desktop toggle. A valid token is still honored when present.
     auth_disabled: bool,
+    /// Outstanding device-pairing tokens. Minted from the desktop, consumed at
+    /// `POST /pair/claim`. Shared (Arc) so the Tauri mint command and the HTTP
+    /// claim handler see the same set.
+    pairing_tokens: super::pairing::PairingTokenStore,
 }
 
 impl GatewayState {
@@ -111,7 +115,13 @@ impl GatewayState {
             client_metadata_service: None,
             domain_event_tx,
             auth_disabled: false,
+            pairing_tokens: super::pairing::PairingTokenStore::new(),
         }
+    }
+
+    /// Shared pairing-token store (mint on desktop, consume at /pair/claim).
+    pub fn pairing_tokens(&self) -> super::pairing::PairingTokenStore {
+        self.pairing_tokens.clone()
     }
 
     /// Set the base URL

@@ -337,6 +337,14 @@ pub fn default_oauth_rate_limiter() -> RateLimiter {
                 window: Duration::from_secs(60),
             },
         ),
+        (
+            // Token-gated device pairing — tight cap blunts token guessing.
+            "/pair/claim".to_string(),
+            RateLimitConfig {
+                max_requests: 20,
+                window: Duration::from_secs(60),
+            },
+        ),
     ])
 }
 

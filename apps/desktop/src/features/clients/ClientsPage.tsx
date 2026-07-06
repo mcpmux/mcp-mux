@@ -58,6 +58,9 @@ import {
   useSetPendingWorkspaceRoot,
 } from '@/stores';
 import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
+import { ConnectDeviceModal } from './ConnectDeviceModal';
+import { invoke } from '@tauri-apps/api/core';
+import { Smartphone } from 'lucide-react';
 import { ClientApiKeysSection } from './ClientApiKeysSection';
 
 // Bundled icons for well-known AI clients.
@@ -129,6 +132,8 @@ export default function ClientsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selected, setSelected] = useState<OAuthClient | null>(null);
   const [showRegister, setShowRegister] = useState(false);
+  const [showConnectDevice, setShowConnectDevice] = useState(false);
+  const [networkAccess, setNetworkAccess] = useState(false);
   const [editAlias, setEditAlias] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>({
@@ -186,6 +191,16 @@ export default function ClientsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingClientId, isLoading, clients]);
+
+  // Whether the gateway binds the network — drives the "Connect a device"
+  // warning (the pairing URL only resolves off-machine when this is on).
+  useEffect(() => {
+    invoke<boolean>('get_gateway_network_access')
+      .then(setNetworkAccess)
+      .catch(() => {
+        /* non-fatal: default to "off", which only over-warns */
+      });
+  }, []);
 
   useEffect(() => {
     const unlistenDomain = listen<{
@@ -293,6 +308,21 @@ export default function ClientsPage() {
                 <Button variant="ghost" size="md" onClick={refreshClients} disabled={isRefreshing}>
                   <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                   Refresh
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => setShowConnectDevice(true)}
+                  disabled={!gatewayStatus.running}
+                  title={
+                    gatewayStatus.running
+                      ? 'Pair a phone or another computer with a QR code'
+                      : 'Start the gateway first'
+                  }
+                  data-testid="connect-device-btn"
+                >
+                  <Smartphone className="mr-2 h-4 w-4" />
+                  Connect a device
                 </Button>
                 <Button
                   variant="primary"
@@ -442,6 +472,13 @@ export default function ClientsPage() {
             success(`Registered "${client.clientName}" with an API key.`);
             void refreshClients();
           }}
+        />
+      )}
+
+      {showConnectDevice && (
+        <ConnectDeviceModal
+          networkAccess={networkAccess}
+          onClose={() => setShowConnectDevice(false)}
         />
       )}
 

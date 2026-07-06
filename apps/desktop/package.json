@@ -25,6 +25,7 @@
     "immer": "^11.0.1",
     "lucide-react": "^0.561.0",
     "posthog-js": "^1.387.0",
+    "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.9"
@@ -33,6 +34,7 @@
     "@eslint/js": "^9.39.2",
     "@tauri-apps/cli": "^2.10.0",
     "@types/node": "^25.0.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",

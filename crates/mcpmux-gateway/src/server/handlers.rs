@@ -1478,3 +1478,174 @@ pub async fn oauth_register(
         }
     }
 }
+
+// ============================================================================
+// Device pairing — claim a per-device API key with a short-lived token
+// ============================================================================
+
+/// Request body for `POST /pair/claim`.
+#[derive(Debug, Deserialize)]
+pub struct PairClaimRequest {
+    /// The single-use pairing token minted on the desktop.
+    pub token: String,
+    /// Optional friendly device name (defaults to "Paired device").
+    #[serde(default)]
+    pub device_name: Option<String>,
+}
+
+/// Success body for `POST /pair/claim` — the API key is shown once, never
+/// stored in plaintext, and identifies this device to the gateway thereafter.
+#[derive(Debug, Serialize)]
+pub struct PairClaimResponse {
+    pub client_id: String,
+    pub client_name: String,
+    pub api_key: String,
+    pub key_prefix: String,
+    /// The MCP endpoint the device should point at (this gateway's `/mcp`).
+    pub endpoint: String,
+}
+
+/// Generate a strong API key: `mcpk_` + 256 bits of v4-UUID randomness.
+/// Returns `(key_id, plaintext, key_prefix)`. Only the hash is ever stored.
+/// (Mirrors the desktop `register_api_key_client` generator so paired keys are
+/// indistinguishable from hand-registered ones.)
+fn generate_api_key() -> (String, String, String) {
+    let key_id = uuid::Uuid::new_v4().to_string();
+    let secret = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let plaintext = format!("mcpk_{secret}");
+    let key_prefix: String = plaintext.chars().take(13).collect();
+    (key_id, plaintext, key_prefix)
+}
+
+/// `POST /pair/claim` — exchange a valid pairing token for a fresh per-device
+/// API-key client.
+///
+/// Always token-gated (independent of the inbound-auth toggle): the token is
+/// the proof-of-trust. It is single-use and short-lived, and can only be minted
+/// from the desktop, so exposing this route on the LAN does not let anyone
+/// self-issue credentials. The created client is a normal Preregistered
+/// API-key client — it appears in the Clients list and routes via the default
+/// Starter set until the user maps it.
+pub async fn pair_claim(
+    State(app_state): State<AppState>,
+    Json(request): Json<PairClaimRequest>,
+) -> Response {
+    // Consume the token first (single-use, short-lived — the proof of trust).
+    {
+        let gateway_state = app_state.gateway_state.read().await;
+        if !gateway_state.pairing_tokens().consume(request.token.trim()) {
+            warn!("[Pair] Rejected claim with invalid/expired/used token");
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Invalid or expired pairing token. Generate a new one on the desktop.",
+            )
+                .into_response();
+        }
+    }
+
+    // Create the client + key through the SAME repo the auth middleware
+    // validates against (services.dependencies), so the issued key works
+    // immediately without depending on gateway_state's DB wiring.
+    let repo = &app_state.services.dependencies.inbound_client_repo;
+
+    let device_name = request
+        .device_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Paired device")
+        .to_string();
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let client_id = format!("mcp_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let client = mcpmux_storage::InboundClient {
+        client_id: client_id.clone(),
+        registration_type: mcpmux_storage::RegistrationType::Preregistered,
+        client_name: device_name.clone(),
+        client_alias: None,
+        redirect_uris: vec![],
+        grant_types: vec![],
+        response_types: vec![],
+        token_endpoint_auth_method: "none".to_string(),
+        scope: None,
+        approved: true,
+        logo_uri: None,
+        client_uri: None,
+        software_id: None,
+        software_version: None,
+        metadata_url: None,
+        metadata_cached_at: None,
+        metadata_cache_ttl: None,
+        last_seen: None,
+        created_at: now.clone(),
+        updated_at: now,
+        reports_roots: false,
+        roots_capability_known: false,
+    };
+    if let Err(e) = repo.save_client(&client).await {
+        error!("[Pair] Failed to create paired client: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to register device",
+        )
+            .into_response();
+    }
+
+    let (key_id, plaintext, key_prefix) = generate_api_key();
+    if let Err(e) = repo
+        .create_api_key(&key_id, &client_id, &plaintext, &key_prefix, None, None)
+        .await
+    {
+        error!("[Pair] Failed to create API key for paired client: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to issue device key",
+        )
+            .into_response();
+    }
+
+    // Best-effort: notify the desktop UI so the new device shows up live
+    // (bridged to the `client-changed` Tauri event the Clients page listens on).
+    app_state.gateway_state.read().await.emit_domain_event(
+        mcpmux_core::DomainEvent::ClientRegistered {
+            client_id: client_id.clone(),
+            client_name: device_name.clone(),
+            registration_type: Some("preregistered".to_string()),
+        },
+    );
+
+    info!(
+        "[Pair] Registered paired device '{}' ({})",
+        device_name, client_id
+    );
+
+    let endpoint = format!("{}/mcp", app_state.base_url.trim_end_matches('/'));
+    (
+        StatusCode::OK,
+        Json(PairClaimResponse {
+            client_id,
+            client_name: device_name,
+            api_key: plaintext,
+            key_prefix,
+            endpoint,
+        }),
+    )
+        .into_response()
+}
+
+/// `GET /pair` — the minimal claim page the pairing QR points at. It reads the
+/// `token` query param, POSTs it to `/pair/claim`, and shows the resulting
+/// ready-to-paste MCP config. Self-contained (no external assets) so it renders
+/// on a phone with no network access beyond this gateway.
+pub async fn pair_page() -> Response {
+    let html = include_str!("pair_page.html");
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}

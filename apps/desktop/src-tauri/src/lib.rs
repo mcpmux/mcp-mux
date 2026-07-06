@@ -998,6 +998,7 @@ pub fn run() {
             commands::update_oauth_client,
             commands::delete_oauth_client,
             commands::register_api_key_client,
+            commands::mint_pairing_token,
             commands::create_client_api_key,
             commands::list_client_api_keys,
             commands::revoke_client_api_key,

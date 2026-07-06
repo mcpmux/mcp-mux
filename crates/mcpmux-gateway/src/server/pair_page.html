@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect to McpMux</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0b0b0f;
+        color: #e7e7ea;
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+      @media (prefers-color-scheme: light) {
+        body { background: #f6f6f8; color: #16161a; }
+        .card { background: #fff; border-color: #e5e5ea; }
+        pre { background: #f0f0f4; }
+      }
+      .card {
+        width: 100%;
+        max-width: 460px;
+        background: #16161c;
+        border: 1px solid #2a2a33;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+      }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 20px; color: #9a9aa5; font-size: 14px; }
+      button {
+        width: 100%;
+        padding: 12px 16px;
+        border: none;
+        border-radius: 10px;
+        background: #6d5efc;
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.6; cursor: default; }
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #2a2a33;
+        background: transparent;
+        color: inherit;
+        font-size: 14px;
+        margin-bottom: 12px;
+      }
+      pre {
+        background: #0f0f14;
+        border-radius: 10px;
+        padding: 12px;
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      label { display: block; font-size: 12px; color: #9a9aa5; margin-bottom: 6px; }
+      .ok { color: #34d399; }
+      .err { color: #f87171; }
+      .row { display: flex; gap: 8px; }
+      .row button { width: auto; padding: 8px 12px; font-size: 13px; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Connect this device to McpMux</h1>
+      <p class="sub">This links the device to your McpMux gateway and issues it a private API key.</p>
+
+      <div id="form">
+        <label for="name">Device name</label>
+        <input id="name" type="text" placeholder="e.g. My phone" autocomplete="off" />
+        <button id="go">Connect this device</button>
+        <p id="msg" class="err"></p>
+      </div>
+
+      <div id="result" class="hidden">
+        <p class="ok">✓ Connected. Paste this into your MCP client config:</p>
+        <pre id="config"></pre>
+        <div class="row">
+          <button id="copy">Copy config</button>
+        </div>
+        <p class="sub" style="margin-top: 16px">
+          Keep this key private — it authenticates this device to your gateway. You can revoke it
+          anytime from McpMux → Clients.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var params = new URLSearchParams(location.search);
+        var token = params.get('token') || '';
+        var msg = document.getElementById('msg');
+        var go = document.getElementById('go');
+
+        if (!token) {
+          msg.textContent = 'Missing pairing token. Generate a fresh QR code on the desktop.';
+          go.disabled = true;
+        }
+
+        function buildConfig(endpoint, apiKey) {
+          var obj = {
+            mcpmux: { url: endpoint, headers: { Authorization: 'Bearer ' + apiKey } },
+          };
+          // Emit just the server entry, matching the desktop copy-config format.
+          return '"mcpmux": ' + JSON.stringify(obj.mcpmux, null, 2);
+        }
+
+        go.addEventListener('click', function () {
+          go.disabled = true;
+          msg.textContent = '';
+          var name = document.getElementById('name').value.trim();
+          fetch('/pair/claim', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ token: token, device_name: name || null }),
+          })
+            .then(function (r) {
+              if (!r.ok) {
+                return r.text().then(function (t) {
+                  throw new Error(t || 'Pairing failed (' + r.status + ')');
+                });
+              }
+              return r.json();
+            })
+            .then(function (data) {
+              var cfg = buildConfig(data.endpoint, data.api_key);
+              document.getElementById('config').textContent = cfg;
+              document.getElementById('form').classList.add('hidden');
+              document.getElementById('result').classList.remove('hidden');
+              document.getElementById('copy').addEventListener('click', function () {
+                navigator.clipboard && navigator.clipboard.writeText(cfg);
+                this.textContent = 'Copied';
+              });
+            })
+            .catch(function (e) {
+              msg.textContent = e.message || 'Pairing failed.';
+              go.disabled = false;
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>

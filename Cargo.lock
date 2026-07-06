@@ -2737,6 +2737,7 @@ dependencies = [
  "dotenvy",
  "image",
  "keyring",
+ "local-ip-address",
  "mcpmux-core",
  "mcpmux-gateway",
  "mcpmux-storage",

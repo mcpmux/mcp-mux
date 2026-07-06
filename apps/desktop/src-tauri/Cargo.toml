@@ -51,3 +51,4 @@ notify-debouncer-mini = "0.5"
 mcpmux-core.workspace = true
 mcpmux-gateway.workspace = true
 mcpmux-storage.workspace = true
+local-ip-address = "0.6"

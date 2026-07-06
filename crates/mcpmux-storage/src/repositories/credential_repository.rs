@@ -314,6 +314,80 @@ mod tests {
         assert!(found.is_none());
     }
 
+    /// Cross-Space credential isolation (security regression, HIGH-1 of the
+    /// June 2026 audit — see `docs/SECURITY_AUDIT.md`). A credential stored for
+    /// one Space must be invisible to another Space, even for the SAME
+    /// server_id + credential_type. Isolation is enforced by the `space_id`
+    /// column being part of every WHERE clause and the primary key.
+    #[tokio::test]
+    async fn credentials_are_isolated_across_spaces() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let key = crate::crypto::generate_master_key().unwrap();
+        let encryptor = Arc::new(FieldEncryptor::new(&key).unwrap());
+        let repo = SqliteCredentialRepository::new(db.clone(), encryptor);
+
+        let space_a = Uuid::new_v4();
+        let space_b = Uuid::new_v4();
+        create_test_space(&db, &space_a).await;
+        create_test_space(&db, &space_b).await;
+
+        // Same server_id in both Spaces, but only Space A holds a credential.
+        repo.save(&Credential::api_key(
+            space_a,
+            "github",
+            "ghp_space_a_secret",
+        ))
+        .await
+        .unwrap();
+
+        // Space A sees its own secret.
+        let a = repo
+            .get(&space_a, "github", &CredentialType::ApiKey)
+            .await
+            .unwrap();
+        assert_eq!(a.unwrap().value, "ghp_space_a_secret");
+
+        // Space B must NOT see Space A's credential for the same server.
+        let b = repo
+            .get(&space_b, "github", &CredentialType::ApiKey)
+            .await
+            .unwrap();
+        assert!(b.is_none(), "Space B must not see Space A's credential");
+
+        // get_all is likewise scoped.
+        assert!(
+            repo.get_all(&space_b, "github").await.unwrap().is_empty(),
+            "get_all must be Space-scoped"
+        );
+
+        // Space B storing its OWN secret for the same server does not collide
+        // with or overwrite Space A's.
+        repo.save(&Credential::api_key(
+            space_b,
+            "github",
+            "ghp_space_b_secret",
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.get(&space_a, "github", &CredentialType::ApiKey)
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
+            "ghp_space_a_secret",
+            "Space B's write must not affect Space A"
+        );
+        assert_eq!(
+            repo.get(&space_b, "github", &CredentialType::ApiKey)
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
+            "ghp_space_b_secret"
+        );
+    }
+
     #[tokio::test]
     async fn test_access_token_credential() {
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));

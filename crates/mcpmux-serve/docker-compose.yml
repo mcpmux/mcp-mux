@@ -1,0 +1,52 @@
+# Blessed self-host topology: the headless gateway behind Caddy, which
+# auto-provisions HTTPS. The gateway itself stays on plain HTTP inside the
+# Docker network; Caddy terminates TLS at the edge.
+#
+#   1. Point mcp.example.com's DNS at this host.
+#   2. Edit MCPMUX_PUBLIC_BASE_URL below + the domain in ./Caddyfile.
+#   3. `docker compose up -d`
+#
+# The gateway requires inbound auth on its network bind (the default) — register
+# an API-key client / pair a device to connect.
+
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: crates/mcpmux-serve/Dockerfile
+    image: mcpmux/gateway
+    restart: unless-stopped
+    environment:
+      MCPMUX_HOST: 0.0.0.0
+      MCPMUX_PORT: 45818
+      # External origin advertised in OAuth metadata + auto-added to the Host
+      # allowlist. Must match the Caddy site address.
+      MCPMUX_PUBLIC_BASE_URL: https://mcp.example.com
+      # Inject the master key from your secret manager (hex, 32 bytes):
+      #   openssl rand -hex 32
+      # Keep it STABLE — changing it makes stored credentials unreadable.
+      MCPMUX_MASTER_KEY: ${MCPMUX_MASTER_KEY}
+      MCPMUX_LOG: info
+    volumes:
+      - mcpmux-data:/data
+    # No published port: only Caddy reaches the gateway, over the compose network.
+    expose:
+      - "45818"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - gateway
+
+volumes:
+  mcpmux-data:
+  caddy-data:
+  caddy-config:

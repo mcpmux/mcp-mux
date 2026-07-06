@@ -1,0 +1,7 @@
+# Caddy fronts the McpMux gateway with automatic HTTPS.
+# Replace mcp.example.com with your domain (and keep it in sync with
+# MCPMUX_PUBLIC_BASE_URL in docker-compose.yml).
+
+mcp.example.com {
+	reverse_proxy gateway:45818
+}

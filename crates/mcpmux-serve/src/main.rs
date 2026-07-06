@@ -172,8 +172,27 @@ async fn run(config: Config) -> Result<()> {
         }
     }
 
+    // Admin API token: operator-supplied (MCPMUX_ADMIN_TOKEN) or generated. The
+    // management router is bearer-gated; on a network bind it's the only gate,
+    // so a generated token is 256 bits.
+    let admin_token = Arc::new(
+        std::env::var("MCPMUX_ADMIN_TOKEN")
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(generate_admin_token),
+    );
+    let management_router = mcpmux_gateway::server::management::management_router(
+        server.app_state(),
+        admin_token.clone(),
+    );
+    // Print the token once so the operator can reach the admin API.
     info!(
-        "[serve] Ready. MCP endpoint: http://{}:{}/mcp  ·  health: /health",
+        "[serve] Admin API mounted at /admin/api (token: {})",
+        admin_token
+    );
+
+    info!(
+        "[serve] Ready. MCP endpoint: http://{}:{}/mcp  ·  health: /health  ·  admin: /admin/api",
         if config.is_network_bind() {
             config.host.as_str()
         } else {
@@ -183,9 +202,10 @@ async fn run(config: Config) -> Result<()> {
     );
 
     // Serve until SIGTERM / Ctrl-C — drains in-flight requests and releases the
-    // port cleanly (important for container restarts).
+    // port cleanly (important for container restarts). The management router is
+    // merged into the gateway's own router.
     server
-        .run_with_shutdown(shutdown_signal())
+        .run_with_shutdown_and_router(management_router, shutdown_signal())
         .await
         .context("gateway server error")
 }
@@ -216,6 +236,16 @@ fn init_tracing(filter: &str) {
     use tracing_subscriber::{fmt, EnvFilter};
     let env_filter = EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("info"));
     fmt().with_env_filter(env_filter).with_target(false).init();
+}
+
+/// Generate a strong (256-bit) admin API token when the operator doesn't
+/// supply one via `MCPMUX_ADMIN_TOKEN`.
+fn generate_admin_token() -> String {
+    format!(
+        "mcpadmin_{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
 }
 
 /// Read the value following `flag` in argv (`--config PATH`).

@@ -7,6 +7,7 @@
 mod dependencies;
 mod handlers;
 pub mod logging_middleware;
+pub mod management;
 pub mod pairing;
 pub mod rate_limit;
 mod service_container;
@@ -382,6 +383,17 @@ impl GatewayServer {
         self.state.clone()
     }
 
+    /// Build the shared [`AppState`] used by the gateway's handlers, so callers
+    /// (e.g. the serve binary mounting the management API) can construct extra
+    /// routers against the same state the gateway uses.
+    pub fn app_state(&self) -> AppState {
+        AppState {
+            gateway_state: self.state.clone(),
+            services: Arc::new(self.services.clone()),
+            base_url: self.config.base_url(),
+        }
+    }
+
     /// Get the pool service
     pub fn pool_service(&self) -> Arc<crate::pool::PoolService> {
         self.services.pool_services.pool_service.clone()
@@ -466,7 +478,11 @@ impl GatewayServer {
     }
 
     /// Build the Axum router
-    fn build_router(&self) -> Router {
+    /// Build the Axum router, merging `extra_router` (already fully stated —
+    /// e.g. the management API) BEFORE the cross-cutting layers so it inherits
+    /// CORS and, on a network bind, the Host allowlist. Pass `Router::new()`
+    /// for the common no-extra-routes case.
+    fn build_router_with(&self, extra_router: Router) -> Router {
         let state = self.state.clone();
 
         // Create app state with services
@@ -640,6 +656,9 @@ impl GatewayServer {
             .merge(client_features_routes)
             // Global state for all routes
             .with_state(app_state.clone())
+            // Extra caller-supplied routes (management API) — merged here so
+            // they sit under CORS + the Host allowlist below.
+            .merge(extra_router)
             .layer(TraceLayer::new_for_http())
             // Request/Response logging with body (DEBUG level)
             .layer(middleware::from_fn(
@@ -705,6 +724,18 @@ impl GatewayServer {
     /// orphaned-socket condition that force-killed processes leave behind.
     pub async fn run_with_shutdown(
         self,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> anyhow::Result<()> {
+        self.run_with_shutdown_and_router(Router::new(), shutdown)
+            .await
+    }
+
+    /// Like [`Self::run_with_shutdown`], but merges `extra_router` (already
+    /// stated — e.g. a management API built via [`Self::app_state`]) into the
+    /// served router, under the same CORS + Host-allowlist protections.
+    pub async fn run_with_shutdown_and_router(
+        self,
+        extra_router: Router,
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> anyhow::Result<()> {
         let addr = self.config.addr();
@@ -783,7 +814,7 @@ impl GatewayServer {
         });
 
         // Build router and start server immediately
-        let router = self_arc.build_router();
+        let router = self_arc.build_router_with(extra_router);
         let listener = tokio::net::TcpListener::bind(addr).await?;
 
         info!("[Gateway] Ready to accept connections (servers connecting in background)");

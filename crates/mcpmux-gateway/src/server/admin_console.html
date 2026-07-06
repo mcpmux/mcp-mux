@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>McpMux Admin</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #0b0b0f;
+        color: #e7e7ea;
+        line-height: 1.5;
+      }
+      @media (prefers-color-scheme: light) {
+        body { background: #f6f6f8; color: #16161a; }
+        .card, header { background: #fff; border-color: #e5e5ea; }
+        input { background: #fff; color: #16161a; }
+        pre { background: #f0f0f4; }
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 24px;
+        border-bottom: 1px solid #2a2a33;
+        background: #16161c;
+      }
+      header h1 { font-size: 18px; margin: 0; }
+      main { max-width: 900px; margin: 0 auto; padding: 24px; }
+      .card {
+        background: #16161c;
+        border: 1px solid #2a2a33;
+        border-radius: 14px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: #9a9aa5; margin: 0 0 12px; }
+      input {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #2a2a33;
+        background: #0f0f14;
+        color: inherit;
+        font-size: 14px;
+        width: 320px;
+        max-width: 100%;
+      }
+      button {
+        padding: 10px 16px;
+        border: none;
+        border-radius: 10px;
+        background: #6d5efc;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary { background: transparent; border: 1px solid #2a2a33; color: inherit; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a2a33; }
+      th { color: #9a9aa5; font-weight: 600; }
+      .muted { color: #9a9aa5; font-size: 13px; }
+      .err { color: #f87171; font-size: 13px; }
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+      .ok { background: #10331f; color: #34d399; }
+      .warn { background: #3a2a10; color: #fbbf24; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>McpMux Admin</h1>
+      <button id="logout" class="secondary hidden">Sign out</button>
+    </header>
+    <main>
+      <div id="login" class="card">
+        <h2>Sign in</h2>
+        <p class="muted">Paste the admin token printed by <code>mcpmux serve</code> (or set via <code>MCPMUX_ADMIN_TOKEN</code>).</p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+          <input id="token" type="password" placeholder="admin token" autocomplete="off" />
+          <button id="signin">Sign in</button>
+        </div>
+        <p id="loginErr" class="err"></p>
+      </div>
+
+      <div id="dashboard" class="hidden">
+        <div class="card">
+          <h2>Gateway</h2>
+          <div id="info" class="muted">Loading…</div>
+        </div>
+        <div class="card">
+          <h2>Spaces</h2>
+          <div id="spaces" class="muted">Loading…</div>
+        </div>
+        <div class="card">
+          <h2>Clients</h2>
+          <div id="clients" class="muted">Loading…</div>
+        </div>
+        <p class="muted">
+          Read-only for now — server, FeatureSet, and mapping management arrive with the full web
+          admin. Manage via a desktop instance sharing the data dir, or the <code>@mux</code>
+          meta-tools, meanwhile.
+        </p>
+      </div>
+    </main>
+
+    <script>
+      (function () {
+        var token = sessionStorage.getItem('mcpmux_admin_token') || '';
+        var el = function (id) { return document.getElementById(id); };
+
+        function api(path) {
+          return fetch('/admin/api/' + path, {
+            headers: { Authorization: 'Bearer ' + token },
+          }).then(function (r) {
+            if (r.status === 401) throw new Error('unauthorized');
+            if (!r.ok) throw new Error('request failed (' + r.status + ')');
+            return r.json();
+          });
+        }
+
+        function esc(s) {
+          return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+          });
+        }
+
+        function showDashboard() {
+          el('login').classList.add('hidden');
+          el('dashboard').classList.remove('hidden');
+          el('logout').classList.remove('hidden');
+          load();
+        }
+
+        function showLogin(msg) {
+          el('dashboard').classList.add('hidden');
+          el('logout').classList.add('hidden');
+          el('login').classList.remove('hidden');
+          if (msg) el('loginErr').textContent = msg;
+        }
+
+        function load() {
+          api('info')
+            .then(function (d) {
+              el('info').innerHTML =
+                'Version <code>' + esc(d.version) + '</code> · ' +
+                (d.auth_required ? '<span class="pill ok">auth required</span>' : '<span class="pill warn">auth disabled</span>') +
+                ' · ' + (d.network_bind ? '<span class="pill warn">network bind</span>' : '<span class="pill ok">loopback</span>') +
+                ' · <code>' + esc(d.base_url) + '</code>';
+            })
+            .catch(function (e) {
+              if (e.message === 'unauthorized') return logout('Session expired — sign in again.');
+              el('info').innerHTML = '<span class="err">' + esc(e.message) + '</span>';
+            });
+
+          api('spaces')
+            .then(function (d) {
+              var rows = (d.spaces || []).map(function (s) {
+                return '<tr><td>' + esc(s.icon || '') + ' ' + esc(s.name) + (s.is_default ? ' <span class="pill ok">default</span>' : '') +
+                  '</td><td><code>' + esc(s.id) + '</code></td></tr>';
+              }).join('');
+              el('spaces').innerHTML = '<table><tr><th>Name</th><th>Id</th></tr>' + rows + '</table>';
+            })
+            .catch(function (e) { el('spaces').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+
+          api('clients')
+            .then(function (d) {
+              var list = d.clients || [];
+              if (!list.length) { el('clients').innerHTML = '<span class="muted">No clients registered yet.</span>'; return; }
+              var rows = list.map(function (c) {
+                return '<tr><td>' + esc(c.client_alias || c.client_name) + '</td><td><code>' + esc(c.client_id) +
+                  '</code></td><td>' + esc(c.registration_type) + '</td><td>' + esc(c.last_seen || 'never') + '</td></tr>';
+              }).join('');
+              el('clients').innerHTML = '<table><tr><th>Name</th><th>Id</th><th>Type</th><th>Last seen</th></tr>' + rows + '</table>';
+            })
+            .catch(function (e) { el('clients').innerHTML = '<span class="err">' + esc(e.message) + '</span>'; });
+        }
+
+        function logout(msg) {
+          token = '';
+          sessionStorage.removeItem('mcpmux_admin_token');
+          showLogin(msg);
+        }
+
+        el('signin').addEventListener('click', function () {
+          token = el('token').value.trim();
+          el('loginErr').textContent = '';
+          if (!token) { el('loginErr').textContent = 'Enter the admin token.'; return; }
+          // Validate by hitting /info.
+          api('info')
+            .then(function () {
+              sessionStorage.setItem('mcpmux_admin_token', token);
+              showDashboard();
+            })
+            .catch(function () { logout('Invalid token.'); });
+        });
+        el('token').addEventListener('keydown', function (e) { if (e.key === 'Enter') el('signin').click(); });
+        el('logout').addEventListener('click', function () { logout(''); });
+
+        if (token) showDashboard();
+        else showLogin('');
+      })();
+    </script>
+  </body>
+</html>

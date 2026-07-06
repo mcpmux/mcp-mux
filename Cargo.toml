@@ -5,6 +5,7 @@ members = [
     "crates/mcpmux-core",
     "crates/mcpmux-gateway",
     "crates/mcpmux-mcp",
+    "crates/mcpmux-serve",
     "crates/mcpmux-storage",
     "tests/rust",
 ]

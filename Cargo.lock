@@ -2853,6 +2853,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcpmux-serve"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "mcpmux-core",
+ "mcpmux-gateway",
+ "mcpmux-storage",
+ "serde",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mcpmux-storage"
 version = "0.5.0"
 dependencies = [

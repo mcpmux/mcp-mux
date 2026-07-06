@@ -63,8 +63,8 @@ mod repositories;
 pub use crypto::{generate_master_key, FieldEncryptor, KEY_SIZE};
 pub use database::Database;
 pub use keychain::{
-    generate_jwt_secret, JwtSecretProvider, KeychainJwtSecretProvider, KeychainKeyProvider,
-    MasterKeyProvider, JWT_SECRET_SIZE,
+    generate_jwt_secret, EnvKeyProvider, JwtSecretProvider, KeychainJwtSecretProvider,
+    KeychainKeyProvider, MasterKeyProvider, JWT_SECRET_SIZE,
 };
 #[cfg(windows)]
 pub use keychain_dpapi::{DpapiJwtSecretProvider, DpapiKeyProvider};

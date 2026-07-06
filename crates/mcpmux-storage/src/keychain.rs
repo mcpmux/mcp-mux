@@ -125,6 +125,86 @@ impl Default for KeychainKeyProvider {
     }
 }
 
+/// Master key supplied directly via an environment variable, as a hex string.
+///
+/// For headless / container deployments (`mcpmux serve`) where the operator
+/// injects the key from a secret manager (`MCPMUX_MASTER_KEY`) rather than
+/// relying on an OS keychain or an on-disk file. The key is read once and held
+/// zeroized in memory; nothing is persisted, so the SAME value must be provided
+/// on every start or existing encrypted data becomes unreadable.
+pub struct EnvKeyProvider {
+    key: Zeroizing<[u8; KEY_SIZE]>,
+}
+
+impl EnvKeyProvider {
+    /// Build from a hex-encoded key string (must decode to exactly `KEY_SIZE`
+    /// bytes). Rejects wrong-length input loudly rather than silently
+    /// truncating.
+    pub fn from_hex(hex_key: &str) -> Result<Self> {
+        let bytes = hex::decode(hex_key.trim())
+            .context("MCPMUX_MASTER_KEY must be a hex-encoded string")?;
+        if bytes.len() != KEY_SIZE {
+            anyhow::bail!(
+                "MCPMUX_MASTER_KEY must decode to {} bytes (got {})",
+                KEY_SIZE,
+                bytes.len()
+            );
+        }
+        let mut key = Zeroizing::new([0u8; KEY_SIZE]);
+        key.copy_from_slice(&bytes);
+        Ok(Self { key })
+    }
+}
+
+impl MasterKeyProvider for EnvKeyProvider {
+    fn get_or_create_key(&self) -> Result<Zeroizing<[u8; KEY_SIZE]>> {
+        Ok(self.key.clone())
+    }
+
+    fn key_exists(&self) -> bool {
+        true
+    }
+
+    fn delete_key(&self) -> Result<()> {
+        // Nothing persisted — deletion is a no-op (the env var is the source).
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod env_key_tests {
+    use super::*;
+
+    #[test]
+    fn from_hex_roundtrips_a_valid_key() {
+        let hex = "aa".repeat(KEY_SIZE); // KEY_SIZE bytes, each 0xaa
+        let provider = EnvKeyProvider::from_hex(&hex).expect("valid key");
+        assert!(provider.key_exists());
+        let key = provider.get_or_create_key().unwrap();
+        assert_eq!(key.len(), KEY_SIZE);
+        assert!(key.iter().all(|&b| b == 0xaa));
+        // Stable across calls.
+        assert_eq!(&*provider.get_or_create_key().unwrap(), &*key);
+    }
+
+    #[test]
+    fn from_hex_rejects_wrong_length() {
+        assert!(EnvKeyProvider::from_hex("aabb").is_err());
+        assert!(EnvKeyProvider::from_hex(&"aa".repeat(KEY_SIZE + 1)).is_err());
+    }
+
+    #[test]
+    fn from_hex_rejects_non_hex() {
+        assert!(EnvKeyProvider::from_hex("not-hex-at-all").is_err());
+    }
+
+    #[test]
+    fn from_hex_trims_whitespace() {
+        let hex = format!("  {}\n", "bb".repeat(KEY_SIZE));
+        assert!(EnvKeyProvider::from_hex(&hex).is_ok());
+    }
+}
+
 // ============================================================================
 // JWT Signing Secret Provider
 // ============================================================================

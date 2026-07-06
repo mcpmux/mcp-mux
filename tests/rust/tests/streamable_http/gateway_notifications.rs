@@ -241,7 +241,12 @@ impl TestGateway {
         // anonymous identity itself and the handshake must still succeed.
         let router =
             if authless {
-                services.gateway_state.write().await.set_auth_disabled(true);
+                services
+                    .gateway_state
+                    .write()
+                    .await
+                    .set_auth_disabled(true)
+                    .expect("loopback test state: disabling auth is allowed");
                 Router::new().nest_service("/mcp", mcp_service).layer(
                     middleware::from_fn_with_state(services.clone(), mcp_oauth_middleware),
                 )

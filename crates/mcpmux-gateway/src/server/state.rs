@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -18,6 +18,24 @@ use crate::services::ClientMetadataService;
 use mcpmux_core::DomainEvent;
 use mcpmux_storage::{Database, InboundClientRepository, JWT_SECRET_SIZE};
 use tokio::sync::broadcast;
+
+/// Rejected auth/network state transition: inbound authentication can never
+/// be disabled while the gateway is bound to a non-loopback address. Callers
+/// surface [`std::fmt::Display`] to the user and leave auth enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthNetworkConflict;
+
+impl std::fmt::Display for AuthNetworkConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "authentication is required while the gateway is exposed on the network — \
+             turn off network access first"
+        )
+    }
+}
+
+impl std::error::Error for AuthNetworkConflict {}
 
 /// Client session in the gateway
 #[derive(Debug, Clone)]
@@ -108,8 +126,21 @@ impl GatewayState {
     }
 
     /// Record whether the gateway is bound to a non-loopback address.
+    ///
+    /// Invariant: a network-bound gateway always requires inbound auth. If
+    /// auth was disabled (loopback convenience) when the bind flips to
+    /// network, auth is force-re-enabled here — the engine never allows the
+    /// unauthenticated-network combination regardless of what callers or
+    /// persisted settings say.
     pub fn set_network_bind(&mut self, network_bind: bool) {
         self.network_bind = network_bind;
+        if network_bind && self.auth_disabled {
+            warn!(
+                "[State] Network bind with inbound auth disabled — force-re-enabling auth \
+                 (unauthenticated network exposure is never allowed)"
+            );
+            self.auth_disabled = false;
+        }
     }
 
     /// Whether inbound MCP auth is disabled — connections may be accepted
@@ -120,7 +151,16 @@ impl GatewayState {
 
     /// Enable/disable system-wide inbound auth. Called at startup (seed from
     /// settings) and live from the desktop toggle.
-    pub fn set_auth_disabled(&mut self, disabled: bool) {
+    ///
+    /// Disabling is rejected while the gateway is bound to a non-loopback
+    /// address ([`AuthNetworkConflict`]) — the loopback-only convenience must
+    /// never become unauthenticated network exposure. Enabling always
+    /// succeeds.
+    pub fn set_auth_disabled(&mut self, disabled: bool) -> Result<(), AuthNetworkConflict> {
+        if disabled && self.network_bind {
+            warn!("[State] Refusing to disable inbound auth: gateway is network-bound");
+            return Err(AuthNetworkConflict);
+        }
         if self.auth_disabled != disabled {
             info!(
                 "[State] Inbound auth {}",
@@ -128,6 +168,7 @@ impl GatewayState {
             );
         }
         self.auth_disabled = disabled;
+        Ok(())
     }
 
     /// Subscribe to domain events (new unified channel)
@@ -319,9 +360,31 @@ mod tests {
         let mut state = GatewayState::default();
         // Secure default: auth is required (not disabled).
         assert!(!state.auth_disabled());
-        state.set_auth_disabled(true);
+        state.set_auth_disabled(true).expect("loopback: allowed");
         assert!(state.auth_disabled());
-        state.set_auth_disabled(false);
+        state.set_auth_disabled(false).expect("enabling always ok");
         assert!(!state.auth_disabled());
+    }
+
+    #[test]
+    fn disabling_auth_rejected_on_network_bind() {
+        let mut state = GatewayState::default();
+        state.set_network_bind(true);
+        // The unauthenticated-network combination must be unrepresentable.
+        assert_eq!(state.set_auth_disabled(true), Err(AuthNetworkConflict));
+        assert!(!state.auth_disabled(), "auth must remain enabled");
+        // Re-enabling (a no-op here) still succeeds on a network bind.
+        state.set_auth_disabled(false).expect("enabling always ok");
+    }
+
+    #[test]
+    fn network_bind_force_reenables_disabled_auth() {
+        let mut state = GatewayState::default();
+        state.set_auth_disabled(true).expect("loopback: allowed");
+        assert!(state.auth_disabled());
+        // Flipping to a network bind heals the combination in the engine —
+        // callers and persisted settings cannot express it either way.
+        state.set_network_bind(true);
+        assert!(!state.auth_disabled(), "network bind must force auth on");
     }
 }

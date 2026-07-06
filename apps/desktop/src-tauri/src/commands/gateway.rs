@@ -1037,6 +1037,12 @@ pub async fn start_gateway(
     // Seed the system-wide inbound-auth toggle into the running gateway from
     // persisted settings (default: auth required). Live changes go through
     // `set_gateway_auth_disabled`.
+    //
+    // Invariant: on a network bind the engine rejects disabling auth
+    // (`AuthNetworkConflict`). A persisted bad combo (e.g. hand-edited DB, or
+    // settings written by an older build) therefore boots with auth ON — and
+    // we heal the stored setting so the UI reflects reality instead of a
+    // toggle the engine will keep refusing.
     {
         let disabled = app_state
             .settings_repository
@@ -1047,7 +1053,19 @@ pub async fn start_gateway(
             .map(|v| v == "true")
             .unwrap_or(false);
         if disabled {
-            gw_state.write().await.set_auth_disabled(true);
+            if let Err(conflict) = gw_state.write().await.set_auth_disabled(true) {
+                warn!(
+                    "[Gateway] Ignoring persisted auth_disabled=true: {}. Healing setting.",
+                    conflict
+                );
+                if let Err(e) = app_state
+                    .settings_repository
+                    .set(GATEWAY_AUTH_DISABLED_KEY, "false")
+                    .await
+                {
+                    warn!("[Gateway] Could not heal auth_disabled setting: {}", e);
+                }
+            }
         }
     }
 
@@ -1261,22 +1279,48 @@ pub async fn get_gateway_auth_disabled(app_state: State<'_, AppState>) -> Result
 /// into the running gateway so the change takes effect immediately (no
 /// restart). When the gateway isn't running it's a no-op beyond persistence —
 /// `start_gateway` seeds the value on launch.
+///
+/// Invariant (mirrors the engine's `AuthNetworkConflict`): auth can never be
+/// disabled while network access is configured OR while the running gateway is
+/// still network-bound (e.g. network access was just turned off but the
+/// gateway hasn't restarted). The engine check runs FIRST so nothing is
+/// persisted when the transition is rejected.
 #[tauri::command]
 pub async fn set_gateway_auth_disabled(
     disabled: bool,
     app_state: State<'_, AppState>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<bool, String> {
+    if disabled && load_network_access(&app_state).await {
+        return Err(
+            "Authentication is required while network access is enabled. \
+             Turn off network access first (Settings → Gateway → Network access)."
+                .to_string(),
+        );
+    }
+
+    // Mirror into the running gateway BEFORE persisting — the engine is the
+    // source of truth for what's allowed (it also covers the
+    // network-setting-off-but-still-bound window until restart).
+    {
+        let state = gateway_state.read().await;
+        if let Some(ref gw) = state.gateway_state {
+            gw.write().await.set_auth_disabled(disabled).map_err(|e| {
+                format!(
+                    "{} (The gateway is still network-bound — restart it after \
+                     turning network access off.)",
+                    e
+                )
+            })?;
+        }
+    }
+
     app_state
         .settings_repository
         .set(GATEWAY_AUTH_DISABLED_KEY, &disabled.to_string())
         .await
         .map_err(|e| e.to_string())?;
 
-    let state = gateway_state.read().await;
-    if let Some(ref gw) = state.gateway_state {
-        gw.write().await.set_auth_disabled(disabled);
-    }
     info!("[Gateway] Inbound auth disabled set to {}", disabled);
     Ok(disabled)
 }
@@ -1375,14 +1419,59 @@ pub async fn get_gateway_network_access(app_state: State<'_, AppState>) -> Resul
     Ok(load_network_access(&app_state).await)
 }
 
+/// Result of toggling network access. `auth_re_enabled` tells the UI that the
+/// auth-disabled convenience was force-reverted as part of enabling network
+/// access (invariant: no unauthenticated network exposure) so it can refresh
+/// the auth toggle and explain why.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkAccessResult {
+    pub enabled: bool,
+    pub auth_re_enabled: bool,
+}
+
 /// Enable or disable binding the gateway to all interfaces (`0.0.0.0`) so other
 /// devices on the network can reach it. Off (default) keeps it on `127.0.0.1`
 /// (this machine only). Restart the gateway for the change to take effect.
+///
+/// Enabling network access while inbound auth is disabled force-re-enables
+/// auth (persisted + mirrored into a running gateway): the engine never
+/// allows the unauthenticated-network combination, so the settings must not
+/// express it either.
 #[tauri::command]
 pub async fn set_gateway_network_access(
     enabled: bool,
     app_state: State<'_, AppState>,
-) -> Result<(), String> {
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<NetworkAccessResult, String> {
+    let mut auth_re_enabled = false;
+    if enabled {
+        let auth_disabled = app_state
+            .settings_repository
+            .get(GATEWAY_AUTH_DISABLED_KEY)
+            .await
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if auth_disabled {
+            app_state
+                .settings_repository
+                .set(GATEWAY_AUTH_DISABLED_KEY, "false")
+                .await
+                .map_err(|e| e.to_string())?;
+            let state = gateway_state.read().await;
+            if let Some(ref gw) = state.gateway_state {
+                // Enabling auth always succeeds.
+                let _ = gw.write().await.set_auth_disabled(false);
+            }
+            auth_re_enabled = true;
+            info!(
+                "[Gateway] Auth was disabled — force-re-enabled as part of enabling network access"
+            );
+        }
+    }
+
     app_state
         .settings_repository
         .set(
@@ -1397,7 +1486,10 @@ pub async fn set_gateway_network_access(
     } else {
         info!("[Gateway] Network access disabled — will bind 127.0.0.1 on next start/restart");
     }
-    Ok(())
+    Ok(NetworkAccessResult {
+        enabled,
+        auth_re_enabled,
+    })
 }
 
 /// Which port source a startup attempt would use.

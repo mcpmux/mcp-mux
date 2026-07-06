@@ -411,11 +411,22 @@ export function SettingsPage() {
     setNetworkAccess(enabled);
     setSavingNetworkAccess(true);
     try {
-      await invoke('set_gateway_network_access', { enabled });
+      // Enabling network access force-re-enables auth (the gateway never
+      // allows unauthenticated network exposure) — the result tells us when
+      // that happened so the auth toggle reflects it immediately.
+      const result = await invoke<{ enabled: boolean; authReEnabled: boolean }>(
+        'set_gateway_network_access',
+        { enabled }
+      );
+      if (result.authReEnabled) {
+        setAuthDisabled(false);
+      }
       success(
         'Settings saved',
         enabled
-          ? 'Gateway will bind 0.0.0.0 — restart it to become reachable on your network.'
+          ? result.authReEnabled
+            ? 'Gateway will bind 0.0.0.0 — authentication was turned back on (always required on the network). Restart the gateway to apply.'
+            : 'Gateway will bind 0.0.0.0 — restart it to become reachable on your network.'
           : 'Gateway will bind 127.0.0.1 — restart it to return to this machine only.'
       );
     } catch (err) {
@@ -1036,12 +1047,21 @@ export function SettingsPage() {
                       header. Quickest setup, but any app on this machine can then reach the
                       gateway.
                     </p>
+                    {networkAccess && (
+                      <p
+                        className="mt-1.5 text-xs font-medium text-amber-600 dark:text-amber-400"
+                        data-testid="disable-auth-network-note"
+                      >
+                        Unavailable while network access is on — authentication is always required
+                        when the gateway is reachable from other devices.
+                      </p>
+                    )}
                   </div>
                 </div>
                 <Switch
                   checked={authDisabled}
                   onCheckedChange={updateAuthDisabled}
-                  disabled={savingAuthDisabled}
+                  disabled={savingAuthDisabled || networkAccess}
                   data-testid="disable-auth-switch"
                 />
               </div>

@@ -147,7 +147,9 @@ impl Harness {
         let (event_tx, _) = broadcast::channel::<DomainEvent>(64);
         let mut gw_state = GatewayState::new(event_tx.clone());
         gw_state.set_base_url("http://127.0.0.1:0".to_string());
-        gw_state.set_auth_disabled(false); // auth REQUIRED — the key must carry it
+        gw_state
+            .set_auth_disabled(false) // auth REQUIRED — the key must carry it
+            .expect("enabling auth is always allowed");
         let gateway_state = Arc::new(tokio::sync::RwLock::new(gw_state));
 
         let services = Arc::new(ServiceContainer::initialize(

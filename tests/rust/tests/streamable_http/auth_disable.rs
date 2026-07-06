@@ -55,6 +55,13 @@ impl Harness {
     /// Boot a gateway exposing `/mcp` behind the REAL oauth middleware, with the
     /// inbound-auth toggle set to `auth_disabled`.
     async fn start(auth_disabled: bool) -> Self {
+        Self::start_opts(auth_disabled, false).await
+    }
+
+    /// Like [`Self::start`], but also lets the test mark the gateway state as
+    /// network-bound (simulating a `0.0.0.0` bind) to exercise the
+    /// no-unauthenticated-network invariant.
+    async fn start_opts(auth_disabled: bool, network_bind: bool) -> Self {
         let ct = CancellationToken::new();
         let space_id = Uuid::new_v4();
 
@@ -107,7 +114,13 @@ impl Harness {
         gw_state.set_base_url("http://127.0.0.1:0".to_string());
         // No JWT secret needed: these tests send no token, so the auth-required
         // path 401s before the secret is ever consulted.
-        gw_state.set_auth_disabled(auth_disabled);
+        if auth_disabled {
+            // May be rejected/healed when combined with a network bind — that
+            // is exactly the invariant under test, so ignore the outcome here
+            // and let the HTTP assertions tell the story.
+            let _ = gw_state.set_auth_disabled(true);
+        }
+        gw_state.set_network_bind(network_bind);
         let gateway_state = Arc::new(tokio::sync::RwLock::new(gw_state));
 
         let services = Arc::new(ServiceContainer::initialize(
@@ -207,6 +220,27 @@ async fn auth_required_gateway_rejects_request_without_token() {
         resp.status(),
         reqwest::StatusCode::UNAUTHORIZED,
         "default gateway must reject a tokenless request"
+    );
+}
+
+#[tokio::test]
+async fn network_bound_gateway_rejects_tokenless_even_with_auth_disabled_persisted() {
+    // The no-unauthenticated-network invariant, end to end: even when the
+    // auth-disabled convenience was set (e.g. persisted from a loopback-only
+    // era), a network-bound gateway heals it and the REAL middleware rejects
+    // a tokenless request instead of minting an anonymous identity.
+    let h = Harness::start_opts(true, true).await;
+    let resp = reqwest::Client::new()
+        .post(&h.url)
+        .header("content-type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "a network-bound gateway must never accept tokenless requests"
     );
 }
 

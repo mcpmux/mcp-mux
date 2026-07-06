@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 import { Sun, Moon, Download, X } from 'lucide-react';
 import { AppShell, Sidebar, SidebarItem, SidebarSection } from '@mcpmux/ui';
 import { ThemeProvider } from '@/components/ThemeProvider';

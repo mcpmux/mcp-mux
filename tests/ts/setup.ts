@@ -1,6 +1,16 @@
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
+// The transport facade (src/lib/transport) selects the Tauri path when
+// `__TAURI_INTERNALS__` is present on window, else the HTTP path. Tests run in
+// jsdom (no Tauri), so mark the environment as Tauri to exercise the mocked
+// IPC path — the same path the desktop app uses.
+Object.defineProperty(window, '__TAURI_INTERNALS__', {
+  value: {},
+  writable: true,
+  configurable: true,
+});
+
 // Mock Tauri core API
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),

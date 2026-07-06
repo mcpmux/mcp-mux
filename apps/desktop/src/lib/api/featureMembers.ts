@@ -4,7 +4,7 @@
  * For managing individual features (tools/prompts/resources) in feature sets
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 export interface FeatureSetMember {
   id: string;

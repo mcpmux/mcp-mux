@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 import { emit } from '@tauri-apps/api/event';
 import App from './App';
 import './index.css';

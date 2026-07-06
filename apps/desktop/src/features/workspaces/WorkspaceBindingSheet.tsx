@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 import { listen } from '@tauri-apps/api/event';
 import { Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@mcpmux/ui';

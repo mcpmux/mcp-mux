@@ -22,6 +22,26 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
+      // The transport facade (src/lib/transport) is the single seam to the
+      // backend so the same UI runs in Tauri and in the web admin. Reach for
+      // `call`/`subscribe` from '@/lib/transport', never raw Tauri IPC.
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@tauri-apps/api/core',
+              message:
+                "Import { call } from '@/lib/transport' instead of raw Tauri invoke (keeps the UI transport-independent).",
+            },
+          ],
+        },
+      ],
     },
+  },
+  {
+    // The Tauri transport is the ONE place allowed to touch raw IPC.
+    files: ['src/lib/transport/tauri.ts'],
+    rules: { 'no-restricted-imports': 'off' },
   }
 );

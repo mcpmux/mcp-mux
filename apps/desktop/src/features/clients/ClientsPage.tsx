@@ -59,7 +59,7 @@ import {
 } from '@/stores';
 import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
 import { ConnectDeviceModal } from './ConnectDeviceModal';
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 import { Smartphone } from 'lucide-react';
 import { ClientApiKeysSection } from './ClientApiKeysSection';
 

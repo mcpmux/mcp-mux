@@ -17,7 +17,7 @@ import {
   Switch,
 } from '@mcpmux/ui';
 import { Download, Loader2, CheckCircle, AlertCircle, RefreshCw, RotateCcw } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 interface DownloadEvent {
   event: 'Started' | 'Progress' | 'Finished';

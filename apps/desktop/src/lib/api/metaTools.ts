@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 /** An "always allow from (client, tool)" entry kept in the gateway's broker. */
 export interface MetaToolGrantEntry {

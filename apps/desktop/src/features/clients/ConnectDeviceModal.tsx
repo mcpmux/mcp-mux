@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 import QRCode from 'qrcode';
 import { Loader2, RefreshCw, Smartphone, X } from 'lucide-react';
 import { Button, Card, CardContent } from '@mcpmux/ui';

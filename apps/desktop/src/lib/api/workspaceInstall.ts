@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 /** A client the per-workspace installer can write a config for. */
 export interface WorkspaceInstallClient {

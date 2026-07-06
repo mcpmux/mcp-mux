@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 /**
  * A Space represents an isolated environment with its own credentials and

@@ -7,7 +7,7 @@
  * - No more polling for status changes
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { call as invoke } from "@/lib/transport";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 /**

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 /**
  * A Client represents an AI assistant (Cursor, VS Code, Claude, etc.).

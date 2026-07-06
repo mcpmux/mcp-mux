@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 /**
  * A WorkspaceBinding maps one normalized filesystem path to one or more

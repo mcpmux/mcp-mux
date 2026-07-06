@@ -2,7 +2,7 @@
  * Registry API functions for Tauri IPC.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 import type { RegistryCategory, ServerDefinition, InstalledServerState, UiConfig, HomeConfig } from '../../types/registry';
 
 /** Discover all servers (definitions from all sources) */

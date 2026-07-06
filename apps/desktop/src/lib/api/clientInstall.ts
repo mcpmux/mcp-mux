@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { call as invoke } from '@/lib/transport';
 
 /** Add McpMux to VS Code via deep link. */
 export async function addToVscode(gatewayUrl: string): Promise<void> {

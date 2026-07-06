@@ -62,6 +62,8 @@ oauth2 = "5"
 # Internal crates (path-only, no version needed)
 mcpmux-core.workspace = true
 mcpmux-storage.workspace = true
+local-ip-address = "0.6"
+hostname = "0.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

@@ -66,6 +66,15 @@ pub struct GatewayConfig {
     pub public_base_url: Option<String>,
     /// Enable CORS for browser access
     pub enable_cors: bool,
+    /// Extra Host-header values accepted on a network bind (user-configured:
+    /// mDNS aliases, DNS names, reverse-proxy hosts). Bare host or host:port;
+    /// bare entries also match with this gateway's port appended.
+    pub additional_allowed_hosts: Vec<String>,
+    /// Escape hatch: accept ANY Host header on a network bind (pre-hardening
+    /// behavior). Off by default — with it off, network binds enforce an
+    /// allowlist built from the machine's own addresses/hostname plus
+    /// `public_base_url` and `additional_allowed_hosts`.
+    pub allow_any_host: bool,
 }
 
 impl Default for GatewayConfig {
@@ -75,6 +84,8 @@ impl Default for GatewayConfig {
             port: mcpmux_core::branding::DEFAULT_GATEWAY_PORT,
             public_base_url: None,
             enable_cors: true,
+            additional_allowed_hosts: Vec::new(),
+            allow_any_host: false,
         }
     }
 }
@@ -105,32 +116,45 @@ impl GatewayConfig {
         !(host.is_empty() || host == "127.0.0.1" || host == "::1" || host == "localhost")
     }
 
-    /// Host values accepted by rmcp's DNS rebinding protection.
+    /// Host values accepted by the gateway's DNS-rebinding protection (fed to
+    /// rmcp's Streamable HTTP config AND the router-wide Host middleware —
+    /// one source of truth).
     ///
-    /// rmcp's Streamable HTTP service defaults to loopback-only Host headers.
-    /// When the gateway is published through a reverse proxy or Cloudflare
-    /// Tunnel, ChatGPT reaches it with the public host, so that hostname must
-    /// be explicitly allowlisted.
+    /// Loopback bind: localhost variants + bind host + `public_base_url` host.
     ///
-    /// When bound to a non-loopback address the gateway is exposed on the LAN
-    /// and reached by IP / hostname / mDNS name we can't enumerate ahead of
-    /// time, so the allowlist is relaxed to empty — rmcp treats an empty list
-    /// as allow-all. The OAuth + per-client consent layer remains the gate.
+    /// Network bind: the allowlist is built from everything this machine is
+    /// legitimately reachable as — its interface IPs, its hostname (and mDNS
+    /// `.local` variant), the bind host when it names a specific interface,
+    /// `public_base_url`, and the user-configured
+    /// [`Self::additional_allowed_hosts`]. Every entry is accepted bare and
+    /// with this gateway's port appended (IPv6 in bracketed form), matching
+    /// how Host headers arrive. New LAN addresses acquired after startup need
+    /// a gateway restart or an explicit additional-host entry.
+    ///
+    /// [`Self::allow_any_host`] (explicit, off by default) restores the old
+    /// allow-all behavior by returning an empty list — rmcp treats empty as
+    /// allow-all and the router middleware is skipped.
     pub fn allowed_hosts(&self) -> Vec<String> {
-        if self.is_network_bind() {
+        if self.is_network_bind() && self.allow_any_host {
             return Vec::new();
         }
 
-        let mut hosts = vec![
-            "localhost".to_string(),
-            "127.0.0.1".to_string(),
-            "::1".to_string(),
-        ];
+        let mut hosts: Vec<String> = Vec::new();
+        for h in ["localhost", "127.0.0.1", "::1"] {
+            push_host_forms(&mut hosts, h, self.port);
+        }
 
         let bind_host = self.host.trim();
-        if !bind_host.is_empty() {
-            hosts.push(bind_host.to_string());
-            hosts.push(format!("{}:{}", bind_host, self.port));
+        // Wildcard binds aren't hostnames clients send — skip them; specific
+        // interfaces (loopback or a chosen LAN IP) are valid Host values.
+        if !bind_host.is_empty() && bind_host != "0.0.0.0" && bind_host != "::" {
+            push_host_forms(&mut hosts, bind_host, self.port);
+        }
+
+        if self.is_network_bind() {
+            for h in machine_hosts() {
+                push_host_forms(&mut hosts, &h, self.port);
+            }
         }
 
         if let Some(public_base_url) = self.public_base_url.as_deref() {
@@ -156,10 +180,106 @@ impl GatewayConfig {
             }
         }
 
+        for extra in &self.additional_allowed_hosts {
+            let extra = extra.trim();
+            if extra.is_empty() {
+                continue;
+            }
+            if extra.contains(':') && extra.parse::<std::net::Ipv6Addr>().is_err() {
+                // Already host:port (or bracketed v6 with port) — take as-is.
+                hosts.push(extra.to_string());
+            } else {
+                push_host_forms(&mut hosts, extra, self.port);
+            }
+        }
+
         hosts.sort();
         hosts.dedup();
         hosts
     }
+}
+
+/// Push the Host-header forms a client may send for `host` on `port`:
+/// bare and `host:port`, with IPv6 addresses additionally in the bracketed
+/// forms (`[addr]`, `[addr]:port`) that Host headers actually carry.
+fn push_host_forms(hosts: &mut Vec<String>, host: &str, port: u16) {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    if host.is_empty() {
+        return;
+    }
+    if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        hosts.push(host.to_string());
+        hosts.push(format!("[{host}]"));
+        hosts.push(format!("[{host}]:{port}"));
+    } else {
+        hosts.push(host.to_string());
+        hosts.push(format!("{host}:{port}"));
+    }
+}
+
+/// Everything this machine is legitimately addressed as on the local network:
+/// interface IPs (v4 + v6) plus the OS hostname and its mDNS `.local` alias.
+/// Best-effort — enumeration failures degrade to the static entries rather
+/// than erroring the gateway.
+fn machine_hosts() -> Vec<String> {
+    let mut out = Vec::new();
+    match local_ip_address::list_afinet_netifas() {
+        Ok(ifas) => {
+            for (_name, ip) in ifas {
+                out.push(ip.to_string());
+            }
+        }
+        Err(error) => {
+            warn!(%error, "[Gateway] Could not enumerate local interfaces for the Host allowlist");
+        }
+    }
+    if let Ok(name) = hostname::get() {
+        if let Some(s) = name.to_str() {
+            let s = s.trim().to_ascii_lowercase();
+            if !s.is_empty() {
+                out.push(s.clone());
+                if !s.ends_with(".local") {
+                    out.push(format!("{s}.local"));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Router-wide Host-header enforcement for network binds. rmcp's built-in
+/// check only covers the Streamable HTTP service; this covers every route
+/// (OAuth authorize/token, client features, future pairing pages) and returns
+/// a self-explanatory 421 instead of an opaque rejection. Same source of
+/// truth as rmcp: [`GatewayConfig::allowed_hosts`].
+async fn enforce_allowed_hosts(
+    axum::extract::State(allowed): axum::extract::State<Arc<std::collections::HashSet<String>>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if allowed.contains(&host) {
+        return next.run(request).await;
+    }
+    warn!(
+        host = %host,
+        "[Gateway] Rejected request with unrecognized Host header (DNS-rebinding protection). \
+         Add it under Settings → Gateway → Allowed hosts if it is legitimate."
+    );
+    (
+        axum::http::StatusCode::MISDIRECTED_REQUEST,
+        format!(
+            "Unrecognized Host header {host:?}. If this name legitimately points at this \
+             McpMux gateway, add it in Settings → Gateway → Network access → Allowed hosts."
+        ),
+    )
+        .into_response()
 }
 
 /// The desktop-only client-management routes (list / update / delete clients).
@@ -520,6 +640,29 @@ impl GatewayServer {
             router = router.layer(cors);
         }
 
+        // Network binds enforce the Host allowlist across the WHOLE router
+        // (rmcp's own check only guards /mcp). Outermost layer: rejected
+        // requests never reach logging/rate-limit/handlers. Loopback binds
+        // skip it (rmcp still enforces loopback hosts on /mcp), as does the
+        // explicit allow-any-host escape hatch.
+        if self.config.is_network_bind() && !self.config.allow_any_host {
+            let allowed: Arc<std::collections::HashSet<String>> = Arc::new(
+                self.config
+                    .allowed_hosts()
+                    .iter()
+                    .map(|h| h.to_ascii_lowercase())
+                    .collect(),
+            );
+            info!(
+                "[Gateway] Host allowlist active on network bind ({} entries)",
+                allowed.len()
+            );
+            router = router.layer(middleware::from_fn_with_state(
+                allowed,
+                enforce_allowed_hosts,
+            ));
+        }
+
         router
     }
 
@@ -768,14 +911,91 @@ mod config_tests {
     }
 
     #[test]
-    fn allowed_hosts_relaxes_to_allow_all_on_network_bind() {
-        // rmcp treats an empty allow-list as allow-all; on a network bind we
-        // can't enumerate the LAN host clients will use, so we relax to that.
-        assert!(config_on_host("0.0.0.0").allowed_hosts().is_empty());
+    fn network_bind_builds_machine_allowlist_not_allow_all() {
+        // Hardened behavior: a network bind enforces an allowlist built from
+        // the machine's own identities instead of relaxing to allow-all.
+        let hosts = config_on_host("0.0.0.0").allowed_hosts();
+        assert!(!hosts.is_empty(), "network bind must NOT be allow-all");
+        // Loopback names stay accepted (the machine itself).
+        assert!(hosts.contains(&"localhost".to_string()), "{hosts:?}");
+        // Wildcard bind addresses are not client-sendable Host values.
+        assert!(!hosts.contains(&"0.0.0.0".to_string()), "{hosts:?}");
         // Loopback bind keeps the strict allow-list.
         assert!(config_on_host("127.0.0.1")
             .allowed_hosts()
             .contains(&"localhost".to_string()));
+    }
+
+    #[test]
+    fn allow_any_host_escape_hatch_returns_empty_on_network_bind_only() {
+        let cfg = GatewayConfig {
+            host: "0.0.0.0".to_string(),
+            allow_any_host: true,
+            ..Default::default()
+        };
+        // Empty = rmcp allow-all; the router middleware is skipped too.
+        assert!(cfg.allowed_hosts().is_empty());
+
+        // On loopback the flag is irrelevant — the strict list stays.
+        let cfg = GatewayConfig {
+            allow_any_host: true,
+            ..Default::default()
+        };
+        assert!(cfg.allowed_hosts().contains(&"localhost".to_string()));
+    }
+
+    #[test]
+    fn additional_allowed_hosts_accepted_bare_and_with_port() {
+        let cfg = GatewayConfig {
+            host: "0.0.0.0".to_string(),
+            port: 45818,
+            additional_allowed_hosts: vec![
+                "mybox.tail1234.ts.net".to_string(),
+                "custom.example:9999".to_string(),
+                "  ".to_string(), // blank entries are ignored
+            ],
+            ..Default::default()
+        };
+        let hosts = cfg.allowed_hosts();
+        assert!(
+            hosts.contains(&"mybox.tail1234.ts.net".to_string()),
+            "{hosts:?}"
+        );
+        assert!(
+            hosts.contains(&"mybox.tail1234.ts.net:45818".to_string()),
+            "bare entries also match with the gateway port: {hosts:?}"
+        );
+        // Entries that already carry a port are taken verbatim.
+        assert!(
+            hosts.contains(&"custom.example:9999".to_string()),
+            "{hosts:?}"
+        );
+        assert!(!hosts.iter().any(|h| h.trim().is_empty()));
+    }
+
+    #[test]
+    fn network_bind_includes_public_base_url_host() {
+        let cfg = GatewayConfig {
+            host: "0.0.0.0".to_string(),
+            public_base_url: Some("https://mcp.example.com".to_string()),
+            ..Default::default()
+        };
+        let hosts = cfg.allowed_hosts();
+        assert!(hosts.contains(&"mcp.example.com".to_string()), "{hosts:?}");
+    }
+
+    #[test]
+    fn ipv6_hosts_get_bracketed_port_forms() {
+        let mut hosts = Vec::new();
+        super::push_host_forms(&mut hosts, "::1", 45818);
+        assert!(hosts.contains(&"::1".to_string()));
+        assert!(hosts.contains(&"[::1]".to_string()));
+        assert!(hosts.contains(&"[::1]:45818".to_string()));
+
+        let mut v4 = Vec::new();
+        super::push_host_forms(&mut v4, "192.168.1.5", 45818);
+        assert!(v4.contains(&"192.168.1.5".to_string()));
+        assert!(v4.contains(&"192.168.1.5:45818".to_string()));
     }
 
     #[test]

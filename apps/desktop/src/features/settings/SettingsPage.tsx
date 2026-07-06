@@ -132,6 +132,12 @@ export function SettingsPage() {
   const [savingAuthDisabled, setSavingAuthDisabled] = useState(false);
   const [networkAccess, setNetworkAccess] = useState(false);
   const [savingNetworkAccess, setSavingNetworkAccess] = useState(false);
+  // Host allowlist for network binds: extra hostnames/IPs the gateway should
+  // accept in the Host header, plus the allow-any escape hatch. Edited as a
+  // comma-separated string; persisted via set_gateway_host_allowlist.
+  const [allowedHostsText, setAllowedHostsText] = useState('');
+  const [allowAnyHost, setAllowAnyHost] = useState(false);
+  const [savingHostAllowlist, setSavingHostAllowlist] = useState(false);
 
   // Meta-tools master switch — gates the entire `mcpmux_*` namespace.
 
@@ -405,6 +411,35 @@ export function SettingsPage() {
       .then(setNetworkAccess)
       .catch((err) => console.error('Failed to load network-access setting:', err));
   }, []);
+
+  // Load the Host-allowlist configuration on mount.
+  useEffect(() => {
+    invoke<{ additionalHosts: string[]; allowAnyHost: boolean }>('get_gateway_host_allowlist')
+      .then((s) => {
+        setAllowedHostsText(s.additionalHosts.join(', '));
+        setAllowAnyHost(s.allowAnyHost);
+      })
+      .catch((err) => console.error('Failed to load host allowlist:', err));
+  }, []);
+
+  const saveHostAllowlist = async (hostsText: string, anyHost: boolean) => {
+    setSavingHostAllowlist(true);
+    try {
+      await invoke('set_gateway_host_allowlist', {
+        additionalHosts: hostsText
+          .split(',')
+          .map((h) => h.trim())
+          .filter(Boolean),
+        allowAnyHost: anyHost,
+      });
+      success('Settings saved', 'Host allowlist updated — restart the gateway to apply.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      error('Failed to save host allowlist', msg);
+    } finally {
+      setSavingHostAllowlist(false);
+    }
+  };
 
   const updateNetworkAccess = async (enabled: boolean) => {
     const prev = networkAccess;
@@ -900,8 +935,9 @@ export function SettingsPage() {
                                 Per-client OAuth approval happens on this machine, so a remote
                                 client that signs in via OAuth (e.g. ChatGPT) can't finish approval
                                 over the network yet — front the gateway with the public URL + a
-                                tunnel for that. For plain LAN sharing, pair this with
-                                authentication disabled.
+                                tunnel for that. For plain LAN sharing, register an API-key client
+                                for each device (authentication stays on whenever the gateway is on
+                                the network).
                               </p>
                             </>
                           )}
@@ -914,6 +950,57 @@ export function SettingsPage() {
                         >
                           Restart gateway
                         </Button>
+                      </div>
+                    ) : null}
+
+                    {networkAccess ? (
+                      <div className="mt-3 space-y-2" data-testid="host-allowlist-section">
+                        <label className="text-sm font-medium">Allowed hosts</label>
+                        <p className="text-xs text-[rgb(var(--muted))]">
+                          On the network, the gateway only answers requests addressed to this
+                          machine (its IPs, hostname, and public URL). If devices reach it under
+                          another name — an mDNS alias, DNS entry, or reverse-proxy host — add it
+                          here, comma-separated. Applies after a gateway restart.
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={allowedHostsText}
+                            onChange={(e) => setAllowedHostsText(e.target.value)}
+                            placeholder="e.g. mybox.local, mcp.home.lan"
+                            className="focus:ring-primary-500 min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2"
+                            data-testid="host-allowlist-input"
+                          />
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => void saveHostAllowlist(allowedHostsText, allowAnyHost)}
+                            disabled={savingHostAllowlist}
+                            data-testid="host-allowlist-save"
+                          >
+                            Save
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between gap-4 pt-1">
+                          <div className="min-w-0">
+                            <label className="text-xs font-medium">
+                              Accept any host name (not recommended)
+                            </label>
+                            <p className="mt-0.5 text-[11px] text-[rgb(var(--muted))]">
+                              Disables the check above entirely. Only for setups the allowlist
+                              can't express — it weakens DNS-rebinding protection.
+                            </p>
+                          </div>
+                          <Switch
+                            checked={allowAnyHost}
+                            onCheckedChange={(v: boolean) => {
+                              setAllowAnyHost(v);
+                              void saveHostAllowlist(allowedHostsText, v);
+                            }}
+                            disabled={savingHostAllowlist}
+                            data-testid="host-allowlist-any-switch"
+                          />
+                        </div>
                       </div>
                     ) : null}
                   </div>

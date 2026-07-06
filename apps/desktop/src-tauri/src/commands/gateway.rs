@@ -126,6 +126,12 @@ pub(crate) async fn shutdown_gateway_handle(mut handle: mcpmux_gateway::GatewayS
 /// window.
 const GATEWAY_PUBLIC_BASE_URL_KEY: &str = "gateway.public_base_url";
 const GATEWAY_NETWORK_ACCESS_KEY: &str = "gateway.network_access_enabled";
+/// Comma-separated extra Host-header values accepted on a network bind
+/// (mDNS aliases, DNS names, reverse-proxy hosts).
+const GATEWAY_ADDITIONAL_ALLOWED_HOSTS_KEY: &str = "gateway.additional_allowed_hosts";
+/// Escape hatch: accept ANY Host header on a network bind. "true"/"false";
+/// missing = false (allowlist enforced — the secure default).
+const GATEWAY_ALLOW_ANY_HOST_KEY: &str = "gateway.allow_any_host";
 
 pub(crate) fn normalize_public_base_url(raw: &str) -> Result<Option<String>, String> {
     let trimmed = raw.trim();
@@ -215,6 +221,39 @@ pub(crate) async fn load_network_access_from_repo(
 
 pub(crate) async fn load_network_access(app_state: &AppState) -> bool {
     load_network_access_from_repo(&app_state.settings_repository).await
+}
+
+/// Parse the persisted comma-separated additional-allowed-hosts value.
+pub(crate) fn parse_additional_hosts(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub(crate) async fn load_additional_allowed_hosts_from_repo(
+    settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
+) -> Vec<String> {
+    settings_repository
+        .get(GATEWAY_ADDITIONAL_ALLOWED_HOSTS_KEY)
+        .await
+        .ok()
+        .flatten()
+        .map(|v| parse_additional_hosts(&v))
+        .unwrap_or_default()
+}
+
+pub(crate) async fn load_allow_any_host_from_repo(
+    settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
+) -> bool {
+    settings_repository
+        .get(GATEWAY_ALLOW_ANY_HOST_KEY)
+        .await
+        .ok()
+        .flatten()
+        .map(|v| v == "true")
+        .unwrap_or(false)
 }
 
 pub(crate) fn advertised_base_url(public_base_url: Option<&str>, port: u16) -> String {
@@ -1019,6 +1058,11 @@ pub async fn start_gateway(
         port: final_port,
         public_base_url: public_base_url.clone(),
         enable_cors: true,
+        additional_allowed_hosts: load_additional_allowed_hosts_from_repo(
+            &app_state.settings_repository,
+        )
+        .await,
+        allow_any_host: load_allow_any_host_from_repo(&app_state.settings_repository).await,
     };
 
     // Create self-contained gateway server with DI
@@ -1490,6 +1534,74 @@ pub async fn set_gateway_network_access(
         enabled,
         auth_re_enabled,
     })
+}
+
+/// Host-allowlist settings for network binds, as shown in Settings.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostAllowlistSettings {
+    /// User-added extra hosts (mDNS aliases, DNS names, reverse-proxy hosts).
+    pub additional_hosts: Vec<String>,
+    /// Escape hatch: accept any Host header on a network bind.
+    pub allow_any_host: bool,
+}
+
+/// Read the Host-allowlist configuration (extra hosts + allow-any escape
+/// hatch). Only meaningful while network access is enabled.
+#[tauri::command]
+pub async fn get_gateway_host_allowlist(
+    app_state: State<'_, AppState>,
+) -> Result<HostAllowlistSettings, String> {
+    Ok(HostAllowlistSettings {
+        additional_hosts: load_additional_allowed_hosts_from_repo(&app_state.settings_repository)
+            .await,
+        allow_any_host: load_allow_any_host_from_repo(&app_state.settings_repository).await,
+    })
+}
+
+/// Persist the Host-allowlist configuration. Takes effect on the next gateway
+/// start/restart (the allowlist is compiled into the router at boot).
+#[tauri::command]
+pub async fn set_gateway_host_allowlist(
+    additional_hosts: Vec<String>,
+    allow_any_host: bool,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    let cleaned: Vec<String> = additional_hosts
+        .iter()
+        .map(|h| h.trim())
+        .filter(|h| !h.is_empty())
+        .map(str::to_string)
+        .collect();
+    for host in &cleaned {
+        // Host values, not URLs: reject obvious mistakes early with a hint.
+        if host.contains("://") || host.contains('/') || host.contains(' ') {
+            return Err(format!(
+                "\"{}\" is not a valid host. Enter a hostname or IP (optionally :port), \
+                 e.g. mybox.local or 192.168.1.5 — not a URL.",
+                host
+            ));
+        }
+    }
+    app_state
+        .settings_repository
+        .set(GATEWAY_ADDITIONAL_ALLOWED_HOSTS_KEY, &cleaned.join(","))
+        .await
+        .map_err(|e| e.to_string())?;
+    app_state
+        .settings_repository
+        .set(
+            GATEWAY_ALLOW_ANY_HOST_KEY,
+            if allow_any_host { "true" } else { "false" },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    info!(
+        "[Gateway] Host allowlist updated: {} extra host(s), allow_any_host={}",
+        cleaned.len(),
+        allow_any_host
+    );
+    Ok(())
 }
 
 /// Which port source a startup attempt would use.

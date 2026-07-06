@@ -425,6 +425,15 @@ pub fn run() {
                 // devices on the LAN can reach the gateway; loopback-only otherwise.
                 let network_access =
                     crate::commands::gateway::load_network_access_from_repo(&settings_repo).await;
+                // Host-allowlist configuration (only meaningful on a network
+                // bind) — load before settings_repo moves into the builder.
+                let additional_allowed_hosts =
+                    crate::commands::gateway::load_additional_allowed_hosts_from_repo(
+                        &settings_repo,
+                    )
+                    .await;
+                let allow_any_host =
+                    crate::commands::gateway::load_allow_any_host_from_repo(&settings_repo).await;
                 let local_url = format!("http://localhost:{}", final_port);
                 info!("Auto-starting gateway on {} (advertising {})", local_url, url);
 
@@ -477,6 +486,8 @@ pub fn run() {
                     port: final_port,
                     public_base_url: public_base_url.clone(),
                     enable_cors: true,
+                    additional_allowed_hosts,
+                    allow_any_host,
                 };
 
                 // Create self-contained gateway server with DI
@@ -964,6 +975,8 @@ pub fn run() {
             commands::reset_gateway_public_base_url,
             commands::get_gateway_network_access,
             commands::set_gateway_network_access,
+            commands::get_gateway_host_allowlist,
+            commands::set_gateway_host_allowlist,
             commands::probe_gateway_start,
             commands::take_pending_port_conflict,
             commands::start_gateway,

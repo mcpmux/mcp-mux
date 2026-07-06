@@ -1,0 +1,15 @@
+# Keep the Docker build context small — the serve image only needs the Rust
+# workspace sources, not build artifacts or JS deps.
+target/
+**/target/
+node_modules/
+**/node_modules/
+.git/
+dist/
+**/dist/
+coverage/
+**/coverage/
+*.log
+.DS_Store
+tests/e2e/**/screenshots/
+apps/desktop/src-tauri/gen/

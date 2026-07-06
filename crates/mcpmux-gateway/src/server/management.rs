@@ -123,10 +123,25 @@ fn internal_error(msg: &str) -> Response {
         .into_response()
 }
 
-/// Build the `/admin/api` router, token-gated. Compose into the gateway (or the
+/// `GET /admin` — the minimal web admin console. Self-contained HTML (no
+/// external assets) that signs in with the admin token and renders the
+/// read-only management data. Public: the page itself holds no secrets; every
+/// data call it makes carries the token the operator pastes.
+async fn admin_console() -> Response {
+    let html = include_str!("admin_console.html");
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}
+
+/// Build the management router: the token-gated `/admin/api/*` read endpoints
+/// plus the public `/admin` console page. Compose into the gateway (or the
 /// serve binary) with the app state and the required admin token.
 pub fn management_router(app_state: AppState, admin_token: Arc<String>) -> Router {
-    Router::new()
+    // Token-gated JSON API.
+    let api = Router::new()
         .route("/admin/api/info", get(admin_info))
         .route("/admin/api/spaces", get(admin_list_spaces))
         .route("/admin/api/clients", get(admin_list_clients))
@@ -134,7 +149,9 @@ pub fn management_router(app_state: AppState, admin_token: Arc<String>) -> Route
         .layer(axum::middleware::from_fn_with_state(
             AdminToken(admin_token),
             require_admin_token,
-        ))
+        ));
+    // Public console page (its API calls carry the operator-entered token).
+    Router::new().route("/admin", get(admin_console)).merge(api)
 }
 
 #[cfg(test)]

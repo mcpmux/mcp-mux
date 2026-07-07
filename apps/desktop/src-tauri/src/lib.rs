@@ -662,6 +662,8 @@ pub fn run() {
                                                 "added": result.added,
                                                 "updated": result.updated,
                                                 "removed": result.removed,
+                                                "adopted_count": result.adopted.len(),
+                                                "error_count": result.errors.len(),
                                             }),
                                         ) {
                                             warn!("[FileWatcher] Failed to emit event: {}", e);

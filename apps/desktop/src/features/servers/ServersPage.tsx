@@ -519,8 +519,28 @@ export function ServersPage() {
         return;
       }
       void loadData();
+
+      const adoptedCount = payload.adopted_count ?? 0;
+      const errorCount = payload.error_count ?? 0;
+      if (adoptedCount > 0 || errorCount > 0) {
+        const detailParts: string[] = [];
+        if (adoptedCount > 0) {
+          detailParts.push(
+            t('configEditorModal.toast.syncPartialAdopted', { count: adoptedCount }),
+          );
+        }
+        if (errorCount > 0) {
+          detailParts.push(
+            t('configEditorModal.toast.syncPartialErrors', { count: errorCount }),
+          );
+        }
+        showToast(
+          `${t('configEditorModal.toast.syncPartialTitle')}: ${t('configEditorModal.toast.syncPartialBody', { detail: detailParts.join('; ') })}`,
+          errorCount > 0 ? 'warning' : 'info',
+        );
+      }
     });
-  }, [loadData, subscribe, viewSpace]);
+  }, [loadData, showToast, subscribe, t, viewSpace]);
 
   useEffect(() => {
     return subscribe('space-servers-sync-failed', (payload) => {

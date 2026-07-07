@@ -251,7 +251,13 @@
       "invalidJsonTitle": "Invalid JSON",
       "saveFailed": "Failed to save configuration",
       "syncFailedTitle": "Config saved, sync failed",
-      "syncFailedBody": "{{message}} — JSON is on disk; fix the entry and save again."
+      "syncFailedBody": "{{message}} — JSON is on disk; fix the entry and save again.",
+      "syncPartialTitle": "Config synced",
+      "syncPartialBody": "{{detail}}",
+      "syncPartialAdopted_one": "{{count}} server took over an existing entry",
+      "syncPartialAdopted_other": "{{count}} servers took over existing entries",
+      "syncPartialErrors_one": "{{count}} server failed to sync",
+      "syncPartialErrors_other": "{{count}} servers failed to sync"
     },
     "validation": {
       "invalidJsonPrefix": "Invalid JSON:",

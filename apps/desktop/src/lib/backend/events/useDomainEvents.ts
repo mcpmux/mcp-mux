@@ -178,6 +178,8 @@ export interface MCPNotificationPayload extends DomainEventPayload {
 /** Space config file sync succeeded (desktop file watcher). */
 export interface SpaceServersUpdatedPayload extends DomainEventPayload {
   space_id: string;
+  adopted_count?: number;
+  error_count?: number;
 }
 
 /** Space config file sync failed (desktop file watcher). */

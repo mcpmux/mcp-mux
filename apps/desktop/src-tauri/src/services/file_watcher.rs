@@ -12,9 +12,19 @@ use anyhow::Result;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use mcpmux_core::application::{SyncResult, UserSpaceSyncService};
 use mcpmux_core::InstalledServerRepository;
+
+type SyncSuccessHandler = Arc<dyn Fn(&str, &SyncResult) + Send + Sync>;
+type SyncErrorHandler = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Optional UI callbacks for background config sync.
+pub struct SpaceFileWatcherEmitters {
+    pub on_success: Option<SyncSuccessHandler>,
+    pub on_error: Option<SyncErrorHandler>,
+}
 
 /// File watcher for user space configuration files
 ///
@@ -34,17 +44,14 @@ impl SpaceFileWatcher {
     /// # Arguments
     /// * `spaces_dir` - Directory containing space JSON config files
     /// * `sync_service` - Service to sync changes
-    /// * `default_space_id` - Default space ID to use for synced servers
-    /// * `event_emitter` - Optional callback to emit UI events after sync
-    pub fn new<F>(
+    /// * `default_space_id` - Fallback space ID when filename stem is not a UUID
+    /// * `emitters` - Optional callbacks for sync success/failure
+    pub fn new(
         spaces_dir: PathBuf,
         sync_service: Arc<UserSpaceSyncService>,
         default_space_id: String,
-        event_emitter: Option<F>,
-    ) -> Result<Self>
-    where
-        F: Fn(&str, &SyncResult) + Send + Sync + 'static,
-    {
+        emitters: SpaceFileWatcherEmitters,
+    ) -> Result<Self> {
         // Ensure directory exists
         if !spaces_dir.exists() {
             std::fs::create_dir_all(&spaces_dir)?;
@@ -56,10 +63,9 @@ impl SpaceFileWatcher {
         // Spawn debounced handler
         let sync_clone = sync_service.clone();
         let space_id = default_space_id.clone();
-        let emitter = event_emitter.map(Arc::new);
 
         tokio::spawn(async move {
-            Self::debounced_handler(rx, sync_clone, space_id, emitter).await;
+            Self::debounced_handler(rx, sync_clone, space_id, emitters).await;
         });
 
         // Create file watcher
@@ -97,17 +103,24 @@ impl SpaceFileWatcher {
         })
     }
 
+    /// Resolve space ID from a config filename stem when it is a UUID.
+    fn space_id_from_config_path(path: &Path, default_space_id: &str) -> String {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| Uuid::parse_str(stem).is_ok())
+            .map(String::from)
+            .unwrap_or_else(|| default_space_id.to_string())
+    }
+
     /// Debounced handler for file changes
     ///
     /// Groups rapid file changes and syncs after a debounce period.
-    async fn debounced_handler<F>(
+    async fn debounced_handler(
         mut rx: mpsc::Receiver<PathBuf>,
         sync_service: Arc<UserSpaceSyncService>,
         default_space_id: String,
-        event_emitter: Option<Arc<F>>,
-    ) where
-        F: Fn(&str, &SyncResult) + Send + Sync + 'static,
-    {
+        emitters: SpaceFileWatcherEmitters,
+    ) {
         let debounce_duration = Duration::from_millis(500);
         let mut pending: HashMap<PathBuf, Instant> = HashMap::new();
 
@@ -129,13 +142,12 @@ impl SpaceFileWatcher {
                     for path in ready {
                         pending.remove(&path);
 
-                        // Extract space_id from filename (e.g., "default.json" -> use default_space_id)
-                        // For now, use the default space for all config files
-                        let space_id = &default_space_id;
+                        let space_id =
+                            Self::space_id_from_config_path(&path, &default_space_id);
 
                         info!("Syncing changes from: {:?}", path);
 
-                        match sync_service.sync_from_file(space_id, &path).await {
+                        match sync_service.sync_from_file(&space_id, &path).await {
                             Ok(result) => {
                                 if result.has_changes() {
                                     info!(
@@ -145,16 +157,19 @@ impl SpaceFileWatcher {
                                         result.removed.len()
                                     );
 
-                                    // Emit event for UI refresh
-                                    if let Some(ref emitter) = event_emitter {
-                                        emitter(space_id, &result);
+                                    if let Some(ref emitter) = emitters.on_success {
+                                        emitter(&space_id, &result);
                                     }
                                 } else {
                                     debug!("Sync complete: no changes");
                                 }
                             }
                             Err(e) => {
-                                error!("Sync failed for {:?}: {}", path, e);
+                                let message = e.to_string();
+                                error!("Sync failed for {:?}: {}", path, message);
+                                if let Some(ref emitter) = emitters.on_error {
+                                    emitter(&space_id, &message);
+                                }
                             }
                         }
                     }
@@ -198,11 +213,14 @@ impl SpaceFileWatcherBuilder {
     /// Build the file watcher without event emitter
     pub fn build(self) -> Result<SpaceFileWatcher> {
         let sync_service = Arc::new(UserSpaceSyncService::new(self.installed_repo));
-        SpaceFileWatcher::new::<fn(&str, &SyncResult)>(
+        SpaceFileWatcher::new(
             self.spaces_dir,
             sync_service,
             self.default_space_id,
-            None,
+            SpaceFileWatcherEmitters {
+                on_success: None,
+                on_error: None,
+            },
         )
     }
 
@@ -216,17 +234,34 @@ impl SpaceFileWatcherBuilder {
             self.spaces_dir,
             sync_service,
             self.default_space_id,
-            Some(emitter),
+            SpaceFileWatcherEmitters {
+                on_success: Some(Arc::new(emitter)),
+                on_error: None,
+            },
         )
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::path::Path;
 
     #[test]
-    fn test_builder_default_space_id() {
-        // Just test the builder pattern compiles
-        // Actual functionality tested via integration tests
+    fn space_id_from_config_path_uses_uuid_stem() {
+        let path = Path::new("/tmp/spaces/00000000-0000-0000-0000-000000000001.json");
+        assert_eq!(
+            SpaceFileWatcher::space_id_from_config_path(path, "fallback"),
+            "00000000-0000-0000-0000-000000000001"
+        );
+    }
+
+    #[test]
+    fn space_id_from_config_path_falls_back_for_non_uuid_stem() {
+        let path = Path::new("/tmp/spaces/default.json");
+        assert_eq!(
+            SpaceFileWatcher::space_id_from_config_path(path, "fallback-id"),
+            "fallback-id"
+        );
     }
 }

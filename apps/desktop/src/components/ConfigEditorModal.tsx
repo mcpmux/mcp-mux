@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Save, Loader2, AlertTriangle, Wand2, Plus } from 'lucide-react';
 import { readSpaceConfig, saveSpaceConfig } from '@/lib/api/spaces';
-import { refreshRegistry } from '@/lib/api/registry';
 import { type Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useToast, ToastContainer } from '@mcpmux/ui';
@@ -143,8 +142,6 @@ export function ConfigEditorModal({
       setIsSaving(true);
       setError(null);
       await saveSpaceConfig(spaceId, content);
-      // Refresh server discovery to pick up new/changed servers
-      await refreshRegistry();
 
       success(t('configEditorModal.toast.saved'), t('configEditorModal.toast.savedBody'));
       onSaved();

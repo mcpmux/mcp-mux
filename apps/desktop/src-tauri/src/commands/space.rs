@@ -6,10 +6,7 @@
 //! built-in fallback. The desktop UI tracks which space the user is
 //! viewing in its own Zustand store (frontend-only state).
 
-use mcpmux_core::{
-    application::UserSpaceSyncService, validate_workspace_root, Space, SpaceBaseDir,
-    WorkspaceRootValidation,
-};
+use mcpmux_core::{validate_workspace_root, Space, SpaceBaseDir, WorkspaceRootValidation};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
@@ -237,24 +234,6 @@ pub async fn save_space_config(
 
     std::fs::write(&config_path, content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
-
-    // Do not rely solely on the debounced file watcher. The UI reloads immediately
-    // after this command returns, so sync the just-saved file into InstalledServer
-    // records synchronously to avoid stale/missing custom-server state.
-    let sync_service = UserSpaceSyncService::new(state.installed_server_repository.clone());
-    let sync_result = sync_service
-        .sync_from_file(&space_id, &config_path)
-        .await
-        .map_err(|e| format!("Failed to sync custom server config: {}", e))?;
-
-    if sync_result.has_changes() {
-        info!(
-            "[save_space_config] Synced custom server config: {} added, {} updated, {} removed",
-            sync_result.added.len(),
-            sync_result.updated.len(),
-            sync_result.removed.len()
-        );
-    }
 
     Ok(())
 }

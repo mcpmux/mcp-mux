@@ -8,4 +8,4 @@ pub mod file_watcher;
 pub mod ui_events;
 
 pub use admin_server::AdminServerState;
-pub use file_watcher::SpaceFileWatcher;
+pub use file_watcher::{SpaceFileWatcher, SpaceFileWatcherEmitters};

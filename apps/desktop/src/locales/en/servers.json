@@ -247,9 +247,11 @@
     "moreErrors": "(+{{count}} more)",
     "toast": {
       "saved": "Configuration saved",
-      "savedBody": "Space configuration updated successfully",
+      "savedBody": "JSON saved to disk. Server sync runs in the background.",
       "invalidJsonTitle": "Invalid JSON",
-      "saveFailed": "Failed to save configuration"
+      "saveFailed": "Failed to save configuration",
+      "syncFailedTitle": "Config saved, sync failed",
+      "syncFailedBody": "{{message}} — JSON is on disk; fix the entry and save again."
     },
     "validation": {
       "invalidJsonPrefix": "Invalid JSON:",

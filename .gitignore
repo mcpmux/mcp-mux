@@ -93,3 +93,6 @@ apps/desktop/src-tauri/target/release/bundle/
 debug/
 *.dSYM/
 
+
+# Cursor rules — symlinked from ~/.cursor/rules/projects/
+.cursor/rules/

@@ -278,7 +278,7 @@ export function ServersPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const gatewayControl = useGatewayControl();
   // Bottom toast notifications
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'warning' } | null>(null);
   const [configModal, setConfigModal] = useState<ConfigModalState>({
     open: false,
     server: null,
@@ -371,7 +371,7 @@ export function ServersPage() {
   }, [authProgress]);
 
   // Show toast notification
-  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 5000);
   }, []);
@@ -512,6 +512,27 @@ export function ServersPage() {
       }
     });
   }, [loadData, subscribe, viewSpace]);
+
+  useEffect(() => {
+    return subscribe('space-servers-updated', (payload) => {
+      if (viewSpace && payload.space_id !== viewSpace.id) {
+        return;
+      }
+      void loadData();
+    });
+  }, [loadData, subscribe, viewSpace]);
+
+  useEffect(() => {
+    return subscribe('space-servers-sync-failed', (payload) => {
+      if (viewSpace && payload.space_id !== viewSpace.id) {
+        return;
+      }
+      showToast(
+        `${t('configEditorModal.toast.syncFailedTitle')}: ${t('configEditorModal.toast.syncFailedBody', { message: payload.message })}`,
+        'warning',
+      );
+    });
+  }, [showToast, subscribe, t, viewSpace]);
 
   useEffect(() => {
     return subscribe('server-update-available', (payload: ServerUpdateAvailablePayload) => {
@@ -2590,10 +2611,13 @@ export function ServersPage() {
               ? 'bg-[rgb(var(--success))]/90 border-[rgb(var(--success))] text-white'
               : toast.type === 'error'
               ? 'bg-[rgb(var(--error))]/90 border-[rgb(var(--error))] text-white'
+              : toast.type === 'warning'
+              ? 'bg-amber-500/90 border-amber-500 text-white'
               : 'bg-[rgb(var(--primary))]/90 border-[rgb(var(--primary))] text-white'
           }`}>
             {toast.type === 'success' && <span className="text-lg">✓</span>}
             {toast.type === 'error' && <span className="text-lg">✕</span>}
+            {toast.type === 'warning' && <span className="text-lg">!</span>}
             {toast.type === 'info' && <span className="text-lg">ℹ</span>}
             <span className="text-sm font-medium">{toast.message}</span>
             <button 

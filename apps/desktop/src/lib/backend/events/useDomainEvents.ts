@@ -16,6 +16,8 @@
  * - `client-grant-changed` - Per-client feature-set grant edits
  * - `gateway-changed` - Gateway start/stop
  * - `mcp-notification` - MCP capability notifications
+ * - `space-servers-updated` - Space config file sync completed (desktop file watcher)
+ * - `space-servers-sync-failed` - Space config file sync failed (desktop file watcher)
  *
  * ## Usage
  *
@@ -63,7 +65,9 @@ export type DomainEventChannel =
   | 'client-changed'
   | 'client-grant-changed'
   | 'gateway-changed'
-  | 'mcp-notification';
+  | 'mcp-notification'
+  | 'space-servers-updated'
+  | 'space-servers-sync-failed';
 
 /** Base event payload */
 export interface DomainEventPayload {
@@ -171,6 +175,17 @@ export interface MCPNotificationPayload extends DomainEventPayload {
   server_id: string;
 }
 
+/** Space config file sync succeeded (desktop file watcher). */
+export interface SpaceServersUpdatedPayload extends DomainEventPayload {
+  space_id: string;
+}
+
+/** Space config file sync failed (desktop file watcher). */
+export interface SpaceServersSyncFailedPayload extends DomainEventPayload {
+  space_id: string;
+  message: string;
+}
+
 /** Payload type map for type safety */
 export interface PayloadTypeMap {
   'space-changed': SpaceChangedPayload;
@@ -184,6 +199,8 @@ export interface PayloadTypeMap {
   'client-grant-changed': ClientGrantChangedPayload;
   'gateway-changed': GatewayChangedPayload;
   'mcp-notification': MCPNotificationPayload;
+  'space-servers-updated': SpaceServersUpdatedPayload;
+  'space-servers-sync-failed': SpaceServersSyncFailedPayload;
 }
 
 /** Type-safe callback for specific channels */
@@ -214,6 +231,8 @@ const ALL_CHANNELS: DomainEventChannel[] = [
   'client-grant-changed',
   'gateway-changed',
   'mcp-notification',
+  'space-servers-updated',
+  'space-servers-sync-failed',
 ];
 
 /**

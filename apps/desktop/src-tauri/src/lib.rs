@@ -643,25 +643,49 @@ pub fn run() {
                 let default_space_id = "00000000-0000-0000-0000-000000000001".to_string();
 
                 tauri::async_runtime::spawn(async move {
+                    let app_handle_success = app_handle_for_watcher.clone();
+                    let app_handle_error = app_handle_for_watcher;
 
                     // Create file watcher with UI event emitter
                     match services::SpaceFileWatcher::new(
                         spaces_dir.clone(),
                         Arc::new(mcpmux_core::application::UserSpaceSyncService::new(installed_repo)),
                         default_space_id,
-                        Some(move |space_id: &str, result: &mcpmux_core::application::SyncResult| {
-                            // Emit event to refresh UI
-                            if result.has_changes() {
-                                if let Err(e) = app_handle_for_watcher.emit("space-servers-updated", serde_json::json!({
-                                    "space_id": space_id,
-                                    "added": result.added,
-                                    "updated": result.updated,
-                                    "removed": result.removed,
-                                })) {
-                                    warn!("[FileWatcher] Failed to emit event: {}", e);
-                                }
-                            }
-                        }),
+                        services::SpaceFileWatcherEmitters {
+                            on_success: Some(Arc::new(
+                                move |space_id: &str, result: &mcpmux_core::application::SyncResult| {
+                                    if result.has_changes() {
+                                        if let Err(e) = app_handle_success.emit(
+                                            "space-servers-updated",
+                                            serde_json::json!({
+                                                "space_id": space_id,
+                                                "added": result.added,
+                                                "updated": result.updated,
+                                                "removed": result.removed,
+                                            }),
+                                        ) {
+                                            warn!("[FileWatcher] Failed to emit event: {}", e);
+                                        }
+                                    }
+                                },
+                            )),
+                            on_error: Some(Arc::new(
+                                move |space_id: &str, message: &str| {
+                                    if let Err(e) = app_handle_error.emit(
+                                        "space-servers-sync-failed",
+                                        serde_json::json!({
+                                            "space_id": space_id,
+                                            "message": message,
+                                        }),
+                                    ) {
+                                        warn!(
+                                            "[FileWatcher] Failed to emit sync failure: {}",
+                                            e
+                                        );
+                                    }
+                                },
+                            )),
+                        },
                     ) {
                         Ok(_watcher) => {
                             info!("[FileWatcher] Started watching: {:?}", spaces_dir);

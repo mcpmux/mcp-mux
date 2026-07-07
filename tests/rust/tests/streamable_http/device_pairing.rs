@@ -49,8 +49,11 @@ struct Harness {
 impl Harness {
     /// Boot a gateway exposing the pairing claim endpoint AND an auth-required
     /// `/mcp`, over the same database + state, so a claimed key can be checked
-    /// against the real middleware.
-    async fn start() -> Self {
+    /// against the real middleware. `network_bind` controls whether the claim
+    /// response derives its endpoint from the request `Host` header (LAN bind)
+    /// or sticks to the configured local base URL (loopback bind).
+    /// `public_base_url` stays unset so the Host-derivation path is exercised.
+    async fn start(network_bind: bool) -> Self {
         let ct = CancellationToken::new();
         let space_id = Uuid::new_v4();
 
@@ -104,6 +107,7 @@ impl Harness {
         gw_state
             .set_auth_disabled(false)
             .expect("enabling auth is always allowed");
+        gw_state.set_network_bind(network_bind);
         let gateway_state = Arc::new(RwLock::new(gw_state));
 
         let services = Arc::new(ServiceContainer::initialize(
@@ -163,7 +167,7 @@ impl Drop for Harness {
 
 #[tokio::test]
 async fn claim_issues_a_working_api_key() {
-    let h = Harness::start().await;
+    let h = Harness::start(false).await;
     let token = h.mint().await;
     let client = reqwest::Client::new();
 
@@ -204,7 +208,7 @@ async fn claim_issues_a_working_api_key() {
 
 #[tokio::test]
 async fn token_is_single_use() {
-    let h = Harness::start().await;
+    let h = Harness::start(false).await;
     let token = h.mint().await;
     let client = reqwest::Client::new();
 
@@ -227,8 +231,51 @@ async fn token_is_single_use() {
 }
 
 #[tokio::test]
+async fn network_bind_claim_endpoint_uses_the_request_host() {
+    let h = Harness::start(true).await;
+    let token = h.mint().await;
+    // The address a phone on the LAN reached the gateway on (the QR points at
+    // the LAN IP, not the loopback socket we actually bound in the test).
+    let lan = "192.168.1.50:45818";
+
+    let resp = reqwest::Client::new()
+        .post(format!("{}/pair/claim", h.url))
+        .header(reqwest::header::HOST, lan)
+        .json(&serde_json::json!({ "token": token, "device_name": "LAN phone" }))
+        .send()
+        .await
+        .expect("claim");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["endpoint"],
+        format!("http://{lan}/mcp"),
+        "a device pairing over the LAN must be told to connect to the host it \
+         reached the gateway on, not to itself via localhost"
+    );
+}
+
+#[tokio::test]
+async fn loopback_bind_claim_endpoint_ignores_request_host() {
+    let h = Harness::start(false).await;
+    let token = h.mint().await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{}/pair/claim", h.url))
+        .header(reqwest::header::HOST, "192.168.1.50:45818")
+        .json(&serde_json::json!({ "token": token }))
+        .send()
+        .await
+        .expect("claim");
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    // network_bind = false → the configured base URL is returned, Host ignored.
+    assert_eq!(body["endpoint"], "http://127.0.0.1:0/mcp");
+}
+
+#[tokio::test]
 async fn invalid_token_rejected() {
-    let h = Harness::start().await;
+    let h = Harness::start(false).await;
     let client = reqwest::Client::new();
     let resp = client
         .post(format!("{}/pair/claim", h.url))

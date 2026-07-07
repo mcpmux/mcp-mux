@@ -27,6 +27,25 @@ export function createHttpTransport(opts: HttpTransportOptions = {}): Transport 
     return t ? { Authorization: `Bearer ${t}` } : {};
   };
 
+  // ONE shared EventSource per transport instance, multiplexing every
+  // subscription. Browsers cap concurrent connections per origin (~6 on
+  // HTTP/1.1); the web admin registers 11+ listeners at boot, so one SSE
+  // stream per subscribe() would starve all other fetches and freeze the UI.
+  let eventSource: EventSource | null = null;
+  // event name -> handlers subscribed to it
+  const handlers = new Map<string, Set<(payload: unknown) => void>>();
+  // event name -> the single DOM listener that fans out to `handlers`
+  const domListeners = new Map<string, (e: MessageEvent) => void>();
+
+  const ensureEventSource = (): EventSource => {
+    if (eventSource) return eventSource;
+    // EventSource can't set headers, so the token rides as a query param.
+    const t = opts.getToken?.();
+    const url = `${baseUrl}/admin/api/events${t ? `?token=${encodeURIComponent(t)}` : ''}`;
+    eventSource = new EventSource(url, { withCredentials: true });
+    return eventSource;
+  };
+
   return {
     async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
       const res = await fetch(`${baseUrl}/admin/api/rpc/${encodeURIComponent(cmd)}`, {
@@ -47,23 +66,48 @@ export function createHttpTransport(opts: HttpTransportOptions = {}): Transport 
     },
 
     subscribe(event: string, handler: (payload: unknown) => void): () => void {
-      // A single shared EventSource per subscribe keeps this simple; the
-      // server fans out event names. Reconnect is handled by EventSource.
-      // EventSource can't set headers, so the token rides as a query param.
-      const t = opts.getToken?.();
-      const url = `${baseUrl}/admin/api/events${t ? `?token=${encodeURIComponent(t)}` : ''}`;
-      const es = new EventSource(url, { withCredentials: true });
-      const listener = (e: MessageEvent) => {
-        try {
-          handler(e.data ? JSON.parse(e.data) : undefined);
-        } catch {
-          handler(e.data);
-        }
-      };
-      es.addEventListener(event, listener as EventListener);
+      // All subscriptions share one EventSource (see above); the server fans
+      // out event names. Reconnect is handled by EventSource itself.
+      const es = ensureEventSource();
+      let set = handlers.get(event);
+      if (!set) {
+        set = new Set();
+        handlers.set(event, set);
+        // One DOM listener per unique event name; it parses the payload once
+        // and dispatches to every handler registered for that name.
+        const domListener = (e: MessageEvent) => {
+          let payload: unknown;
+          try {
+            payload = e.data ? JSON.parse(e.data) : undefined;
+          } catch {
+            payload = e.data;
+          }
+          for (const h of [...(handlers.get(event) ?? [])]) h(payload);
+        };
+        domListeners.set(event, domListener);
+        es.addEventListener(event, domListener as EventListener);
+      }
+      set.add(handler);
+
+      let active = true;
       return () => {
-        es.removeEventListener(event, listener as EventListener);
-        es.close();
+        if (!active) return;
+        active = false;
+        const current = handlers.get(event);
+        current?.delete(handler);
+        if (current && current.size === 0) {
+          handlers.delete(event);
+          const domListener = domListeners.get(event);
+          if (domListener && eventSource) {
+            eventSource.removeEventListener(event, domListener as EventListener);
+          }
+          domListeners.delete(event);
+        }
+        // Last handler across all names gone → close the shared stream.
+        if (handlers.size === 0 && eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
       };
     },
 

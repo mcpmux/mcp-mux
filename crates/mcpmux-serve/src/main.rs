@@ -69,12 +69,18 @@ async fn run(config: Config) -> Result<()> {
         .with_context(|| format!("creating data dir {:?}", config.data_dir))?;
 
     // --- Master key: env-injected (stateless) or on-disk/keychain (persistent).
-    let master_key = if let Ok(hex) = std::env::var("MCPMUX_MASTER_KEY") {
-        info!("[serve] Using master key from MCPMUX_MASTER_KEY");
-        EnvKeyProvider::from_hex(&hex)?.get_or_create_key()?
-    } else {
-        info!("[serve] Using on-disk/keychain master key provider");
-        mcpmux_storage::create_key_provider(&config.data_dir)?.get_or_create_key()?
+    // An empty/whitespace MCPMUX_MASTER_KEY (e.g. docker-compose expanding an
+    // unset ${MCPMUX_MASTER_KEY} to "") falls back to the persistent provider
+    // instead of failing the boot with a zero-length key.
+    let master_key = match std::env::var("MCPMUX_MASTER_KEY") {
+        Ok(hex) if !hex.trim().is_empty() => {
+            info!("[serve] Using master key from MCPMUX_MASTER_KEY");
+            EnvKeyProvider::from_hex(hex.trim())?.get_or_create_key()?
+        }
+        _ => {
+            info!("[serve] Using on-disk/keychain master key provider");
+            mcpmux_storage::create_key_provider(&config.data_dir)?.get_or_create_key()?
+        }
     };
     let encryptor = Arc::new(FieldEncryptor::new(&master_key)?);
 
@@ -177,12 +183,11 @@ async fn run(config: Config) -> Result<()> {
     // Admin API token: operator-supplied (MCPMUX_ADMIN_TOKEN) or generated. The
     // management router is bearer-gated; on a network bind it's the only gate,
     // so a generated token is 256 bits.
-    let admin_token = Arc::new(
-        std::env::var("MCPMUX_ADMIN_TOKEN")
-            .ok()
-            .filter(|t| !t.trim().is_empty())
-            .unwrap_or_else(generate_admin_token),
-    );
+    let operator_token = std::env::var("MCPMUX_ADMIN_TOKEN")
+        .ok()
+        .filter(|t| !t.trim().is_empty());
+    let token_generated = operator_token.is_none();
+    let admin_token = Arc::new(operator_token.unwrap_or_else(generate_admin_token));
     let extra_router = mcpmux_gateway::server::management::management_router(
         server.app_state(),
         admin_token.clone(),
@@ -193,11 +198,17 @@ async fn run(config: Config) -> Result<()> {
         info!("[serve] Web admin mounted at /app");
         extra_router.merge(webui::router())
     };
-    // Print the token once so the operator can reach the admin API + sign in.
-    info!(
-        "[serve] Admin API mounted at /admin/api (token: {})",
-        admin_token
-    );
+    if token_generated {
+        // Print a generated token once — it exists nowhere else, so this line
+        // is the operator's only handoff. An operator-supplied secret is never
+        // echoed into logs (log pipelines outlive secret rotations).
+        info!(
+            "[serve] Admin API mounted at /admin/api (token: {})",
+            admin_token
+        );
+    } else {
+        info!("[serve] Admin API mounted at /admin/api (token from MCPMUX_ADMIN_TOKEN)");
+    }
 
     info!(
         "[serve] Ready. MCP endpoint: http://{}:{}/mcp  ·  health: /health  ·  admin: /admin/api",

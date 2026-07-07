@@ -69,6 +69,13 @@ pub struct GatewayState {
     /// metadata handlers advertise the host a remote client actually used
     /// instead of `localhost`, without changing local-only behavior.
     pub network_bind: bool,
+    /// Extra Host-header values the gateway was configured to accept, surfaced
+    /// by the management API so remote admins see the real security posture.
+    pub additional_allowed_hosts: Vec<String>,
+    /// True when Host-header checking is disabled (`allow_any_host`).
+    pub allow_any_host: bool,
+    /// TCP port the gateway was configured to bind (management-API reads).
+    pub bound_port: Option<u16>,
     /// Active client sessions
     pub sessions: HashMap<Uuid, ClientSession>,
     /// Access key to client ID mapping
@@ -105,6 +112,9 @@ impl GatewayState {
             base_url: "http://localhost:3100".to_string(), // Default
             public_base_url: None,
             network_bind: false,
+            additional_allowed_hosts: Vec::new(),
+            allow_any_host: false,
+            bound_port: None,
             sessions: HashMap::new(),
             access_keys: HashMap::new(),
             oauth_tokens: HashMap::new(),
@@ -133,6 +143,19 @@ impl GatewayState {
     /// Set the configured public base URL (None = local-only / host-derived).
     pub fn set_public_base_url(&mut self, public_base_url: Option<String>) {
         self.public_base_url = public_base_url;
+    }
+
+    /// Record the config-derived posture (Host allowlist + bound port) so the
+    /// management API reports what the gateway actually runs with.
+    pub fn set_config_posture(
+        &mut self,
+        additional_allowed_hosts: Vec<String>,
+        allow_any_host: bool,
+        port: u16,
+    ) {
+        self.additional_allowed_hosts = additional_allowed_hosts;
+        self.allow_any_host = allow_any_host;
+        self.bound_port = Some(port);
     }
 
     /// Record whether the gateway is bound to a non-loopback address.

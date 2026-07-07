@@ -54,14 +54,48 @@ fn tokens_match(a: &str, b: &str) -> bool {
 }
 
 /// Extract a `token=` value from a URL query string (minimal, no deps).
+///
+/// The value is percent-decoded: both web clients build the URL with
+/// `encodeURIComponent(token)`, so a token containing `+`, `=`, `%`, … arrives
+/// encoded and must be decoded before the constant-time compare — otherwise
+/// header auth works but SSE auth 401s for the same token.
 fn token_from_query(query: Option<&str>) -> Option<String> {
     let q = query?;
     for pair in q.split('&') {
         if let Some(v) = pair.strip_prefix("token=") {
-            return Some(v.to_string());
+            return Some(percent_decode(v));
         }
     }
     None
+}
+
+/// Minimal `%XX` percent-decoding. No `+`-as-space: `encodeURIComponent`
+/// never emits `+`, and a literal `+` in a token must survive round-tripping.
+/// Malformed escapes pass through unchanged.
+fn percent_decode(s: &str) -> String {
+    fn hex_val(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push(hi * 16 + lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Bearer-token gate for `/admin/api/*`. Rejected requests never reach a
@@ -104,6 +138,130 @@ fn internal_error(msg: &str) -> Response {
 
 fn bad_request(msg: &str) -> Response {
     (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers (REST + RPC mirror) — parity with the desktop commands
+// ---------------------------------------------------------------------------
+
+/// Serialize an [`mcpmux_core::InstalledServer`] with its decrypted secrets
+/// masked. `input_values`, `env_overrides` and `extra_headers` hold user
+/// credentials (API keys, tokens, custom auth headers). The desktop reads the
+/// full struct over loopback IPC only; the management API can be reached over
+/// the network, where the at-rest field encryption must not be undone by a
+/// list endpoint. Keys survive (the UI can show *what* is configured), values
+/// are masked.
+pub(crate) fn redacted_server_json(server: &mcpmux_core::InstalledServer) -> serde_json::Value {
+    let mut v = serde_json::to_value(server).unwrap_or_else(|_| json!({}));
+    for field in ["input_values", "env_overrides", "extra_headers"] {
+        if let Some(map) = v.get_mut(field).and_then(|m| m.as_object_mut()) {
+            for val in map.values_mut() {
+                *val = json!("•••");
+            }
+        }
+    }
+    v
+}
+
+/// Create a Space with the desktop's `SpaceService::create` semantics — the
+/// first Space becomes the default and builtin FeatureSets (Starter, …) are
+/// seeded — so headless writes keep the resolver's default-Space/Starter
+/// fallback intact. Emits `SpaceCreated`.
+pub(crate) async fn create_space_with_builtins(
+    app_state: &AppState,
+    name: &str,
+    icon: Option<&str>,
+    description: Option<&str>,
+) -> Result<Space, String> {
+    let deps = &app_state.services.dependencies;
+    let service = mcpmux_core::SpaceService::with_feature_set_repository(
+        deps.space_repo.clone(),
+        deps.feature_set_repo.clone(),
+    );
+    let mut space = service
+        .create(name.to_string(), icon.map(str::to_string))
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(desc) = description {
+        // The service constructor has no description param; persist it as a
+        // follow-up update so the REST shape keeps working.
+        space = space.with_description(desc);
+        deps.space_repo
+            .update(&space)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    app_state
+        .gateway_state
+        .read()
+        .await
+        .emit_domain_event(DomainEvent::SpaceCreated {
+            space_id: space.id,
+            name: space.name.clone(),
+            icon: space.icon.clone(),
+        });
+    Ok(space)
+}
+
+/// Delete a Space through the same service the desktop uses, which refuses to
+/// delete the default Space (the resolver's fallback for unmapped sessions).
+/// Emits `SpaceDeleted`.
+pub(crate) async fn delete_space_guarded(app_state: &AppState, id: &Uuid) -> Result<(), String> {
+    let deps = &app_state.services.dependencies;
+    mcpmux_core::SpaceService::new(deps.space_repo.clone())
+        .delete(id)
+        .await
+        .map_err(|e| e.to_string())?;
+    app_state
+        .gateway_state
+        .read()
+        .await
+        .emit_domain_event(DomainEvent::SpaceDeleted { space_id: *id });
+    Ok(())
+}
+
+/// Resolve a binding input's storage key with the desktop command's rules:
+/// `path` bindings are normalized + validated (relative paths, filesystem
+/// roots, reserved characters rejected — a binding the resolver could never
+/// match must not be storable); `id` bindings take any non-empty trimmed key.
+pub(crate) fn binding_key_for(raw_root: &str, is_id: bool) -> Result<String, String> {
+    if is_id {
+        let key = raw_root.trim();
+        if key.is_empty() {
+            return Err("Mapping id cannot be empty".into());
+        }
+        return Ok(key.to_string());
+    }
+    match mcpmux_core::validate_workspace_root(raw_root) {
+        mcpmux_core::WorkspaceRootValidation::Ok { normalized } => Ok(normalized),
+        mcpmux_core::WorkspaceRootValidation::Empty => Err("workspace_root cannot be empty".into()),
+        mcpmux_core::WorkspaceRootValidation::Invalid { reason } => Err(reason),
+    }
+}
+
+/// Reject a duplicate mapping key with a readable message (the schema's
+/// `UNIQUE(workspace_root)` would otherwise surface an opaque SQLite error).
+pub(crate) async fn ensure_binding_key_free(
+    app_state: &AppState,
+    key: &str,
+    exclude: Option<Uuid>,
+) -> Result<(), String> {
+    let existing = app_state
+        .services
+        .dependencies
+        .workspace_binding_repo
+        .list()
+        .await
+        .map_err(|e| e.to_string())?;
+    if existing
+        .iter()
+        .any(|b| Some(b.id) != exclude && b.workspace_root == key)
+    {
+        return Err(format!(
+            "A mapping already exists for {key}. Edit the existing mapping instead of adding a second one."
+        ));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +321,10 @@ async fn admin_list_servers(
         .list_for_space(&space_id.to_string())
         .await
     {
-        Ok(servers) => Json(json!({ "servers": servers })).into_response(),
+        Ok(servers) => {
+            let out: Vec<_> = servers.iter().map(redacted_server_json).collect();
+            Json(json!({ "servers": out })).into_response()
+        }
         Err(e) => internal_error(&e.to_string()),
     }
 }
@@ -244,7 +405,8 @@ struct CreateSpaceRequest {
     description: Option<String>,
 }
 
-/// `POST /admin/api/spaces` — create a Space.
+/// `POST /admin/api/spaces` — create a Space (desktop `SpaceService` parity:
+/// seeds builtin FeatureSets; first Space becomes the default).
 async fn admin_create_space(
     State(app_state): State<AppState>,
     Json(req): Json<CreateSpaceRequest>,
@@ -253,40 +415,16 @@ async fn admin_create_space(
     if name.is_empty() {
         return bad_request("name is required");
     }
-    let mut space = Space::new(name);
-    if let Some(icon) = req.icon.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        space = space.with_icon(icon);
-    }
-    if let Some(desc) = req
+    let icon = req.icon.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let description = req
         .description
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        space = space.with_description(desc);
+        .filter(|s| !s.is_empty());
+    match create_space_with_builtins(&app_state, name, icon, description).await {
+        Ok(space) => (StatusCode::CREATED, Json(json!({ "space": space }))).into_response(),
+        Err(e) => internal_error(&e),
     }
-    let space_id = space.id;
-    let space_name = space.name.clone();
-    let icon = space.icon.clone();
-    if let Err(e) = app_state
-        .services
-        .dependencies
-        .space_repo
-        .create(&space)
-        .await
-    {
-        return internal_error(&e.to_string());
-    }
-    app_state
-        .gateway_state
-        .read()
-        .await
-        .emit_domain_event(DomainEvent::SpaceCreated {
-            space_id,
-            name: space_name,
-            icon,
-        });
-    (StatusCode::CREATED, Json(json!({ "space": space }))).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,24 +498,29 @@ struct CreateBindingRequest {
     binding_type: Option<String>,
 }
 
-/// `POST /admin/api/bindings` — create a workspace mapping.
+/// `POST /admin/api/bindings` — create a workspace mapping. Path roots get the
+/// same normalization + validation + duplicate pre-check the desktop command
+/// applies (an unnormalized root would never match a reported workspace).
 async fn admin_create_binding(
     State(app_state): State<AppState>,
     Json(req): Json<CreateBindingRequest>,
 ) -> Response {
-    let root = req.workspace_root.trim();
-    if root.is_empty() {
-        return bad_request("workspace_root is required");
-    }
     let space_uuid = match Uuid::parse_str(req.space_id.trim()) {
         Ok(u) => u,
         Err(_) => return bad_request("space_id must be a UUID"),
     };
     let is_id = req.binding_type.as_deref() == Some("id");
+    let key = match binding_key_for(&req.workspace_root, is_id) {
+        Ok(k) => k,
+        Err(e) => return bad_request(&e),
+    };
+    if let Err(e) = ensure_binding_key_free(&app_state, &key, None).await {
+        return bad_request(&e);
+    }
     let binding = if is_id {
-        WorkspaceBinding::new_id(root, space_uuid, req.feature_set_ids.clone())
+        WorkspaceBinding::new_id(key, space_uuid, req.feature_set_ids.clone())
     } else {
-        WorkspaceBinding::new_multi(root, space_uuid, req.feature_set_ids.clone())
+        WorkspaceBinding::new_multi(key, space_uuid, req.feature_set_ids.clone())
     };
     let workspace_root = binding.workspace_root.clone();
     if let Err(e) = app_state
@@ -451,7 +594,10 @@ fn ui_event_name(event: &mcpmux_core::DomainEvent) -> String {
         | E::ClientDeleted { .. }
         | E::ClientTokenIssued { .. }
         | E::ClientGrantChanged { .. } => "client-changed".into(),
-        E::ServerStatusChanged { .. } => "server-status".into(),
+        // Must match the desktop Tauri bridge's name (gateway.rs
+        // `map_domain_event_to_ui`) — the same React app listens on both
+        // transports.
+        E::ServerStatusChanged { .. } => "server-status-changed".into(),
         other => other.type_name().replace('_', "-"),
     }
 }
@@ -573,5 +719,39 @@ mod tests {
         );
         assert_eq!(token_from_query(Some("foo=1")), None);
         assert_eq!(token_from_query(None), None);
+    }
+
+    #[test]
+    fn token_from_query_percent_decodes_the_value() {
+        // encodeURIComponent('a+b=c%') === 'a%2Bb%3Dc%25' — the SSE clients
+        // send the token through encodeURIComponent, so the gate must decode.
+        assert_eq!(
+            token_from_query(Some("token=a%2Bb%3Dc%25")),
+            Some("a+b=c%".to_string())
+        );
+        // Malformed escapes pass through unchanged rather than panicking.
+        assert_eq!(token_from_query(Some("token=a%2")), Some("a%2".to_string()));
+        assert_eq!(
+            token_from_query(Some("token=a%zz")),
+            Some("a%zz".to_string())
+        );
+    }
+
+    #[test]
+    fn server_secrets_are_redacted_but_keys_survive() {
+        let mut server = mcpmux_core::InstalledServer::new("space", "srv");
+        server
+            .input_values
+            .insert("API_KEY".into(), "sk-secret".into());
+        server.env_overrides.insert("TOKEN".into(), "t0ken".into());
+        server
+            .extra_headers
+            .insert("Authorization".into(), "Bearer xyz".into());
+        let v = redacted_server_json(&server);
+        assert_eq!(v["input_values"]["API_KEY"], "•••");
+        assert_eq!(v["env_overrides"]["TOKEN"], "•••");
+        assert_eq!(v["extra_headers"]["Authorization"], "•••");
+        let s = v.to_string();
+        assert!(!s.contains("sk-secret") && !s.contains("t0ken") && !s.contains("Bearer xyz"));
     }
 }

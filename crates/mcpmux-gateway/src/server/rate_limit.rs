@@ -1,8 +1,13 @@
 //! Rate limiting middleware for the gateway.
 //!
 //! Two limiters live here:
-//!   * [`RateLimiter`] — the original per-path limiter for OAuth endpoints
-//!     (all clients share a bucket per path; fine on loopback).
+//!   * [`RateLimiter`] — guards the OAuth/pairing endpoints. Buckets are
+//!     keyed by (peer-IP, path prefix) so that on a network bind a single
+//!     LAN peer flooding e.g. `POST /oauth/token` only exhausts its own
+//!     budget — the host's own clients keep exchanging/refreshing tokens.
+//!     On loopback all local clients share 127.0.0.1 and thus one bucket
+//!     per path, which matches the original per-path caps. The bucket map
+//!     is bounded by a lazy sweep of expired entries once it grows large.
 //!   * [`McpRateLimiter`] — a peer-aware limiter for the `/mcp` endpoint,
 //!     installed only on a network bind. It caps request rate per
 //!     (peer-IP, credential) and damps credential-stuffing by throttling a
@@ -31,31 +36,61 @@ pub struct RateLimitConfig {
     pub window: Duration,
 }
 
+/// Once the bucket map holds this many entries, the next admission check
+/// sweeps expired buckets before inserting. Keeps the map bounded by the
+/// number of distinct peers active within one rate-limit window instead of
+/// every peer ever seen (same lazy-sweep idea as `pairing.rs`).
+const SWEEP_THRESHOLD: usize = 1024;
+
 /// Shared rate limiter state (clone-friendly via Arc).
+///
+/// Buckets are keyed by `(peer-IP, path prefix)` so each peer gets its own
+/// budget per endpoint; one flooding peer cannot starve the others.
 #[derive(Clone)]
 pub struct RateLimiter {
-    /// Map from path prefix → (window_start, request_count).
+    /// Map from `"{peer_ip}|{path prefix}"` → (window_start, request_count).
     buckets: Arc<DashMap<String, (Instant, u32)>>,
     /// Configuration per route prefix.
     rules: Arc<Vec<(String, RateLimitConfig)>>,
+    /// Longest window across all rules; any bucket older than this is dead
+    /// weight and safe to evict in [`Self::sweep_if_full`].
+    max_window: Duration,
 }
 
 impl RateLimiter {
     pub fn new(rules: Vec<(String, RateLimitConfig)>) -> Self {
+        let max_window = rules
+            .iter()
+            .map(|(_, config)| config.window)
+            .max()
+            .unwrap_or(Duration::ZERO);
         Self {
             buckets: Arc::new(DashMap::new()),
             rules: Arc::new(rules),
+            max_window,
+        }
+    }
+
+    /// Drop expired buckets once the map is large, so it cannot grow without
+    /// bound as new peer IPs show up. Called before inserting, never while an
+    /// entry guard is held (DashMap `retain` would deadlock otherwise).
+    fn sweep_if_full(&self) {
+        if self.buckets.len() >= SWEEP_THRESHOLD {
+            let max_window = self.max_window;
+            self.buckets
+                .retain(|_, (window_start, _)| window_start.elapsed() < max_window);
         }
     }
 
     /// Check if the request should be rate limited.
     /// Returns `true` if the request is within limits (allowed).
-    fn check(&self, path: &str) -> bool {
+    fn check(&self, peer_ip: &str, path: &str) -> bool {
         for (prefix, config) in self.rules.iter() {
             if path.starts_with(prefix) {
+                self.sweep_if_full();
                 let mut entry = self
                     .buckets
-                    .entry(prefix.clone())
+                    .entry(format!("{peer_ip}|{prefix}"))
                     .or_insert_with(|| (Instant::now(), 0));
                 let (window_start, count) = entry.value_mut();
 
@@ -83,8 +118,14 @@ pub async fn rate_limit_middleware(request: Request, next: Next) -> Response {
     let limiter = request.extensions().get::<RateLimiter>().cloned();
 
     if let Some(limiter) = limiter {
+        let peer_ip = request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0.ip().to_string())
+            // No ConnectInfo (embedded/test server) → single shared bucket.
+            .unwrap_or_else(|| "unknown".to_string());
         let path = request.uri().path().to_string();
-        if !limiter.check(&path) {
+        if !limiter.check(&peer_ip, &path) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Rate limit exceeded. Please try again later.",
@@ -300,6 +341,7 @@ pub async fn mcp_rate_limit_middleware(request: Request, next: Next) -> Response
 }
 
 /// Create the default rate limiter for OAuth endpoints.
+/// All caps below apply per peer IP (per path prefix).
 pub fn default_oauth_rate_limiter() -> RateLimiter {
     RateLimiter::new(vec![
         (
@@ -351,6 +393,102 @@ pub fn default_oauth_rate_limiter() -> RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn oauth_rules() -> Vec<(String, RateLimitConfig)> {
+        vec![
+            (
+                "/oauth/token".to_string(),
+                RateLimitConfig {
+                    max_requests: 2,
+                    window: Duration::from_secs(60),
+                },
+            ),
+            (
+                "/oauth/register".to_string(),
+                RateLimitConfig {
+                    max_requests: 1,
+                    window: Duration::from_secs(60),
+                },
+            ),
+        ]
+    }
+
+    #[test]
+    fn oauth_buckets_are_per_peer() {
+        let rl = RateLimiter::new(oauth_rules());
+        // Peer A exhausts its /oauth/token budget.
+        assert!(rl.check("10.0.0.1", "/oauth/token"));
+        assert!(rl.check("10.0.0.1", "/oauth/token"));
+        assert!(!rl.check("10.0.0.1", "/oauth/token"), "peer A over cap");
+        // The flooding peer must not have consumed peer B's budget.
+        assert!(rl.check("10.0.0.2", "/oauth/token"));
+        assert!(rl.check("10.0.0.2", "/oauth/token"));
+        assert!(
+            !rl.check("10.0.0.2", "/oauth/token"),
+            "peer B has its own cap"
+        );
+    }
+
+    #[test]
+    fn oauth_buckets_are_per_path_prefix_within_a_peer() {
+        let rl = RateLimiter::new(oauth_rules());
+        assert!(rl.check("10.0.0.1", "/oauth/register"));
+        assert!(!rl.check("10.0.0.1", "/oauth/register"));
+        // Exhausting /oauth/register leaves the peer's /oauth/token untouched.
+        assert!(rl.check("10.0.0.1", "/oauth/token"));
+    }
+
+    #[test]
+    fn oauth_unmatched_paths_are_unlimited() {
+        let rl = RateLimiter::new(oauth_rules());
+        for _ in 0..100 {
+            assert!(rl.check("10.0.0.1", "/health"));
+        }
+    }
+
+    #[test]
+    fn oauth_window_reset_readmits_peer() {
+        let rl = RateLimiter::new(vec![(
+            "/oauth/token".to_string(),
+            RateLimitConfig {
+                max_requests: 1,
+                window: Duration::from_millis(10),
+            },
+        )]);
+        assert!(rl.check("10.0.0.1", "/oauth/token"));
+        assert!(!rl.check("10.0.0.1", "/oauth/token"));
+        std::thread::sleep(Duration::from_millis(15));
+        assert!(
+            rl.check("10.0.0.1", "/oauth/token"),
+            "window reset readmits"
+        );
+    }
+
+    #[test]
+    fn oauth_bucket_map_sweeps_expired_entries() {
+        let rl = RateLimiter::new(vec![(
+            "/oauth/token".to_string(),
+            RateLimitConfig {
+                max_requests: 5,
+                window: Duration::from_millis(10),
+            },
+        )]);
+        // Fill the map to the sweep threshold with distinct peers.
+        for i in 0..SWEEP_THRESHOLD {
+            let peer = format!("10.0.{}.{}", i / 256, i % 256);
+            assert!(rl.check(&peer, "/oauth/token"));
+        }
+        assert!(rl.buckets.len() >= SWEEP_THRESHOLD);
+        // Once every window has expired, the next admission sweeps them all
+        // (sweep runs before the new bucket is inserted).
+        std::thread::sleep(Duration::from_millis(15));
+        assert!(rl.check("192.168.0.1", "/oauth/token"));
+        assert_eq!(
+            rl.buckets.len(),
+            1,
+            "expired buckets evicted; only the fresh peer remains"
+        );
+    }
 
     fn small_cfg() -> McpRateLimitConfig {
         McpRateLimitConfig {

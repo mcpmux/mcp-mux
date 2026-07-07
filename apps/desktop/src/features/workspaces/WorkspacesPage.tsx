@@ -1542,7 +1542,7 @@ function EffectiveFeaturesContent({
         });
     };
     const unBinding = listen('workspace-binding-changed', reload);
-    const unServer = listen('server-status', reload);
+    const unServer = listen('server-status-changed', reload);
     return () => {
       cancelled = true;
       unBinding.then((fn) => fn());

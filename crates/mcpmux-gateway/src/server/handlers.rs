@@ -1532,10 +1532,11 @@ fn generate_api_key() -> (String, String, String) {
 /// Starter set until the user maps it.
 pub async fn pair_claim(
     State(app_state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<PairClaimRequest>,
 ) -> Response {
     // Consume the token first (single-use, short-lived — the proof of trust).
-    {
+    let (public_base_url, network_bind) = {
         let gateway_state = app_state.gateway_state.read().await;
         if !gateway_state.pairing_tokens().consume(request.token.trim()) {
             warn!("[Pair] Rejected claim with invalid/expired/used token");
@@ -1545,7 +1546,11 @@ pub async fn pair_claim(
             )
                 .into_response();
         }
-    }
+        (
+            gateway_state.public_base_url.clone(),
+            gateway_state.network_bind,
+        )
+    };
 
     // Create the client + key through the SAME repo the auth middleware
     // validates against (services.dependencies), so the issued key works
@@ -1623,7 +1628,19 @@ pub async fn pair_claim(
         device_name, client_id
     );
 
-    let endpoint = format!("{}/mcp", app_state.base_url.trim_end_matches('/'));
+    // Derive the advertised endpoint the same way the OAuth metadata does: a
+    // device pairing over the LAN reached us on the QR's host (`Host` header),
+    // so that — not `localhost` — is the address its config must point at.
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok());
+    let base = effective_base_url(
+        public_base_url.as_deref(),
+        network_bind,
+        host,
+        &app_state.base_url,
+    );
+    let endpoint = format!("{base}/mcp");
     (
         StatusCode::OK,
         Json(PairClaimResponse {

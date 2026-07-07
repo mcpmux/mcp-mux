@@ -352,6 +352,11 @@ impl GatewayServer {
         state.set_base_url(config.base_url());
         state.set_public_base_url(config.public_base_url.clone());
         state.set_network_bind(config.is_network_bind());
+        state.set_config_posture(
+            config.additional_allowed_hosts.clone(),
+            config.allow_any_host,
+            config.port,
+        );
         if let Some(jwt_secret) = dependencies.jwt_secret.clone() {
             state.set_jwt_secret(jwt_secret);
         }
@@ -665,9 +670,13 @@ impl GatewayServer {
             .layer(middleware::from_fn(
                 logging_middleware::http_logging_middleware,
             ))
-            // Rate limiting on OAuth endpoints
-            .layer(axum::Extension(rate_limiter))
+            // Rate limiting on OAuth endpoints, keyed per (peer-IP, path
+            // prefix) so one LAN peer cannot exhaust everyone's budget on a
+            // network bind. The Extension is layered OUTSIDE the middleware
+            // (added last = runs first) so the limiter is present in the
+            // request extensions by the time the middleware looks it up.
             .layer(middleware::from_fn(rate_limit::rate_limit_middleware))
+            .layer(axum::Extension(rate_limiter))
             // Keep desktop-only client management off the LAN on a 0.0.0.0 bind.
             .layer(middleware::from_fn(restrict_management_to_loopback));
 

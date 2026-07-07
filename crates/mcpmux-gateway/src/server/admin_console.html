@@ -248,7 +248,9 @@
             // param (accepted by the gate solely for this reason).
             es = new EventSource('/admin/api/events?token=' + encodeURIComponent(token));
             var onAny = function () { refresh(); };
-            ['space_created', 'feature_set_created', 'workspace_binding_changed', 'client_registered', 'client_updated', 'client_deleted'].forEach(function (name) {
+            // These must be the grouped names ui_event_name() emits (the same
+            // ones the desktop bridge uses) or no listener ever fires.
+            ['space-changed', 'feature-set-changed', 'workspace-binding-changed', 'client-changed', 'server-status-changed'].forEach(function (name) {
               es.addEventListener(name, onAny);
             });
             es.onopen = function () { el('conn').innerHTML = '<span class="ok">● live</span>'; };

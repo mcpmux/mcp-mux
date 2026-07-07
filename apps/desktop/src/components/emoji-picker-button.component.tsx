@@ -1,9 +1,13 @@
 /**
  * Button that opens an emoji picker popover.
- * Uses emoji-picker-element (web component) — no external data fetch required.
+ * Uses emoji-picker-element (web component), which fetches emoji metadata from
+ * cdn.jsdelivr.net unless a custom data-source is set (allowed in prod via CSP).
  * The popover renders in a portal with fixed positioning so it is never clipped
  * by a scrolling drawer/panel and always stays inside the viewport.
  */
+
+const EMOJI_DATA_SOURCE =
+  'https://cdn.jsdelivr.net/npm/emoji-picker-element-data@^1/en/emojibase/data.json';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -121,7 +125,7 @@ export function EmojiPickerButton({ value, onChange, disabled, testId }: Props) 
           >
             {/* ponytail: emoji-picker-element renders its own shadow DOM; sizing via style only */}
             {/* @ts-expect-error -- emoji-picker is a custom web component not in React's intrinsic elements */}
-            <emoji-picker style={{ width: '100%' }} />
+            <emoji-picker data-source={EMOJI_DATA_SOURCE} style={{ width: '100%' }} />
           </div>,
           document.body,
         )}

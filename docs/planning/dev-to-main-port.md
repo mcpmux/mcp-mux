@@ -1,6 +1,6 @@
 # Fork → Upstream Reconciliation (`dev` + `i18n` → `main`)
 
-**Last Updated:** Jun 23, 2026
+**Last Updated:** Jul 7, 2026
 **Status:** Planning — not started
 **Branch:** N/A — each phase is a separate feature branch off `main`
 **Base branch:** `main` (upstream `mcpmux/mcp-mux`, synced to `4a69908` as of Jun 22, 2026)
@@ -101,6 +101,7 @@ Pure additive work. No conflicts with upstream — all new files.
 - `apps/desktop/src/lib/backend/shell/index.ts`
 - `apps/desktop/src/lib/backend/index.ts`
 - Helper files: `build-info.helpers.ts`, `build-date.helpers.ts`, `desktop-shell.ts`, `monaco-setup.ts`, `analytics.ts`, `contribute.ts`
+- **Monaco in Tauri prod (Jul 7, 2026):** `monaco-setup.ts` self-hosts Monaco + Vite workers (CDN blocked). Prod CSP also requires `script-src 'self' 'unsafe-eval'`, `worker-src 'self' blob:`, and `style-src 'self' 'unsafe-inline'`. JSON modals use shared [`monaco-json-editor.component.tsx`](../../apps/desktop/src/components/monaco-json-editor.component.tsx) (ResizeObserver height + mount fallback in `ConfigEditorModal` / `ServerDefinitionModal`).
 
 **Scripts:**
 - Port fork-specific dev scripts: `dev-admin.mjs`, `build-web-admin.mjs`, `dev-web-admin.mjs`, `build-stamp.mjs`, `cf-access-env.mjs`, `admin-e2e-fixture.mjs`, `remote-gateway-smoke.mjs`, `run-with-repo-env.mjs`, `count-meta-tool-tokens.py`

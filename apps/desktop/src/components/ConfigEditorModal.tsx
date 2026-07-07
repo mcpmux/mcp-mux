@@ -3,11 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { X, Save, Loader2, AlertTriangle, Wand2, Plus } from 'lucide-react';
 import { readSpaceConfig, saveSpaceConfig } from '@/lib/api/spaces';
 import { refreshRegistry } from '@/lib/api/registry';
-import Editor, { type Monaco } from '@monaco-editor/react';
+import { type Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useToast, ToastContainer } from '@mcpmux/ui';
 import USER_SPACE_CONFIG_SCHEMA from '../../../../schemas/user-space.schema.json';
 import { RequestServerCTA } from './Contribute';
+import { MonacoJsonEditor } from './monaco-json-editor.component';
 
 const EDITOR_MOUNT_TIMEOUT_MS = 10_000;
 
@@ -75,7 +76,6 @@ export function ConfigEditorModal({
   const [editorMounted, setEditorMounted] = useState(false);
   const [editorLoadFailed, setEditorLoadFailed] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<Monaco | null>(null);
   const { toasts, success, error: showError } = useToast();
 
   // Delay editor mount to avoid glitch during modal open
@@ -211,13 +211,19 @@ export function ConfigEditorModal({
   };
 
   /**
-   * Mount handler — marks Monaco ready and focuses the editor.
+   * Mount handler — marks Monaco ready for timeout/fallback logic.
    */
-  const handleEditorMount = (mountedEditor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
+  const handleEditorMount = (mountedEditor: editor.IStandaloneCodeEditor) => {
     editorRef.current = mountedEditor;
-    monacoRef.current = monaco;
     setEditorMounted(true);
-    mountedEditor.focus();
+  };
+
+  /**
+   * Signal mount failure when the editor container has no measurable height.
+   */
+  const handleEditorMountFailed = () => {
+    setEditorLoadFailed(true);
+    setError(t('configEditorModal.editorLoadFailed'));
   };
 
   const handleEditorValidation = (markers: editor.IMarker[]) => {
@@ -388,39 +394,14 @@ export function ConfigEditorModal({
                 spellCheck={false}
               />
             ) : (
-              <Editor
-                height="100%"
-                defaultLanguage="json"
+              <MonacoJsonEditor
                 value={content}
-                theme="vs-dark"
                 onChange={handleContentChange}
                 beforeMount={handleEditorBeforeMount}
                 onMount={handleEditorMount}
+                onMountFailed={handleEditorMountFailed}
                 onValidate={handleEditorValidation}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 14,
-                  fontFamily: "'Fira Code', 'Consolas', monospace",
-                  lineNumbers: 'on',
-                  scrollBeyondLastLine: false,
-                  automaticLayout: true,
-                  tabSize: 2,
-                  wordWrap: 'on',
-                  formatOnPaste: true,
-                  formatOnType: true,
-                  folding: true,
-                  bracketPairColorization: { enabled: true },
-                  guides: {
-                    bracketPairs: true,
-                    indentation: true,
-                  },
-                  padding: { top: 12, bottom: 12 },
-                }}
-                loading={
-                  <div className="flex h-full items-center justify-center bg-[#1e1e1e]">
-                    <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
-                  </div>
-                }
+                testId="config-editor-monaco"
               />
             )}
           </div>

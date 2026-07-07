@@ -1,6 +1,6 @@
 # Workspace Machine Binding
 
-**Last Updated:** Jul 1, 2026
+**Last Updated:** Jul 7, 2026
 **Status:** In progress — Phases 1–4 largely landed; per-device header for tunneled multi-device routing landed Jun 30, 2026; PR #8 (this branch) reviewed Jul 1, 2026 — see architecture review below
 **Branch:** `feat/workspace-machine-binding` (off `dev-rebased`)
 **Depends on:** `dev-rebased` label/icon port complete (migration 032 landed)
@@ -8,7 +8,15 @@
 
 ---
 
-## Update — Jul 1, 2026 (PR #8 architecture review — client_id vs machine_id)
+## Update — Jul 7, 2026 (Tauri prod emoji picker CSP fix)
+
+`EmojiPickerButton` (`apps/desktop/src/components/emoji-picker-button.component.tsx`) fetches emoji metadata from `cdn.jsdelivr.net` via `emoji-picker-element`. Tauri **production** CSP blocked that fetch, producing "Could not load emoji" and a broken grid in the workspace binding **Scope** icon field (`form.iconPlaceholder`: "Emoji, URL, or local: ref").
+
+**Fix:** Prod CSP in `apps/desktop/src-tauri/tauri.conf.json` now includes `connect-src 'self' https://cdn.jsdelivr.net`. The picker sets an explicit `data-source` URL matching the library default.
+
+**Note:** Decision #7 in [`sidesheet-panel-identity-header.md`](./sidesheet-panel-identity-header.md) planned a header emoji picker; implementation keeps the header icon display-only and the picker in `ScopeFields`.
+
+---
 
 PR #8 review surfaced that `machine_id` didn't replace the pre-existing `client_id` scoping (migration 027) — it stacked on top of it. `WorkspaceBinding` now carries **two independent optional scope fields**, and the resolver reconciles both instead of one:
 

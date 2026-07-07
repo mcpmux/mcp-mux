@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Copy, Check, Loader2 } from 'lucide-react';
-import Editor from '@monaco-editor/react';
 import type { ServerViewModel, ServerDefinition } from '../types/registry';
+import { MonacoJsonEditor } from './monaco-json-editor.component';
+
+const EDITOR_MOUNT_TIMEOUT_MS = 10_000;
 
 interface ServerDefinitionModalProps {
   server: ServerViewModel;
@@ -38,6 +40,8 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
   const { t } = useTranslation('servers');
   const [copied, setCopied] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
+  const [editorMounted, setEditorMounted] = useState(false);
+  const [editorLoadFailed, setEditorLoadFailed] = useState(false);
 
   const definition = extractDefinition(server);
   const json = JSON.stringify(definition, null, 2);
@@ -46,6 +50,18 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
     const timer = setTimeout(() => setEditorReady(true), 100);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!editorReady || editorMounted || editorLoadFailed) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setEditorLoadFailed(true);
+    }, EDITOR_MOUNT_TIMEOUT_MS);
+
+    return () => clearTimeout(timer);
+  }, [editorReady, editorMounted, editorLoadFailed]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -66,6 +82,20 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
       // Fallback for environments where clipboard API is unavailable
     }
   }, [json]);
+
+  /**
+   * Mark Monaco mounted so the mount-timeout fallback does not fire.
+   */
+  const handleEditorMount = () => {
+    setEditorMounted(true);
+  };
+
+  /**
+   * Fall back to plain JSON when the editor container has no measurable height.
+   */
+  const handleEditorMountFailed = () => {
+    setEditorLoadFailed(true);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -113,39 +143,30 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
             <div className="absolute inset-0 flex items-center justify-center">
               <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
             </div>
-          ) : (
-            <Editor
-              height="100%"
-              defaultLanguage="json"
+          ) : editorLoadFailed ? (
+            <textarea
+              readOnly
               value={json}
-              theme="vs-dark"
-              options={{
-                readOnly: true,
-                minimap: { enabled: false },
-                fontSize: 14,
-                fontFamily: "'Fira Code', 'Consolas', monospace",
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 2,
-                wordWrap: 'on',
-                folding: true,
-                bracketPairColorization: { enabled: true },
-                guides: {
-                  bracketPairs: true,
-                  indentation: true,
-                },
-                padding: { top: 12, bottom: 12 },
-                domReadOnly: true,
-              }}
-              loading={
-                <div className="flex items-center justify-center h-full bg-[#1e1e1e]">
-                  <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
-                </div>
-              }
+              className="h-full w-full resize-none bg-[#1e1e1e] p-3 font-mono text-sm text-[#d4d4d4] focus:outline-none"
+              spellCheck={false}
+              aria-label={t('definitionModal.subtitle')}
+            />
+          ) : (
+            <MonacoJsonEditor
+              value={json}
+              readOnly
+              onMount={handleEditorMount}
+              onMountFailed={handleEditorMountFailed}
+              testId="server-definition-monaco"
             />
           )}
         </div>
+
+        {editorLoadFailed && (
+          <div className="border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))] px-4 py-2 text-xs text-[rgb(var(--muted))]">
+            {t('definitionModal.editorLoadFailed')}
+          </div>
+        )}
       </div>
     </div>
   );

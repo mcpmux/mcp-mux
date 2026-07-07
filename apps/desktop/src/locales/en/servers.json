@@ -263,6 +263,7 @@
     "subtitle": "Server Definition",
     "copy": "Copy",
     "copied": "Copied",
-    "copyTitle": "Copy to clipboard"
+    "copyTitle": "Copy to clipboard",
+    "editorLoadFailed": "Editor failed to load. Showing plain JSON instead."
   }
 }

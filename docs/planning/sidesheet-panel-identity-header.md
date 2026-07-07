@@ -1,6 +1,6 @@
 # Workspace Binding Panel — Identity Header Refactor
 
-**Last Updated:** Jun 28, 2026
+**Last Updated:** Jul 7, 2026
 **Status:** Complete (including restoration pass + auto-close fix)
 **Branch:** `feat/workspace-machine-binding`
 **Depends on:** None — builds on current panel in `main`
@@ -30,7 +30,7 @@ This means the space and feature set pickers — the two fields a user actually 
 | 4 | Form sections | "Mapping" becomes two sections: "Routing" (space + FS) and "Scope" (machine + root) | Routing is the high-signal decision; Scope is usually set once and rarely touched. Scope starts collapsed. |
 | 5 | State location | Lift form state (label, icon, spaceId, fsIds, machineId, root) to `WorkspaceBindingPanel` | Splitting fields across two `CollapsibleSection` wrappers requires coordinated state. Lifting makes both sections contribute to the same autosave trigger and removes the need for two `BindingForm` instances. |
 | 6 | BindingForm refactoring | `BindingForm` becomes two narrower components: `RoutingFields` and `ScopeFields` | Cleaner than a `visibleFields` prop, easier to test independently, and the components are small enough that this isn't over-engineering. |
-| 7 | Icon edit in header | Emoji picker button + clear in the header icon slot; file upload stays in Scope | Upload button in a 44px header slot is too cramped. Emoji and clear cover the common case; power users can expand Scope to upload. |
+| 7 | Icon edit in header | Emoji picker button + clear in the header icon slot; file upload stays in Scope | Upload button in a 44px header slot is too cramped. Emoji and clear cover the common case; power users can expand Scope to upload. **Implementation note (Jul 7, 2026):** Header icon slot is display-only; `EmojiPickerButton` lives in `ScopeFields` only. |
 
 ---
 
@@ -152,6 +152,12 @@ Regressions found after Phase 3 and fixed:
 **Tests:** `WorkspaceBindingPrompt.test.tsx` — edit mode stays open after `workspace-binding-changed` and after icon Clear persist.
 
 **Tradeoff:** If a binding is deleted or mutated externally while the edit panel is open, stale data may show until the user closes manually. Acceptable; matches pre-refactor edit behavior.
+
+---
+
+## Update — Jul 7, 2026 (Tauri prod emoji picker)
+
+`EmojiPickerButton` in `ScopeFields` failed in Tauri production builds because prod CSP blocked the picker's jsdelivr data fetch. Fixed via scoped `connect-src https://cdn.jsdelivr.net` in `tauri.conf.json` (see [`workspace-machine-binding.md`](./workspace-machine-binding.md) Jul 7 update). Web admin was unaffected.
 
 ---
 

@@ -39,8 +39,6 @@ export interface ServerActionMenuProps {
   hasUpdateAvailable?: boolean;
   /** Latest registry version when an update is available. */
   latestVersion?: string | null;
-  /** Show "Add another account…" for registry/manual installs (not clones-of-clones). */
-  canCloneAccount?: boolean;
   onConfigure: () => void;
   onRefresh: () => void;
   onReconnect: () => void;
@@ -67,7 +65,6 @@ export function ServerActionMenu({
   updatePolicy = 'notify',
   hasUpdateAvailable = false,
   latestVersion,
-  canCloneAccount = false,
   onConfigure,
   onRefresh,
   onReconnect,
@@ -175,7 +172,7 @@ export function ServerActionMenu({
           onSelect={onViewDefinition}
           data-testid={`view-definition-${serverId}`}
         />
-        {canCloneAccount && onCloneAccount && (
+        {onCloneAccount && (
           <DropdownMenuAction
             icon={Copy}
             label={t('actions.cloneAccount')}

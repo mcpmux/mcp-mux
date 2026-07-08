@@ -88,15 +88,28 @@ function getInstalledCloneLineage(state: InstalledServerState): string | undefin
 }
 
 /**
- * Whether the overflow menu should offer "Add another account…".
+ * Resolve the original (non-clone) source server for a clone request. Cloning is available
+ * on every installed server, including clones — cloning a clone clones its original source
+ * instead of stacking clone-of-clone chains. Falls back to the clicked server if its source
+ * can no longer be found (e.g. the original was uninstalled).
  */
-function canCloneServer(server: ServerViewModelWithClone): boolean {
-  if (server.cloned_from) {
-    return false;
+function resolveCloneSource(
+  server: ServerViewModelWithClone,
+  allServers: ServerViewModelWithClone[]
+): ServerViewModelWithClone {
+  const visited = new Set<string>();
+  let current = server;
+
+  while (current.cloned_from && !visited.has(current.id)) {
+    visited.add(current.id);
+    const source = allServers.find((candidate) => candidate.id === current.cloned_from);
+    if (!source) {
+      return current;
+    }
+    current = source;
   }
 
-  const sourceType = server.installation_source?.type;
-  return sourceType === 'registry' || sourceType === 'manual_entry';
+  return current;
 }
 
 // Helper to merge definitions with states (same as registryStore)
@@ -1943,7 +1956,6 @@ export function ServersPage() {
                           })
                         }
                         latestVersion={server.latest_available_version}
-                        canCloneAccount={canCloneServer(server)}
                         onConfigure={() => handleConfigureClick(server)}
                         onRefresh={() => handleRefresh(server)}
                         onReconnect={() => handleReconnect(server)}
@@ -1952,7 +1964,9 @@ export function ServersPage() {
                         onLockToCurrentVersion={() => handleLockToCurrentVersion(server)}
                         onViewLogs={() => setLogViewerServer({ id: server.id, name: server.name })}
                         onViewDefinition={() => setDefinitionServer({ id: server.id, name: server.name })}
-                        onCloneAccount={() => setCloneModalServer(server)}
+                        onCloneAccount={() =>
+                          setCloneModalServer(resolveCloneSource(server, installedServers))
+                        }
                         onUninstall={() => handleUninstall(server)}
                       />
                     </div>

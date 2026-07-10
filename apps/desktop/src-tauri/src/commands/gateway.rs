@@ -217,6 +217,22 @@ pub(crate) async fn load_network_access(app_state: &AppState) -> bool {
     load_network_access_from_repo(&app_state.settings_repository).await
 }
 
+pub(crate) async fn load_gateway_auth_disabled_from_repo(
+    settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
+) -> bool {
+    settings_repository
+        .get(GATEWAY_AUTH_DISABLED_KEY)
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
+pub(crate) async fn load_gateway_auth_disabled(app_state: &AppState) -> bool {
+    load_gateway_auth_disabled_from_repo(&app_state.settings_repository).await
+}
+
 pub(crate) fn advertised_base_url(public_base_url: Option<&str>, port: u16) -> String {
     public_base_url
         .map(str::trim)
@@ -1037,18 +1053,8 @@ pub async fn start_gateway(
     // Seed the system-wide inbound-auth toggle into the running gateway from
     // persisted settings (default: auth required). Live changes go through
     // `set_gateway_auth_disabled`.
-    {
-        let disabled = app_state
-            .settings_repository
-            .get(GATEWAY_AUTH_DISABLED_KEY)
-            .await
-            .ok()
-            .flatten()
-            .map(|v| v == "true")
-            .unwrap_or(false);
-        if disabled {
-            gw_state.write().await.set_auth_disabled(true);
-        }
+    if load_gateway_auth_disabled(&app_state).await {
+        gw_state.write().await.set_auth_disabled(true);
     }
 
     // Subscribe to OAuth completions BEFORE spawn so we don't miss early
@@ -2039,5 +2045,39 @@ mod public_base_url_tests {
     fn bind_host_for_maps_network_access_to_address() {
         assert_eq!(super::bind_host_for(false), "127.0.0.1");
         assert_eq!(super::bind_host_for(true), "0.0.0.0");
+    }
+}
+
+#[cfg(test)]
+mod gateway_auth_settings_tests {
+    use super::{load_gateway_auth_disabled_from_repo, GATEWAY_AUTH_DISABLED_KEY};
+    use mcpmux_core::AppSettingsRepository;
+    use mcpmux_storage::{Database, SqliteAppSettingsRepository};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    fn settings_repo() -> Arc<dyn AppSettingsRepository> {
+        let database = Database::open_in_memory().expect("create in-memory database");
+        Arc::new(SqliteAppSettingsRepository::new(Arc::new(Mutex::new(
+            database,
+        ))))
+    }
+
+    #[tokio::test]
+    async fn auth_remains_required_when_disable_setting_is_missing() {
+        let repository = settings_repo();
+
+        assert!(!load_gateway_auth_disabled_from_repo(&repository).await);
+    }
+
+    #[tokio::test]
+    async fn persisted_disable_setting_is_restored_on_gateway_start() {
+        let repository = settings_repo();
+        repository
+            .set(GATEWAY_AUTH_DISABLED_KEY, "true")
+            .await
+            .unwrap();
+
+        assert!(load_gateway_auth_disabled_from_repo(&repository).await);
     }
 }

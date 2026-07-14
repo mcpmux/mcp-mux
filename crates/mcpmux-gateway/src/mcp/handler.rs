@@ -860,15 +860,13 @@ impl ServerHandler for McpMuxGatewayHandler {
             .await
             .map_err(|e| McpError::internal_error(format!("Tool call failed: {}", e), None))?;
 
-        // Convert ToolCallResult to MCP CallToolResult
-        let content: Vec<Content> = tool_result
-            .content
-            .into_iter()
-            .filter_map(|v| serde_json::from_value(v).ok())
-            .collect();
+        // Convert ToolCallResult to MCP CallToolResult without dropping
+        // structuredContent or protocol-level _meta from the upstream server.
+        let result = tool_result.into_mcp_result();
 
         // Log result summary - show content types and approximate sizes
-        let content_summary: Vec<String> = content
+        let content_summary: Vec<String> = result
+            .content
             .iter()
             .map(|c| {
                 // Content is Annotated<RawContent>, serialize to inspect type
@@ -907,16 +905,10 @@ impl ServerHandler for McpMuxGatewayHandler {
             .collect();
         debug!(
             tool = %params.name,
-            is_error = tool_result.is_error,
+            is_error = result.is_error.unwrap_or(false),
             content = ?content_summary,
             "call_tool result"
         );
-
-        let result = if tool_result.is_error {
-            CallToolResult::error(content)
-        } else {
-            CallToolResult::success(content)
-        };
 
         Ok(result)
     }

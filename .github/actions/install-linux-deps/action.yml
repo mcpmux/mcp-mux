@@ -13,6 +13,16 @@ runs:
   using: composite
   steps:
     # Cache apt packages to avoid re-downloading on every run
+    # The runner image ships an apt index from its build date, and
+    # cache-apt-pkgs-action's own refresh (update_apt_lists_if_stale) is a
+    # no-op outside nektos/act -- it guards on ACT=true. A stale index names
+    # .debs that Ubuntu has since superseded and dropped from the pool, so the
+    # install 404s; the action then caches the empty result instead of failing,
+    # and every later run restores that as a hit and skips installing at all.
+    - name: Refresh apt lists
+      shell: bash
+      run: sudo apt-get update
+
     # Pinned to a SHA: `@latest` is a moving tag, so a broken upstream release
     # (e.g. v1.6.2) would otherwise roll straight into CI unreviewed.
     - name: Cache apt packages (base)

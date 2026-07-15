@@ -17,6 +17,7 @@ permissions:
   actions: read
   checks: write
   pull-requests: write
+  id-token: write
 
 env:
   CARGO_TERM_COLOR: always

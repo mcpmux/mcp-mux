@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.0](https://github.com/mcpmux/mcp-mux/compare/v0.5.0...v0.6.0) (2026-07-15)
+
+
+### Features
+
+* API-key inbound auth for headless/remote MCP clients (P1/3) ([#201](https://github.com/mcpmux/mcp-mux/issues/201)) ([4b5a9bc](https://github.com/mcpmux/mcp-mux/commit/4b5a9bcc73bc301ee7b9591079d7b1166049177a))
+* **gateway:** optional network access — bind 0.0.0.0 for LAN sharing ([#200](https://github.com/mcpmux/mcp-mux/issues/200)) ([9e481e7](https://github.com/mcpmux/mcp-mux/commit/9e481e71b5857d9f67b62a811694034bed3a4400))
+* generalized client→Space/FeatureSet mappings + lock-confine (P2/3) ([#202](https://github.com/mcpmux/mcp-mux/issues/202)) ([2913ecb](https://github.com/mcpmux/mcp-mux/commit/2913ecb8098044734ea7ee105533d97834f6c956))
+* Mapping/Clients rename + non-localhost consent note (P3/3) ([#203](https://github.com/mcpmux/mcp-mux/issues/203)) ([87df4a2](https://github.com/mcpmux/mcp-mux/commit/87df4a26fb13e159c09ea8d920c3ce01050c7488))
+* support configurable public gateway base URL ([#192](https://github.com/mcpmux/mcp-mux/issues/192)) ([6f81378](https://github.com/mcpmux/mcp-mux/commit/6f81378384ed37cf254d7b8711199404a848ca3f))
+
+
+### Bug Fixes
+
+* avoid synthetic connecting state for enabled servers ([#196](https://github.com/mcpmux/mcp-mux/issues/196)) ([80045c6](https://github.com/mcpmux/mcp-mux/commit/80045c61e9ea2e92a035ab59f6d0adbad33175e0))
+* filter invalid DCR redirect URIs ([#193](https://github.com/mcpmux/mcp-mux/issues/193)) ([187b57c](https://github.com/mcpmux/mcp-mux/commit/187b57c31f68519dd536ee8e576cbae0b9a2cf08))
+* **gateway:** preserve structured tool results ([#206](https://github.com/mcpmux/mcp-mux/issues/206)) ([6bd8220](https://github.com/mcpmux/mcp-mux/commit/6bd822063dc11ff00bf90af18e6d426e37abb84e))
+* **gateway:** restore disabled auth on auto-start ([#205](https://github.com/mcpmux/mcp-mux/issues/205)) ([460da1f](https://github.com/mcpmux/mcp-mux/commit/460da1f2b81cb9aad403392d32d3caa2856b8a92))
+* make feature discovery capability-aware and bounded ([#194](https://github.com/mcpmux/mcp-mux/issues/194)) ([c2a1569](https://github.com/mcpmux/mcp-mux/commit/c2a156974004e113b4368dada41411e61c8205f1))
+* restore titlebar drag region without breaking controls ([#197](https://github.com/mcpmux/mcp-mux/issues/197)) ([47c787c](https://github.com/mcpmux/mcp-mux/commit/47c787cf95b1c36e99673596170666252c59f114))
+* sync custom server config saves immediately ([#195](https://github.com/mcpmux/mcp-mux/issues/195)) ([536a4ce](https://github.com/mcpmux/mcp-mux/commit/536a4ceb7e4ad32549f870145557d00fe790cb2e))
+
 ## [0.5.0](https://github.com/mcpmux/mcp-mux/compare/v0.4.0...v0.5.0) (2026-06-25)
 
 

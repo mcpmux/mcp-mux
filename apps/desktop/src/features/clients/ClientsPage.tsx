@@ -271,17 +271,17 @@ export default function ClientsPage() {
       <header className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-8">
         <div className="mx-auto max-w-[2000px]">
           <PageHeader
-            title="Apps"
+            title="Clients"
             titleTestId="clients-title"
             subtitle={
               <>
-                The AI apps connected through your gateway. Which tools each one gets (which Space,
-                which FeatureSet) is configured in{' '}
+                The AI clients connected through your gateway. Which tools each one gets (which
+                Space, which FeatureSet) is configured in{' '}
                 <button
                   onClick={() => navigateTo('workspaces')}
                   className="font-medium text-[rgb(var(--accent))] hover:underline"
                 >
-                  Workspaces
+                  Mapping
                 </button>{' '}
                 per folder, not per app.
               </>

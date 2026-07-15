@@ -44,8 +44,9 @@ test.describe('Complete User Flows', () => {
     await page.locator('nav button:has-text("Discover")').click();
     await expect(page.locator('h1:has-text("Discover")')).toBeVisible();
     
-    // Spaces (use last() to avoid space switcher)
-    await page.locator('nav button:has-text("Spaces")').last().click();
+    // Mapping (the workspace→tools mapping tab; nav label was renamed from
+    // "Workspaces", but the page heading is still "Workspaces").
+    await page.locator('nav button:has-text("Mapping")').click();
     await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
     
     // FeatureSets

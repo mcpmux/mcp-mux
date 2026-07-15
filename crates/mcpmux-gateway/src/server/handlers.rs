@@ -478,6 +478,17 @@ pub async fn oauth_authorize(
     // authorization for the desktop UI, which renders it as text via React.
     let display_name_html = html_escape_text(&display_name);
 
+    // When the gateway is exposed beyond loopback, a client that reached this
+    // page from another machine can't complete the desktop consent (the
+    // mcpmux:// deep link fires only on the host). Surface the API-key path so a
+    // remote user isn't left at a dead end.
+    let network_bind = state.read().await.network_bind;
+    let network_note = if network_bind {
+        r#"<div style="margin-bottom:1.5rem;padding:0.85rem 1rem;border-radius:10px;background:rgba(218,119,86,0.08);border:1px solid rgba(218,119,86,0.25);color:#d8b08c;font-size:0.8rem;line-height:1.45;text-align:left;"><strong style="color:#DA7756;">Connecting from another machine?</strong> This approval only completes on the computer running McpMux. For a remote or headless client, register an <strong>API-key client</strong> in McpMux (Clients tab) and connect with that key &mdash; no browser approval needed.</div>"#
+    } else {
+        ""
+    };
+
     // HTML page that triggers the deep link
     // The page shows a brief message while the app opens
     // Industry standard: Don't auto-close, let user close after approval
@@ -588,6 +599,8 @@ pub async fn oauth_authorize(
         <p class="subtitle">
             Complete authorization in {app_name}
         </p>
+
+        {network_note}
 
         <div class="client-info">
             <div class="client-name">{display_name_html}</div>

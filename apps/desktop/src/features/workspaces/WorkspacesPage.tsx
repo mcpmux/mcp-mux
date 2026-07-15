@@ -23,14 +23,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import {
-  Button,
-  Card,
-  CardContent,
-  useToast,
-  ToastContainer,
-  useConfirm,
-} from '@mcpmux/ui';
+import { Button, Card, CardContent, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import {
   clearUnmappedReportedRoots,
   createWorkspaceBinding,
@@ -45,11 +38,7 @@ import {
   type WorkspaceBindingInput,
   type WorkspaceEffectiveFeatures,
 } from '@/lib/api/workspaceBindings';
-import {
-  isStarterFeatureSet,
-  listFeatureSets,
-  type FeatureSet,
-} from '@/lib/api/featureSets';
+import { isStarterFeatureSet, listFeatureSets, type FeatureSet } from '@/lib/api/featureSets';
 import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
 import { WorkspaceSetupWizard } from './WorkspaceSetupWizard';
 import { useSpaces, usePendingWorkspaceNew, useSetPendingWorkspaceNew } from '@/stores';
@@ -220,11 +209,9 @@ export function WorkspacesPage() {
       if (filter === 'mapped' && !e.binding) return false;
       if (filter === 'unmapped' && e.kind !== 'unmapped-live') return false;
       if (!q) return true;
-      const spaceName = e.binding ? spaceById.get(e.binding.space_id)?.name ?? '' : '';
+      const spaceName = e.binding ? (spaceById.get(e.binding.space_id)?.name ?? '') : '';
       const fsNames = e.binding
-        ? e.binding.feature_set_ids
-            .map((id) => fsById.get(id)?.name ?? '')
-            .join(' ')
+        ? e.binding.feature_set_ids.map((id) => fsById.get(id)?.name ?? '').join(' ')
         : '';
       return (
         e.root.toLowerCase().includes(q) ||
@@ -247,7 +234,7 @@ export function WorkspacesPage() {
   }, [entries]);
 
   const selectedEntry: Entry | null =
-    selected?.mode === 'entry' ? entries.find((e) => e.id === selected.id) ?? null : null;
+    selected?.mode === 'entry' ? (entries.find((e) => e.id === selected.id) ?? null) : null;
   const selectedIsNew = selected?.mode === 'new';
   const panelOpen = selected !== null;
 
@@ -311,32 +298,27 @@ export function WorkspacesPage() {
         cleared > 0 ? "You'll be asked to map them again next time." : undefined
       );
     } catch (e) {
-      showError(
-        'Could not clear unmapped folders',
-        e instanceof Error ? e.message : String(e)
-      );
+      showError('Could not clear unmapped folders', e instanceof Error ? e.message : String(e));
     }
   };
 
   return (
-    <div className="h-full flex flex-col relative" data-testid="workspaces-page">
-      <header className="flex-shrink-0 p-8 border-b border-[rgb(var(--border-subtle))]">
-        <div className="max-w-[2000px] mx-auto">
-          <div className="flex items-start justify-between gap-6 mb-6">
+    <div className="relative flex h-full flex-col" data-testid="workspaces-page">
+      <header className="flex-shrink-0 border-b border-[rgb(var(--border-subtle))] p-8">
+        <div className="mx-auto max-w-[2000px]">
+          <div className="mb-6 flex items-start justify-between gap-6">
             <div className="min-w-0 flex-1">
               <h1 className="text-3xl font-bold" data-testid="workspaces-title">
                 Workspaces
               </h1>
-              <p className="text-base text-[rgb(var(--muted))] mt-2 max-w-2xl">
-                Map a folder to the tools it should get. When you open that
-                folder in a connected app — Cursor, VS Code, Claude — McpMux
-                serves exactly the tools you chose for it. Folders you
-                haven&apos;t mapped fall back to your default Starter set, so
-                they work out of the box — map one only when it should see
-                something different.
+              <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
+                Map a folder to the tools it should get. When you open that folder in a connected
+                app — Cursor, VS Code, Claude — McpMux serves exactly the tools you chose for it.
+                Folders you haven&apos;t mapped fall back to your default Starter set, so they work
+                out of the box — map one only when it should see something different.
               </p>
             </div>
-            <div className="flex-shrink-0 flex items-center gap-2">
+            <div className="flex flex-shrink-0 items-center gap-2">
               <Button
                 variant="ghost"
                 size="md"
@@ -344,7 +326,7 @@ export function WorkspacesPage() {
                 disabled={isRefreshing}
                 className="whitespace-nowrap"
               >
-                <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 Refresh
               </Button>
               <Button
@@ -354,21 +336,21 @@ export function WorkspacesPage() {
                 data-testid="workspace-binding-create-toggle"
                 className="whitespace-nowrap"
               >
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="mr-2 h-4 w-4" />
                 New mapping
               </Button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 max-w-3xl">
-            <div className="relative flex-1 min-w-[220px]">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-[rgb(var(--muted))]" />
+          <div className="flex max-w-3xl flex-wrap items-center gap-3">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[rgb(var(--muted))]" />
               <input
                 type="text"
                 placeholder="Search by path, space, or feature set…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 text-base bg-[rgb(var(--surface))] border border-[rgb(var(--border))] rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all"
+                className="focus:ring-primary-500 focus:border-primary-500 w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3 pl-12 pr-4 text-base transition-all focus:outline-none focus:ring-2"
                 data-testid="workspace-binding-search"
               />
             </div>
@@ -391,7 +373,7 @@ export function WorkspacesPage() {
                 className="whitespace-nowrap text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:hover:bg-amber-900/20"
                 data-testid="workspaces-clear-unmapped"
               >
-                <Trash2 className="h-4 w-4 mr-2" />
+                <Trash2 className="mr-2 h-4 w-4" />
                 Clear unmapped
               </Button>
             )}
@@ -401,17 +383,17 @@ export function WorkspacesPage() {
 
       {error && (
         <div className="flex-shrink-0 px-8 pt-6">
-          <div className="max-w-[2000px] mx-auto p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl text-base text-red-600 dark:text-red-400">
+          <div className="mx-auto max-w-[2000px] rounded-xl border border-red-200 bg-red-50 p-4 text-base text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
             {error}
           </div>
         </div>
       )}
 
       <div className="flex-1 overflow-auto px-8 py-8">
-        <div className="max-w-[2000px] mx-auto">
+        <div className="mx-auto max-w-[2000px]">
           {isLoading ? (
-            <div className="flex items-center justify-center h-64">
-              <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
+            <div className="flex h-64 items-center justify-center">
+              <Loader2 className="text-primary-500 h-8 w-8 animate-spin" />
             </div>
           ) : filtered.length === 0 ? (
             <EmptyState
@@ -420,10 +402,9 @@ export function WorkspacesPage() {
               onCreate={() => setSelected({ mode: 'new' })}
             />
           ) : (
-            <div className="grid gap-5 auto-fill-cards">
+            <div className="auto-fill-cards grid gap-5">
               {filtered.map((entry) => {
-                const isSelected =
-                  selected?.mode === 'entry' && selected.id === entry.id;
+                const isSelected = selected?.mode === 'entry' && selected.id === entry.id;
                 // Mapped entries show their bound Space + FeatureSet names.
                 // Unmapped entries read "Not mapped" — they fall back to the
                 // default Starter set rather than to an explicit binding.
@@ -431,9 +412,7 @@ export function WorkspacesPage() {
                   ? spaceById.get(entry.binding.space_id)?.name
                   : undefined;
                 const fsNames = entry.binding
-                  ? entry.binding.feature_set_ids.map(
-                      (id) => fsById.get(id)?.name ?? id
-                    )
+                  ? entry.binding.feature_set_ids.map((id) => fsById.get(id)?.name ?? id)
                   : [];
                 return (
                   <EntryCard
@@ -454,7 +433,7 @@ export function WorkspacesPage() {
       {panelOpen && (
         <>
           <div
-            className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40 animate-in fade-in duration-200"
+            className="animate-in fade-in fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px] duration-200"
             onClick={() => setSelected(null)}
           />
           {selectedIsNew ? (
@@ -548,7 +527,7 @@ function SegmentedFilter<T extends string>({
   options: Array<{ value: T; label: string; count?: number }>;
 }) {
   return (
-    <div className="inline-flex rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-0.5 gap-0.5">
+    <div className="inline-flex gap-0.5 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-0.5">
       {options.map((o) => {
         const active = o.value === value;
         return (
@@ -559,7 +538,7 @@ function SegmentedFilter<T extends string>({
             data-testid={`workspace-filter-${o.value}`}
             aria-pressed={active}
             className={[
-              'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all',
+              'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all',
               active
                 ? 'bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-sm'
                 : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]',
@@ -568,7 +547,7 @@ function SegmentedFilter<T extends string>({
             {o.label}
             {typeof o.count === 'number' && (
               <span
-                className={`inline-flex items-center justify-center min-w-[1.25rem] h-[1.125rem] px-1 text-[10px] font-semibold rounded-full ${
+                className={`inline-flex h-[1.125rem] min-w-[1.25rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold ${
                   active
                     ? 'bg-[rgb(var(--surface))] text-[rgb(var(--foreground))]'
                     : 'bg-[rgb(var(--surface-hover,var(--surface)))] text-[rgb(var(--muted))]'
@@ -645,18 +624,14 @@ function EntryCard({
   onClick: () => void;
 }) {
   const tone =
-    entry.kind === 'unmapped-live'
-      ? 'amber'
-      : entry.kind === 'mapped-live'
-        ? 'emerald'
-        : 'neutral';
+    entry.kind === 'unmapped-live' ? 'amber' : entry.kind === 'mapped-live' ? 'emerald' : 'neutral';
   const t = CARD_TONES[tone];
   const name = folderName(entry.root);
 
   return (
     <Card
-      className={`relative cursor-pointer overflow-hidden transition-all hover:shadow-lg hover:scale-[1.01] ${
-        selected ? 'ring-2 ring-primary-500 shadow-lg' : ''
+      className={`relative cursor-pointer overflow-hidden transition-all hover:scale-[1.01] hover:shadow-lg ${
+        selected ? 'ring-primary-500 shadow-lg ring-2' : ''
       }`}
       onClick={onClick}
       data-testid={`workspace-entry-${entry.id}`}
@@ -669,11 +644,7 @@ function EntryCard({
             <div
               className={`flex h-14 w-14 items-center justify-center rounded-xl ring-1 ring-inset ${t.box}`}
             >
-              {entry.isLive ? (
-                <FolderOpen className="h-6 w-6" />
-              ) : (
-                <Folder className="h-6 w-6" />
-              )}
+              {entry.isLive ? <FolderOpen className="h-6 w-6" /> : <Folder className="h-6 w-6" />}
             </div>
             {entry.isLive && (
               <span
@@ -691,10 +662,7 @@ function EntryCard({
             <h3 className="truncate text-base font-semibold" title={entry.root}>
               {name}
             </h3>
-            <p
-              className="truncate font-mono text-xs text-[rgb(var(--muted))]"
-              title={entry.root}
-            >
+            <p className="truncate font-mono text-xs text-[rgb(var(--muted))]" title={entry.root}>
               {entry.root}
             </p>
           </div>
@@ -704,7 +672,7 @@ function EntryCard({
           {entry.binding ? (
             <div className="flex items-center justify-between gap-3">
               <span className="inline-flex min-w-0 items-center gap-1.5">
-                <Layers className="h-3.5 w-3.5 flex-shrink-0 text-primary-500" />
+                <Layers className="text-primary-500 h-3.5 w-3.5 flex-shrink-0" />
                 <span
                   className="truncate font-medium text-[rgb(var(--foreground))]"
                   title={fsNames.join(', ')}
@@ -713,7 +681,7 @@ function EntryCard({
                 </span>
                 {fsNames.length > 1 && (
                   <span
-                    className="flex-shrink-0 rounded-full bg-primary-500/10 px-1.5 text-[10px] font-bold tabular-nums text-primary-600 dark:text-primary-300"
+                    className="bg-primary-500/10 text-primary-600 dark:text-primary-300 flex-shrink-0 rounded-full px-1.5 text-[10px] font-bold tabular-nums"
                     title={`${fsNames.length} feature sets`}
                   >
                     {fsNames.length}
@@ -752,27 +720,21 @@ function Pill({
         : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[10px] font-semibold uppercase tracking-wider ${cls}`}
+      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${cls}`}
     >
       {children}
     </span>
   );
 }
 
-function Chip({
-  children,
-  tone,
-}: {
-  children: React.ReactNode;
-  tone: 'primary' | 'neutral';
-}) {
+function Chip({ children, tone }: { children: React.ReactNode; tone: 'primary' | 'neutral' }) {
   const styles =
     tone === 'primary'
       ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 border-primary-200 dark:border-primary-800/60'
       : 'bg-[rgb(var(--surface))] border-[rgb(var(--border-subtle))] text-[rgb(var(--foreground))]';
   return (
     <span
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-md border text-[11px] font-medium ${styles}`}
+      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${styles}`}
     >
       {children}
     </span>
@@ -804,8 +766,7 @@ const SECTION_TONES: Record<SectionTone, SectionToneSpec> = {
   primary: {
     gradientOpen:
       'bg-gradient-to-r from-primary-50 to-primary-100/50 dark:from-primary-900/20 dark:to-primary-800/10',
-    iconQuiet:
-      'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400',
+    iconQuiet: 'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400',
     iconActive: 'bg-primary-500 text-white shadow-sm shadow-primary-500/30',
     badgeOpen:
       'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 border border-primary-300/70 dark:border-primary-700/70',
@@ -813,8 +774,7 @@ const SECTION_TONES: Record<SectionTone, SectionToneSpec> = {
   purple: {
     gradientOpen:
       'bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/15',
-    iconQuiet:
-      'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400',
+    iconQuiet: 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400',
     iconActive: 'bg-purple-500 text-white shadow-sm shadow-purple-500/30',
     badgeOpen:
       'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-300/70 dark:border-purple-700/70',
@@ -848,41 +808,37 @@ function CollapsibleSection({
 
   return (
     <div
-      className="bg-[rgb(var(--background))] rounded-xl border-2 border-[rgb(var(--border))] overflow-hidden transition-all"
+      className="overflow-hidden rounded-xl border-2 border-[rgb(var(--border))] bg-[rgb(var(--background))] transition-all"
       data-testid={testId}
     >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={[
-          'w-full flex items-center justify-between p-4 transition-all',
-          open
-            ? t.gradientOpen
-            : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]',
+          'flex w-full items-center justify-between p-4 transition-all',
+          open ? t.gradientOpen : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]',
         ].join(' ')}
         aria-expanded={open}
       >
-        <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <div
             className={[
-              'p-2 rounded-lg flex-shrink-0 transition-colors duration-200',
+              'flex-shrink-0 rounded-lg p-2 transition-colors duration-200',
               open ? t.iconActive : t.iconQuiet,
             ].join(' ')}
           >
             {icon}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-base text-[rgb(var(--foreground))]">
-                {title}
-              </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-base font-semibold text-[rgb(var(--foreground))]">{title}</span>
               {typeof badge === 'number' && badge > 0 && (
                 <span
                   className={[
-                    'text-xs px-2 py-0.5 rounded-full font-bold tabular-nums',
+                    'rounded-full px-2 py-0.5 text-xs font-bold tabular-nums',
                     open
                       ? t.badgeOpen
-                      : 'bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))] border border-[rgb(var(--border-subtle))]',
+                      : 'border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))]',
                   ].join(' ')}
                 >
                   {badge}
@@ -891,21 +847,19 @@ function CollapsibleSection({
               {headerExtra}
             </div>
             {subtitle && (
-              <div className="text-xs text-[rgb(var(--muted))] truncate mt-0.5">
-                {subtitle}
-              </div>
+              <div className="mt-0.5 truncate text-xs text-[rgb(var(--muted))]">{subtitle}</div>
             )}
           </div>
         </div>
         {open ? (
-          <ChevronDown className="h-5 w-5 text-[rgb(var(--muted))] flex-shrink-0" />
+          <ChevronDown className="h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
         ) : (
-          <ChevronRight className="h-5 w-5 text-[rgb(var(--muted))] flex-shrink-0" />
+          <ChevronRight className="h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
         )}
       </button>
 
       {open && (
-        <div className="border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))] p-4">
+        <div className="border-t-2 border-[rgb(var(--border))] bg-white p-4 dark:bg-[rgb(var(--background))]">
           {children}
         </div>
       )}
@@ -958,14 +912,8 @@ function InspectorPanel({
     : isMapped
       ? 'edit'
       : 'create-from-live';
-  const title = isNew
-    ? 'New mapping'
-    : isMapped
-      ? 'Workspace mapping'
-      : 'Map this folder';
-  const subtitle = isNew
-    ? 'Choose the tools a folder should get.'
-    : entry?.root ?? '';
+  const title = isNew ? 'New mapping' : isMapped ? 'Workspace mapping' : 'Map this folder';
+  const subtitle = isNew ? 'Choose the tools a folder should get.' : (entry?.root ?? '');
 
   // Auto-save status drives the small pill in the Mapping section header.
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ kind: 'idle' });
@@ -975,22 +923,24 @@ function InspectorPanel({
   const [effectiveTotal, setEffectiveTotal] = useState<number | null>(null);
 
   return (
-    <div className="fixed right-0 top-0 bottom-0 w-full max-w-[480px] min-w-[420px] bg-[rgb(var(--surface))] border-l border-[rgb(var(--border))] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 z-50">
-      <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
+    <div className="animate-in slide-in-from-right fixed bottom-0 right-0 top-0 z-50 flex w-full min-w-[420px] max-w-[480px] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl duration-300">
+      <div className="flex-shrink-0 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
         <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-11 h-11 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg flex-shrink-0 border border-[rgb(var(--border-subtle))]">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))]">
               <FolderOpen className="h-5 w-5 text-[rgb(var(--muted))]" />
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+            <div className="min-w-0 flex-1">
+              <div className="mb-0.5 flex flex-wrap items-center gap-2">
                 {!isNew && entry?.isLive && <Pill tone="emerald">Live</Pill>}
                 {!isNew && entry && !isMapped && <Pill tone="amber">Unmapped</Pill>}
-                {!isNew && entry && isMapped && !entry.isLive && <Pill tone="neutral">Offline</Pill>}
+                {!isNew && entry && isMapped && !entry.isLive && (
+                  <Pill tone="neutral">Offline</Pill>
+                )}
               </div>
-              <h2 className="text-lg font-bold truncate">{title}</h2>
+              <h2 className="truncate text-lg font-bold">{title}</h2>
               <p
-                className={`text-xs text-[rgb(var(--muted))] truncate ${!isNew ? 'font-mono' : ''}`}
+                className={`truncate text-xs text-[rgb(var(--muted))] ${!isNew ? 'font-mono' : ''}`}
                 title={subtitle}
               >
                 {subtitle}
@@ -999,7 +949,7 @@ function InspectorPanel({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
+            className="flex-shrink-0 rounded-lg p-1.5 transition-colors hover:bg-[rgb(var(--surface-hover))]"
             aria-label="Close panel"
           >
             <X className="h-5 w-5" />
@@ -1007,7 +957,7 @@ function InspectorPanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
+      <div className="flex-1 space-y-5 overflow-y-auto p-6">
         <CollapsibleSection
           icon={<FolderOpen className="h-5 w-5" />}
           tone="primary"
@@ -1024,9 +974,7 @@ function InspectorPanel({
                           (id) => featureSets.find((f) => f.id === id)?.name ?? id
                         )
                       ) || '—'
-                    } from ${
-                      spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—'
-                    }`
+                    } from ${spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—'}`
                   : 'Edit what this folder sees, then press Apply.'
           }
           defaultOpen={isNew || !isMapped}
@@ -1070,24 +1018,21 @@ function InspectorPanel({
             badge={effectiveTotal ?? undefined}
             testId="workspace-effective-features-section"
           >
-            <EffectiveFeaturesContent
-              root={entry.root}
-              onTotalChange={setEffectiveTotal}
-            />
+            <EffectiveFeaturesContent root={entry.root} onTotalChange={setEffectiveTotal} />
           </CollapsibleSection>
         )}
       </div>
 
       {entry?.binding && (
-        <div className="flex-shrink-0 p-4 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
+        <div className="flex-shrink-0 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => void onDelete()}
-            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+            className="w-full text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-900/20"
             data-testid={`workspace-binding-delete-${entry.binding.id}`}
           >
-            <Trash2 className="h-4 w-4 mr-2" />
+            <Trash2 className="mr-2 h-4 w-4" />
             Remove mapping
           </Button>
         </div>
@@ -1103,7 +1048,7 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
   if (status.kind === 'saving') {
     return (
       <span
-        className={`${base} bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))] border-[rgb(var(--border))]`}
+        className={`${base} border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))] text-[rgb(var(--muted))]`}
       >
         <Loader2 className="h-2.5 w-2.5 animate-spin" />
         Saving
@@ -1113,7 +1058,7 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
   if (status.kind === 'saved') {
     return (
       <span
-        className={`${base} bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border-green-300/70 dark:border-green-700/70 animate-in fade-in duration-200`}
+        className={`${base} animate-in fade-in border-green-300/70 bg-green-100 text-green-700 duration-200 dark:border-green-700/70 dark:bg-green-900/30 dark:text-green-300`}
       >
         <Check className="h-2.5 w-2.5" strokeWidth={2.5} />
         Saved
@@ -1122,7 +1067,7 @@ function SaveStatusPill({ status }: { status: SaveStatus }) {
   }
   return (
     <span
-      className={`${base} bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800`}
+      className={`${base} border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400`}
       title={status.message}
     >
       <AlertCircle className="h-2.5 w-2.5" />
@@ -1160,9 +1105,7 @@ function buildServerGroups(data: WorkspaceEffectiveFeatures): ServerGroup[] {
     let g = map.get(item.server_id);
     if (!g) {
       const totals = data.server_totals[item.server_id];
-      const server_total = totals
-        ? totals.tools + totals.prompts + totals.resources
-        : 0;
+      const server_total = totals ? totals.tools + totals.prompts + totals.resources : 0;
       g = {
         server_id: item.server_id,
         server_alias: item.server_alias ?? item.server_id,
@@ -1298,8 +1241,8 @@ function EffectiveFeaturesContent({
   }
   if (error) {
     return (
-      <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 flex items-start gap-2 text-sm text-red-600 dark:text-red-400">
-        <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+      <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
         <span>{error}</span>
       </div>
     );
@@ -1313,12 +1256,12 @@ function EffectiveFeaturesContent({
     <div className="space-y-4">
       {/* Resolution summary — bold pills showing what this folder
           resolves to, plus a progress bar for availability. */}
-      <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 space-y-2.5">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div className="space-y-2.5 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[rgb(var(--muted))]">
             Resolves to
           </span>
-          <span className="text-sm font-semibold text-[rgb(var(--foreground))] truncate">
+          <span className="truncate text-sm font-semibold text-[rgb(var(--foreground))]">
             {formatFsList(data.feature_sets.map((fs) => fs.name)) || '—'}
           </span>
           <span className="text-xs text-[rgb(var(--muted))]">in</span>
@@ -1332,10 +1275,10 @@ function EffectiveFeaturesContent({
                 : 'No binding matches this folder, so it falls back to the default Starter set shown here. Map it to give this folder a different set.'
             }
             className={[
-              'ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border',
+              'ml-auto rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider',
               data.source === 'binding'
-                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border-purple-300/70 dark:border-purple-700/70'
-                : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-300/70 dark:border-amber-700/70',
+                ? 'border-purple-300/70 bg-purple-100 text-purple-700 dark:border-purple-700/70 dark:bg-purple-900/30 dark:text-purple-300'
+                : 'border-amber-300/70 bg-amber-100 text-amber-700 dark:border-amber-700/70 dark:bg-amber-900/30 dark:text-amber-300',
             ].join(' ')}
           >
             {data.source === 'binding' ? 'binding' : 'unbound'}
@@ -1346,7 +1289,7 @@ function EffectiveFeaturesContent({
             are connected, leans amber when some are dim. */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-[rgb(var(--muted))] tabular-nums">
+            <span className="tabular-nums text-[rgb(var(--muted))]">
               <span className="font-semibold text-[rgb(var(--foreground))]">{availableCount}</span>
               <span> of </span>
               <span className="font-semibold text-[rgb(var(--foreground))]">{totalCount}</span>
@@ -1367,7 +1310,7 @@ function EffectiveFeaturesContent({
               </span>
             )}
           </div>
-          <div className="h-1.5 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+          <div className="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
             <div
               className={[
                 'h-full transition-all duration-300',
@@ -1389,12 +1332,12 @@ function EffectiveFeaturesContent({
 
       {/* Server-grouped feature list. */}
       {groups.length === 0 ? (
-        <div className="text-center py-8 text-[rgb(var(--muted))]">
-          <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
+        <div className="py-8 text-center text-[rgb(var(--muted))]">
+          <Package className="mx-auto mb-2 h-8 w-8 opacity-50" />
           <p className="text-sm">No features configured in this feature set yet.</p>
         </div>
       ) : (
-        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] overflow-hidden">
+        <div className="overflow-hidden rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
           <div className="divide-y divide-[rgb(var(--border))]">
             {groups.map((g) => (
               <ServerGroupRow
@@ -1432,46 +1375,38 @@ function ServerGroupRow({
 
   // Strip reverse-DNS prefix so display reads "cloudflare-bindings" not
   // "com.cloudflare-bindings". The full id stays in title for hover.
-  const prefix = group.server_alias.includes('.')
-    ? group.server_alias.split('.', 2)[0]
-    : null;
-  const displayName = prefix
-    ? group.server_alias.slice(prefix.length + 1)
-    : group.server_alias;
+  const prefix = group.server_alias.includes('.') ? group.server_alias.split('.', 2)[0] : null;
+  const displayName = prefix ? group.server_alias.slice(prefix.length + 1) : group.server_alias;
 
   return (
     <div className="bg-[rgb(var(--surface))]">
       <div
-        className="flex items-center justify-between px-4 py-3 hover:bg-[rgb(var(--surface-hover))] cursor-pointer transition-colors"
+        className="flex cursor-pointer items-center justify-between px-4 py-3 transition-colors hover:bg-[rgb(var(--surface-hover))]"
         onClick={onToggle}
         role="button"
         title={group.server_alias}
       >
-        <div className="flex items-center gap-3 flex-1 min-w-0">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           {open ? (
-            <ChevronDown className="h-4 w-4 text-[rgb(var(--muted))] flex-shrink-0" />
+            <ChevronDown className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-[rgb(var(--muted))] flex-shrink-0" />
+            <ChevronRight className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
           )}
-          <ServerIcon className="h-4 w-4 text-blue-500 flex-shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <ServerIcon className="h-4 w-4 flex-shrink-0 text-blue-500" />
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
               {prefix && (
-                <span className="text-[10px] text-[rgb(var(--muted))] font-mono">
-                  {prefix}.
-                </span>
+                <span className="font-mono text-[10px] text-[rgb(var(--muted))]">{prefix}.</span>
               )}
-              <span className="font-medium text-sm truncate font-mono">
-                {displayName}
-              </span>
+              <span className="truncate font-mono text-sm font-medium">{displayName}</span>
               <span
                 className={[
-                  'text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0 tabular-nums',
+                  'flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-bold tabular-nums',
                   noneAvailable
-                    ? 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400 border border-gray-300/70 dark:border-gray-700/70'
+                    ? 'border border-gray-300/70 bg-gray-100 text-gray-600 dark:border-gray-700/70 dark:bg-gray-900/30 dark:text-gray-400'
                     : allAvailable
-                      ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300/70 dark:border-green-700/70'
-                      : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300/70 dark:border-amber-700/70',
+                      ? 'border border-green-300/70 bg-green-100 text-green-700 dark:border-green-700/70 dark:bg-green-900/30 dark:text-green-300'
+                      : 'border border-amber-300/70 bg-amber-100 text-amber-700 dark:border-amber-700/70 dark:bg-amber-900/30 dark:text-amber-300',
                 ].join(' ')}
               >
                 {group.mapped}/{denominator}
@@ -1479,12 +1414,12 @@ function ServerGroupRow({
               {issue && (
                 <span
                   className={[
-                    'text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider border',
+                    'rounded-full border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider',
                     issue.tone === 'red'
-                      ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800'
+                      ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400'
                       : issue.tone === 'amber'
-                        ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800'
-                        : 'bg-gray-50 dark:bg-gray-900/20 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-800',
+                        ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400'
+                        : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-800 dark:bg-gray-900/20 dark:text-gray-400',
                   ].join(' ')}
                 >
                   {issue.label}
@@ -1493,7 +1428,7 @@ function ServerGroupRow({
             </div>
             {/* Per-server progress bar — same treatment as FeatureSetPanel's
                 server rows so the visual language is consistent. */}
-            <div className="h-1 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+            <div className="h-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
               <div
                 className={[
                   'h-full transition-all duration-300',
@@ -1506,10 +1441,7 @@ function ServerGroupRow({
                         : 'bg-gray-400',
                 ].join(' ')}
                 style={{
-                  width:
-                    group.mapped > 0
-                      ? `${(availableCount / group.mapped) * 100}%`
-                      : '0%',
+                  width: group.mapped > 0 ? `${(availableCount / group.mapped) * 100}%` : '0%',
                 }}
               />
             </div>
@@ -1518,7 +1450,7 @@ function ServerGroupRow({
       </div>
 
       {open && (
-        <div className="bg-[rgb(var(--background))] border-t border-[rgb(var(--border))]">
+        <div className="border-t border-[rgb(var(--border))] bg-[rgb(var(--background))]">
           <FeatureSubGroup label="tool" items={group.tools} />
           <FeatureSubGroup label="prompt" items={group.prompts} />
           <FeatureSubGroup label="resource" items={group.resources} />
@@ -1547,33 +1479,33 @@ function FeatureSubGroup({
         <div
           key={item.id}
           className={[
-            'flex items-start gap-3 px-4 py-2.5 pl-12 border-b border-[rgb(var(--border))] last:border-b-0',
+            'flex items-start gap-3 border-b border-[rgb(var(--border))] px-4 py-2.5 pl-12 last:border-b-0',
             !item.available ? 'opacity-50' : '',
           ].join(' ')}
           title={item.description ?? item.feature_name}
         >
           {getFeatureTypeIcon(label)}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-medium text-sm truncate font-mono">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="truncate font-mono text-sm font-medium">
                 {item.display_name || item.feature_name}
               </span>
               <span
                 className={[
-                  'text-[10px] px-1.5 py-0.5 rounded font-medium',
+                  'rounded px-1.5 py-0.5 text-[10px] font-medium',
                   getFeatureTypeColor(label),
                 ].join(' ')}
               >
                 {label}
               </span>
               {!item.available && (
-                <span className="text-[9px] uppercase tracking-wider font-bold text-[rgb(var(--muted))]">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-[rgb(var(--muted))]">
                   unavailable
                 </span>
               )}
             </div>
             {item.description && (
-              <p className="text-xs text-[rgb(var(--muted))] mt-0.5 line-clamp-1">
+              <p className="mt-0.5 line-clamp-1 text-xs text-[rgb(var(--muted))]">
                 {item.description}
               </p>
             )}
@@ -1587,11 +1519,11 @@ function FeatureSubGroup({
 function getFeatureTypeIcon(type: 'tool' | 'prompt' | 'resource') {
   switch (type) {
     case 'tool':
-      return <Wrench className="h-4 w-4 text-purple-500 flex-shrink-0 mt-0.5" />;
+      return <Wrench className="mt-0.5 h-4 w-4 flex-shrink-0 text-purple-500" />;
     case 'prompt':
-      return <MessageSquare className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />;
+      return <MessageSquare className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-500" />;
     case 'resource':
-      return <FileText className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />;
+      return <FileText className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-500" />;
   }
 }
 
@@ -1676,6 +1608,13 @@ function BindingForm({
   // their members into one allow set). Order is preserved so the operator
   // can rank a "primary" FS first; the resolver itself doesn't care.
   const [fsIds, setFsIds] = useState<string[]>(initial?.feature_set_ids ?? []);
+  // A mapping is keyed by a folder path OR an arbitrary id/label. The type is
+  // chosen at create time and fixed thereafter (an id never becomes a folder).
+  // Mapping type is chosen in the create wizard and fixed thereafter; here
+  // (edit / create-from-live) we only read it so an id mapping isn't
+  // re-validated as a filesystem path.
+  const bindingType = initial?.binding_type ?? 'path';
+  const isId = bindingType === 'id';
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isEdit = mode === 'edit';
@@ -1708,6 +1647,11 @@ function BindingForm({
       setRootValidation({ state: 'ok', normalized: root });
       return;
     }
+    if (isId) {
+      // Id keys are matched verbatim — skip filesystem-path validation.
+      setRootValidation(root.trim() ? { state: 'ok', normalized: root.trim() } : { state: 'idle' });
+      return;
+    }
     if (!root.trim()) {
       setRootValidation({ state: 'idle' });
       return;
@@ -1724,15 +1668,11 @@ function BindingForm({
         .catch((e: unknown) => {
           if (validationSeq.current !== seq) return;
           const reason = typeof e === 'string' ? e : String(e);
-          setRootValidation(
-            reason === ''
-              ? { state: 'idle' }
-              : { state: 'error', reason }
-          );
+          setRootValidation(reason === '' ? { state: 'idle' } : { state: 'error', reason });
         });
     }, 180);
     return () => clearTimeout(handle);
-  }, [root, rootEditable]);
+  }, [root, rootEditable, isId]);
 
   useEffect(() => {
     if (mode === 'create') rootRef.current?.focus();
@@ -1779,17 +1719,14 @@ function BindingForm({
   }, [availableFs]);
 
   const toggleFs = (id: string) => {
-    setFsIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setFsIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   const trimmedRoot = root.trim();
   // The canonical form the server will store. We prefer the validator's
   // normalized output (drive-letter case, slash direction, trailing slash
   // all settled) so the duplicate check matches exactly what a save writes.
-  const effectiveRoot =
-    rootValidation.state === 'ok' ? rootValidation.normalized : trimmedRoot;
+  const effectiveRoot = rootValidation.state === 'ok' ? rootValidation.normalized : trimmedRoot;
 
   // Has this folder already been mapped? Compare against every saved mapping
   // (case-insensitively, the app's notion of "same folder"), excluding the
@@ -1830,15 +1767,19 @@ function BindingForm({
 
   const handleSubmit = async () => {
     if (!root.trim()) {
-      onError('Pick a folder first.');
+      onError(isId ? 'Enter an id or label.' : 'Pick a folder first.');
       return;
     }
-    if (rootValidation.state === 'error') {
+    if (!isId && rootValidation.state === 'error') {
       onError(rootValidation.reason);
       return;
     }
     if (duplicate) {
-      onError(`That folder is already mapped. Open the existing mapping to change it.`);
+      onError(
+        isId
+          ? 'That id is already mapped. Open its existing mapping to change it.'
+          : `That folder is already mapped. Open the existing mapping to change it.`
+      );
       return;
     }
     if (!spaceId) {
@@ -1856,6 +1797,7 @@ function BindingForm({
         workspace_root: root.trim(),
         space_id: spaceId,
         feature_set_ids: fsIds,
+        binding_type: bindingType,
       });
       onSaveStatusChange?.({ kind: 'saved' });
       savedTimerRef.current = setTimeout(() => {
@@ -1887,15 +1829,13 @@ function BindingForm({
       {/* Plain-language primer for anyone who's never seen McpMux. Explains
           the whole flow in two sentences before the fields. */}
       <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-3.5 py-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
-        <span className="font-semibold text-[rgb(var(--foreground))]">
-          What is a mapping?
-        </span>{' '}
-        Pick a folder, then choose the tools it should get. Whenever you open
-        that folder in a connected app — Cursor, VS Code, Claude — McpMux hands
-        it exactly the tools you choose here, and nothing else.
+        <span className="font-semibold text-[rgb(var(--foreground))]">What is a mapping?</span>{' '}
+        {isId
+          ? 'Enter an id or label (a client id, machine name, or any string), then choose the tools it gets. A headless or remote client that sends this exact value in the X-Mcpmux-Workspace header receives exactly those tools.'
+          : 'Pick a folder, then choose the tools it should get. Whenever you open that folder in a connected app — Cursor, VS Code, Claude — McpMux hands it exactly the tools you choose here, and nothing else.'}
       </div>
 
-      <FormField label="Workspace folder">
+      <FormField label={isId ? 'Mapping ID / label' : 'Workspace folder'}>
         <div className="flex gap-2">
           <input
             ref={rootRef}
@@ -1903,18 +1843,22 @@ function BindingForm({
             value={root}
             onChange={(e) => setRoot(e.target.value)}
             readOnly={!rootEditable}
-            placeholder="Browse for a folder, or paste an absolute path"
+            placeholder={
+              isId
+                ? 'Any exact-match label — a client id, machine name, etc.'
+                : 'Browse for a folder, or paste an absolute path'
+            }
             className={[
-              'flex-1 min-w-0 px-3 py-2 rounded-lg text-sm font-mono focus:outline-none focus:ring-2',
+              'min-w-0 flex-1 rounded-lg px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2',
               !rootEditable
-                ? 'bg-[rgb(var(--background))] border border-[rgb(var(--border-subtle))] text-[rgb(var(--muted))] cursor-not-allowed focus:ring-primary-500'
+                ? 'focus:ring-primary-500 cursor-not-allowed border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] text-[rgb(var(--muted))]'
                 : rootValidation.state === 'error'
-                  ? 'bg-[rgb(var(--background))] border border-red-500/60 focus:ring-red-500 focus:border-red-500'
-                  : 'bg-[rgb(var(--background))] border border-[rgb(var(--border))] focus:ring-primary-500 focus:border-primary-500',
+                  ? 'border border-red-500/60 bg-[rgb(var(--background))] focus:border-red-500 focus:ring-red-500'
+                  : 'focus:ring-primary-500 focus:border-primary-500 border border-[rgb(var(--border))] bg-[rgb(var(--background))]',
             ].join(' ')}
             data-testid="workspace-binding-root-input"
           />
-          {rootEditable && (
+          {rootEditable && !isId && (
             <button
               type="button"
               onClick={async () => {
@@ -1935,7 +1879,7 @@ function BindingForm({
                   onError(e instanceof Error ? e.message : String(e));
                 }
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] hover:bg-[rgb(var(--surface-hover))] text-sm font-medium text-[rgb(var(--foreground))] transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 flex-shrink-0"
+              className="focus:ring-primary-500 inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface-hover))] focus:outline-none focus:ring-2"
               title="Pick a folder"
               data-testid="workspace-binding-browse"
             >
@@ -1946,21 +1890,22 @@ function BindingForm({
         </div>
         {duplicate ? (
           <p
-            className="mt-1.5 text-[11px] text-red-600 dark:text-red-400 flex items-start gap-1.5"
+            className="mt-1.5 flex items-start gap-1.5 text-[11px] text-red-600 dark:text-red-400"
             data-testid="workspace-binding-duplicate-error"
           >
-            <AlertCircle className="h-3 w-3 flex-shrink-0 mt-px" />
+            <AlertCircle className="mt-px h-3 w-3 flex-shrink-0" />
             <span>
-              This folder is already mapped. Open its existing mapping to change
-              what it sees instead of adding a second one.
+              This folder is already mapped. Open its existing mapping to change what it sees
+              instead of adding a second one.
             </span>
           </p>
+        ) : isId ? (
+          <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
+            Matched exactly (case-sensitive). A client sends this value in the{' '}
+            <code className="font-mono">X-Mcpmux-Workspace</code> header.
+          </p>
         ) : (
-          <RootValidationHint
-            state={rootValidation}
-            editable={rootEditable}
-            originalValue={root}
-          />
+          <RootValidationHint state={rootValidation} editable={rootEditable} originalValue={root} />
         )}
       </FormField>
 
@@ -1982,19 +1927,13 @@ function BindingForm({
       </FormField>
 
       <FormField
-        label={
-          fsIds.length > 1
-            ? `Feature set (${fsIds.length} selected)`
-            : 'Feature set'
-        }
+        label={fsIds.length > 1 ? `Feature set (${fsIds.length} selected)` : 'Feature set'}
         hint="A feature set is a curated list of tools, prompts, and resources from that Space — exactly what this folder is allowed to use. Pick one, or combine several into a single set."
       >
         {!spaceId ? (
-          <p className="text-xs text-[rgb(var(--muted))] italic px-3 py-2">
-            Pick a Space first.
-          </p>
+          <p className="px-3 py-2 text-xs italic text-[rgb(var(--muted))]">Pick a Space first.</p>
         ) : availableFs.length === 0 ? (
-          <p className="text-xs text-[rgb(var(--muted))] italic px-3 py-2">
+          <p className="px-3 py-2 text-xs italic text-[rgb(var(--muted))]">
             No feature sets in that Space yet.
           </p>
         ) : (
@@ -2002,19 +1941,19 @@ function BindingForm({
             className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))]"
             data-testid="workspace-binding-fs"
           >
-            <div className="p-2 border-b border-[rgb(var(--border-subtle))]">
+            <div className="border-b border-[rgb(var(--border-subtle))] p-2">
               <input
                 type="text"
                 value={fsSearch}
                 onChange={(e) => setFsSearch(e.target.value)}
                 placeholder={`Search ${availableFs.length} feature set${availableFs.length === 1 ? '' : 's'}…`}
-                className="w-full px-2.5 py-1.5 text-xs bg-[rgb(var(--surface))] border border-[rgb(var(--border-subtle))] rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="focus:ring-primary-500 w-full rounded border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2"
                 data-testid="workspace-binding-fs-search"
               />
             </div>
-            <div className="max-h-56 overflow-y-auto p-1.5 space-y-1">
+            <div className="max-h-56 space-y-1 overflow-y-auto p-1.5">
               {filteredFs.length === 0 ? (
-                <p className="text-xs text-[rgb(var(--muted))] italic px-2 py-3 text-center">
+                <p className="px-2 py-3 text-center text-xs italic text-[rgb(var(--muted))]">
                   No feature sets match &ldquo;{fsSearch}&rdquo;.
                 </p>
               ) : (
@@ -2027,7 +1966,7 @@ function BindingForm({
                       type="button"
                       onClick={() => toggleFs(f.id)}
                       className={[
-                        'w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded text-left text-sm transition-colors',
+                        'flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-sm transition-colors',
                         isSelected
                           ? 'bg-primary-500/10 hover:bg-primary-500/15'
                           : 'hover:bg-[rgb(var(--surface-hover))]',
@@ -2036,30 +1975,25 @@ function BindingForm({
                     >
                       <div
                         className={[
-                          'h-4 w-4 rounded border flex items-center justify-center flex-shrink-0',
+                          'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border',
                           isSelected
                             ? 'bg-primary-500 border-primary-500'
                             : 'border-[rgb(var(--border-strong))] bg-[rgb(var(--surface))]',
                         ].join(' ')}
                       >
                         {isSelected ? (
-                          <Check
-                            className="h-3 w-3 text-white"
-                            strokeWidth={3}
-                          />
+                          <Check className="h-3 w-3 text-white" strokeWidth={3} />
                         ) : null}
                       </div>
                       {f.icon && (
-                        <span className="text-base leading-none flex-shrink-0">
-                          {f.icon}
-                        </span>
+                        <span className="flex-shrink-0 text-base leading-none">{f.icon}</span>
                       )}
-                      <div className="flex-1 min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
-                          <p className="font-medium truncate">{f.name}</p>
+                          <p className="truncate font-medium">{f.name}</p>
                           {isStarterFeatureSet(f) && (
                             <span
-                              className="text-[9px] uppercase tracking-wide text-[rgb(var(--muted))] bg-[rgb(var(--surface))] px-1 py-0.5 rounded flex-shrink-0"
+                              className="flex-shrink-0 rounded bg-[rgb(var(--surface))] px-1 py-0.5 text-[9px] uppercase tracking-wide text-[rgb(var(--muted))]"
                               title="Auto-seeded with this Space."
                             >
                               starter
@@ -2067,14 +2001,14 @@ function BindingForm({
                           )}
                         </div>
                         {f.description && (
-                          <p className="text-[11px] text-[rgb(var(--muted))] truncate">
+                          <p className="truncate text-[11px] text-[rgb(var(--muted))]">
                             {f.description}
                           </p>
                         )}
                       </div>
                       {order !== null && fsIds.length > 1 && (
                         <span
-                          className="text-[10px] font-bold text-primary-600 dark:text-primary-300 bg-primary-500/15 rounded-full h-5 w-5 flex items-center justify-center flex-shrink-0"
+                          className="text-primary-600 dark:text-primary-300 bg-primary-500/15 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
                           title="Render order — first FS rendered first; resolver merges all into one set."
                         >
                           {order}
@@ -2086,7 +2020,7 @@ function BindingForm({
               )}
             </div>
             {fsSearch && filteredFs.length > 0 && filteredFs.length < availableFs.length && (
-              <div className="px-3 py-1.5 text-[11px] text-[rgb(var(--muted))] border-t border-[rgb(var(--border-subtle))]">
+              <div className="border-t border-[rgb(var(--border-subtle))] px-3 py-1.5 text-[11px] text-[rgb(var(--muted))]">
                 {filteredFs.length} of {availableFs.length} shown
               </div>
             )}
@@ -2099,13 +2033,12 @@ function BindingForm({
           state. In edit mode the button stays disabled until something
           actually changes. An empty feature-set selection is valid and
           savable. */}
-      <div className="pt-1 space-y-2">
+      <div className="space-y-2 pt-1">
         {spaceId && fsIds.length === 0 && (
           // Empty is allowed — explain what it means rather than blocking.
           <p className="text-[11px] text-[rgb(var(--muted))]">
-            No feature sets selected — this folder gets <strong>no tools</strong>{' '}
-            from this Space. Built-in servers still apply per Space (see Built-in
-            Servers).
+            No feature sets selected — this folder gets <strong>no tools</strong> from this Space.
+            Built-in servers still apply per Space (see Built-in Servers).
           </p>
         )}
         {isEdit && dirty && !duplicate && (
@@ -2123,9 +2056,9 @@ function BindingForm({
             data-testid="workspace-binding-submit"
           >
             {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
-              <Check className="h-4 w-4 mr-1.5" />
+              <Check className="mr-1.5 h-4 w-4" />
             )}
             {submitLabel}
           </Button>
@@ -2164,8 +2097,8 @@ function RootValidationHint({
   if (!editable) {
     return (
       <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        This folder was reported by the app that&apos;s open in it, so the path
-        is fixed — just choose its tools below.
+        This folder was reported by the app that&apos;s open in it, so the path is fixed — just
+        choose its tools below.
       </p>
     );
   }
@@ -2179,35 +2112,24 @@ function RootValidationHint({
   }
   if (state.state === 'checking') {
     return (
-      <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))] inline-flex items-center gap-1.5">
+      <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-[rgb(var(--muted))]">
         <Loader2 className="h-3 w-3 animate-spin" />
         Checking…
       </p>
     );
   }
   if (state.state === 'error') {
-    return (
-      <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">
-        {state.reason}
-      </p>
-    );
+    return <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">{state.reason}</p>;
   }
   // ok
   const changed = state.normalized !== originalValue.trim();
   if (!changed) {
-    return (
-      <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
-        Ready to save.
-      </p>
-    );
+    return <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">Ready to save.</p>;
   }
   return (
     <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">
       Will be saved as{' '}
-      <code className="font-mono text-[rgb(var(--foreground))]">
-        {state.normalized}
-      </code>
-      .
+      <code className="font-mono text-[rgb(var(--foreground))]">{state.normalized}</code>.
     </p>
   );
 }
@@ -2223,7 +2145,7 @@ function FormField({
 }) {
   return (
     <div>
-      <label className="block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))] mb-2">
+      <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
         {label}
       </label>
       {children}
@@ -2253,7 +2175,7 @@ function Picker({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="w-full appearance-none px-3 py-2 pr-9 bg-[rgb(var(--background))] border border-[rgb(var(--border))] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="focus:ring-primary-500 focus:border-primary-500 w-full appearance-none rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 pr-9 text-sm focus:outline-none focus:ring-2 disabled:cursor-not-allowed disabled:opacity-50"
         data-testid={testId}
       >
         <option value="">{placeholder}</option>
@@ -2264,7 +2186,7 @@ function Picker({
           </option>
         ))}
       </select>
-      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))] pointer-events-none" />
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
     </div>
   );
 }
@@ -2284,11 +2206,11 @@ function EmptyState({
 }) {
   if (hasFilter && hasAny) {
     return (
-      <Card className="max-w-2xl mx-auto">
+      <Card className="mx-auto max-w-2xl">
         <CardContent className="flex flex-col items-center justify-center py-16">
-          <Search className="h-16 w-16 text-[rgb(var(--muted))] mb-4" />
-          <h3 className="text-lg font-medium mb-2">No workspaces match</h3>
-          <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md">
+          <Search className="mb-4 h-16 w-16 text-[rgb(var(--muted))]" />
+          <h3 className="mb-2 text-lg font-medium">No workspaces match</h3>
+          <p className="max-w-md text-center text-sm text-[rgb(var(--muted))]">
             Try adjusting the search or filter.
           </p>
         </CardContent>
@@ -2296,19 +2218,18 @@ function EmptyState({
     );
   }
   return (
-    <Card className="max-w-2xl mx-auto">
+    <Card className="mx-auto max-w-2xl">
       <CardContent className="flex flex-col items-center justify-center py-16">
-        <div className="h-16 w-16 rounded-full bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center mb-4">
-          <Radio className="h-8 w-8 text-primary-500" />
+        <div className="bg-primary-50 dark:bg-primary-900/20 mb-4 flex h-16 w-16 items-center justify-center rounded-full">
+          <Radio className="text-primary-500 h-8 w-8" />
         </div>
-        <h3 className="text-lg font-medium mb-2">No folders mapped yet</h3>
-        <p className="text-sm text-[rgb(var(--muted))] text-center max-w-md mb-6">
-          When you open a folder in a connected app, it shows up here so you can
-          choose its tools. You can also map a folder ahead of time — add one
-          now to get started.
+        <h3 className="mb-2 text-lg font-medium">No folders mapped yet</h3>
+        <p className="mb-6 max-w-md text-center text-sm text-[rgb(var(--muted))]">
+          When you open a folder in a connected app, it shows up here so you can choose its tools.
+          You can also map a folder ahead of time — add one now to get started.
         </p>
         <Button variant="primary" onClick={onCreate}>
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className="mr-2 h-4 w-4" />
           Add a mapping
         </Button>
       </CardContent>

@@ -133,6 +133,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "inbound_client_api_keys",
         sql: include_str!("migrations/020_inbound_client_api_keys.sql"),
     },
+    Migration {
+        version: 21,
+        name: "binding_type",
+        sql: include_str!("migrations/021_binding_type.sql"),
+    },
+    Migration {
+        version: 22,
+        name: "inbound_client_locked_space",
+        sql: include_str!("migrations/022_inbound_client_locked_space.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

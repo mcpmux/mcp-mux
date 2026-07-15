@@ -163,8 +163,9 @@ function GetStartedStrip() {
 
 /**
  * Per-folder setup entry point. The ConnectionCard above connects an app to
- * the gateway globally; this routes into the Workspaces walkthrough to map a
- * specific project and write its per-folder config.
+ * the gateway globally; this routes into the Mapping walkthrough (the create
+ * wizard, in folder mode) to map a specific project and write its per-folder
+ * config.
  */
 function SetUpFolderCard() {
   const navigateTo = useNavigateTo();
@@ -179,7 +180,7 @@ function SetUpFolderCard() {
       data-testid="home-setup-folder"
       className="group flex w-full items-center gap-3 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--card))] p-4 text-left shadow transition-all duration-200 hover:-translate-y-0.5 hover:border-[rgb(var(--border))] hover:shadow-md"
     >
-      <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/12 text-[rgb(var(--primary))]">
+      <span className="bg-[rgb(var(--primary))]/12 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-[rgb(var(--primary))]">
         <FolderPlus className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
@@ -275,7 +276,7 @@ export function HomePage() {
           pending-approval nudge. */}
       <ConnectionCard />
 
-      {/* Per-folder setup — opens the Workspaces walkthrough. */}
+      {/* Per-folder setup — opens the Mapping walkthrough (folder mode). */}
       <SetUpFolderCard />
 
       {/* Stat tiles — each is a shortcut into the page that manages it. */}

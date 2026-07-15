@@ -37,6 +37,7 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use super::gateway::GatewayAppState;
+use crate::state::AppState;
 
 // ============================================================================
 // Deep Link Handling
@@ -900,6 +901,7 @@ pub async fn update_oauth_client(
 #[tauri::command]
 pub async fn delete_oauth_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    app: State<'_, AppState>,
     client_id: String,
 ) -> Result<(), String> {
     let app_state = gateway_state.read().await;
@@ -920,6 +922,23 @@ pub async fn delete_oauth_client(
         .map_err(|e| format!("Failed to delete client: {}", e))?;
 
     info!("[OAuth] Deleted client: {}", client_id);
+
+    // Best-effort: remove the auto-mapped clientId id-binding so a deleted
+    // client doesn't leave an orphan "<client_id> → Starter" mapping behind in
+    // the Mapping tab. Only API-key clients have such a binding; for DCR
+    // clients this is a no-op.
+    if let Ok(Some(b)) = app
+        .workspace_binding_repository
+        .find_by_id_key(&client_id)
+        .await
+    {
+        if let Err(e) = app.workspace_binding_repository.delete(&b.id).await {
+            warn!(
+                "[OAuth] failed to remove clientId mapping for {}: {}",
+                client_id, e
+            );
+        }
+    }
 
     // Emit domain event
     state.emit_domain_event(mcpmux_core::DomainEvent::ClientDeleted { client_id });
@@ -943,6 +962,7 @@ pub async fn delete_oauth_client(
 pub struct RegisteredApiKeyClient {
     pub client_id: String,
     pub client_name: String,
+    pub locked_space_id: Option<String>,
     pub api_key: String,
     pub key_prefix: String,
 }
@@ -973,12 +993,14 @@ fn generate_api_key() -> (String, String, String) {
     (key_id, plaintext, key_prefix)
 }
 
-/// Register a new pre-approved client authenticated by an API key. The returned
-/// `api_key` is shown once and never stored.
+/// Register a new pre-approved client authenticated by an API key, optionally
+/// locked to a Space. The returned `api_key` is shown once and never stored.
 #[tauri::command]
 pub async fn register_api_key_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    app: State<'_, AppState>,
     name: String,
+    locked_space_id: Option<String>,
 ) -> Result<RegisteredApiKeyClient, String> {
     let app_state = gateway_state.read().await;
     let Some(ref gw_state) = app_state.gateway_state else {
@@ -1024,6 +1046,12 @@ pub async fn register_api_key_client(
         .await
         .map_err(|e| format!("Failed to create client: {}", e))?;
 
+    if let Some(ref space) = locked_space_id {
+        repo.set_locked_space(&client_id, Some(space))
+            .await
+            .map_err(|e| format!("Failed to lock client to space: {}", e))?;
+    }
+
     let (key_id, plaintext, key_prefix) = generate_api_key();
     repo.create_api_key(&key_id, &client_id, &plaintext, &key_prefix, None, None)
         .await
@@ -1034,12 +1062,59 @@ pub async fn register_api_key_client(
         trimmed, client_id
     );
 
+    // Best-effort: auto-create a clientId-keyed mapping → the (locked or
+    // default) Space's Starter, so the client routes sensibly out of the box
+    // and the mapping is visible + editable in the Mapping tab. A failure here
+    // must not undo the registration — without an explicit mapping the resolver
+    // still falls back to the default Starter.
+    if let Err(e) = auto_map_api_key_client(&app, &client_id, locked_space_id.as_deref()).await {
+        warn!(
+            "[OAuth] auto-map for {} failed (non-fatal): {}",
+            client_id, e
+        );
+    }
+
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: trimmed.to_string(),
+        locked_space_id,
         api_key: plaintext,
         key_prefix,
     })
+}
+
+/// Auto-create a clientId-keyed `id` mapping pointing at the (locked or
+/// default) Space's Starter FeatureSet, so a freshly-registered API-key client
+/// routes somewhere sensible by default and the operator can retarget it from
+/// the Mapping tab.
+async fn auto_map_api_key_client(
+    app: &AppState,
+    client_id: &str,
+    locked_space_id: Option<&str>,
+) -> Result<(), String> {
+    let space_id = match locked_space_id {
+        Some(s) => uuid::Uuid::parse_str(s).map_err(|e| e.to_string())?,
+        None => {
+            app.space_service
+                .get_default()
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or("no default Space configured")?
+                .id
+        }
+    };
+    let starter = app
+        .feature_set_repository
+        .get_starter_for_space(&space_id.to_string())
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Space has no Starter FeatureSet")?;
+    let binding =
+        mcpmux_core::WorkspaceBinding::new_id(client_id.to_string(), space_id, vec![starter.id]);
+    app.workspace_binding_repository
+        .create(&binding)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Issue an additional API key for an existing client (rotation). Returns the
@@ -1079,9 +1154,15 @@ pub async fn create_client_api_key(
     .await
     .map_err(|e| format!("Failed to create API key: {}", e))?;
 
+    let locked_space_id = repo
+        .get_locked_space(&client_id)
+        .await
+        .map_err(|e| format!("Failed to read client: {}", e))?;
+
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: client.client_name,
+        locked_space_id,
         api_key: plaintext,
         key_prefix,
     })

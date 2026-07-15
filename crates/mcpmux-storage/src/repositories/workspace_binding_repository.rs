@@ -32,7 +32,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mcpmux_core::{WorkspaceBinding, WorkspaceBindingRepository};
+use mcpmux_core::{BindingType, WorkspaceBinding, WorkspaceBindingRepository};
 use rusqlite::params;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -67,10 +67,12 @@ impl SqliteWorkspaceBindingRepository {
         let space_id_str: String = row.get(2)?;
         let created_at: String = row.get(3)?;
         let updated_at: String = row.get(4)?;
+        let binding_type: String = row.get(5)?;
 
         Ok(WorkspaceBinding {
             id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
             workspace_root,
+            binding_type: BindingType::parse(&binding_type),
             space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::nil()),
             feature_set_ids: Vec::new(), // filled in by caller
             created_at: Self::parse_datetime(&created_at),
@@ -149,7 +151,8 @@ impl SqliteWorkspaceBindingRepository {
         Ok(())
     }
 
-    const SELECT_COLS: &'static str = "id, workspace_root, space_id, created_at, updated_at";
+    const SELECT_COLS: &'static str =
+        "id, workspace_root, space_id, created_at, updated_at, binding_type";
 
     /// Fetch bindings + their FeatureSet lists in two queries.
     /// `where_clause` is appended to the binding SELECT (use `""` for none);
@@ -221,14 +224,15 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO workspace_bindings
-                (id, workspace_root, space_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+                (id, workspace_root, space_id, created_at, updated_at, binding_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 binding.id.to_string(),
                 binding.workspace_root,
                 binding.space_id.to_string(),
                 binding.created_at.to_rfc3339(),
                 binding.updated_at.to_rfc3339(),
+                binding.binding_type.as_str(),
             ],
         )?;
         Self::rewrite_fs_for_binding(&tx, &binding.id.to_string(), &binding.feature_set_ids)?;
@@ -248,13 +252,14 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let tx = conn.unchecked_transaction()?;
         let rows_affected = tx.execute(
             "UPDATE workspace_bindings
-             SET workspace_root = ?2, space_id = ?3, updated_at = ?4
+             SET workspace_root = ?2, space_id = ?3, updated_at = ?4, binding_type = ?5
              WHERE id = ?1",
             params![
                 binding.id.to_string(),
                 binding.workspace_root,
                 binding.space_id.to_string(),
                 binding.updated_at.to_rfc3339(),
+                binding.binding_type.as_str(),
             ],
         )?;
 
@@ -292,13 +297,28 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
 
         let bindings = self.list().await?;
         // Exact match only — no ancestor/prefix inheritance. A folder resolves
-        // to a binding for THAT exact root, or to nothing.
+        // to a binding for THAT exact root, or to nothing. Only PATH bindings
+        // participate here; id-keyed bindings are matched via `find_by_id_key`
+        // so a folder root can never collide with an arbitrary id label.
         for root in candidate_roots {
-            if let Some(b) = bindings.iter().find(|b| &b.workspace_root == root) {
+            if let Some(b) = bindings
+                .iter()
+                .find(|b| b.binding_type == BindingType::Path && &b.workspace_root == root)
+            {
                 return Ok(Some(b.clone()));
             }
         }
         Ok(None)
+    }
+
+    async fn find_by_id_key(&self, key: &str) -> Result<Option<WorkspaceBinding>> {
+        if key.is_empty() {
+            return Ok(None);
+        }
+        let bindings = self.list().await?;
+        Ok(bindings
+            .into_iter()
+            .find(|b| b.binding_type == BindingType::Id && b.workspace_root == key))
     }
 }
 
@@ -505,5 +525,46 @@ mod tests {
             .unwrap()
             .expect("exact match");
         assert_eq!(hit.workspace_root, exact);
+    }
+
+    #[tokio::test]
+    async fn test_id_binding_matches_by_exact_key_not_as_path() {
+        // An id-keyed binding is matched verbatim via find_by_id_key and is
+        // invisible to the path-based find_exact_for_roots (and vice versa) so a
+        // folder root and an arbitrary id label can never collide.
+        let (repo, space_id, fs_id) = fixture().await;
+        let key = "mcp_abc12345"; // e.g. a client id
+        let binding = WorkspaceBinding::new_id(key, space_id, vec![fs_id.clone()]);
+        repo.create(&binding).await.unwrap();
+
+        // Exact id lookup hits and round-trips the type + key.
+        let got = repo.find_by_id_key(key).await.unwrap().expect("id match");
+        assert_eq!(got.binding_type, BindingType::Id);
+        assert_eq!(got.workspace_root, key);
+        assert_eq!(got.feature_set_ids, vec![fs_id.clone()]);
+
+        // The path resolver ignores id bindings.
+        assert!(repo
+            .find_exact_for_roots(&[key.to_string()])
+            .await
+            .unwrap()
+            .is_none());
+
+        // A path binding is invisible to the id lookup, but visible to the
+        // path resolver.
+        let path_root = if cfg!(windows) {
+            "d:\\idtest"
+        } else {
+            "/idtest"
+        };
+        repo.create(&WorkspaceBinding::new(path_root, space_id, fs_id))
+            .await
+            .unwrap();
+        assert!(repo.find_by_id_key(path_root).await.unwrap().is_none());
+        assert!(repo
+            .find_exact_for_roots(&[path_root.to_string()])
+            .await
+            .unwrap()
+            .is_some());
     }
 }

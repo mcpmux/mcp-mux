@@ -25,6 +25,38 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// How a binding's `workspace_root` key is matched against a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BindingType {
+    /// A normalized absolute folder path (the original behaviour). Matched
+    /// case-/separator-insensitively via [`normalize_workspace_root`].
+    #[default]
+    Path,
+    /// An arbitrary exact-match string — a client id, machine name, or any
+    /// label a headless/remote client sends in `X-Mcpmux-Workspace`. Matched
+    /// verbatim (no path normalization).
+    Id,
+}
+
+impl BindingType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BindingType::Path => "path",
+            BindingType::Id => "id",
+        }
+    }
+
+    /// Parse from storage; unknown values fall back to `Path` (the default for
+    /// pre-`binding_type` rows).
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "id" => BindingType::Id,
+            _ => BindingType::Path,
+        }
+    }
+}
+
 /// A binding between a normalized workspace root and the FeatureSet(s) it
 /// resolves to. `feature_set_ids` MAY be empty — an empty list is a valid
 /// "no Space tools" mapping (the folder still routes to this Space; built-in
@@ -33,6 +65,8 @@ use uuid::Uuid;
 pub struct WorkspaceBinding {
     pub id: Uuid,
     pub workspace_root: String,
+    /// Whether `workspace_root` is a filesystem path or an arbitrary id key.
+    pub binding_type: BindingType,
     pub space_id: Uuid,
     /// Order matters for UI rendering only — the resolver treats them as
     /// a set. Stored in the `workspace_binding_feature_sets` junction
@@ -63,10 +97,21 @@ impl WorkspaceBinding {
         Self {
             id: Uuid::new_v4(),
             workspace_root: workspace_root.into(),
+            binding_type: BindingType::Path,
             space_id,
             feature_set_ids,
             created_at: now,
             updated_at: now,
+        }
+    }
+
+    /// Construct an **id-keyed** binding: `key` is matched verbatim (exact
+    /// string, no path normalization) rather than as a folder. Used to route
+    /// headless/remote clients by a client id or an arbitrary label.
+    pub fn new_id(key: impl Into<String>, space_id: Uuid, feature_set_ids: Vec<String>) -> Self {
+        Self {
+            binding_type: BindingType::Id,
+            ..Self::new_multi(key, space_id, feature_set_ids)
         }
     }
 }

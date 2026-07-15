@@ -707,6 +707,36 @@ impl InboundClientRepository {
         Ok(())
     }
 
+    /// Set (or clear, with `None`) the Space a client is locked to. A locked
+    /// client is confined to that Space during resolution (see the gateway
+    /// FeatureSet resolver).
+    pub async fn set_locked_space(&self, client_id: &str, space_id: Option<&str>) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        conn.execute(
+            "UPDATE inbound_clients SET locked_space_id = ?1, updated_at = ?2 WHERE client_id = ?3",
+            params![space_id, now, client_id],
+        )?;
+        Ok(())
+    }
+
+    /// The Space a client is locked to, if any.
+    pub async fn get_locked_space(&self, client_id: &str) -> Result<Option<String>> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let result = conn.query_row(
+            "SELECT locked_space_id FROM inbound_clients WHERE client_id = ?1",
+            params![client_id],
+            |r| r.get::<_, Option<String>>(0),
+        );
+        match result {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Save a token record
     pub async fn save_token(&self, record: &TokenRecord) -> Result<()> {
         let db = self.db.lock().await;

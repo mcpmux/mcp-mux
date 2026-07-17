@@ -164,6 +164,27 @@ pub struct TokenRecord {
     pub parent_token_id: Option<String>,
 }
 
+/// A stored API-key record. Never exposes the secret — only its display prefix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboundApiKey {
+    pub key_id: String,
+    pub client_id: String,
+    pub key_prefix: String,
+    pub label: Option<String>,
+    pub revoked: bool,
+    pub last_used_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Identity resolved from a presented API key.
+#[derive(Debug, Clone)]
+pub struct ApiKeyAuth {
+    pub key_id: String,
+    pub client_id: String,
+}
+
 /// OAuth Repository with database persistence
 pub struct InboundClientRepository {
     db: Arc<Mutex<Database>>,
@@ -602,6 +623,126 @@ impl InboundClientRepository {
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         hex::encode(hasher.finalize())
+    }
+
+    // =========================================================================
+    // Inbound client API keys (long-lived, host-issued bearer credentials)
+    // =========================================================================
+
+    /// SHA-256 hex of an API key — the only form ever persisted. Same algorithm
+    /// as `hash_token`; named separately for intent.
+    pub fn hash_api_key(key: &str) -> String {
+        Self::hash_token(key)
+    }
+
+    /// Persist a freshly-generated API key for a client. The caller generates
+    /// the random `plaintext` (shown to the user once) and a unique `key_id`;
+    /// only the SHA-256 hash + a display prefix are stored.
+    pub async fn create_api_key(
+        &self,
+        key_id: &str,
+        client_id: &str,
+        plaintext: &str,
+        key_prefix: &str,
+        label: Option<&str>,
+        expires_at: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let hash = Self::hash_api_key(plaintext);
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        conn.execute(
+            "INSERT INTO inbound_client_api_keys
+                (key_id, client_id, key_hash, key_prefix, label, revoked, expires_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, ?7)",
+            params![key_id, client_id, hash, key_prefix, label, expires_at, now],
+        )?;
+        info!(
+            "[ApiKey] Created key {} for client {}",
+            key_prefix, client_id
+        );
+        Ok(())
+    }
+
+    /// Validate a presented API key: look up a live (non-revoked, unexpired) key
+    /// by hash, touch `last_used_at`, and return the owning client.
+    pub async fn validate_api_key(&self, presented: &str) -> Result<Option<ApiKeyAuth>> {
+        let hash = Self::hash_api_key(presented);
+        let now = chrono::Utc::now().to_rfc3339();
+        let db = self.db.lock().await;
+        let conn = db.connection();
+
+        let result = conn.query_row(
+            "SELECT key_id, client_id, expires_at
+             FROM inbound_client_api_keys
+             WHERE key_hash = ?1 AND revoked = 0",
+            params![hash],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                ))
+            },
+        );
+        let (key_id, client_id, expires_at) = match result {
+            Ok(t) => t,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        // ISO-8601 strings compare lexicographically; reject expired keys.
+        if let Some(exp) = expires_at.as_deref() {
+            if exp <= now.as_str() {
+                return Ok(None);
+            }
+        }
+
+        conn.execute(
+            "UPDATE inbound_client_api_keys SET last_used_at = ?1 WHERE key_id = ?2",
+            params![now, key_id],
+        )?;
+        Ok(Some(ApiKeyAuth { key_id, client_id }))
+    }
+
+    /// List a client's API keys (no secrets — prefix + metadata only).
+    pub async fn list_api_keys(&self, client_id: &str) -> Result<Vec<InboundApiKey>> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let mut stmt = conn.prepare(
+            "SELECT key_id, client_id, key_prefix, label, revoked, last_used_at, expires_at, created_at, updated_at
+             FROM inbound_client_api_keys WHERE client_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![client_id], |r| {
+            Ok(InboundApiKey {
+                key_id: r.get(0)?,
+                client_id: r.get(1)?,
+                key_prefix: r.get(2)?,
+                label: r.get(3)?,
+                revoked: r.get::<_, i32>(4)? != 0,
+                last_used_at: r.get(5)?,
+                expires_at: r.get(6)?,
+                created_at: r.get(7)?,
+                updated_at: r.get(8)?,
+            })
+        })?;
+        let mut keys = Vec::new();
+        for k in rows {
+            keys.push(k?);
+        }
+        Ok(keys)
+    }
+
+    /// Revoke a single API key (irreversible — it can never authenticate again).
+    pub async fn revoke_api_key(&self, key_id: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        conn.execute(
+            "UPDATE inbound_client_api_keys SET revoked = 1, updated_at = ?1 WHERE key_id = ?2",
+            params![now, key_id],
+        )?;
+        Ok(())
     }
 
     /// Save a token record

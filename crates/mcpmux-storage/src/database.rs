@@ -208,6 +208,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "inbound_client_machine",
         sql: include_str!("migrations/035_inbound_client_machine.sql"),
     },
+    Migration {
+        version: 36,
+        name: "inbound_client_api_keys",
+        sql: include_str!("migrations/036_inbound_client_api_keys.sql"),
+    },
 ];
 
 /// SQLite database wrapper.
@@ -748,7 +753,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
 
         let v16_name: String = db
             .conn
@@ -801,7 +806,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
 
         let v16_name: String = db
             .conn

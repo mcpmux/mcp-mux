@@ -26,6 +26,7 @@ import {
   Check,
   Globe,
   ShieldOff,
+  KeyRound,
 } from 'lucide-react';
 import { ConnectIDEs } from '@/components/ConnectIDEs';
 import type { GatewayStatus, OAuthClient } from '@/lib/api/gateway';
@@ -38,6 +39,8 @@ import {
   grantOAuthClientFeatureSet,
   revokeOAuthClientFeatureSet,
 } from '@/lib/api/gateway';
+import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
+import { ClientApiKeysSection } from './ClientApiKeysSection';
 import {
   isStarterFeatureSet,
   listFeatureSetsBySpace,
@@ -117,6 +120,7 @@ export default function ClientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selected, setSelected] = useState<OAuthClient | null>(null);
+  const [showRegister, setShowRegister] = useState(false);
   const [editAlias, setEditAlias] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>({
@@ -291,6 +295,15 @@ export default function ClientsPage() {
               <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
               {t('common:actions.refresh')}
             </Button>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => setShowRegister(true)}
+              data-testid="register-api-key-client-btn"
+            >
+              <KeyRound className="mr-2 h-4 w-4" />
+              Register client
+            </Button>
           </div>
 
           {clients.length > 0 && (
@@ -410,6 +423,16 @@ export default function ClientsPage() {
             onToastSuccess={success}
           />
         </>
+      )}
+
+      {showRegister && (
+        <RegisterApiKeyClientModal
+          onClose={() => setShowRegister(false)}
+          onRegistered={(client) => {
+            success('Client registered', `"${client.clientName}" can authenticate with its API key.`);
+            void refreshClients();
+          }}
+        />
       )}
 
       <ToastContainer toasts={toasts} onClose={dismiss} />
@@ -577,6 +600,14 @@ function SidePanel({
             {t('panel.displayNameHint')}
           </p>
         </section>
+
+        {client.registration_type === 'preregistered' && (
+          <ClientApiKeysSection
+            clientId={client.client_id}
+            onError={onToastError}
+            onSuccess={onToastSuccess}
+          />
+        )}
 
         <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
           <div className="flex items-start gap-3">

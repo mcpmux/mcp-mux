@@ -7,6 +7,7 @@
 
 mod auth_disable;
 mod auth_oauth_e2e;
+mod api_key_auth;
 mod gateway_notifications;
 mod network_advertising;
 mod notifications;

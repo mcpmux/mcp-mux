@@ -291,6 +291,52 @@ export async function revokeOAuthClientFeatureSet(
   });
 }
 
+/** A newly-registered API-key client. `apiKey` is shown ONCE — store it now. */
+export interface RegisteredApiKeyClient {
+  clientId: string;
+  clientName: string;
+  lockedSpaceId: string | null;
+  /** The full key — shown once; afterwards only its hash is kept. */
+  apiKey: string;
+  keyPrefix: string;
+}
+
+/** API-key metadata for display (never the secret). */
+export interface ApiKeyInfo {
+  keyId: string;
+  keyPrefix: string;
+  label: string | null;
+  revoked: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Register a pre-approved client authenticated by an API key.
+ * The returned key is shown once and never retrievable again.
+ */
+export async function registerApiKeyClient(name: string): Promise<RegisteredApiKeyClient> {
+  return apiCall('register_api_key_client', { name });
+}
+
+/** Issue an additional API key for an existing client (rotation). Shown once. */
+export async function createClientApiKey(
+  clientId: string,
+  label?: string | null
+): Promise<RegisteredApiKeyClient> {
+  return apiCall('create_client_api_key', { clientId, label: label ?? null });
+}
+
+/** List a client's API keys (metadata only — never the secret). */
+export async function listClientApiKeys(clientId: string): Promise<ApiKeyInfo[]> {
+  return apiCall('list_client_api_keys', { clientId });
+}
+
+/** Revoke an API key (it can never authenticate again). */
+export async function revokeClientApiKey(keyId: string): Promise<void> {
+  return apiCall('revoke_client_api_key', { keyId });
+}
+
 /**
  * Result of bulk server connection.
  */

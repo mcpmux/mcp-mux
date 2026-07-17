@@ -1101,6 +1101,10 @@ pub fn run() {
             commands::approve_oauth_client,
             commands::update_oauth_client,
             commands::delete_oauth_client,
+            commands::register_api_key_client,
+            commands::create_client_api_key,
+            commands::list_client_api_keys,
+            commands::revoke_client_api_key,
             commands::open_url,
             // Per-client grants for the rootless fallback path
             commands::get_oauth_client_grants,

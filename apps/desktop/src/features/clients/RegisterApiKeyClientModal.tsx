@@ -14,6 +14,7 @@ import { useState } from 'react';
 import { AlertTriangle, Check, Copy, KeyRound, Loader2, ShieldCheck, X } from 'lucide-react';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
 import { registerApiKeyClient, type RegisteredApiKeyClient } from '@/lib/api/gateway';
+import { useSpaces } from '@/stores';
 
 interface RegisterApiKeyClientModalProps {
   onClose: () => void;
@@ -28,7 +29,9 @@ export function RegisterApiKeyClientModal({
   onClose,
   onRegistered,
 }: RegisterApiKeyClientModalProps) {
+  const spaces = useSpaces();
   const [name, setName] = useState('');
+  const [lockedSpaceId, setLockedSpaceId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RegisteredApiKeyClient | null>(null);
@@ -43,7 +46,10 @@ export function RegisterApiKeyClientModal({
     setIsSubmitting(true);
     setError(null);
     try {
-      const client = await registerApiKeyClient(trimmed);
+      const client = await registerApiKeyClient(
+        trimmed,
+        lockedSpaceId.trim() ? lockedSpaceId.trim() : null
+      );
       setResult(client);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -160,6 +166,34 @@ export function RegisterApiKeyClientModal({
                   placeholder="e.g. CI runner, my-laptop, prod-bot"
                   className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm transition-all focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]/40"
                 />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="api-key-locked-space"
+                  className="mb-1.5 block text-sm font-medium"
+                >
+                  Lock to a Space
+                </label>
+                <select
+                  id="api-key-locked-space"
+                  data-testid="register-api-key-locked-space"
+                  value={lockedSpaceId}
+                  onChange={(e) => setLockedSpaceId(e.target.value)}
+                  className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm transition-all focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]/40"
+                >
+                  <option value="">No lock — resolve across all Spaces</option>
+                  {spaces.map((space) => (
+                    <option key={space.id} value={space.id}>
+                      {space.icon ? `${space.icon} ` : ''}
+                      {space.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
+                  Optional. When set, the client can only use bindings or grants inside this Space.
+                  It still needs an explicit mapping — lock alone grants no tools.
+                </p>
               </div>
 
               <div className="flex items-start gap-3 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-3.5">

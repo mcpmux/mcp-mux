@@ -218,6 +218,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "workspace_binding_type",
         sql: include_str!("migrations/037_workspace_binding_type.sql"),
     },
+    Migration {
+        version: 38,
+        name: "inbound_client_locked_space",
+        sql: include_str!("migrations/038_inbound_client_locked_space.sql"),
+    },
 ];
 
 /// SQLite database wrapper.
@@ -758,7 +763,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 37);
+        assert_eq!(version, 38);
 
         let v16_name: String = db
             .conn

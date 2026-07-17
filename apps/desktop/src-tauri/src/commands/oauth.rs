@@ -717,6 +717,7 @@ fn generate_api_key() -> (String, String, String) {
 pub async fn register_api_key_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
     name: String,
+    locked_space_id: Option<String>,
 ) -> Result<RegisteredApiKeyClient, String> {
     let app_state = gateway_state.read().await;
     let Some(ref gw_state) = app_state.gateway_state else {
@@ -763,6 +764,20 @@ pub async fn register_api_key_client(
         .await
         .map_err(|e| format!("Failed to create client: {}", e))?;
 
+    let locked_space = locked_space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            uuid::Uuid::parse_str(s).map_err(|_| format!("Invalid locked_space_id: {s}"))
+        })
+        .transpose()?;
+    if let Some(space_id) = locked_space {
+        repo.set_locked_space(&client_id, Some(space_id))
+            .await
+            .map_err(|e| format!("Failed to set Space lock: {}", e))?;
+    }
+
     let (key_id, plaintext, key_prefix) = generate_api_key();
     repo.create_api_key(&key_id, &client_id, &plaintext, &key_prefix, None, None)
         .await
@@ -782,7 +797,7 @@ pub async fn register_api_key_client(
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: trimmed.to_string(),
-        locked_space_id: None,
+        locked_space_id: locked_space.map(|id| id.to_string()),
         api_key: plaintext,
         key_prefix,
     })
@@ -825,10 +840,16 @@ pub async fn create_client_api_key(
     .await
     .map_err(|e| format!("Failed to create API key: {}", e))?;
 
+    let locked_space_id = repo
+        .get_locked_space(&client_id)
+        .await
+        .map_err(|e| format!("Failed to read Space lock: {}", e))?
+        .map(|id| id.to_string());
+
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: client.client_name,
-        locked_space_id: None,
+        locked_space_id,
         api_key: plaintext,
         key_prefix,
     })

@@ -199,6 +199,24 @@ impl Fixture {
         };
         self.client_repo.save_client(&c).await.unwrap();
     }
+
+    /// Create a non-default Space with a custom FeatureSet for lock tests.
+    async fn make_alt_space_with_fs(&self, name: &str) -> (Uuid, String) {
+        let space = Space::new(name);
+        let space_id = space.id;
+        self.space_repo.create(&space).await.unwrap();
+        let fs = FeatureSet::new_custom("Alt", space_id.to_string());
+        self.fs_repo.create(&fs).await.unwrap();
+        (space_id, fs.id)
+    }
+
+    /// Pin a client to one Space (Tier 0 narrowing filter).
+    async fn lock_client_to_space(&self, client_id: &str, space_id: Uuid) {
+        self.client_repo
+            .set_locked_space(client_id, Some(space_id))
+            .await
+            .unwrap();
+    }
 }
 
 fn test_root() -> &'static str {
@@ -968,6 +986,87 @@ async fn request_machine_header_selects_machine_scoped_id_binding() {
         .unwrap();
     assert_eq!(with_rohan_header.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(with_rohan_header.feature_set_ids, vec![f.fs_b_id]);
+}
+
+// ---------------------------------------------------------------------------
+// Space lock narrowing filter (Tier 0)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn locked_client_in_space_id_binding_resolves() {
+    let f = Fixture::new().await;
+    let (locked_space, locked_fs) = f.make_alt_space_with_fs("Locked").await;
+    let client_id = "api-key.example/locked-in-space";
+    f.make_client(client_id).await;
+    f.lock_client_to_space(client_id, locked_space).await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            client_id,
+            locked_space,
+            locked_fs.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.space_id, Some(locked_space));
+    assert_eq!(r.feature_set_ids, vec![locked_fs]);
+}
+
+#[tokio::test]
+async fn locked_client_id_binding_in_other_space_is_unbound() {
+    let f = Fixture::new().await;
+    let (locked_space, _locked_fs) = f.make_alt_space_with_fs("Locked").await;
+    let client_id = "api-key.example/wrong-space-binding";
+    f.make_client(client_id).await;
+    f.lock_client_to_space(client_id, locked_space).await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            client_id,
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
+    assert_eq!(r.space_id, Some(locked_space));
+    assert_ne!(r.space_id, Some(f.space_id));
+    assert_ne!(r.feature_set_ids, vec![f.fs_a_id]);
+    assert_ne!(r.source, ResolutionSource::SpaceDefault);
+}
+
+#[tokio::test]
+async fn locked_client_without_any_binding_is_unbound() {
+    let f = Fixture::new().await;
+    let (locked_space, _locked_fs) = f.make_alt_space_with_fs("Locked").await;
+    let client_id = "api-key.example/locked-unmapped";
+    f.make_client(client_id).await;
+    f.lock_client_to_space(client_id, locked_space).await;
+
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
+    assert_eq!(r.space_id, Some(locked_space));
+    assert_ne!(r.source, ResolutionSource::SpaceDefault);
 }
 
 // ---------------------------------------------------------------------------

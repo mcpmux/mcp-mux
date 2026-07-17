@@ -469,6 +469,37 @@ impl InboundClientRepository {
         Ok(machine_id_str.and_then(|s| Uuid::parse_str(&s).ok()))
     }
 
+    /// Read the Space lock assigned to an inbound client, if any.
+    pub async fn get_locked_space(&self, client_id: &str) -> Result<Option<Uuid>> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let locked_space_str: Option<String> = conn
+            .query_row(
+                "SELECT locked_space_id FROM inbound_clients WHERE client_id = ?1",
+                params![client_id],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(locked_space_str.and_then(|s| Uuid::parse_str(&s).ok()))
+    }
+
+    /// Assign or clear the Space lock for an inbound client.
+    pub async fn set_locked_space(&self, client_id: &str, space_id: Option<Uuid>) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let space_id_str = space_id.map(|id| id.to_string());
+        conn.execute(
+            "UPDATE inbound_clients SET locked_space_id = ?1, updated_at = ?2 WHERE client_id = ?3",
+            params![space_id_str, now, client_id],
+        )?;
+        debug!(
+            "[OAuth] Set locked_space_id for client {}: {:?}",
+            client_id, space_id
+        );
+        Ok(())
+    }
+
     /// Assign or clear the machine id for an inbound OAuth client.
     pub async fn set_machine_id(&self, client_id: &str, machine_id: Option<Uuid>) -> Result<()> {
         let db = self.db.lock().await;

@@ -397,6 +397,19 @@ impl FeatureSetResolverService {
         }
     }
 
+    /// Whether a binding is eligible under an optional Space lock.
+    fn binding_matches_space_lock(
+        binding: &mcpmux_core::WorkspaceBinding,
+        space_lock: Option<Uuid>,
+    ) -> bool {
+        space_lock.is_none_or(|lock| binding.space_id == lock)
+    }
+
+    /// Space id used for Unbound / grant lookups when a lock is active.
+    fn unbound_space_id(space_lock: Option<Uuid>, fallback: Uuid) -> Uuid {
+        space_lock.unwrap_or(fallback)
+    }
+
     /// Borrow the session-roots registry. The notifier uses this to GC
     /// dead sessions out of the registry when reaping the corresponding
     /// peer entries — keeping both stores in sync.
@@ -429,6 +442,14 @@ impl FeatureSetResolverService {
                 });
             }
         };
+
+        // Tier 0 — Space lock narrows all subsequent tiers to one Space.
+        // It never grants tools by itself; no in-Space match still → Unbound.
+        let space_lock = match client_id {
+            Some(cid) => self.client_repo.get_locked_space(cid).await?,
+            None => None,
+        };
+        let deny_space_id = Self::unbound_space_id(space_lock, default_space_id);
 
         // Tier 1 / 1b / 1c — branches on roots-capable + roots-arrived state.
         if let Some(sid) = session_id {
@@ -468,27 +489,35 @@ impl FeatureSetResolverService {
                     .find_binding_for_roots(&reported_roots, client_id, request_machine_id)
                     .await?
                 {
+                    if Self::binding_matches_space_lock(&binding, space_lock) {
+                        debug!(
+                            workspace_root = %binding.workspace_root,
+                            space_id = %binding.space_id,
+                            feature_sets = ?binding.feature_set_ids,
+                            "[FeatureSetResolver] resolved via WorkspaceBinding",
+                        );
+                        return Ok(ResolvedFeatureSet {
+                            feature_set_ids: binding.feature_set_ids,
+                            space_id: Some(binding.space_id),
+                            source: ResolutionSource::WorkspaceBinding,
+                        });
+                    }
                     debug!(
-                        workspace_root = %binding.workspace_root,
-                        space_id = %binding.space_id,
-                        feature_sets = ?binding.feature_set_ids,
-                        "[FeatureSetResolver] resolved via WorkspaceBinding",
+                        binding_space = %binding.space_id,
+                        ?space_lock,
+                        "[FeatureSetResolver] path binding outside locked Space — ignored",
                     );
-                    return Ok(ResolvedFeatureSet {
-                        feature_set_ids: binding.feature_set_ids,
-                        space_id: Some(binding.space_id),
-                        source: ResolutionSource::WorkspaceBinding,
-                    });
                 }
-                // Tier 1b: had roots, no binding. The folder is unmapped —
-                // deny by default. Scope `space_id` to the Space whose base
-                // directory claims the root (longest-prefix), if any; otherwise
-                // the global default Space. Upstream emits WorkspaceNeedsBinding
-                // so the user can attach an explicit binding.
-                let target_space = self
-                    .space_for_roots(&reported_roots)
-                    .await?
-                    .unwrap_or(default_space_id);
+                // Tier 1b: had roots, no binding (or binding outside lock).
+                // The folder is unmapped — deny by default. When locked, scope
+                // `space_id` to the locked Space; otherwise longest-prefix base dir.
+                let target_space = if space_lock.is_some() {
+                    deny_space_id
+                } else {
+                    self.space_for_roots(&reported_roots)
+                        .await?
+                        .unwrap_or(default_space_id)
+                };
                 debug!(
                     %target_space,
                     scoped_by_base_dir = target_space != default_space_id,
@@ -525,7 +554,7 @@ impl FeatureSetResolverService {
                     );
                     return Ok(ResolvedFeatureSet {
                         feature_set_ids: vec![],
-                        space_id: Some(default_space_id),
+                        space_id: Some(deny_space_id),
                         source: ResolutionSource::PendingRoots,
                     });
                 }
@@ -538,7 +567,7 @@ impl FeatureSetResolverService {
                     capability = ?roots_capable_known,
                     "[FeatureSetResolver] pending-roots grace lapsed, no root reported — Unbound",
                 );
-                return Ok(self.unbound(default_space_id));
+                return Ok(self.unbound(deny_space_id));
             }
         }
 
@@ -548,17 +577,24 @@ impl FeatureSetResolverService {
                 .find_binding_for_client_id(cid, request_machine_id)
                 .await?
             {
+                if Self::binding_matches_space_lock(&binding, space_lock) {
+                    debug!(
+                        client_id = %cid,
+                        space_id = %binding.space_id,
+                        feature_sets = ?binding.feature_set_ids,
+                        "[FeatureSetResolver] resolved via id-type WorkspaceBinding",
+                    );
+                    return Ok(ResolvedFeatureSet {
+                        feature_set_ids: binding.feature_set_ids,
+                        space_id: Some(binding.space_id),
+                        source: ResolutionSource::WorkspaceBinding,
+                    });
+                }
                 debug!(
-                    client_id = %cid,
-                    space_id = %binding.space_id,
-                    feature_sets = ?binding.feature_set_ids,
-                    "[FeatureSetResolver] resolved via id-type WorkspaceBinding",
+                    binding_space = %binding.space_id,
+                    ?space_lock,
+                    "[FeatureSetResolver] id binding outside locked Space — ignored",
                 );
-                return Ok(ResolvedFeatureSet {
-                    feature_set_ids: binding.feature_set_ids,
-                    space_id: Some(binding.space_id),
-                    source: ResolutionSource::WorkspaceBinding,
-                });
             }
         }
 
@@ -567,6 +603,7 @@ impl FeatureSetResolverService {
         // (the desktop UI's preview HTTP path lands here too). Consult the
         // per-client grant table.
         if let Some(cid) = client_id {
+            let grant_space_id = deny_space_id;
             // Propagate storage errors instead of treating them as "no
             // grants": a transient DB failure must surface as a request
             // error, not a silent deny (which would also record a `None`
@@ -574,18 +611,18 @@ impl FeatureSetResolverService {
             // cycle once the error clears).
             let grants = self
                 .client_repo
-                .get_grants_for_space(cid, &default_space_id.to_string())
+                .get_grants_for_space(cid, &grant_space_id.to_string())
                 .await?;
             if !grants.is_empty() {
                 debug!(
                     client_id = %cid,
-                    space_id = %default_space_id,
+                    space_id = %grant_space_id,
                     grant_count = grants.len(),
                     "[FeatureSetResolver] resolved via ClientGrant",
                 );
                 return Ok(ResolvedFeatureSet {
                     feature_set_ids: grants,
-                    space_id: Some(default_space_id),
+                    space_id: Some(grant_space_id),
                     source: ResolutionSource::ClientGrant,
                 });
             }
@@ -595,10 +632,11 @@ impl FeatureSetResolverService {
         // tools are appended unconditionally by the request handler regardless,
         // so the LLM can always self-bind / ask the user for a grant from here.
         debug!(
-            space_id = %default_space_id,
+            space_id = %deny_space_id,
             ?client_id,
+            ?space_lock,
             "[FeatureSetResolver] no roots + no id binding + no grants — Unbound",
         );
-        Ok(self.unbound(default_space_id))
+        Ok(self.unbound(deny_space_id))
     }
 }

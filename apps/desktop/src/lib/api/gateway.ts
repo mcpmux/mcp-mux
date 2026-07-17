@@ -315,8 +315,14 @@ export interface ApiKeyInfo {
  * Register a pre-approved client authenticated by an API key.
  * The returned key is shown once and never retrievable again.
  */
-export async function registerApiKeyClient(name: string): Promise<RegisteredApiKeyClient> {
-  return apiCall('register_api_key_client', { name });
+export async function registerApiKeyClient(
+  name: string,
+  lockedSpaceId?: string | null
+): Promise<RegisteredApiKeyClient> {
+  return apiCall('register_api_key_client', {
+    name,
+    lockedSpaceId: lockedSpaceId ?? null,
+  });
 }
 
 /** Issue an additional API key for an existing client (rotation). Shown once. */

@@ -44,9 +44,9 @@ test.describe('Complete User Flows', () => {
     await page.locator('nav button:has-text("Search")').click();
     await expect(page.locator('h1:has-text("Discover Servers")')).toBeVisible();
     
-    // Spaces (use last() to avoid space switcher)
-    await page.locator('nav button:has-text("Spaces")').last().click();
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    // Projects (the folder → bundle mapping tab)
+    await page.locator('nav button:has-text("Projects")').last().click();
+    await expect(page.locator('h1:has-text("Projects")')).toBeVisible();
     
     // FeatureSets
     await page.locator('nav button:has-text("Bundles")').click();

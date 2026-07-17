@@ -481,10 +481,42 @@ pub async fn oauth_authorize(
 
     let app_name = branding::DISPLAY_NAME;
 
-    // Minimal launcher page — fires the deep link and closes immediately.
-    // No visible UI: consent lives entirely in the McpMux app (desktop modal
-    // or web admin SSE modal). The fallback section only appears if the
-    // browser blocks window.close() (tab was not script-opened).
+    // When the gateway is exposed beyond loopback, a client that reached this
+    // page from another machine can't complete the desktop consent (the
+    // mcpmux:// deep link fires only on the host). Surface the API-key path so a
+    // remote user isn't left at a dead end.
+    let network_bind = state.read().await.network_bind;
+    let network_note = if network_bind {
+        format!(
+            r#"<p style="margin:0 0 1rem;padding:0.85rem 1rem;border-radius:8px;background:rgba(218,119,86,0.12);border:1px solid rgba(218,119,86,0.3);color:#d8b08c;font-size:0.85rem;line-height:1.45;text-align:left;"><strong style="color:#DA7756;">Connecting from another machine?</strong> This approval only completes on the computer running {app_name}. For a remote or headless client, register an <strong>API-key client</strong> in {app_name} (Clients tab) and connect with that key instead of this browser flow.</p>"#
+        )
+    } else {
+        String::new()
+    };
+    let body_style = if network_bind {
+        String::new()
+    } else {
+        "display: none;".to_string()
+    };
+    let redirect_script = if network_bind {
+        String::new()
+    } else {
+        format!(
+            r#"
+    <script>
+        window.location.href = "{deep_link_url}";
+        setTimeout(function() {{
+            try {{ window.close(); }} catch(e) {{}}
+            // If window.close() was blocked, reveal the fallback.
+            document.body.style.display = '';
+        }}, 300);
+    </script>"#
+        )
+    };
+
+    // Minimal launcher page — fires the deep link and closes immediately on
+    // loopback binds. On network binds the fallback stays visible with guidance
+    // toward API-key clients because the deep link only works on the host.
     let html = format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -494,7 +526,7 @@ pub async fn oauth_authorize(
     <title>{app_name}</title>
     <style>
         body {{
-            display: none;
+            {body_style}
         }}
         .fallback {{
             display: flex;
@@ -522,18 +554,12 @@ pub async fn oauth_authorize(
 <body>
     <div class="fallback">
         <div>
+            {network_note}
             <p>Check {app_name} to complete authorization.</p>
             <a href="{deep_link_url}">Open {app_name}</a>
         </div>
     </div>
-    <script>
-        window.location.href = "{deep_link_url}";
-        setTimeout(function() {{
-            try {{ window.close(); }} catch(e) {{}}
-            // If window.close() was blocked, reveal the fallback.
-            document.body.style.display = '';
-        }}, 300);
-    </script>
+{redirect_script}
 </body>
 </html>"##
     );

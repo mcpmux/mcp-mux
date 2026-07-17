@@ -441,6 +441,9 @@ pub fn run() {
                 // devices on the LAN can reach the gateway; loopback-only otherwise.
                 let network_access =
                     crate::commands::gateway::load_network_access_from_repo(&settings_repo).await;
+                let auth_disabled =
+                    crate::commands::gateway::load_gateway_auth_disabled_from_repo(&settings_repo)
+                        .await;
                 let local_url = format!("http://localhost:{}", final_port);
                 info!("Auto-starting gateway on {} (advertising {})", local_url, url);
 
@@ -499,6 +502,10 @@ pub fn run() {
                 // Gateway auto-initializes all services and auto-connects enabled servers
                 let server = mcpmux_gateway::GatewayServer::new(config, dependencies);
                 let gw_inner_state = server.state();
+
+                if auth_disabled {
+                    gw_inner_state.write().await.set_auth_disabled(true);
+                }
 
                 // Get services from gateway
                 let pool_service = server.pool_service();

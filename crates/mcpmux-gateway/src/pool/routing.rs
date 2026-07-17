@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use mcpmux_core::{FeatureType, LogLevel, LogSource, ServerLog, ServerLogManager};
-use rmcp::model::CallToolRequestParams;
+use rmcp::model::{CallToolRequestParams, CallToolResult, Content, Meta};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -53,6 +53,38 @@ pub struct ToolCallResult {
     pub content: Vec<Value>,
     pub structured_content: Option<Value>,
     pub is_error: bool,
+    pub meta: Option<Meta>,
+}
+
+impl ToolCallResult {
+    fn from_mcp_result(result: CallToolResult) -> Self {
+        Self {
+            content: result
+                .content
+                .into_iter()
+                .map(|item| serde_json::to_value(item).unwrap_or(Value::Null))
+                .collect(),
+            structured_content: result.structured_content,
+            is_error: result.is_error.unwrap_or(false),
+            meta: result.meta,
+        }
+    }
+
+    pub(crate) fn into_mcp_result(self) -> CallToolResult {
+        let content: Vec<Content> = self
+            .content
+            .into_iter()
+            .filter_map(|item| serde_json::from_value(item).ok())
+            .collect();
+        let mut result = if self.is_error {
+            CallToolResult::error(content)
+        } else {
+            CallToolResult::success(content)
+        };
+        result.structured_content = self.structured_content;
+        result.meta = self.meta;
+        result
+    }
 }
 
 /// Default timeout for MCP tool calls (60 seconds)
@@ -377,17 +409,7 @@ impl RoutingService {
                         .map_err(|_| anyhow!("Tool call timed out after {:?}", TOOL_CALL_TIMEOUT))?
                         .map_err(|e| anyhow!("MCP call failed: {}", e))?;
 
-                    let content: Vec<Value> = res
-                        .content
-                        .into_iter()
-                        .map(|c| serde_json::to_value(c).unwrap_or(Value::Null))
-                        .collect();
-
-                    Ok(ToolCallResult {
-                        content,
-                        structured_content: res.structured_content,
-                        is_error: res.is_error.unwrap_or(false),
-                    })
+                    Ok(ToolCallResult::from_mcp_result(res))
                 }
                 None => Err(anyhow!("Server instance has no active client")),
             }
@@ -823,7 +845,9 @@ impl RoutingService {
 
 #[cfg(test)]
 mod redirect_tests {
-    use super::format_direct_call_redirect;
+    use super::{format_direct_call_redirect, ToolCallResult};
+    use rmcp::model::{CallToolResult, Content, Meta};
+    use serde_json::json;
 
     #[test]
     fn direct_call_redirect_points_at_invoke_tool() {
@@ -831,5 +855,24 @@ mod redirect_tests {
         assert!(message.contains("mcpmux_invoke_tool"));
         assert!(message.contains("\"server_id\": \"github\""));
         assert!(message.contains("\"tool\": \"create_issue\""));
+    }
+
+    #[test]
+    fn tool_result_round_trip_preserves_structured_content_and_meta() {
+        let structured = json!({ "matches": [{ "message": "found" }] });
+        let mut meta = Meta::new();
+        meta.0.insert("traceId".to_string(), json!("trace-123"));
+
+        let mut upstream = CallToolResult::structured(structured.clone());
+        upstream.content = vec![Content::text("search completed")];
+        upstream.meta = Some(meta.clone());
+
+        let routed = ToolCallResult::from_mcp_result(upstream);
+        let forwarded = routed.into_mcp_result();
+
+        assert_eq!(forwarded.content, vec![Content::text("search completed")]);
+        assert_eq!(forwarded.structured_content, Some(structured));
+        assert_eq!(forwarded.meta, Some(meta));
+        assert_eq!(forwarded.is_error, Some(false));
     }
 }

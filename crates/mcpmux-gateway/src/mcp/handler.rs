@@ -106,7 +106,8 @@ impl McpMuxGatewayHandler {
         let resolver = &services.feature_set_resolver;
         match resolver
             .resolve(session_id, Some(client_id), request_machine_id)
-            .await {
+            .await
+        {
             Ok(resolved) => {
                 info!(
                     %client_id,
@@ -826,14 +827,23 @@ impl ServerHandler for McpMuxGatewayHandler {
         // connection). Without the probe it resolves to empty FS ids and
         // fails "not allowed by the current grants" — breaking the
         // list==call invariant the list handlers already uphold.
-        self.ensure_roots_probed(&context.peer, session_id, &oauth_ctx.client_id, oauth_ctx.request_machine_id)
-            .await;
+        self.ensure_roots_probed(
+            &context.peer,
+            session_id,
+            &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
+        )
+        .await;
 
         // Resolve routing once — the binding's target space is authoritative
         // (may differ from oauth_ctx.space_id). Needed both to gate the
         // per-Space meta tools below and to route a normal tool call.
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id, &oauth_ctx.client_id, oauth_ctx.request_machine_id)
+            .resolve_routing(
+                session_id,
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
         // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering, gated
@@ -979,15 +989,13 @@ impl ServerHandler for McpMuxGatewayHandler {
             .await
             .map_err(|e| McpError::internal_error(format!("Tool call failed: {}", e), None))?;
 
-        // Convert ToolCallResult to MCP CallToolResult
-        let content: Vec<Content> = tool_result
-            .content
-            .into_iter()
-            .filter_map(|v| serde_json::from_value(v).ok())
-            .collect();
+        // Convert ToolCallResult to MCP CallToolResult without dropping
+        // structuredContent or protocol-level _meta from the upstream server.
+        let result = tool_result.into_mcp_result();
 
         // Log result summary - show content types and approximate sizes
-        let content_summary: Vec<String> = content
+        let content_summary: Vec<String> = result
+            .content
             .iter()
             .map(|c| {
                 // Content is Annotated<RawContent>, serialize to inspect type
@@ -1026,17 +1034,10 @@ impl ServerHandler for McpMuxGatewayHandler {
             .collect();
         debug!(
             tool = %params.name,
-            is_error = tool_result.is_error,
+            is_error = result.is_error.unwrap_or(false),
             content = ?content_summary,
             "call_tool result"
         );
-
-        let mut result = if tool_result.is_error {
-            CallToolResult::error(content)
-        } else {
-            CallToolResult::success(content)
-        };
-        result.structured_content = tool_result.structured_content;
 
         Ok(result)
     }

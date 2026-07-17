@@ -770,6 +770,7 @@ pub async fn update_workspace_binding(
     let updated = WorkspaceBinding {
         id: existing.id,
         workspace_root: normalized.clone(),
+        binding_type: existing.binding_type,
         client_id: body.client_id.or(existing.client_id),
         machine_id,
         label,

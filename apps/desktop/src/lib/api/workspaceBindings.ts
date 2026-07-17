@@ -1,16 +1,24 @@
 /** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
 import { apiCall } from './transport';
 
+/** How this binding is keyed during resolver lookup. */
+export type BindingType = 'path' | 'id';
+
 /**
  * A WorkspaceBinding maps one normalized filesystem path to one or more
  * FeatureSets within a Space. When an MCP session reports a root that
  * matches a binding (longest-prefix wins), the resolver hands back the
  * binding's `space_id` and the union of `feature_set_ids` — multiple FSes
  * compose into a single allow set, no "follow active" indirection.
+ *
+ * Id-type bindings (`binding_type: 'id'`) route a rootless OAuth/API client
+ * by `workspace_root` (the client id) instead of a folder path.
  */
 export interface WorkspaceBinding {
   id: string;
   workspace_root: string;
+  /** `path` (default) or `id` — see interface doc. */
+  binding_type?: BindingType;
   /** When set, binding applies only to this OAuth client. */
   client_id?: string | null;
   /** When set, binding applies only on this machine; null = global canonical. */
@@ -41,6 +49,8 @@ export interface WorkspaceBindingInput {
   client_id?: string | null;
   /** When set, scopes the binding to this machine; null = global canonical. */
   machine_id?: string | null;
+  /** `path` folder binding (default) or `id` client-id binding. */
+  binding_type?: BindingType;
 }
 
 /** List every binding (sorted by workspace_root). */
@@ -133,7 +143,13 @@ export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
     feature_set_ids: b.feature_set_ids,
     client_id: b.client_id,
     machine_id: b.machine_id,
+    binding_type: b.binding_type,
   };
+}
+
+/** True when the binding routes by OAuth/API client id instead of folder path. */
+export function isIdBinding(binding: WorkspaceBinding): boolean {
+  return binding.binding_type === 'id';
 }
 
 /**

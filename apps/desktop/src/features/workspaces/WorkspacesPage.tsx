@@ -35,6 +35,7 @@ import {
   Wrench,
   X,
   Monitor,
+  UserRound,
 } from 'lucide-react';
 import {
   Button,
@@ -53,6 +54,7 @@ import {
   type EffectiveFeature,
   type WorkspaceBinding,
   type WorkspaceEffectiveFeatures,
+  isIdBinding,
 } from '@/lib/api/workspaceBindings';
 import {
   createMachine,
@@ -108,6 +110,8 @@ interface Entry {
   root: string;
   bindings: WorkspaceBinding[];
   isLive: boolean;
+  /** Id-type bindings route by OAuth/API client id, not folder path. */
+  isClientMapping?: boolean;
 }
 
 /**
@@ -225,6 +229,7 @@ export function WorkspacesPage() {
   const bindingsByRoot = useMemo(() => {
     const m = new Map<string, WorkspaceBinding[]>();
     for (const b of bindings) {
+      if (isIdBinding(b)) continue;
       const key = b.workspace_root.toLowerCase();
       const list = m.get(key) ?? [];
       list.push(b);
@@ -289,6 +294,7 @@ export function WorkspacesPage() {
       list.push(entry);
     }
     for (const b of bindings) {
+      if (isIdBinding(b)) continue;
       const key = b.workspace_root.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -306,6 +312,20 @@ export function WorkspacesPage() {
         root: b.workspace_root,
         bindings: binds,
         isLive: false,
+      });
+    }
+    for (const b of bindings) {
+      if (!isIdBinding(b)) continue;
+      const key = `id:${b.workspace_root.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({
+        id: b.id,
+        kind: 'mapped-offline',
+        root: b.workspace_root,
+        bindings: [b],
+        isLive: false,
+        isClientMapping: true,
       });
     }
     const rank: Record<EntryKind, number> = {
@@ -687,6 +707,7 @@ function formatFsList(names: string[]): string {
 function entryDisplayTitle(entry: Entry): string {
   const label = primaryBinding(entry)?.label?.trim();
   if (label) return label;
+  if (entry.isClientMapping) return shortClientId(entry.root);
   return entry.root;
 }
 
@@ -1035,6 +1056,8 @@ function EntryCard({
             >
               {icon ? (
                 <ServerIcon icon={icon} className="h-8 w-8 object-contain" fallback="📁" />
+              ) : entry.isClientMapping ? (
+                <UserRound className="h-6 w-6" />
               ) : (
                 <FolderOpen className="h-6 w-6" />
               )}
@@ -1057,6 +1080,11 @@ function EntryCard({
                 <Pill tone="info">{t('card.badgeBoundElsewhere')}</Pill>
               )}
               {entry.kind === 'mapped-offline' && <Pill tone="neutral">{t('card.offline')}</Pill>}
+              {entry.isClientMapping && (
+                <Pill tone="neutral" title={entry.root}>
+                  Client mapping
+                </Pill>
+              )}
               {entry.kind === 'mapped-live' && <Pill tone="emerald">{t('card.live')}</Pill>}
               {binding?.client_id && (
                 <Pill tone="neutral" title={binding.client_id}>
@@ -1074,12 +1102,12 @@ function EntryCard({
             </p>
             <p
               className={`mt-0.5 line-clamp-2 min-h-[2rem] font-mono text-xs leading-snug text-[rgb(var(--muted))] ${
-                hasLabel ? 'break-all' : 'invisible'
+                hasLabel || entry.isClientMapping ? 'break-all' : 'invisible'
               }`}
-              title={hasLabel ? entry.root : undefined}
-              aria-hidden={!hasLabel}
+              title={hasLabel || entry.isClientMapping ? entry.root : undefined}
+              aria-hidden={!hasLabel && !entry.isClientMapping}
             >
-              {hasLabel ? entry.root : '\u00A0'}
+              {hasLabel || entry.isClientMapping ? entry.root : '\u00A0'}
             </p>
             {entry.kind === 'unmapped-live' && (
               <Button

@@ -9,6 +9,7 @@ import {
   FolderSearch,
   Layers,
   Loader2,
+  UserRound,
   Wrench,
   X,
 } from 'lucide-react';
@@ -17,6 +18,7 @@ import {
   validateWorkspaceRoot,
   type WorkspaceBinding,
   type WorkspaceBindingInput,
+  isIdBinding,
 } from '@/lib/api/workspaceBindings';
 import { isStarterFeatureSet, type FeatureSet } from '@/lib/api/featureSets';
 import type { Space } from '@/lib/api/spaces';
@@ -53,7 +55,10 @@ export function WorkspaceSetupWizard({
   onError: (msg: string) => void;
 }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [bindingMode, setBindingMode] = useState<'path' | 'id'>('path');
   const [folder, setFolder] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [mappingLabel, setMappingLabel] = useState('');
   const [validating, setValidating] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -83,8 +88,22 @@ export function WorkspaceSetupWizard({
 
   // Detected folders not already mapped — quick-pick targets for step 1.
   const boundRoots = useMemo(
-    () => new Set(existingBindings.map((b) => b.workspace_root.toLowerCase())),
-    [existingBindings]
+    () =>
+      new Set(
+        existingBindings
+          .filter((b) => !isIdBinding(b))
+          .map((b) => b.workspace_root.toLowerCase()),
+      ),
+    [existingBindings],
+  );
+  const boundClientIds = useMemo(
+    () =>
+      new Set(
+        existingBindings
+          .filter(isIdBinding)
+          .map((b) => b.workspace_root.toLowerCase()),
+      ),
+    [existingBindings],
   );
   const unmappedRoots = useMemo(
     () => reportedRoots.filter((r) => !boundRoots.has(r.toLowerCase())),
@@ -92,10 +111,16 @@ export function WorkspaceSetupWizard({
   );
   // Block picking a folder that already has a mapping (e.g. chosen via the
   // folder dialog) — it must be edited from the Workspaces list, not re-created.
-  const alreadyMapped = useMemo(
-    () => !!folder && boundRoots.has(folder.toLowerCase()),
-    [folder, boundRoots]
-  );
+  const alreadyMapped = useMemo(() => {
+    if (bindingMode === 'id') {
+      const key = clientId.trim().toLowerCase();
+      return !!key && boundClientIds.has(key);
+    }
+    return !!folder && boundRoots.has(folder.toLowerCase());
+  }, [bindingMode, clientId, folder, boundRoots, boundClientIds]);
+
+  const stepOneReady =
+    bindingMode === 'id' ? clientId.trim().length > 0 : !!folder && !alreadyMapped;
 
   const pickFolder = async () => {
     try {
@@ -120,14 +145,29 @@ export function WorkspaceSetupWizard({
     });
 
   const finish = async () => {
-    if (!folder || fsIds.size === 0 || !spaceId) return;
+    if (fsIds.size === 0 || !spaceId) return;
+    if (bindingMode === 'path' && !folder) return;
+    if (bindingMode === 'id' && !clientId.trim()) return;
     setSaving(true);
     try {
-      await onCreate({
-        workspace_root: folder,
-        space_id: spaceId,
-        feature_set_ids: Array.from(fsIds),
-      });
+      const label = mappingLabel.trim() || null;
+      if (bindingMode === 'id') {
+        await onCreate({
+          workspace_root: clientId.trim(),
+          binding_type: 'id',
+          label,
+          space_id: spaceId,
+          feature_set_ids: Array.from(fsIds),
+        });
+      } else {
+        await onCreate({
+          workspace_root: folder,
+          binding_type: 'path',
+          label,
+          space_id: spaceId,
+          feature_set_ids: Array.from(fsIds),
+        });
+      }
       // The parent transitions to the new mapping's inspector (which shows its
       // effective features) — don't close here, or that view would be lost.
     } catch (e) {
@@ -136,7 +176,26 @@ export function WorkspaceSetupWizard({
     }
   };
 
-  const TITLES = ['Choose a folder', 'Connect your apps', 'Choose its tools'] as const;
+  const TITLES =
+    bindingMode === 'id'
+      ? (['Choose a client', 'Connect your apps', 'Choose its tools'] as const)
+      : (['Choose a folder', 'Connect your apps', 'Choose its tools'] as const);
+
+  const goNext = () => {
+    if (step === 1 && bindingMode === 'id') {
+      setStep(3);
+      return;
+    }
+    setStep((s) => (s + 1) as 1 | 2 | 3);
+  };
+
+  const goBack = () => {
+    if (step === 3 && bindingMode === 'id') {
+      setStep(1);
+      return;
+    }
+    setStep((s) => (s - 1) as 1 | 2 | 3);
+  };
 
   return (
     <div
@@ -148,7 +207,8 @@ export function WorkspaceSetupWizard({
         <div className="flex items-start justify-between">
           <div className="min-w-0">
             <div className="text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              Set up a folder · Step {step} of 3
+              Set up a mapping · Step {bindingMode === 'id' && step === 3 ? 2 : step} of{' '}
+              {bindingMode === 'id' ? 2 : 3}
             </div>
             <h2 className="mt-0.5 text-lg font-bold">{TITLES[step - 1]}</h2>
           </div>
@@ -175,70 +235,142 @@ export function WorkspaceSetupWizard({
       <div className="flex-1 overflow-y-auto p-6">
         {step === 1 && (
           <div className="space-y-4" data-testid="wizard-step-folder">
-            <p className="text-sm text-[rgb(var(--muted))]">
-              Which project folder do you want to map? Pick one, or choose a folder an app already
-              opened.
-            </p>
-            <Button variant="primary" size="sm" onClick={pickFolder} disabled={validating}>
-              {validating ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <FolderOpen className="mr-2 h-4 w-4" />
-              )}
-              Choose folder…
-            </Button>
+            <div className="inline-flex rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-0.5 gap-0.5">
+              {(
+                [
+                  { value: 'path' as const, label: 'Folder', icon: FolderOpen },
+                  { value: 'id' as const, label: 'Client ID', icon: UserRound },
+                ] as const
+              ).map((opt) => {
+                const active = bindingMode === opt.value;
+                const Icon = opt.icon;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setBindingMode(opt.value)}
+                    data-testid={`wizard-binding-mode-${opt.value}`}
+                    aria-pressed={active}
+                    className={[
+                      'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all',
+                      active
+                        ? 'bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-sm'
+                        : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]',
+                    ].join(' ')}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
 
-            {folder && (
-              <div
-                className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
-                  alreadyMapped
-                    ? 'border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-900/20'
-                    : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
-                }`}
-              >
-                {alreadyMapped ? (
-                  <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-600" />
-                ) : (
-                  <Check className="h-4 w-4 flex-shrink-0 text-green-600" />
+            {bindingMode === 'path' ? (
+              <>
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  Which project folder do you want to map? Pick one, or choose a folder an app already
+                  opened.
+                </p>
+                <Button variant="primary" size="sm" onClick={pickFolder} disabled={validating}>
+                  {validating ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                  )}
+                  Choose folder…
+                </Button>
+
+                {folder && (
+                  <div
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                      alreadyMapped
+                        ? 'border-amber-300 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-900/20'
+                        : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
+                    }`}
+                  >
+                    {alreadyMapped ? (
+                      <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-600" />
+                    ) : (
+                      <Check className="h-4 w-4 flex-shrink-0 text-green-600" />
+                    )}
+                    <span className="truncate font-mono text-xs" title={folder}>
+                      {folder}
+                    </span>
+                  </div>
                 )}
-                <span className="truncate font-mono text-xs" title={folder}>
-                  {folder}
-                </span>
-              </div>
-            )}
-            {alreadyMapped && (
-              <p
-                className="text-xs text-amber-700 dark:text-amber-400"
-                data-testid="wizard-folder-mapped-error"
-              >
-                This folder is already mapped — edit it from the Workspaces list instead.
-              </p>
-            )}
+                {alreadyMapped && (
+                  <p
+                    className="text-xs text-amber-700 dark:text-amber-400"
+                    data-testid="wizard-folder-mapped-error"
+                  >
+                    This folder is already mapped — edit it from the Workspaces list instead.
+                  </p>
+                )}
 
-            {unmappedRoots.length > 0 && (
-              <div>
-                <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[rgb(var(--muted))]">
-                  <FolderSearch className="h-3.5 w-3.5" />
-                  Detected workspaces
+                {unmappedRoots.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[rgb(var(--muted))]">
+                      <FolderSearch className="h-3.5 w-3.5" />
+                      Detected workspaces
+                    </div>
+                    <div className="overflow-hidden rounded-lg border border-[rgb(var(--border))]">
+                      {unmappedRoots.slice(0, 6).map((r, i) => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => setFolder(r)}
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[rgb(var(--surface-hover))] ${
+                            i > 0 ? 'border-t border-[rgb(var(--border-subtle))]' : ''
+                          } ${folder === r ? 'bg-primary-500/5' : ''}`}
+                        >
+                          <FolderOpen className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
+                          <span className="truncate font-mono text-xs" title={r}>
+                            {r}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  Map a rootless OAuth or API-key client directly to tools — no folder path required.
+                </p>
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+                    Client ID
+                  </label>
+                  <input
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    placeholder="e.g. cursor.example/shared"
+                    className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2.5 font-mono text-sm"
+                    data-testid="wizard-client-id-input"
+                  />
                 </div>
-                <div className="overflow-hidden rounded-lg border border-[rgb(var(--border))]">
-                  {unmappedRoots.slice(0, 6).map((r, i) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setFolder(r)}
-                      className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-[rgb(var(--surface-hover))] ${
-                        i > 0 ? 'border-t border-[rgb(var(--border-subtle))]' : ''
-                      } ${folder === r ? 'bg-primary-500/5' : ''}`}
-                    >
-                      <FolderOpen className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
-                      <span className="truncate font-mono text-xs" title={r}>
-                        {r}
-                      </span>
-                    </button>
-                  ))}
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+                    Label (optional)
+                  </label>
+                  <input
+                    value={mappingLabel}
+                    onChange={(e) => setMappingLabel(e.target.value)}
+                    placeholder="Friendly name in the Workspaces list"
+                    className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2.5 text-sm"
+                    data-testid="wizard-client-label-input"
+                  />
                 </div>
-              </div>
+                {alreadyMapped && (
+                  <p
+                    className="text-xs text-amber-700 dark:text-amber-400"
+                    data-testid="wizard-client-mapped-error"
+                  >
+                    This client already has a mapping — edit it from the Workspaces list instead.
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}
@@ -322,7 +454,7 @@ export function WorkspaceSetupWizard({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => (step === 1 ? onClose() : setStep((s) => (s - 1) as 1 | 2 | 3))}
+          onClick={() => (step === 1 ? onClose() : goBack())}
           data-testid="wizard-back"
         >
           {step === 1 ? (
@@ -339,8 +471,8 @@ export function WorkspaceSetupWizard({
           <Button
             variant="primary"
             size="sm"
-            onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
-            disabled={step === 1 && (!folder || alreadyMapped)}
+            onClick={goNext}
+            disabled={step === 1 && (!stepOneReady || alreadyMapped)}
             data-testid="wizard-next"
           >
             {step === 2 ? 'Next' : 'Continue'}
@@ -351,7 +483,11 @@ export function WorkspaceSetupWizard({
             variant="primary"
             size="sm"
             onClick={finish}
-            disabled={saving || fsIds.size === 0 || !folder}
+            disabled={
+              saving ||
+              fsIds.size === 0 ||
+              (bindingMode === 'path' ? !folder : !clientId.trim())
+            }
             data-testid="wizard-finish"
           >
             {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Wrench className="mr-1.5 h-4 w-4" />}

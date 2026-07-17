@@ -332,6 +332,17 @@ pub trait WorkspaceBindingRepository: Send + Sync {
     async fn find_exact_global(&self, workspace_root: &str)
         -> RepoResult<Option<WorkspaceBinding>>;
 
+    /// Lookup an id-type binding keyed by OAuth/API `client_id`.
+    ///
+    /// When `machine_id` is `Some`, matches a machine-scoped id binding on that
+    /// host. When `None`, matches a global id binding (`machine_id IS NULL`).
+    /// Path-type rows are never returned.
+    async fn find_by_id_key(
+        &self,
+        client_id: &str,
+        machine_id: Option<&Uuid>,
+    ) -> RepoResult<Option<WorkspaceBinding>>;
+
     /// Resolve which binding applies for a set of candidate workspace roots by
     /// longest-prefix containment.
     ///

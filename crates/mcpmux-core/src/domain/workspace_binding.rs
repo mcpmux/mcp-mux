@@ -25,6 +25,36 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// How a [`WorkspaceBinding`] is keyed during resolver lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingType {
+    /// Folder path binding (default) — matched via reported MCP roots.
+    #[default]
+    Path,
+    /// Client-id binding — matched via OAuth/API `client_id` when rootless.
+    Id,
+}
+
+impl BindingType {
+    /// Persisted SQLite enum value.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Path => "path",
+            Self::Id => "id",
+        }
+    }
+
+    /// Parse a row value; unknown strings fall back to `Path`.
+    pub fn from_db_str(raw: &str) -> Self {
+        if raw == "id" {
+            Self::Id
+        } else {
+            Self::Path
+        }
+    }
+}
+
 /// A binding between a normalized workspace root and the FeatureSet(s) it
 /// resolves to. `feature_set_ids` MAY be empty — an empty list is a valid
 /// "no Space tools" mapping (the folder still routes to this Space; built-in
@@ -33,6 +63,10 @@ use uuid::Uuid;
 pub struct WorkspaceBinding {
     pub id: Uuid,
     pub workspace_root: String,
+    /// `Path` (default) keys on folder path; `Id` keys on OAuth/API client id
+    /// stored in `workspace_root`.
+    #[serde(default)]
+    pub binding_type: BindingType,
     /// Optional OAuth client scope. `None` is a global binding. When set
     /// together with `machine_id`, resolution prefers the client+machine pair
     /// over a machine-only canonical binding on the same path.
@@ -90,7 +124,42 @@ impl WorkspaceBinding {
         Self {
             id: Uuid::new_v4(),
             workspace_root: workspace_root.into(),
+            binding_type: BindingType::Path,
             client_id,
+            machine_id: None,
+            label: None,
+            icon: None,
+            space_id,
+            feature_set_ids,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Construct an id-type binding for a rootless OAuth/API client. The
+    /// `client_id` argument is persisted as `workspace_root`; the optional
+    /// `client_id` scope column stays unset (path-scope semantics do not apply).
+    pub fn new_id(
+        client_id: impl Into<String>,
+        space_id: Uuid,
+        feature_set_id: impl Into<String>,
+    ) -> Self {
+        Self::new_id_multi(client_id, space_id, vec![feature_set_id.into()])
+    }
+
+    /// Construct an id-type binding with zero or more FeatureSets.
+    pub fn new_id_multi(
+        client_id: impl Into<String>,
+        space_id: Uuid,
+        feature_set_ids: Vec<String>,
+    ) -> Self {
+        let cid = client_id.into();
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            workspace_root: cid,
+            binding_type: BindingType::Id,
+            client_id: None,
             machine_id: None,
             label: None,
             icon: None,
@@ -114,6 +183,7 @@ impl WorkspaceBinding {
         Self {
             id: Uuid::new_v4(),
             workspace_root: workspace_root.into(),
+            binding_type: BindingType::Path,
             client_id: None,
             machine_id: Some(machine_id),
             label: None,

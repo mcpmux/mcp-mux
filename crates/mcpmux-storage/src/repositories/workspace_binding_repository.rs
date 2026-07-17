@@ -32,7 +32,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mcpmux_core::{WorkspaceBinding, WorkspaceBindingRepository};
+use mcpmux_core::{BindingType, WorkspaceBinding, WorkspaceBindingRepository};
 use rusqlite::params;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -71,10 +71,12 @@ impl SqliteWorkspaceBindingRepository {
         let machine_id_str: Option<String> = row.get(6)?;
         let label: Option<String> = row.get(7)?;
         let icon: Option<String> = row.get(8)?;
+        let binding_type_raw: String = row.get(9)?;
 
         Ok(WorkspaceBinding {
             id: id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
             workspace_root,
+            binding_type: BindingType::from_db_str(&binding_type_raw),
             client_id,
             machine_id: machine_id_str.and_then(|s| s.parse().ok()),
             label,
@@ -158,7 +160,7 @@ impl SqliteWorkspaceBindingRepository {
     }
 
     const SELECT_COLS: &'static str =
-        "id, workspace_root, space_id, created_at, updated_at, client_id, machine_id, label, icon";
+        "id, workspace_root, space_id, created_at, updated_at, client_id, machine_id, label, icon, binding_type";
 
     /// Fetch bindings + their FeatureSet lists in two queries.
     /// `where_clause` is appended to the binding SELECT (use `""` for none);
@@ -230,8 +232,8 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let tx = conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO workspace_bindings
-                (id, workspace_root, space_id, created_at, updated_at, client_id, machine_id, label, icon)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                (id, workspace_root, space_id, created_at, updated_at, client_id, machine_id, label, icon, binding_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 binding.id.to_string(),
                 binding.workspace_root,
@@ -242,6 +244,7 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
                 binding.machine_id.map(|id| id.to_string()),
                 binding.label,
                 binding.icon,
+                binding.binding_type.as_db_str(),
             ],
         )?;
         Self::rewrite_fs_for_binding(&tx, &binding.id.to_string(), &binding.feature_set_ids)?;
@@ -262,7 +265,7 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         let rows_affected = tx.execute(
             "UPDATE workspace_bindings
              SET workspace_root = ?2, space_id = ?3, updated_at = ?4, client_id = ?5,
-                 machine_id = ?6, label = ?7, icon = ?8
+                 machine_id = ?6, label = ?7, icon = ?8, binding_type = ?9
              WHERE id = ?1",
             params![
                 binding.id.to_string(),
@@ -273,6 +276,7 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
                 binding.machine_id.map(|id| id.to_string()),
                 binding.label,
                 binding.icon,
+                binding.binding_type.as_db_str(),
             ],
         )?;
 
@@ -312,7 +316,9 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         // Exact match only — no ancestor/prefix inheritance. A folder resolves
         // to a binding for THAT exact root, or to nothing.
         for root in candidate_roots {
-            if let Some(b) = bindings.iter().find(|b| &b.workspace_root == root) {
+            if let Some(b) = bindings.iter().find(|b| {
+                b.binding_type == BindingType::Path && &b.workspace_root == root
+            }) {
                 return Ok(Some(b.clone()));
             }
         }
@@ -330,7 +336,8 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         // Try the specific client match first, fall back to canonical (client_id IS NULL).
         let specific = client_id.and_then(|cid| {
             bindings.iter().find(|b| {
-                b.workspace_root == workspace_root
+                b.binding_type == BindingType::Path
+                    && b.workspace_root == workspace_root
                     && b.machine_id == Some(*machine_id)
                     && b.client_id.as_deref() == Some(cid)
             })
@@ -339,16 +346,33 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
             return Ok(Some(b.clone()));
         }
         Ok(bindings.into_iter().find(|b| {
-            b.workspace_root == workspace_root
+            b.binding_type == BindingType::Path
+                && b.workspace_root == workspace_root
                 && b.machine_id == Some(*machine_id)
                 && b.client_id.is_none()
+        }))
+    }
+
+    async fn find_by_id_key(
+        &self,
+        client_id: &str,
+        machine_id: Option<&Uuid>,
+    ) -> Result<Option<WorkspaceBinding>> {
+        let bindings = self.list().await?;
+        Ok(bindings.into_iter().find(|b| {
+            b.binding_type == BindingType::Id
+                && b.workspace_root == client_id
+                && b.machine_id.as_ref() == machine_id
         }))
     }
 
     async fn find_exact_global(&self, workspace_root: &str) -> Result<Option<WorkspaceBinding>> {
         let bindings = self.list().await?;
         Ok(bindings.into_iter().find(|b| {
-            b.workspace_root == workspace_root && b.machine_id.is_none() && b.client_id.is_none()
+            b.binding_type == BindingType::Path
+                && b.workspace_root == workspace_root
+                && b.machine_id.is_none()
+                && b.client_id.is_none()
         }))
     }
 }

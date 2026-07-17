@@ -834,6 +834,143 @@ async fn pinned_header_root_without_binding_is_unbound() {
 }
 
 // ---------------------------------------------------------------------------
+// Id-type binding tier (Tier 2)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn id_binding_routes_rootless_client_without_grants() {
+    let f = Fixture::new().await;
+    let client_id = "api-key.example/headless";
+    f.make_client(client_id).await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            client_id,
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn rootless_client_without_id_binding_is_unbound_not_starter() {
+    let f = Fixture::new().await;
+    let client_id = "api-key.example/unmapped";
+    f.make_client(client_id).await;
+    f.session_roots.set_roots_capable("s", false);
+
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
+    assert_ne!(r.source, ResolutionSource::SpaceDefault);
+}
+
+#[tokio::test]
+async fn id_binding_beats_client_grant() {
+    let f = Fixture::new().await;
+    let client_id = "api-key.example/both";
+    f.make_client(client_id).await;
+    f.client_repo
+        .grant_feature_set(client_id, &f.space_id.to_string(), &f.fs_b_id)
+        .await
+        .unwrap();
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            client_id,
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn reported_roots_without_path_binding_stays_unbound_skips_id_binding() {
+    // Tier 1b: roots reported but no path binding → Unbound immediately;
+    // Tier 2 id binding must NOT run for roots-capable sessions with folders.
+    let f = Fixture::new().await;
+    let client_id = "cursor.example/window";
+    f.make_client(client_id).await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            client_id,
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    let other = if cfg!(windows) { "d:\\tmp" } else { "/tmp" };
+    f.session_roots.set("s", [other]);
+    f.session_roots.set_roots_capable("s", true);
+
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
+    assert_ne!(r.source, ResolutionSource::SpaceDefault);
+}
+
+#[tokio::test]
+async fn request_machine_header_selects_machine_scoped_id_binding() {
+    let f = Fixture::new().await;
+    let gondor_id = f.make_machine("Gondor").await;
+    let rohan_id = f.make_machine("Rohan").await;
+    let client_id = "api-key.example/shared";
+
+    f.make_client(client_id).await;
+
+    let global = WorkspaceBinding::new_id(client_id, f.space_id, f.fs_a_id.clone());
+    f.binding_repo.create(&global).await.unwrap();
+
+    let mut rohan = WorkspaceBinding::new_id(client_id, f.space_id, f.fs_b_id.clone());
+    rohan.machine_id = Some(rohan_id);
+    f.binding_repo.create(&rohan).await.unwrap();
+
+    f.session_roots.set_roots_capable("s", false);
+    let resolver = f.resolver_with_local_machine(gondor_id);
+
+    let without_header = resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(without_header.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(without_header.feature_set_ids, vec![f.fs_a_id]);
+
+    let with_rohan_header = resolver
+        .resolve(Some("s"), Some(client_id), Some(rohan_id))
+        .await
+        .unwrap();
+    assert_eq!(with_rohan_header.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(with_rohan_header.feature_set_ids, vec![f.fs_b_id]);
+}
+
+// ---------------------------------------------------------------------------
 // Request machine header — per-device identity over shared tunnel
 // ---------------------------------------------------------------------------
 

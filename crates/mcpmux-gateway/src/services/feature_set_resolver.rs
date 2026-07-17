@@ -22,11 +22,15 @@
 //!         else:
 //!             return (default_space, [], Unbound)   // gave up waiting
 //!
-//!     // Signal 2 — client identity (rootless-by-design: Claude.ai web, …)
+//!     // Signal 2 — client identity (id-type binding, rootless)
+//!     if client has an id-type WorkspaceBinding:
+//!         return (binding.space_id, binding.feature_set_ids, WorkspaceBinding)
+//!
+//!     // Signal 3 — client identity (rootless-by-design: Claude.ai web, …)
 //!     if client has grants in the default space:
 //!         return (default_space, grants, ClientGrant)
 //!
-//!     // Tier 3 — no roots, no grants
+//!     // Tier 4 — no roots, no id binding, no grants
 //!     return (default_space, [], Unbound)
 //! ```
 //!
@@ -306,6 +310,47 @@ impl FeatureSetResolverService {
         Ok(None)
     }
 
+    /// Tier 2 id-type binding lookup: request machine header, then client
+    /// machine, then local machine, then global.
+    async fn find_binding_for_client_id(
+        &self,
+        client_id: &str,
+        request_machine_id: Option<Uuid>,
+    ) -> Result<Option<mcpmux_core::WorkspaceBinding>> {
+        if let Some(header_machine) = request_machine_id {
+            if let Some(binding) = self
+                .binding_repo
+                .find_by_id_key(client_id, Some(&header_machine))
+                .await?
+            {
+                return Ok(Some(binding));
+            }
+            if let Some(binding) = self.binding_repo.find_by_id_key(client_id, None).await? {
+                return Ok(Some(binding));
+            }
+            return Ok(None);
+        }
+        if let Some(client_machine) = self.client_repo.get_machine_id(client_id).await? {
+            if let Some(binding) = self
+                .binding_repo
+                .find_by_id_key(client_id, Some(&client_machine))
+                .await?
+            {
+                return Ok(Some(binding));
+            }
+        }
+        if let Some(local_id) = *self.local_machine_id.read().await {
+            if let Some(binding) = self
+                .binding_repo
+                .find_by_id_key(client_id, Some(&local_id))
+                .await?
+            {
+                return Ok(Some(binding));
+            }
+        }
+        self.binding_repo.find_by_id_key(client_id, None).await
+    }
+
     /// The Space that claims one of `roots` by base directory, or `None`. Each
     /// root's longest-prefix match is taken (via the repo); the first reported
     /// root that lands in a Space wins. Used to scope an unmapped folder to its
@@ -363,8 +408,8 @@ impl FeatureSetResolverService {
     ///
     /// `session_id`: the client's `mcp-session-id` header (or `None` when
     /// the caller is stateless — e.g. desktop UI HTTP path).
-    /// `client_id`: the OAuth client identity. Used only for the Tier-2
-    /// `client_grants` lookup; ignored for binding-based routing.
+    /// `client_id`: the OAuth client identity. Used for Tier-2 id-type binding
+    /// lookup and Tier-3 `client_grants`; ignored for path-based routing.
     /// `request_machine_id`: optional per-device identity from
     /// `X-Mcpmux-Machine-Id`; highest-priority machine signal for Tier 1.
     pub async fn resolve(
@@ -497,7 +542,27 @@ impl FeatureSetResolverService {
             }
         }
 
-        // Tier 2 — rootless-by-design. Either the session declared no
+        // Tier 2 — id-type client mapping (rootless / API-key / OAuth clientId).
+        if let Some(cid) = client_id {
+            if let Some(binding) = self
+                .find_binding_for_client_id(cid, request_machine_id)
+                .await?
+            {
+                debug!(
+                    client_id = %cid,
+                    space_id = %binding.space_id,
+                    feature_sets = ?binding.feature_set_ids,
+                    "[FeatureSetResolver] resolved via id-type WorkspaceBinding",
+                );
+                return Ok(ResolvedFeatureSet {
+                    feature_set_ids: binding.feature_set_ids,
+                    space_id: Some(binding.space_id),
+                    source: ResolutionSource::WorkspaceBinding,
+                });
+            }
+        }
+
+        // Tier 3 — rootless-by-design. Either the session declared no
         // `roots` capability, or the caller has no session id at all
         // (the desktop UI's preview HTTP path lands here too). Consult the
         // per-client grant table.
@@ -526,13 +591,13 @@ impl FeatureSetResolverService {
             }
         }
 
-        // Tier 3 — no roots, no grants. Deny by default. The mcpmux_* meta
+        // Tier 4 — no roots, no id binding, no grants. Deny by default. The mcpmux_* meta
         // tools are appended unconditionally by the request handler regardless,
         // so the LLM can always self-bind / ask the user for a grant from here.
         debug!(
             space_id = %default_space_id,
             ?client_id,
-            "[FeatureSetResolver] no roots + no grants — Unbound",
+            "[FeatureSetResolver] no roots + no id binding + no grants — Unbound",
         );
         Ok(self.unbound(default_space_id))
     }

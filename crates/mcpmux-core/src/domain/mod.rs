@@ -45,5 +45,6 @@ pub use space::*;
 pub use workspace_appearance::WorkspaceAppearance;
 pub use workspace_binding::{
     longest_matching_base, normalize_optional_metadata, normalize_workspace_root, path_is_within,
-    resolve_workspace_icon, validate_workspace_root, WorkspaceBinding, WorkspaceRootValidation,
+    resolve_workspace_icon, validate_workspace_root, BindingType, WorkspaceBinding,
+    WorkspaceRootValidation,
 };

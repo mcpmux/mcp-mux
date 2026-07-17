@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use mcpmux_core::{
-    normalize_optional_metadata, validate_workspace_root as validate_root, DomainEvent, FeatureSet,
-    FeatureSetType, MemberMode, MemberType, ServerFeature, WorkspaceBinding,
+    normalize_optional_metadata, validate_workspace_root as validate_root, BindingType, DomainEvent,
+    FeatureSet, FeatureSetType, MemberMode, MemberType, ServerFeature, WorkspaceBinding,
     WorkspaceRootValidation,
 };
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,8 @@ pub struct WorkspaceBindingDto {
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
     pub machine_id: Option<String>,
+    #[serde(default)]
+    pub binding_type: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -75,6 +77,7 @@ impl From<WorkspaceBinding> for WorkspaceBindingDto {
             space_id: b.space_id.to_string(),
             feature_set_ids: b.feature_set_ids,
             machine_id: b.machine_id.map(|id| id.to_string()),
+            binding_type: Some(b.binding_type.as_db_str().to_string()),
             created_at: b.created_at.to_rfc3339(),
             updated_at: b.updated_at.to_rfc3339(),
         }
@@ -95,6 +98,8 @@ pub struct WorkspaceBindingInput {
     pub feature_set_ids: Vec<String>,
     #[serde(default)]
     pub machine_id: Option<String>,
+    #[serde(default)]
+    pub binding_type: Option<String>,
 }
 
 fn parse_optional_machine_id(value: Option<&str>) -> Result<Option<Uuid>, String> {
@@ -117,6 +122,13 @@ fn binding_scope_conflicts(
         return false;
     }
     existing.machine_id == machine_id && existing.client_id.as_deref() == client_id
+}
+
+fn parse_binding_type(value: Option<&str>) -> BindingType {
+    match value {
+        Some("id") => BindingType::Id,
+        _ => BindingType::Path,
+    }
 }
 
 fn parse_space_id(input: &WorkspaceBindingInput) -> Result<Uuid, String> {
@@ -358,39 +370,59 @@ pub async fn create_workspace_binding(
 ) -> Result<WorkspaceBindingDto, String> {
     let space_id = parse_space_id(&input)?;
     let feature_set_ids = validate_fs_list(&input)?;
-    let normalized = normalize_and_validate(&input.workspace_root)?;
+    let binding_type = parse_binding_type(input.binding_type.as_deref());
+    let machine_id = parse_optional_machine_id(input.machine_id.as_deref())?;
+
+    let (normalized, binding) = if binding_type == BindingType::Id {
+        let client_key = input.workspace_root.trim();
+        if client_key.is_empty() {
+            return Err("client id cannot be empty".into());
+        }
+        let mut binding = WorkspaceBinding::new_id_multi(client_key, space_id, feature_set_ids);
+        binding.machine_id = machine_id;
+        binding.label = resolve_binding_label(&input, None);
+        binding.icon = normalize_optional_metadata(&input.icon);
+        (client_key.to_string(), binding)
+    } else {
+        let normalized = normalize_and_validate(&input.workspace_root)?;
+        let binding = WorkspaceBinding {
+            id: Uuid::new_v4(),
+            workspace_root: normalized.clone(),
+            binding_type: BindingType::Path,
+            client_id: None,
+            machine_id,
+            label: resolve_binding_label(&input, None),
+            icon: resolve_binding_icon(&state, &normalized, &input, None).await?,
+            space_id,
+            feature_set_ids,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        (normalized, binding)
+    };
 
     // Reject a duplicate folder up front with a readable message. The schema
     // already enforces `UNIQUE(workspace_root)`, but that surfaces an opaque
     // SQLite constraint error — this gives the UI something a user can act on.
-    let machine_id = parse_optional_machine_id(input.machine_id.as_deref())?;
 
     let existing = state
         .workspace_binding_repository
         .list()
         .await
         .map_err(|e| e.to_string())?;
-    if existing
-        .iter()
-        .any(|b| binding_scope_conflicts(b, &normalized, machine_id, None))
-    {
+    if existing.iter().any(|b| {
+        b.binding_type == binding_type
+            && binding_scope_conflicts(b, &normalized, machine_id, None)
+    }) {
+        let noun = if binding_type == BindingType::Id {
+            "client mapping"
+        } else {
+            "mapping"
+        };
         return Err(format!(
-            "A mapping already exists for {normalized}. Edit the existing mapping instead of adding a second one."
+            "A {noun} already exists for {normalized}. Edit the existing mapping instead of adding a second one."
         ));
     }
-
-    let binding = WorkspaceBinding {
-        id: Uuid::new_v4(),
-        workspace_root: normalized.clone(),
-        client_id: None,
-        machine_id,
-        label: resolve_binding_label(&input, None),
-        icon: resolve_binding_icon(&state, &normalized, &input, None).await?,
-        space_id,
-        feature_set_ids,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-    };
 
     state
         .workspace_binding_repository
@@ -398,11 +430,14 @@ pub async fn create_workspace_binding(
         .await
         .map_err(|e| e.to_string())?;
 
-    clear_appearance_for_bound_root(&state, &normalized).await?;
+    if binding_type == BindingType::Path {
+        clear_appearance_for_bound_root(&state, &normalized).await?;
+    }
 
     info!(
         binding_id = %binding.id,
         root = %binding.workspace_root,
+        ?binding_type,
         %space_id,
         feature_sets = ?binding.feature_set_ids,
         "[workspace_binding] created",
@@ -417,8 +452,6 @@ pub async fn create_workspace_binding(
     Ok(binding.into())
 }
 
-/// Update an existing binding. Accepts full input so the UI can edit any
-/// axis (root, target space, target FS) in one call.
 #[tauri::command]
 pub async fn update_workspace_binding(
     id: String,
@@ -429,8 +462,25 @@ pub async fn update_workspace_binding(
     let id_uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let space_id = parse_space_id(&input)?;
     let feature_set_ids = validate_fs_list(&input)?;
-    let normalized = normalize_and_validate(&input.workspace_root)?;
+    let binding_type = parse_binding_type(input.binding_type.as_deref());
     let machine_id = parse_optional_machine_id(input.machine_id.as_deref())?;
+
+    let existing = state
+        .workspace_binding_repository
+        .get(&id_uuid)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("binding not found: {}", id))?;
+
+    let normalized = if binding_type == BindingType::Id {
+        let client_key = input.workspace_root.trim();
+        if client_key.is_empty() {
+            return Err("client id cannot be empty".into());
+        }
+        client_key.to_string()
+    } else {
+        normalize_and_validate(&input.workspace_root)?
+    };
 
     // If the edit moved the folder onto a path another mapping already owns,
     // reject with a readable message rather than tripping the DB UNIQUE
@@ -440,30 +490,34 @@ pub async fn update_workspace_binding(
         .list()
         .await
         .map_err(|e| e.to_string())?;
-    if all
-        .iter()
-        .any(|b| b.id != id_uuid && binding_scope_conflicts(b, &normalized, machine_id, None))
-    {
+    if all.iter().any(|b| {
+        b.id != id_uuid
+            && b.binding_type == binding_type
+            && binding_scope_conflicts(b, &normalized, machine_id, None)
+    }) {
         return Err(format!(
             "Another mapping already uses {normalized}. Pick a different folder."
         ));
     }
 
-    let existing = state
-        .workspace_binding_repository
-        .get(&id_uuid)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("binding not found: {}", id))?;
     let old_space_id = existing.space_id;
     let previous_icon = existing.icon.clone();
     let client_id = existing.client_id.clone();
     let label = resolve_binding_label(&input, Some(&existing));
-    let icon = resolve_binding_icon(&state, &normalized, &input, Some(&existing)).await?;
+    let icon = if binding_type == BindingType::Id {
+        if input.icon.is_some() {
+            normalize_optional_metadata(&input.icon)
+        } else {
+            existing.icon.clone()
+        }
+    } else {
+        resolve_binding_icon(&state, &normalized, &input, Some(&existing)).await?
+    };
 
     let updated = WorkspaceBinding {
         id: existing.id,
         workspace_root: normalized.clone(),
+        binding_type,
         client_id,
         machine_id,
         label,
@@ -480,7 +534,9 @@ pub async fn update_workspace_binding(
         .await
         .map_err(|e| e.to_string())?;
 
-    clear_appearance_for_bound_root(&state, &normalized).await?;
+    if binding_type == BindingType::Path {
+        clear_appearance_for_bound_root(&state, &normalized).await?;
+    }
 
     if previous_icon.as_deref() != updated.icon.as_deref() {
         maybe_remove_orphaned_icon_file(&state, previous_icon.as_deref()).await?;

@@ -316,9 +316,10 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
         // Exact match only — no ancestor/prefix inheritance. A folder resolves
         // to a binding for THAT exact root, or to nothing.
         for root in candidate_roots {
-            if let Some(b) = bindings.iter().find(|b| {
-                b.binding_type == BindingType::Path && &b.workspace_root == root
-            }) {
+            if let Some(b) = bindings
+                .iter()
+                .find(|b| b.binding_type == BindingType::Path && &b.workspace_root == root)
+            {
                 return Ok(Some(b.clone()));
             }
         }

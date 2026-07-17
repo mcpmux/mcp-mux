@@ -33,8 +33,7 @@ pub fn normalize_public_url(url: &str) -> Result<String, String> {
     }
     if parsed.path() != "/" && !parsed.path().is_empty() {
         return Err(
-            "Public gateway URL must be an origin only, for example https://mcp.example.com"
-                .into(),
+            "Public gateway URL must be an origin only, for example https://mcp.example.com".into(),
         );
     }
 

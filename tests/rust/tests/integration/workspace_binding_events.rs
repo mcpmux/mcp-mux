@@ -95,7 +95,11 @@ async fn creating_binding_flips_next_resolution_source() {
     ctx.session_roots.set("sess-1", [raw]);
     ctx.session_roots.set_roots_capable("sess-1", true);
 
-    let before = ctx.resolver.resolve(Some("sess-1"), None, None).await.unwrap();
+    let before = ctx
+        .resolver
+        .resolve(Some("sess-1"), None, None)
+        .await
+        .unwrap();
     assert_eq!(before.source, ResolutionSource::Unbound);
     // Unmapped folder gets empty ids; binding flips to a non-empty FS below —
     // that change is exactly what fires the per-peer `list_changed`.
@@ -104,7 +108,11 @@ async fn creating_binding_flips_next_resolution_source() {
     let binding = WorkspaceBinding::new(root, ctx.space_id, ctx.fs_custom_id.clone());
     ctx.binding_repo.create(&binding).await.unwrap();
 
-    let after = ctx.resolver.resolve(Some("sess-1"), None, None).await.unwrap();
+    let after = ctx
+        .resolver
+        .resolve(Some("sess-1"), None, None)
+        .await
+        .unwrap();
     assert_eq!(after.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(after.feature_set_ids, vec![ctx.fs_custom_id.clone()]);
 }

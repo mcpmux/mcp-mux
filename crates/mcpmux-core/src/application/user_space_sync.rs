@@ -381,7 +381,11 @@ mod tests {
             fail_ids.extend(server_ids.iter().map(|id| (*id).to_string()));
         }
 
-        async fn get_server_by_server_id(&self, space_id: &str, server_id: &str) -> Option<InstalledServer> {
+        async fn get_server_by_server_id(
+            &self,
+            space_id: &str,
+            server_id: &str,
+        ) -> Option<InstalledServer> {
             self.servers
                 .read()
                 .await
@@ -401,7 +405,10 @@ mod tests {
             Ok(self.servers.read().await.clone())
         }
 
-        async fn list_for_space(&self, space_id: &str) -> crate::repository::RepoResult<Vec<InstalledServer>> {
+        async fn list_for_space(
+            &self,
+            space_id: &str,
+        ) -> crate::repository::RepoResult<Vec<InstalledServer>> {
             Ok(self
                 .servers
                 .read()
@@ -470,7 +477,10 @@ mod tests {
             Ok(())
         }
 
-        async fn list_enabled(&self, space_id: &str) -> crate::repository::RepoResult<Vec<InstalledServer>> {
+        async fn list_enabled(
+            &self,
+            space_id: &str,
+        ) -> crate::repository::RepoResult<Vec<InstalledServer>> {
             Ok(self
                 .servers
                 .read()
@@ -617,7 +627,10 @@ mod tests {
                 file_path: file_path.clone()
             }
         );
-        assert_eq!(adopted.server_name.as_deref(), Some("Home Assistant Config"));
+        assert_eq!(
+            adopted.server_name.as_deref(),
+            Some("Home Assistant Config")
+        );
     }
 
     #[tokio::test]

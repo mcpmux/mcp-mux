@@ -251,7 +251,11 @@ async fn pending_when_session_has_no_roots_and_capability_unknown() {
     // on_initialized resolved to "no roots + no grants — deny" and the
     // user saw only meta tools until reconnect.
     let f = Fixture::new().await;
-    let r = f.resolver.resolve(Some("orphan"), None, None).await.unwrap();
+    let r = f
+        .resolver
+        .resolve(Some("orphan"), None, None)
+        .await
+        .unwrap();
     assert_eq!(r.source, ResolutionSource::PendingRoots);
     assert!(r.feature_set_ids.is_empty());
 }
@@ -263,7 +267,11 @@ async fn default_when_session_explicitly_rootless_and_no_grants() {
     // so settle straight on Unbound (no grace wait needed).
     let f = Fixture::new().await;
     f.session_roots.set_roots_capable("rootless", false);
-    let r = f.resolver.resolve(Some("rootless"), None, None).await.unwrap();
+    let r = f
+        .resolver
+        .resolve(Some("rootless"), None, None)
+        .await
+        .unwrap();
     assert_eq!(r.source, ResolutionSource::Unbound);
     assert!(r.feature_set_ids.is_empty());
 }
@@ -384,7 +392,11 @@ async fn no_inheritance_child_of_bound_parent_falls_back_to_default() {
     // The parent's own exact root still resolves to its binding.
     f.session_roots.set("parent", [parent]);
     f.session_roots.set_roots_capable("parent", true);
-    let rp = f.resolver.resolve(Some("parent"), None, None).await.unwrap();
+    let rp = f
+        .resolver
+        .resolve(Some("parent"), None, None)
+        .await
+        .unwrap();
     assert_eq!(rp.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(rp.feature_set_ids, vec![f.fs_a_id]);
 }
@@ -649,7 +661,10 @@ async fn pending_roots_grace_lapse_falls_back_to_space_default_not_grants() {
         .unwrap();
 
     f.session_roots.set_roots_capable("s", true); // capable, but no roots ever arrive
-    let r = resolver.resolve(Some("s"), Some(client_id), None).await.unwrap();
+    let r = resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
     assert_eq!(r.source, ResolutionSource::Unbound);
     assert!(r.feature_set_ids.is_empty());
 }
@@ -692,8 +707,16 @@ async fn two_sessions_on_different_roots_resolve_independently() {
     f.session_roots.set("sess-b", [root_b]);
     f.session_roots.set_roots_capable("sess-b", true);
 
-    let ra = f.resolver.resolve(Some("sess-a"), None, None).await.unwrap();
-    let rb = f.resolver.resolve(Some("sess-b"), None, None).await.unwrap();
+    let ra = f
+        .resolver
+        .resolve(Some("sess-a"), None, None)
+        .await
+        .unwrap();
+    let rb = f
+        .resolver
+        .resolve(Some("sess-b"), None, None)
+        .await
+        .unwrap();
     assert_eq!(ra.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(rb.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(ra.feature_set_ids, vec![f.fs_a_id.clone()]);
@@ -720,8 +743,16 @@ async fn two_sessions_on_same_root_resolve_to_the_same_binding() {
         f.session_roots.set_roots_capable(s, true);
     }
 
-    let r1 = f.resolver.resolve(Some("sess-1"), None, None).await.unwrap();
-    let r2 = f.resolver.resolve(Some("sess-2"), None, None).await.unwrap();
+    let r1 = f
+        .resolver
+        .resolve(Some("sess-1"), None, None)
+        .await
+        .unwrap();
+    let r2 = f
+        .resolver
+        .resolve(Some("sess-2"), None, None)
+        .await
+        .unwrap();
     assert_eq!(r1.feature_set_ids, vec![f.fs_a_id.clone()]);
     assert_eq!(r2.feature_set_ids, vec![f.fs_a_id.clone()]);
     assert_eq!(r1.space_id, r2.space_id);

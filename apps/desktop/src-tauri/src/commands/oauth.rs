@@ -768,9 +768,7 @@ pub async fn register_api_key_client(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| {
-            uuid::Uuid::parse_str(s).map_err(|_| format!("Invalid locked_space_id: {s}"))
-        })
+        .map(|s| uuid::Uuid::parse_str(s).map_err(|_| format!("Invalid locked_space_id: {s}")))
         .transpose()?;
     if let Some(space_id) = locked_space {
         repo.set_locked_space(&client_id, Some(space_id))

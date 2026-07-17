@@ -16,7 +16,9 @@ use super::registry::{MetaTool, MetaToolCall, MetaToolError};
 pub struct BindCurrentWorkspaceTool;
 
 /// Machine identity for this bind — header, then OAuth client machine, then gateway local.
-async fn effective_machine_for_bind(call: &MetaToolCall<'_>) -> Result<Option<Uuid>, MetaToolError> {
+async fn effective_machine_for_bind(
+    call: &MetaToolCall<'_>,
+) -> Result<Option<Uuid>, MetaToolError> {
     call.ctx
         .resolver
         .effective_machine_id(Some(call.client_id), call.request_machine_id)
@@ -39,11 +41,7 @@ async fn find_existing_binding_for_bind(
             .map_err(|e| MetaToolError::Internal(e.to_string()));
     }
     binding_repo
-        .find_longest_prefix_match(
-            space_id,
-            Some(client_id),
-            &[normalized.to_string()],
-        )
+        .find_longest_prefix_match(space_id, Some(client_id), &[normalized.to_string()])
         .await
         .map_err(|e| MetaToolError::Internal(e.to_string()))
 }
@@ -73,10 +71,7 @@ async fn bind_tool_result(input: BindToolResultInput<'_>) -> Result<CallToolResu
         )
         .await
         .map_err(|e| MetaToolError::Internal(e.to_string()))?;
-    let active = resolved
-        .feature_set_ids
-        .iter()
-        .any(|id| id == &fs_id_str);
+    let active = resolved.feature_set_ids.iter().any(|id| id == &fs_id_str);
 
     let mut body = json!({
         "ok": true,

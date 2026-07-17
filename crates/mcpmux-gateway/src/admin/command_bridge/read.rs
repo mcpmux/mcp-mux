@@ -428,12 +428,7 @@ pub async fn get_workspace_effective_features(
             binding.space_id,
             binding.feature_set_ids,
         ),
-        None => (
-            "unbound".to_string(),
-            None,
-            default_space.id,
-            vec![],
-        ),
+        None => ("unbound".to_string(), None, default_space.id, vec![]),
     };
 
     let space = ctx

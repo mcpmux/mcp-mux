@@ -13,10 +13,10 @@ use futures::FutureExt;
 use mcpmux_core::{
     normalize_workspace_root, Client, DomainEvent, EmbeddingRecord, EmbeddingRepository,
     FeatureSet, FeatureSetMember, FeatureSetRepository, InboundMcpClientRepository,
-    InputDefinition, InstalledServer, InstalledServerRepository, LogConfig, Machine, MachineRepository,
-    MemberMode, MemberType, ServerDefinition, ServerFeature, ServerFeatureRepository, ServerLogManager,
-    ServerSource, SpaceRepository, TransportConfig, TransportMetadata, WorkspaceBinding,
-    WorkspaceBindingRepository,
+    InputDefinition, InstalledServer, InstalledServerRepository, LogConfig, Machine,
+    MachineRepository, MemberMode, MemberType, ServerDefinition, ServerFeature,
+    ServerFeatureRepository, ServerLogManager, ServerSource, SpaceRepository, TransportConfig,
+    TransportMetadata, WorkspaceBinding, WorkspaceBindingRepository,
 };
 use mcpmux_gateway::pool::{
     CachedFeatures, ConnectionService, FeatureService, OutboundOAuthManager, ServerKey,
@@ -176,7 +176,11 @@ async fn seed_diagnose_servers(f: &Fixture) {
 
 impl Fixture {
     pub(crate) async fn new() -> Self {
-        Self::new_with_db(Arc::new(Mutex::new(Database::open_in_memory().unwrap())), None).await
+        Self::new_with_db(
+            Arc::new(Mutex::new(Database::open_in_memory().unwrap())),
+            None,
+        )
+        .await
     }
 
     /// Gateway fixture with `local_machine_id` set (machine row seeded in DB).
@@ -2064,7 +2068,9 @@ async fn unbound_session_lists_bind_current_workspace() {
         .map(|t| t.name.to_string())
         .collect();
     assert!(
-        advertised.iter().any(|n| n == "mcpmux_bind_current_workspace"),
+        advertised
+            .iter()
+            .any(|n| n == "mcpmux_bind_current_workspace"),
         "Unbound sessions must advertise bind in tools/list: {advertised:?}"
     );
 }

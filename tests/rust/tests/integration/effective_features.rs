@@ -152,7 +152,11 @@ impl Ctx {
     /// The tools a session actually sees — the exact two-step the request
     /// handler runs: resolve the mapping, then pull its FS-filtered tools.
     async fn effective_tools(&self, session_id: &str) -> Vec<String> {
-        let resolved = self.resolver.resolve(Some(session_id), None, None).await.unwrap();
+        let resolved = self
+            .resolver
+            .resolve(Some(session_id), None, None)
+            .await
+            .unwrap();
         let tools = self
             .feature_service
             .get_tools_for_grants(&self.space_id_str, &resolved.feature_set_ids)
@@ -263,7 +267,11 @@ async fn empty_mapping_yields_zero_effective_tools() {
     ctx.session_roots.set("sess", [root]);
     ctx.session_roots.set_roots_capable("sess", true);
 
-    let resolved = ctx.resolver.resolve(Some("sess"), None, None).await.unwrap();
+    let resolved = ctx
+        .resolver
+        .resolve(Some("sess"), None, None)
+        .await
+        .unwrap();
     assert_eq!(resolved.source, ResolutionSource::WorkspaceBinding);
     assert!(resolved.feature_set_ids.is_empty());
     assert!(ctx.effective_tools("sess").await.is_empty());
@@ -296,7 +304,11 @@ async fn unbound_session_returns_no_tools() {
     ctx.session_roots.set("sess", [root]);
     ctx.session_roots.set_roots_capable("sess", true);
 
-    let resolved = ctx.resolver.resolve(Some("sess"), None, None).await.unwrap();
+    let resolved = ctx
+        .resolver
+        .resolve(Some("sess"), None, None)
+        .await
+        .unwrap();
     assert_eq!(resolved.source, ResolutionSource::Unbound);
     assert!(resolved.feature_set_ids.is_empty());
     assert!(ctx.effective_tools("sess").await.is_empty());
@@ -332,7 +344,11 @@ async fn empty_starter_grants_nothing_to_unbound_session() {
     ctx.session_roots.set("sess", [root]);
     ctx.session_roots.set_roots_capable("sess", true);
 
-    let resolved = ctx.resolver.resolve(Some("sess"), None, None).await.unwrap();
+    let resolved = ctx
+        .resolver
+        .resolve(Some("sess"), None, None)
+        .await
+        .unwrap();
     assert_eq!(resolved.source, ResolutionSource::Unbound);
     assert!(resolved.feature_set_ids.is_empty());
     assert!(ctx.effective_tools("sess").await.is_empty());

@@ -8,9 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use mcpmux_core::{
-    normalize_optional_metadata, validate_workspace_root as validate_root, BindingType, DomainEvent,
-    FeatureSet, FeatureSetType, MemberMode, MemberType, ServerFeature, WorkspaceBinding,
-    WorkspaceRootValidation,
+    normalize_optional_metadata, validate_workspace_root as validate_root, BindingType,
+    DomainEvent, FeatureSet, FeatureSetType, MemberMode, MemberType, ServerFeature,
+    WorkspaceBinding, WorkspaceRootValidation,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -411,8 +411,7 @@ pub async fn create_workspace_binding(
         .await
         .map_err(|e| e.to_string())?;
     if existing.iter().any(|b| {
-        b.binding_type == binding_type
-            && binding_scope_conflicts(b, &normalized, machine_id, None)
+        b.binding_type == binding_type && binding_scope_conflicts(b, &normalized, machine_id, None)
     }) {
         let noun = if binding_type == BindingType::Id {
             "client mapping"

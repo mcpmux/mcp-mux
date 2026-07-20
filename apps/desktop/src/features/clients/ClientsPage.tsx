@@ -41,6 +41,7 @@ import {
 } from '@/lib/api/gateway';
 import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
 import { ClientApiKeysSection } from './ClientApiKeysSection';
+import { CursorBridgeSection } from './CursorBridgeSection';
 import {
   isStarterFeatureSet,
   listFeatureSetsBySpace,
@@ -331,7 +332,13 @@ export default function ClientsPage() {
       )}
 
       <div className="flex-1 overflow-auto px-8 py-8">
-        <div className="mx-auto max-w-[2000px]">
+        <div className="mx-auto max-w-[2000px] space-y-8">
+          <CursorBridgeSection
+            gatewayUrl={gatewayStatus.url || 'http://localhost:45818'}
+            gatewayRunning={gatewayStatus.running}
+            onRegistered={() => void refreshClients()}
+          />
+
           {isLoading ? (
             <div className="flex h-64 items-center justify-center">
               <Loader2 className="text-primary-500 h-8 w-8 animate-spin" />

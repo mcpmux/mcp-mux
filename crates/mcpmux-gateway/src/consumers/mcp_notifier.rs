@@ -330,6 +330,41 @@ impl MCPNotifier {
         );
     }
 
+    /// Drop bookkeeping for every live session belonging to a deleted client.
+    ///
+    /// rmcp doesn't expose a way to forcibly close a `Peer`'s underlying
+    /// transport from here (only `RunningService`, which we don't hold, can
+    /// do that) — so this can't hang up the socket. What it *can* do is stop
+    /// fanning out further notifications to it immediately, instead of
+    /// waiting on the lazy `is_transport_closed()` GC pass. The actual
+    /// connection gets cut on the client's next request via the DB-backed
+    /// revocation check in `oauth_middleware`.
+    fn drop_sessions_for_client(&self, client_id: &str) {
+        let removed: Vec<String> = {
+            let mut sessions = self.sessions.write();
+            let dead: Vec<String> = sessions
+                .iter()
+                .filter(|(_, e)| e.client_id == client_id)
+                .map(|(sid, _)| sid.clone())
+                .collect();
+            for sid in &dead {
+                sessions.remove(sid);
+            }
+            dead
+        };
+        if removed.is_empty() {
+            return;
+        }
+        for sid in &removed {
+            self.feature_set_resolver.session_roots().remove(sid);
+        }
+        info!(
+            %client_id,
+            removed = removed.len(),
+            "[MCPNotifier] 🗑️ Dropped sessions for deleted client"
+        );
+    }
+
     /// Unregister a session.
     ///
     /// Called when a client disconnects or the session closes.
@@ -523,6 +558,14 @@ impl MCPNotifier {
     /// This is enterprise-grade: consumers interpret events based on their context,
     /// not producers dictating what to do.
     async fn handle_event(&self, event: DomainEvent) {
+        // Revocation teardown runs ahead of (and regardless of) the
+        // capability-change filter below: a deleted client never implies a
+        // list_changed notification, but we still want its bookkeeping gone
+        // immediately rather than waiting for the next lazy GC pass.
+        if let DomainEvent::ClientDeleted { ref client_id } = event {
+            self.drop_sessions_for_client(client_id);
+        }
+
         // Only handle events that affect MCP capabilities
         if !event.affects_mcp_capabilities() {
             trace!(

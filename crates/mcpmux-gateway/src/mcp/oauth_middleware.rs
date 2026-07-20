@@ -123,6 +123,33 @@ pub async fn mcp_oauth_middleware(
     // key); when auth is disabled, fall back to an anonymous identity on the
     // default space.
     let authed_client_id = claims.map(|c| c.client_id).or(api_key_client_id);
+
+    // Revocation check: a JWT access token is a stateless, self-contained
+    // credential that stays cryptographically valid until it expires —
+    // deleting the client in the UI doesn't invalidate tokens it already
+    // issued. Confirm the client row still exists on every request so a
+    // revoked client is rejected on its very next call instead of continuing
+    // to work until natural token expiry.
+    let authed_client_id = match authed_client_id {
+        Some(cid) => match services
+            .dependencies
+            .inbound_client_repo
+            .get_client(&cid)
+            .await
+        {
+            Ok(Some(_)) => Some(cid),
+            Ok(None) => {
+                warn!(trace_id = %trace_id, client_id = %cid, "Client no longer registered (revoked) — rejecting");
+                None
+            }
+            Err(e) => {
+                warn!(trace_id = %trace_id, client_id = %cid, "Client lookup failed: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+
     let (client_id, space_id) = if let Some(cid) = authed_client_id {
         match services
             .space_resolver_service

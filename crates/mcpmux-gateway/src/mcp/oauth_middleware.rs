@@ -137,7 +137,29 @@ pub async fn mcp_oauth_middleware(
             .get_client(&cid)
             .await
         {
-            Ok(Some(_)) => Some(cid),
+            Ok(Some(_)) => {
+                // `last_seen` otherwise only gets stamped by the /oauth/token
+                // grant handlers, which API-key clients (static `mcpk_`
+                // bearer, no OAuth dance) never hit — leaving their
+                // Connections-page status dot permanently "never seen"
+                // regardless of how active they are. Stamp it here instead,
+                // from the identity every request already resolves.
+                //
+                // ponytail: writes unconditionally on every request (no
+                // throttling) — fine for local single-user SQLite; if this
+                // ever shows up in profiling, bucket it to e.g. 10s windows
+                // using the just-fetched `client.last_seen` instead of
+                // writing every time.
+                if let Err(e) = services
+                    .dependencies
+                    .inbound_client_repo
+                    .update_client_last_seen(&cid)
+                    .await
+                {
+                    warn!(trace_id = %trace_id, client_id = %cid, "Failed to update last_seen: {}", e);
+                }
+                Some(cid)
+            }
             Ok(None) => {
                 warn!(trace_id = %trace_id, client_id = %cid, "Client no longer registered (revoked) — rejecting");
                 None

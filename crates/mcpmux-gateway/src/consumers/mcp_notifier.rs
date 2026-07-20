@@ -117,6 +117,13 @@ impl SessionEntry {
     }
 }
 
+/// Sort a session's roots so two sessions on the same folder set compare equal
+/// regardless of the order the registry returns them in.
+fn sorted_roots(mut roots: Vec<String>) -> Vec<String> {
+    roots.sort();
+    roots
+}
+
 impl MCPNotifier {
     pub fn new(
         feature_set_resolver: Arc<FeatureSetResolverService>,
@@ -187,17 +194,76 @@ impl MCPNotifier {
         client_id: String,
         peer: Arc<Peer<RoleServer>>,
     ) {
-        let entry = SessionEntry::new(client_id.clone(), peer);
-        let mut sessions = self.sessions.write();
-        let is_reconnect = sessions.contains_key(&session_id);
-        sessions.insert(session_id.clone(), entry);
+        // A new session for the SAME (client_id, workspace root) supersedes any
+        // prior one. The mcp-remote bridge opens a fresh `mcp-session-id` on
+        // every reconnect but always targets one workspace root, so without
+        // this its stale sessions pile up — rmcp doesn't flip
+        // `is_transport_closed()` for them, so lazy reaping never removes them
+        // and every list_changed fans out to all of them (the 24-sessions-for-
+        // one-bridge-client amplification). Distinct roots — real multi-window
+        // editors — never match here, so they're preserved.
+        let superseded = self.collect_superseded_sessions(&session_id, &client_id);
+
+        let total_sessions = {
+            let entry = SessionEntry::new(client_id.clone(), peer);
+            let mut sessions = self.sessions.write();
+            for stale in &superseded {
+                sessions.remove(stale);
+            }
+            sessions.insert(session_id.clone(), entry);
+            sessions.len()
+        };
+
+        // Drop the superseded sessions' pinned roots so the resolver stops
+        // consulting them (mirrors reap_dead_sessions' registry cleanup).
+        let roots = self.feature_set_resolver.session_roots();
+        for stale in &superseded {
+            roots.remove(stale);
+        }
+
+        if !superseded.is_empty() {
+            info!(
+                %session_id,
+                %client_id,
+                superseded = superseded.len(),
+                "[MCPNotifier] ♻️ Superseded prior same-root sessions on reconnect"
+            );
+        }
         info!(
             %session_id,
             %client_id,
-            is_reconnect,
-            total_sessions = sessions.len(),
+            total_sessions,
             "[MCPNotifier] 📡 Registered session (stream not yet active)"
         );
+    }
+
+    /// Find prior sessions the newly-registering one supersedes: same OAuth
+    /// `client_id` AND same resolved workspace root.
+    ///
+    /// Returns empty when the new session has no known root yet — clients that
+    /// route via probed MCP `roots` (rather than the `X-Mcpmux-Workspace`
+    /// header) haven't responded to `roots/list` at registration time, so
+    /// there's nothing safe to match against and nothing is evicted.
+    fn collect_superseded_sessions(&self, new_session_id: &str, client_id: &str) -> Vec<String> {
+        let roots = self.feature_set_resolver.session_roots();
+        let new_root = roots.get(new_session_id).map(sorted_roots);
+        let Some(new_root) = new_root.filter(|r| !r.is_empty()) else {
+            return Vec::new();
+        };
+
+        let same_client: Vec<String> = {
+            let sessions = self.sessions.read();
+            sessions
+                .iter()
+                .filter(|(sid, e)| e.client_id == client_id && sid.as_str() != new_session_id)
+                .map(|(sid, _)| sid.clone())
+                .collect()
+        };
+
+        same_client
+            .into_iter()
+            .filter(|sid| roots.get(sid).map(sorted_roots).as_deref() == Some(new_root.as_slice()))
+            .collect()
     }
 
     /// Mark that a client has an active SSE stream and can receive notifications

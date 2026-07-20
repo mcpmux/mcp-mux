@@ -15,6 +15,16 @@ By default, McpMux serves MCP on **loopback only** (`http://localhost:45818/mcp`
 
 Local and remote MCP share the same gateway process. Remote clients use your **Public gateway URL**; local clients can keep using `localhost`.
 
+### Local Cursor: global bridge vs direct HTTP
+
+On the same machine, Cursor can connect via a **global** `~/.cursor/mcp.json` entry
+that spawns `npx mcp-remote` with `${workspaceFolder}` in the bridge args — no
+per-repo config files. Generate the snippet from **Connections → Global Cursor
+setup** in the desktop app. See
+[Cursor workspace bridge (manual test)](/docs/manual/cursor-workspace-bridge) for
+verification steps. The per-repo header install (Workspaces → Connect apps) remains
+the fallback when `npx` is unavailable.
+
 ## Recommended Layout
 
 Use **two hostnames** — one for MCP traffic, one for the admin UI:

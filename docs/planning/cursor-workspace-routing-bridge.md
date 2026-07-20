@@ -1,7 +1,7 @@
 # Cursor Workspace Routing via Global `mcp-remote` Bridge
 
 **Last Updated:** Jul 20, 2026
-**Status:** Phase 1 complete — GO for Phase 2
+**Status:** Complete (Phases 1–3 on `dev-rebased`)
 **Branch:** `dev-rebased`
 
 ### Phase 1 spike results (Jul 20, 2026)

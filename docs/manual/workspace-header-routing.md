@@ -12,6 +12,22 @@ state toggle, and the install panel (see _Automated tests_ at the end). The
 steps below verify the end-to-end behavior that automation can't — a real
 client connecting through the gateway.
 
+## Recommended: global Cursor bridge (no per-repo files)
+
+For Cursor on the same machine as McpMux, prefer the **global bridge** over
+per-repo `.cursor/mcp.json` installs:
+
+1. **Connections → Global Cursor setup** — generate and copy the
+   `~/.cursor/mcp.json` snippet (uses `npx mcp-remote` with
+   `${workspaceFolder}` in bridge args).
+2. Paste into `~/.cursor/mcp.json`, reload MCP in Cursor.
+3. Follow the regression steps in
+   [`cursor-workspace-bridge.md`](./cursor-workspace-bridge.md).
+
+This avoids maintaining a `.cursor/mcp.json` + `.gitignore` entry in every
+repo. The per-repo install path below (sections A–B) remains a supported
+fallback when you cannot use `npx`/`mcp-remote`.
+
 ## Prerequisites
 
 - `pnpm dev` (desktop app + gateway) running.

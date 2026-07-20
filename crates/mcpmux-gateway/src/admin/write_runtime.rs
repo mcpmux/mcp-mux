@@ -61,6 +61,7 @@ pub trait GatewayWriteRuntime: Send + Sync {
         &self,
         client_id: String,
         client_alias: Option<String>,
+        client_icon: Option<String>,
     ) -> Result<Value>;
     async fn delete_oauth_client(&self, client_id: String) -> Result<Value>;
     async fn grant_oauth_client_feature_set(
@@ -279,6 +280,7 @@ impl GatewayWriteRuntime for LiveGatewayWriteRuntime {
         &self,
         _client_id: String,
         _client_alias: Option<String>,
+        _client_icon: Option<String>,
     ) -> Result<Value> {
         Err(gateway_write_unavailable())
     }
@@ -436,6 +438,7 @@ impl GatewayWriteRuntime for StubGatewayWriteRuntime {
         &self,
         _client_id: String,
         _client_alias: Option<String>,
+        _client_icon: Option<String>,
     ) -> Result<Value> {
         Err(gateway_not_running())
     }

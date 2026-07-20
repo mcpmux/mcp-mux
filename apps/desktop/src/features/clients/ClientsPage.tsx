@@ -12,6 +12,7 @@ import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
 import opencodeIcon from '@/assets/client-icons/opencode.svg';
 import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
 import { ClientBrandIcon } from '@/components/ClientBrandIcon';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
 import {
   Laptop,
@@ -62,7 +63,18 @@ const CLIENT_ICON_ASSETS: Record<string, string> = {
   'android-studio': androidStudioIcon,
 };
 
-function ClientIcon({ logo_uri, client_name }: { logo_uri?: string | null; client_name: string }) {
+function ClientIcon({
+  logo_uri,
+  client_name,
+  client_icon,
+}: {
+  logo_uri?: string | null;
+  client_name: string;
+  client_icon?: string | null;
+}) {
+  if (client_icon) {
+    return <span>{client_icon}</span>;
+  }
   const knownKey = resolveKnownClientKey(client_name);
   // opencode ships theme-specific marks; render our bundled official logo
   // (overriding any outdated self-reported logo_uri).
@@ -123,6 +135,7 @@ export default function ClientsPage() {
   const [selected, setSelected] = useState<OAuthClient | null>(null);
   const [showRegister, setShowRegister] = useState(false);
   const [editAlias, setEditAlias] = useState('');
+  const [editIcon, setEditIcon] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>({
     running: false,
@@ -204,6 +217,7 @@ export default function ClientsPage() {
   const openPanel = (client: OAuthClient) => {
     setSelected(client);
     setEditAlias(client.client_alias || '');
+    setEditIcon(client.client_icon || '');
   };
 
   const handleSaveAlias = async () => {
@@ -212,9 +226,11 @@ export default function ClientsPage() {
     try {
       const updated = await updateOAuthClient(selected.client_id, {
         client_alias: editAlias || undefined,
+        client_icon: editIcon || undefined,
       });
       setClients((prev) => prev.map((c) => (c.client_id === updated.client_id ? updated : c)));
       setSelected(updated);
+      setEditIcon(updated.client_icon || '');
       success(t('toast.saved'), t('toast.savedBody', { name: updated.client_alias || updated.client_name }));
     } catch (e) {
       showError(t('toast.saveFailed'), e instanceof Error ? e.message : String(e));
@@ -374,7 +390,11 @@ export default function ClientsPage() {
                     <CardContent className="p-6">
                       <div className="mb-4 flex items-start gap-4">
                         <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] text-3xl">
-                          <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
+                          <ClientIcon
+                            logo_uri={client.logo_uri}
+                            client_name={client.client_name}
+                            client_icon={client.client_icon}
+                          />
                         </div>
                         <div className="min-w-0 flex-1">
                           <h3 className="mb-1 truncate text-lg font-semibold">{displayName}</h3>
@@ -417,6 +437,8 @@ export default function ClientsPage() {
             client={selected}
             editAlias={editAlias}
             setEditAlias={setEditAlias}
+            editIcon={editIcon}
+            setEditIcon={setEditIcon}
             isSaving={isSaving}
             defaultSpaceId={defaultSpace?.id ?? null}
             onClose={() => setSelected(null)}
@@ -517,6 +539,8 @@ interface SidePanelProps {
   client: OAuthClient;
   editAlias: string;
   setEditAlias: (v: string) => void;
+  editIcon: string;
+  setEditIcon: (v: string) => void;
   isSaving: boolean;
   defaultSpaceId: string | null;
   onClose: () => void;
@@ -531,6 +555,8 @@ function SidePanel({
   client,
   editAlias,
   setEditAlias,
+  editIcon,
+  setEditIcon,
   isSaving,
   defaultSpaceId,
   onClose,
@@ -542,6 +568,7 @@ function SidePanel({
 }: SidePanelProps) {
   const { t } = useTranslation(['clients', 'nav']);
   const aliasDirty = (client.client_alias || '') !== editAlias;
+  const iconDirty = (client.client_icon || '') !== editIcon;
 
   return (
     <div className="animate-in slide-in-from-right fixed bottom-0 right-0 top-0 z-50 flex w-full min-w-[420px] max-w-[480px] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl duration-300">
@@ -549,7 +576,11 @@ function SidePanel({
         <div className="flex items-start justify-between">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] text-2xl">
-              <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
+              <ClientIcon
+                logo_uri={client.logo_uri}
+                client_name={client.client_name}
+                client_icon={editIcon}
+              />
             </div>
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-lg font-bold">
@@ -581,19 +612,25 @@ function SidePanel({
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
             {t('panel.displayName')}
           </h3>
-          <div className="flex gap-2">
+          <div className="flex items-end gap-2">
+            <EmojiPickerButton
+              value={editIcon}
+              onChange={setEditIcon}
+              disabled={isSaving}
+              testId="client-icon-picker"
+            />
             <input
               type="text"
               value={editAlias}
               onChange={(e) => setEditAlias(e.target.value)}
               placeholder={client.client_name}
-              className="focus:ring-primary-500 focus:border-primary-500 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm focus:outline-none focus:ring-2"
+              className="focus:ring-primary-500 focus:border-primary-500 h-10 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 text-sm focus:outline-none focus:ring-2"
             />
             <Button
               size="sm"
               variant="primary"
               onClick={onSaveAlias}
-              disabled={!aliasDirty || isSaving}
+              disabled={(!aliasDirty && !iconDirty) || isSaving}
               data-testid="client-save-alias-btn"
             >
               {isSaving ? (

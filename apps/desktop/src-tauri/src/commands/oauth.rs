@@ -468,6 +468,7 @@ pub async fn get_oauth_clients(
             registration_type: client.registration_type.as_str().to_string(),
             client_name: client.client_name,
             client_alias: client.client_alias,
+            client_icon: client.client_icon,
             redirect_uris: client.redirect_uris,
             scope: client.scope,
             approved: client.approved,
@@ -526,6 +527,7 @@ pub struct OAuthClientInfo {
     pub registration_type: String,
     pub client_name: String,
     pub client_alias: Option<String>,
+    pub client_icon: Option<String>,
     pub redirect_uris: Vec<String>,
     pub scope: Option<String>,
 
@@ -570,11 +572,13 @@ pub struct OAuthClientInfo {
 
 /// Request to update client settings.
 ///
-/// Only the alias is user-editable now — connection mode / space pin no
-/// longer exist.
+/// Only the alias and icon are user-editable now — connection mode /
+/// space pin no longer exist.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateClientSettingsRequest {
     pub client_alias: Option<String>,
+    #[serde(default)]
+    pub client_icon: Option<String>,
 }
 
 /// Update an OAuth client's settings (direct service access)
@@ -599,6 +603,9 @@ pub async fn update_oauth_client(
     repo.update_client_alias(&client_id, settings.client_alias)
         .await
         .map_err(|e| format!("Failed to update client: {}", e))?;
+    repo.update_client_icon(&client_id, settings.client_icon)
+        .await
+        .map_err(|e| format!("Failed to update client: {}", e))?;
 
     info!("[OAuth] Updated client: {}", client_id);
 
@@ -617,6 +624,7 @@ pub async fn update_oauth_client(
         registration_type: updated_client.registration_type.as_str().to_string(),
         client_name: updated_client.client_name,
         client_alias: updated_client.client_alias,
+        client_icon: updated_client.client_icon,
         redirect_uris: updated_client.redirect_uris,
         scope: updated_client.scope,
         approved: updated_client.approved,
@@ -759,6 +767,7 @@ pub async fn register_api_key_client(
         reports_roots: false,
         roots_capability_known: false,
         machine_id: None,
+        client_icon: None,
     };
     repo.save_client(&client)
         .await

@@ -229,6 +229,8 @@ pub struct MetaToolRevokeBody {
 #[derive(Debug, Deserialize)]
 pub struct OAuthClientUpdateBody {
     pub client_alias: Option<String>,
+    #[serde(default)]
+    pub client_icon: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1180,7 +1182,7 @@ pub async fn update_oauth_client(
     body: OAuthClientUpdateBody,
 ) -> Result<Value> {
     ctx.gateway_writes
-        .update_oauth_client(client_id, body.client_alias)
+        .update_oauth_client(client_id, body.client_alias, body.client_icon)
         .await
 }
 

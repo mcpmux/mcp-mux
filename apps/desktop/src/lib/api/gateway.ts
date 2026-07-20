@@ -165,6 +165,8 @@ export interface OAuthClient {
   registration_type: RegistrationType;
   client_name: string;
   client_alias: string | null;
+  /** User-set emoji override for the Connections-page icon; `null` falls back to logo_uri / known-client resolution. */
+  client_icon: string | null;
   redirect_uris: string[];
   scope: string | null;
   
@@ -204,10 +206,11 @@ export interface OAuthClient {
 }
 
 /**
- * Update client settings request. Only the display alias is editable.
+ * Update client settings request. Only the display alias and icon are editable.
  */
 export interface UpdateClientRequest {
   client_alias?: string;
+  client_icon?: string;
 }
 
 /**

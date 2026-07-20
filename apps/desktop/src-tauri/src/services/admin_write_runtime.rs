@@ -250,11 +250,15 @@ impl GatewayWriteRuntime for DesktopGatewayWriteRuntime {
         &self,
         client_id: String,
         client_alias: Option<String>,
+        client_icon: Option<String>,
     ) -> anyhow::Result<Value> {
         let client = update_oauth_client(
             self.app_handle.state(),
             client_id,
-            UpdateClientSettingsRequest { client_alias },
+            UpdateClientSettingsRequest {
+                client_alias,
+                client_icon,
+            },
         )
         .await
         .map_err(|e| anyhow::anyhow!(e))?;

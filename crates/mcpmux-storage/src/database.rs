@@ -223,6 +223,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "inbound_client_locked_space",
         sql: include_str!("migrations/038_inbound_client_locked_space.sql"),
     },
+    Migration {
+        version: 39,
+        name: "inbound_client_icon",
+        sql: include_str!("migrations/039_inbound_client_icon.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

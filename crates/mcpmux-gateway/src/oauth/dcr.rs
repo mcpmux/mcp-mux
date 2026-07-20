@@ -141,6 +141,7 @@ fn build_inbound_client_from_request(
         reports_roots: false,
         roots_capability_known: false,
         machine_id: None,
+        client_icon: None,
     }
 }
 

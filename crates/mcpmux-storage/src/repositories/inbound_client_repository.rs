@@ -111,6 +111,10 @@ pub struct InboundClient {
 
     /// Machine this OAuth client is assigned to for per-machine binding lookup.
     pub machine_id: Option<Uuid>,
+
+    /// User-set emoji override for the Connections-page icon. `None` falls
+    /// back to `logo_uri` / known-client-name resolution in the UI.
+    pub client_icon: Option<String>,
 }
 
 /// Authorization code (pending exchange)
@@ -210,6 +214,7 @@ impl InboundClientRepository {
         let reports_roots_int: i32 = row.get::<_, Option<i32>>(20)?.unwrap_or(0);
         let roots_capability_known_int: i32 = row.get::<_, Option<i32>>(21)?.unwrap_or(0);
         let machine_id_str: Option<String> = row.get(22)?;
+        let client_icon: Option<String> = row.get(23)?;
 
         Ok(InboundClient {
             client_id: row.get(0)?,
@@ -244,6 +249,7 @@ impl InboundClientRepository {
             reports_roots: reports_roots_int != 0,
             roots_capability_known: roots_capability_known_int != 0,
             machine_id: machine_id_str.and_then(|s| Uuid::parse_str(&s).ok()),
+            client_icon,
         })
     }
 
@@ -254,7 +260,7 @@ impl InboundClientRepository {
          redirect_uris, grant_types, response_types, token_endpoint_auth_method, scope,
          metadata_url, metadata_cached_at, metadata_cache_ttl,
          last_seen, created_at, updated_at, approved, reports_roots, roots_capability_known,
-         machine_id";
+         machine_id, client_icon";
 
     // =========================================================================
     // Client Operations (unified inbound_clients table)
@@ -533,6 +539,25 @@ impl InboundClientRepository {
             )?;
         }
         debug!("[OAuth] Updated alias for client: {}", client_id);
+        self.get_client(client_id).await
+    }
+
+    /// Update a client's emoji icon override.
+    pub async fn update_client_icon(
+        &self,
+        client_id: &str,
+        client_icon: Option<String>,
+    ) -> Result<Option<InboundClient>> {
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        {
+            let db = self.db.lock().await;
+            let conn = db.connection();
+            conn.execute(
+                "UPDATE inbound_clients SET client_icon = ?1, updated_at = ?2 WHERE client_id = ?3",
+                params![client_icon, now, client_id],
+            )?;
+        }
+        debug!("[OAuth] Updated icon for client: {}", client_id);
         self.get_client(client_id).await
     }
 

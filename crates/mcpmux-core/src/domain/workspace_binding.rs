@@ -283,6 +283,14 @@ pub fn normalize_workspace_root(input: &str) -> String {
     // drive-letter detector can fire on the following byte.
     let cleaned = strip_leading_slash_before_drive(&decoded);
 
+    // Some clients report roots using shell-style `~` shorthand instead of
+    // the real absolute path (observed from Cursor's `roots/list` and from
+    // `${workspaceFolder}` substitution through the mcp-remote bridge — see
+    // docs/manual/cursor-workspace-bridge.md). Gateway and client share a
+    // filesystem in that scenario, so expand against *this* machine's home
+    // directory before absoluteness detection runs.
+    let cleaned = expand_home_tilde(&cleaned);
+
     match detect_style(&cleaned) {
         Some(PathStyle::Posix) => normalize_posix(&cleaned),
         Some(PathStyle::WindowsDrive) => normalize_windows_drive(&cleaned),
@@ -356,6 +364,26 @@ fn reconstruct_uri_path(rest: &str) -> String {
     // A real remote host → UNC path `\\host\share\...`. Emit the `\\host`
     // prefix; normalize_windows_unc converts the remaining separators.
     format!("\\\\{host}{path}")
+}
+
+/// Expand a leading `~` (or `~/...`) to the current user's home directory.
+///
+/// Only the bare `~` prefix is handled — `~otheruser/...` is left untouched
+/// (POSIX shells resolve that via the password database, which we have no
+/// business doing here, and detect_style will simply reject it as relative).
+fn expand_home_tilde(path: &str) -> String {
+    let Some(rest) = path.strip_prefix('~') else {
+        return path.to_string();
+    };
+    if !rest.is_empty() && !rest.starts_with('/') && !rest.starts_with('\\') {
+        return path.to_string();
+    }
+    let Some(home) = dirs::home_dir() else {
+        return path.to_string();
+    };
+    let home = home.to_string_lossy();
+    let home = home.trim_end_matches(['/', '\\']);
+    format!("{home}{rest}")
 }
 
 fn strip_leading_slash_before_drive(path: &str) -> String {
@@ -887,9 +915,31 @@ mod tests {
             validate_workspace_root("./proj"),
             WorkspaceRootValidation::Invalid { .. }
         ));
+        // `~otheruser/proj` isn't a bare-home shorthand — still relative.
         assert!(matches!(
-            validate_workspace_root("~/proj"),
+            validate_workspace_root("~otheruser/proj"),
             WorkspaceRootValidation::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn normalize_expands_home_tilde() {
+        let home = dirs::home_dir().expect("test environment has a home dir");
+        let home_str = home.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
+
+        assert_eq!(
+            normalize_workspace_root("~/Desktop/proj"),
+            format!("{home_str}/Desktop/proj")
+        );
+        // Bare `~` alone expands to the home dir itself.
+        assert_eq!(normalize_workspace_root("~"), home_str);
+    }
+
+    #[test]
+    fn validate_accepts_home_tilde() {
+        assert!(matches!(
+            validate_workspace_root("~/Desktop/proj"),
+            WorkspaceRootValidation::Ok { .. }
         ));
     }
 

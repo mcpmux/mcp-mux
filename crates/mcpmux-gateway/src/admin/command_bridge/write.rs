@@ -38,6 +38,11 @@ pub struct SaveSpaceConfigBody {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct UpdateServerInConfigBody {
+    pub entry: Value,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateFeatureSetBody {
     pub name: String,
     pub space_id: String,
@@ -436,6 +441,16 @@ pub async fn remove_server_from_config(
 ) -> Result<Value> {
     let removed = space::remove_server_from_config(&space_ctx(ctx), &space_id, &server_id).await?;
     as_json(removed)
+}
+
+pub async fn update_server_in_config(
+    ctx: &AdminBridgeCtx,
+    space_id: String,
+    server_id: String,
+    body: UpdateServerInConfigBody,
+) -> Result<Value> {
+    space::update_server_in_config(&space_ctx(ctx), &space_id, &server_id, body.entry).await?;
+    Ok(json!({ "ok": true }))
 }
 
 // --- Feature sets ---

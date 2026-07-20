@@ -59,6 +59,19 @@ export async function removeServerFromConfig(spaceId: string, serverId: string):
   return apiCall('remove_server_from_config', { spaceId, serverId });
 }
 
+/**
+ * Replace a custom server's entry in the space configuration file.
+ * `entry` is the standard MCP format object (command/args/env or url/headers, etc.)
+ * that goes under the server's `mcpServers` key.
+ */
+export async function updateServerInConfig(
+  spaceId: string,
+  serverId: string,
+  entry: Record<string, unknown>,
+): Promise<void> {
+  return apiCall('update_server_in_config', { spaceId, serverId, entry });
+}
+
 /** Reveal a space config file in the system editor (desktop only). */
 export async function openSpaceConfigFile(spaceId: string): Promise<void> {
   return shellOpenSpaceConfigFile(spaceId);

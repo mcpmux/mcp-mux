@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Copy, Check, Loader2 } from 'lucide-react';
+import { X, Copy, Check, Loader2, Save } from 'lucide-react';
 import type { ServerViewModel, ServerDefinition } from '../types/registry';
 import { MonacoJsonEditor } from './monaco-json-editor.component';
+import { updateServerInConfig } from '@/lib/api/spaces';
 
 const EDITOR_MOUNT_TIMEOUT_MS = 10_000;
 
 interface ServerDefinitionModalProps {
   server: ServerViewModel;
   onClose: () => void;
+  /** Called after a successful save so the caller can reload the server list. */
+  onSaved?: () => void;
 }
 
 const RUNTIME_SERVER_FIELDS = [
@@ -36,15 +39,49 @@ function extractDefinition(server: ServerViewModel): ServerDefinition {
   return copy as ServerDefinition;
 }
 
-export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModalProps) {
+/**
+ * Build the standard MCP config format (the shape that lives under a
+ * `mcpServers` key in a space JSON file) from a server's current view model.
+ * This is the editable subset — no id/source/badges or other derived fields.
+ */
+function buildEditableEntry(server: ServerViewModel): Record<string, unknown> {
+  const entry: Record<string, unknown> = {};
+
+  if (server.transport.type === 'stdio') {
+    entry.command = server.transport.command;
+    entry.args = server.transport.args;
+    entry.env = server.transport.env;
+  } else {
+    entry.url = server.transport.url;
+    entry.headers = server.transport.headers;
+  }
+
+  entry.name = server.name;
+  if (server.description) entry.description = server.description;
+  if (server.icon) entry.icon = server.icon;
+  if (server.alias) entry.alias = server.alias;
+  if (server.auth && server.auth.type !== 'none') entry.auth = server.auth;
+  if (server.transport.metadata.inputs.length > 0) {
+    entry.metadata = { inputs: server.transport.metadata.inputs };
+  }
+
+  return entry;
+}
+
+export function ServerDefinitionModal({ server, onClose, onSaved }: ServerDefinitionModalProps) {
   const { t } = useTranslation('servers');
   const [copied, setCopied] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
   const [editorMounted, setEditorMounted] = useState(false);
   const [editorLoadFailed, setEditorLoadFailed] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const definition = extractDefinition(server);
-  const json = JSON.stringify(definition, null, 2);
+  const isEditable = server.source.type === 'UserSpace';
+  const [content, setContent] = useState(() =>
+    JSON.stringify(isEditable ? buildEditableEntry(server) : extractDefinition(server), null, 2),
+  );
+  const json = content;
 
   useEffect(() => {
     const timer = setTimeout(() => setEditorReady(true), 100);
@@ -97,17 +134,48 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
     setEditorLoadFailed(true);
   };
 
+  const handleContentChange = (value: string | undefined) => {
+    if (value !== undefined) {
+      setContent(value);
+      setSaveError(null);
+    }
+  };
+
+  const handleSave = useCallback(async () => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      setSaveError(t('definitionModal.invalidJson', { message: (e as Error).message }));
+      return;
+    }
+
+    if (server.source.type !== 'UserSpace') {
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await updateServerInConfig(server.source.space_id, server.id, parsed);
+      onSaved?.();
+      onClose();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [content, onClose, onSaved, server, t]);
+
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-[rgb(var(--surface))] w-full max-w-3xl h-[70vh] rounded-xl shadow-2xl flex flex-col border border-[rgb(var(--border))] animate-in fade-in scale-in duration-150">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[rgb(var(--border))]">
           <div className="min-w-0">
-            <h3 className="text-lg font-semibold truncate">
-              {server.name}
-            </h3>
+            <h3 className="text-lg font-semibold truncate">{server.name}</h3>
             <p className="text-sm text-[rgb(var(--muted))]">
-              {t('definitionModal.subtitle')}
+              {isEditable ? t('definitionModal.subtitleEditable') : t('definitionModal.subtitle')}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -128,6 +196,20 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
                 </>
               )}
             </button>
+            {isEditable && (
+              <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-[rgb(var(--primary))] text-white hover:bg-[rgb(var(--primary))]/90 transition-colors disabled:opacity-50"
+              >
+                {isSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {t('definitionModal.save')}
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-2 hover:bg-[rgb(var(--surface-hover))] rounded-lg transition-colors"
@@ -145,8 +227,9 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
             </div>
           ) : editorLoadFailed ? (
             <textarea
-              readOnly
+              readOnly={!isEditable}
               value={json}
+              onChange={(e) => handleContentChange(e.target.value)}
               className="h-full w-full resize-none bg-[#1e1e1e] p-3 font-mono text-sm text-[#d4d4d4] focus:outline-none"
               spellCheck={false}
               aria-label={t('definitionModal.subtitle')}
@@ -154,13 +237,20 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
           ) : (
             <MonacoJsonEditor
               value={json}
-              readOnly
+              onChange={handleContentChange}
+              readOnly={!isEditable}
               onMount={handleEditorMount}
               onMountFailed={handleEditorMountFailed}
               testId="server-definition-monaco"
             />
           )}
         </div>
+
+        {saveError && (
+          <div className="border-t border-[rgb(var(--error))]/20 bg-[rgb(var(--error))]/10 px-4 py-2 text-xs text-[rgb(var(--error))]">
+            {saveError}
+          </div>
+        )}
 
         {editorLoadFailed && (
           <div className="border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-dim))] px-4 py-2 text-xs text-[rgb(var(--muted))]">

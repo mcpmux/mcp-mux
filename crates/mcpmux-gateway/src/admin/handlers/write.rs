@@ -18,7 +18,8 @@ use crate::admin::command_bridge::write::{
     SetClientMachineIdBody, SetLocalMachineIdBody, SetMembersBody, SetServerDisplayNameBody,
     SetServerEnabledBody, SetServerOAuthConnectedBody, SpaceBaseDirBody, StartupSettingsBody,
     UninstallServerBody, UpdateChannelBody, UpdateFeatureSetBody, UpdateMachineBody,
-    UploadIconBody, WorkspaceAppearanceBody, WorkspaceBindingBody, WorkspaceMappingPromptBody,
+    UpdateServerInConfigBody, UploadIconBody, WorkspaceAppearanceBody, WorkspaceBindingBody,
+    WorkspaceMappingPromptBody,
 };
 use crate::admin::handlers::error::ApiError;
 use crate::admin::router::AdminState;
@@ -92,6 +93,17 @@ pub async fn remove_server_from_config(
     Path((space_id, server_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, ApiError> {
     bridge::remove_server_from_config(&state.bridge, space_id, server_id)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
+pub async fn update_server_in_config(
+    State(state): State<AdminState>,
+    Path((space_id, server_id)): Path<(String, String)>,
+    Json(body): Json<UpdateServerInConfigBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::update_server_in_config(&state.bridge, space_id, server_id, body)
         .await
         .map(ok)
         .map_err(ApiError::from_bridge)

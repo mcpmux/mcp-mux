@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use mcpmux_core::{get_space_config_path, ApplicationServices, Space};
+use mcpmux_core::{get_space_config_path, ApplicationServices, Space, UserServerEntry};
 use serde::Deserialize;
 use tracing::info;
 use uuid::Uuid;
@@ -146,6 +146,53 @@ pub async fn remove_server_from_config(
     }
 
     Ok(false)
+}
+
+/// Replace a custom server's entry in a space config file.
+///
+/// Matches the target `mcpServers` key by comparing its normalized form
+/// (see `UserServerEntry::normalize_server_id`) against `server_id`, since
+/// the installed server id is normalized but the raw JSON key may not be.
+pub async fn update_server_in_config(
+    ctx: &SpaceBridgeCtx<'_>,
+    space_id: &str,
+    server_id: &str,
+    entry: serde_json::Value,
+) -> Result<()> {
+    if !entry.is_object() {
+        anyhow::bail!("Server entry must be a JSON object");
+    }
+
+    let config_path = ctx.config_path(space_id)?;
+    let content = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
+
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).context("Failed to parse config")?;
+
+    let servers = config
+        .get_mut("mcpServers")
+        .and_then(|v| v.as_object_mut())
+        .context("Config file has no mcpServers object")?;
+
+    let matching_key = servers
+        .keys()
+        .find(|key| UserServerEntry::normalize_server_id(key) == server_id)
+        .cloned()
+        .with_context(|| format!("Server '{}' not found in config", server_id))?;
+
+    servers.insert(matching_key, entry);
+
+    let new_content =
+        serde_json::to_string_pretty(&config).context("Failed to serialize config")?;
+    std::fs::write(&config_path, new_content)
+        .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
+
+    info!(
+        "[command_bridge::space] Updated server '{}' in space '{}'",
+        server_id, space_id
+    );
+    Ok(())
 }
 
 fn write_default_config_if_missing(ctx: &SpaceBridgeCtx<'_>, space_id: &str) -> Result<()> {

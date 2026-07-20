@@ -100,7 +100,7 @@ pub fn build_admin_router(state: AdminState) -> Router {
         )
         .route(
             "/api/v1/spaces/{space_id}/config/servers/{server_id}",
-            delete(write::remove_server_from_config),
+            delete(write::remove_server_from_config).put(write::update_server_in_config),
         )
         .route(
             "/api/v1/spaces/{space_id}/base-dirs",

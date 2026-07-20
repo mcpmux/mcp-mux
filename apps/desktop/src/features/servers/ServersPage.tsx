@@ -1964,6 +1964,7 @@ export function ServersPage() {
                         onLockToCurrentVersion={() => handleLockToCurrentVersion(server)}
                         onViewLogs={() => setLogViewerServer({ id: server.id, name: server.name })}
                         onViewDefinition={() => setDefinitionServer({ id: server.id, name: server.name })}
+                        canEditDefinition={server.source.type === 'UserSpace'}
                         onCloneAccount={() =>
                           setCloneModalServer(resolveCloneSource(server, installedServers))
                         }
@@ -2680,6 +2681,7 @@ export function ServersPage() {
           <ServerDefinitionModal
             server={server}
             onClose={() => setDefinitionServer(null)}
+            onSaved={() => loadData()}
           />
         ) : null;
       })()}

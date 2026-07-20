@@ -6,7 +6,9 @@
 //! built-in fallback. The desktop UI tracks which space the user is
 //! viewing in its own Zustand store (frontend-only state).
 
-use mcpmux_core::{validate_workspace_root, Space, SpaceBaseDir, WorkspaceRootValidation};
+use mcpmux_core::{
+    validate_workspace_root, Space, SpaceBaseDir, UserServerEntry, WorkspaceRootValidation,
+};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
@@ -282,6 +284,57 @@ pub async fn remove_server_from_config(
     }
 
     Ok(false)
+}
+
+/// Replace a custom server's entry in the space configuration file.
+///
+/// Matches the target `mcpServers` key by comparing its normalized form
+/// (see `UserServerEntry::normalize_server_id`) against `server_id`, since
+/// the installed server id is normalized but the raw JSON key may not be.
+#[tauri::command]
+pub async fn update_server_in_config(
+    space_id: String,
+    server_id: String,
+    entry: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if !entry.is_object() {
+        return Err("Server entry must be a JSON object".to_string());
+    }
+
+    let config_path = state.space_config_path(&space_id)?;
+
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+
+    let servers = config
+        .get_mut("mcpServers")
+        .and_then(|v| v.as_object_mut())
+        .ok_or_else(|| "Config file has no mcpServers object".to_string())?;
+
+    let matching_key = servers
+        .keys()
+        .find(|key| UserServerEntry::normalize_server_id(key) == server_id)
+        .cloned()
+        .ok_or_else(|| format!("Server '{}' not found in config", server_id))?;
+
+    servers.insert(matching_key, entry);
+
+    let new_content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    std::fs::write(&config_path, new_content)
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    info!(
+        "[update_server_in_config] Updated server '{}' in space '{}'",
+        server_id, space_id
+    );
+
+    Ok(())
 }
 
 /// Refresh the system tray menu to reflect current spaces

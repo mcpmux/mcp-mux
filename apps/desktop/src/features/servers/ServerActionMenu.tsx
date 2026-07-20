@@ -47,6 +47,8 @@ export interface ServerActionMenuProps {
   onLockToCurrentVersion?: () => void;
   onViewLogs: () => void;
   onViewDefinition: () => void;
+  /** Whether the server's config is stored locally and can be edited (UserSpace source). */
+  canEditDefinition?: boolean;
   onCloneAccount?: () => void;
   onUninstall: () => void;
 }
@@ -73,6 +75,7 @@ export function ServerActionMenu({
   onLockToCurrentVersion,
   onViewLogs,
   onViewDefinition,
+  canEditDefinition = false,
   onCloneAccount,
   onUninstall,
 }: ServerActionMenuProps) {
@@ -168,7 +171,7 @@ export function ServerActionMenu({
         />
         <DropdownMenuAction
           icon={Code}
-          label={t('actions.viewDefinition')}
+          label={canEditDefinition ? t('actions.editDefinition') : t('actions.viewDefinition')}
           onSelect={onViewDefinition}
           data-testid={`view-definition-${serverId}`}
         />

@@ -82,6 +82,7 @@
     "lockVersion": "Lock to current version",
     "viewLogs": "View Logs",
     "viewDefinition": "View Definition",
+    "editDefinition": "Edit Definition",
     "cloneAccount": "Add another account…",
     "uninstall": "Uninstall",
     "updateBadge": "Update available"
@@ -269,9 +270,12 @@
   },
   "definitionModal": {
     "subtitle": "Server Definition",
+    "subtitleEditable": "Edit the server's config entry",
     "copy": "Copy",
     "copied": "Copied",
     "copyTitle": "Copy to clipboard",
+    "save": "Save",
+    "invalidJson": "Invalid JSON: {{message}}",
     "editorLoadFailed": "Editor failed to load. Showing plain JSON instead."
   }
 }

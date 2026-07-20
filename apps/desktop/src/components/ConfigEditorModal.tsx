@@ -14,7 +14,6 @@ const EDITOR_MOUNT_TIMEOUT_MS = 10_000;
 interface ConfigEditorModalProps {
   spaceId: string;
   spaceName: string;
-  insertNewServer?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -60,7 +59,6 @@ function addCustomServerDraft(config: SpaceConfigJson): SpaceConfigJson {
 export function ConfigEditorModal({
   spaceId,
   spaceName,
-  insertNewServer = false,
   onClose,
   onSaved,
 }: ConfigEditorModalProps) {
@@ -91,12 +89,10 @@ export function ConfigEditorModal({
       setIsLoading(true);
       setError(null);
       const data = await readSpaceConfig(spaceId);
-      // Auto-format on load if valid JSON. When opened from Add Custom Server,
-      // insert a unique draft entry instead of replacing an existing server block.
+      // Auto-format on load if valid JSON.
       try {
         const parsed = JSON.parse(data) as SpaceConfigJson;
-        const nextConfig = insertNewServer ? addCustomServerDraft(parsed) : parsed;
-        setContent(JSON.stringify(nextConfig, null, 2));
+        setContent(JSON.stringify(parsed, null, 2));
       } catch {
         setContent(data);
       }
@@ -105,7 +101,7 @@ export function ConfigEditorModal({
     } finally {
       setIsLoading(false);
     }
-  }, [spaceId, insertNewServer]);
+  }, [spaceId]);
 
   useEffect(() => {
     void loadConfig();

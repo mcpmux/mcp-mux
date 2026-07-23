@@ -238,6 +238,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "workspace_binding_prompt_dismissals",
         sql: include_str!("migrations/041_workspace_binding_prompt_dismissals.sql"),
     },
+    Migration {
+        version: 42,
+        name: "backfill_approved_clients",
+        sql: include_str!("migrations/042_backfill_approved_clients.sql"),
+    },
 ];
 
 /// SQLite database wrapper.
@@ -778,7 +783,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
 
         let v16_name: String = db
             .conn

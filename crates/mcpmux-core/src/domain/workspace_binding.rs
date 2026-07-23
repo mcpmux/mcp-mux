@@ -925,7 +925,10 @@ mod tests {
     #[test]
     fn normalize_expands_home_tilde() {
         let home = dirs::home_dir().expect("test environment has a home dir");
-        let home_str = home.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
+        let home_str = home
+            .to_string_lossy()
+            .trim_end_matches(['/', '\\'])
+            .to_string();
 
         assert_eq!(
             normalize_workspace_root("~/Desktop/proj"),

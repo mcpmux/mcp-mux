@@ -10,11 +10,26 @@
  * never display it again — if lost, revoke it and issue a new one.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Copy, KeyRound, Loader2, ShieldCheck, X } from 'lucide-react';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
 import { registerApiKeyClient, type RegisteredApiKeyClient } from '@/lib/api/gateway';
+import {
+  createMachine,
+  getHostname,
+  listMachines,
+  setClientMachineId,
+  type Machine,
+} from '@/lib/api/machines';
+import {
+  getMissingMachineProfileField,
+  toMachineProfilePayload,
+} from '@/lib/machine-profile.helpers';
+import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
 import { useSpaces } from '@/stores';
+
+/** Sentinel `<select>` value that reveals the "create new machine" sub-form. */
+const NEW_MACHINE_OPTION = '__new__';
 
 interface RegisterApiKeyClientModalProps {
   onClose: () => void;
@@ -37,12 +52,37 @@ export function RegisterApiKeyClientModal({
   const [result, setResult] = useState<RegisteredApiKeyClient | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [selectedMachineId, setSelectedMachineId] = useState('');
+  const [machineName, setMachineName] = useState('');
+  const [machineIcon, setMachineIcon] = useState('');
+  const [machineHostname, setMachineHostname] = useState('');
+  const isCreatingMachine = selectedMachineId === NEW_MACHINE_OPTION;
+
+  useEffect(() => {
+    void listMachines()
+      .then(setMachines)
+      .catch(() => undefined);
+  }, []);
+
   const handleGenerate = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       setError('Give the client a name so you can recognise it later.');
       return;
     }
+    if (isCreatingMachine) {
+      const missingField = getMissingMachineProfileField({
+        name: machineName,
+        icon: machineIcon,
+        hostname: machineHostname,
+      });
+      if (missingField) {
+        setError(`New machine ${missingField} is required, or switch back to "No machine".`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setError(null);
     try {
@@ -50,6 +90,24 @@ export function RegisterApiKeyClientModal({
         trimmed,
         lockedSpaceId.trim() ? lockedSpaceId.trim() : null
       );
+
+      let machineId: string | null = null;
+      if (isCreatingMachine) {
+        const created = await createMachine(
+          toMachineProfilePayload({
+            name: machineName,
+            icon: machineIcon,
+            hostname: machineHostname,
+          })
+        );
+        machineId = created.id;
+      } else if (selectedMachineId) {
+        machineId = selectedMachineId;
+      }
+      if (machineId) {
+        await setClientMachineId(client.clientId, machineId);
+      }
+
       setResult(client);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -169,10 +227,7 @@ export function RegisterApiKeyClientModal({
               </div>
 
               <div>
-                <label
-                  htmlFor="api-key-locked-space"
-                  className="mb-1.5 block text-sm font-medium"
-                >
+                <label htmlFor="api-key-locked-space" className="mb-1.5 block text-sm font-medium">
                   Lock to a Space
                 </label>
                 <select
@@ -193,6 +248,61 @@ export function RegisterApiKeyClientModal({
                 <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
                   Optional. When set, the client can only use bindings or grants inside this Space.
                   It still needs an explicit mapping — lock alone grants no tools.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="api-key-machine" className="mb-1.5 block text-sm font-medium">
+                  Machine
+                </label>
+                <select
+                  id="api-key-machine"
+                  data-testid="register-api-key-machine"
+                  value={selectedMachineId}
+                  onChange={(e) => setSelectedMachineId(e.target.value)}
+                  className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm transition-all focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]/40"
+                >
+                  <option value="">No machine — assign later if needed</option>
+                  {machines.map((machine) => (
+                    <option key={machine.id} value={machine.id}>
+                      {machine.icon ? `${machine.icon} ` : ''}
+                      {machine.name}
+                    </option>
+                  ))}
+                  <option value={NEW_MACHINE_OPTION}>+ New machine…</option>
+                </select>
+                {isCreatingMachine && (
+                  <div className="mt-3 space-y-3 rounded-xl border border-[rgb(var(--border))] p-4">
+                    <div className="flex items-center gap-2">
+                      <EmojiPickerButton value={machineIcon} onChange={setMachineIcon} />
+                      <input
+                        type="text"
+                        value={machineName}
+                        onChange={(e) => setMachineName(e.target.value)}
+                        placeholder="e.g. Cursor Web"
+                        className="h-10 min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 text-sm"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={machineHostname}
+                      onChange={(e) => setMachineHostname(e.target.value)}
+                      onFocus={() => {
+                        if (!machineHostname) {
+                          void getHostname()
+                            .then(setMachineHostname)
+                            .catch(() => undefined);
+                        }
+                      }}
+                      placeholder="Hostname"
+                      className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-sm"
+                    />
+                  </div>
+                )}
+                <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
+                  Optional. Tags the client so tunneled routing (the{' '}
+                  <code>X-Mcpmux-Machine-Id</code> header) and the Connections list can identify
+                  which device it's connecting from.
                 </p>
               </div>
 

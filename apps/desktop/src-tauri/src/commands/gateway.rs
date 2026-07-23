@@ -5,7 +5,9 @@
 use crate::commands::server_manager::ServerManagerState;
 use crate::services::ui_events::OAUTH_CONSENT_REQUEST_CHANNEL;
 use crate::AppState;
-use mcpmux_core::service::{allocate_dynamic_port, is_port_available};
+use mcpmux_core::service::{
+    allocate_dynamic_port, is_port_available, wait_for_port_available, AUTOSTART_PORT_WAIT,
+};
 use mcpmux_core::DomainEvent;
 use mcpmux_gateway::admin::ui_events::AdminUiEventBus;
 use mcpmux_gateway::{
@@ -1621,6 +1623,21 @@ pub async fn restart_gateway(
     };
     if let Some(h) = handle {
         shutdown_gateway_handle(h).await;
+    }
+
+    // The shutdown above is graceful (or force-aborted after a 2s timeout),
+    // but the OS may hold the socket a moment longer than the in-process
+    // handle takes to resolve. Ride out that brief window the same way
+    // auto-start rides out the self-update restart race, so start_gateway's
+    // single is_port_available() check below doesn't spuriously report the
+    // port we just released as taken.
+    let (preferred_port, _source) = resolve_preferred_port(&app_state, port).await;
+    if !wait_for_port_available(preferred_port, AUTOSTART_PORT_WAIT).await {
+        warn!(
+            "[Gateway] Restart: port {} still unavailable after waiting — \
+             deferring to start_gateway's normal conflict handling",
+            preferred_port
+        );
     }
 
     // Start with new config

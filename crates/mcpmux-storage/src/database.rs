@@ -228,6 +228,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "inbound_client_icon",
         sql: include_str!("migrations/039_inbound_client_icon.sql"),
     },
+    Migration {
+        version: 40,
+        name: "public_url_rename",
+        sql: include_str!("migrations/040_public_url_rename.sql"),
+    },
 ];
 
 /// SQLite database wrapper.
@@ -768,7 +773,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 38);
+        assert_eq!(version, 40);
 
         let v16_name: String = db
             .conn
@@ -862,5 +867,114 @@ mod tests {
             .unwrap();
 
         assert_eq!(name, "Test");
+    }
+
+    /// Migration 40 must carry an old `gateway.public_url` row over to
+    /// `gateway.public_base_url` (the key current code actually reads) and
+    /// remove the superseded key, without clobbering an already-current row.
+    #[test]
+    fn migration_40_renames_public_url_setting_key() {
+        use rusqlite::{params, Connection};
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let db = Database { conn };
+        db.ensure_migrations_table().unwrap();
+
+        // Apply migrations up to v39, recording each as applied.
+        const PRE_RENAME: i64 = 39;
+        for m in MIGRATIONS.iter().filter(|m| m.version <= PRE_RENAME) {
+            db.conn.execute_batch(m.sql).unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at) \
+                     VALUES (?1, ?2, datetime('now'))",
+                    params![m.version, m.name],
+                )
+                .unwrap();
+        }
+
+        // Seed the OLD key, simulating an install that predates the rename.
+        db.conn
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) \
+                 VALUES ('gateway.public_url', 'https://mcp.example.com', datetime('now'))",
+                [],
+            )
+            .unwrap();
+
+        db.run_migrations().unwrap();
+
+        let new_value: String = db
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'gateway.public_base_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_value, "https://mcp.example.com");
+
+        let old_key_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_settings WHERE key = 'gateway.public_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_key_count, 0, "old key must be removed");
+    }
+
+    /// If the new key is already present (e.g. the user re-saved the setting
+    /// as a workaround), migration 40 must not overwrite it with the old
+    /// value — `INSERT OR IGNORE` should be a no-op for that row.
+    #[test]
+    fn migration_40_does_not_overwrite_existing_new_key() {
+        use rusqlite::{params, Connection};
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let db = Database { conn };
+        db.ensure_migrations_table().unwrap();
+
+        const PRE_RENAME: i64 = 39;
+        for m in MIGRATIONS.iter().filter(|m| m.version <= PRE_RENAME) {
+            db.conn.execute_batch(m.sql).unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at) \
+                     VALUES (?1, ?2, datetime('now'))",
+                    params![m.version, m.name],
+                )
+                .unwrap();
+        }
+
+        db.conn
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) \
+                 VALUES ('gateway.public_url', 'https://stale.example.com', datetime('now'))",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) \
+                 VALUES ('gateway.public_base_url', 'https://current.example.com', datetime('now'))",
+                [],
+            )
+            .unwrap();
+
+        db.run_migrations().unwrap();
+
+        let new_value: String = db
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'gateway.public_base_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_value, "https://current.example.com");
     }
 }

@@ -90,8 +90,7 @@ export function useGatewayControl() {
   const start = async (opts?: { port?: number }): Promise<GatewayStartOutcome> => {
     try {
       return await runStart(
-        (allowFallback) =>
-          startGateway({ port: opts?.port, allowDynamicFallback: allowFallback }),
+        (allowFallback) => startGateway({ port: opts?.port, allowDynamicFallback: allowFallback }),
         opts?.port
       );
     } catch (err) {
@@ -104,12 +103,18 @@ export function useGatewayControl() {
   };
 
   const restart = async (opts?: { port?: number }): Promise<GatewayStartOutcome> => {
+    // Unlike start(), restart never pre-probes the port: the gateway we're
+    // about to replace is still holding it at probe time, so
+    // probeGatewayStart() would see our own listener and spuriously report
+    // the port as taken. Restart owns the port by definition — go straight
+    // to restartGateway() and only surface the confirm dialog on a genuine
+    // bind failure (handleBindFailure), same as a real conflict from start().
+    console.log('[Gateway] restart → skipping pre-probe, going straight to restartGateway');
     try {
-      return await runStart(
-        (allowFallback) =>
-          restartGateway({ port: opts?.port, allowDynamicFallback: allowFallback }),
-        opts?.port
-      );
+      const url = await restartGateway({ port: opts?.port, allowDynamicFallback: false });
+      const port = parsePortFromUrl(url) ?? opts?.port ?? 0;
+      console.log('[Gateway] restart ok →', url);
+      return { status: 'started', url, port, fellBackToDynamic: false };
     } catch (err) {
       return await handleBindFailure(err, opts?.port, (allowFallback) =>
         restartGateway({ port: opts?.port, allowDynamicFallback: allowFallback })

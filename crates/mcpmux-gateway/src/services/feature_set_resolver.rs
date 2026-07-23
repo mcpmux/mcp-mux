@@ -264,6 +264,12 @@ impl FeatureSetResolverService {
         request_machine_id: Option<Uuid>,
     ) -> Result<Option<mcpmux_core::WorkspaceBinding>> {
         for root in roots {
+            let registered_machine = if let Some(cid) = client_id {
+                self.client_repo.get_machine_id(cid).await?
+            } else {
+                None
+            };
+
             if let Some(header_machine) = request_machine_id {
                 if let Some(binding) = self
                     .binding_repo
@@ -275,17 +281,24 @@ impl FeatureSetResolverService {
                 if let Some(binding) = self.binding_repo.find_exact_global(root).await? {
                     return Ok(Some(binding));
                 }
-                continue;
+                // Header-only semantics when the header matches the OAuth
+                // client's registered machine (tunneled caller on the wrong
+                // box stays Unbound) or the caller is anonymous. When the
+                // header disagrees with the registered tag it is treated as
+                // stale — e.g. cloud-agent config on a native localhost
+                // session — and we fall through to client/local/global below.
+                if client_id.is_none() || registered_machine.is_some_and(|m| m == header_machine) {
+                    continue;
+                }
             }
-            if let Some(cid) = client_id {
-                if let Some(client_machine) = self.client_repo.get_machine_id(cid).await? {
-                    if let Some(binding) = self
-                        .binding_repo
-                        .find_exact_for_machine(&client_machine, root, Some(cid))
-                        .await?
-                    {
-                        return Ok(Some(binding));
-                    }
+
+            if let Some(client_machine) = registered_machine {
+                if let Some(binding) = self
+                    .binding_repo
+                    .find_exact_for_machine(&client_machine, root, client_id)
+                    .await?
+                {
+                    return Ok(Some(binding));
                 }
             }
             if let Some(local_id) = *self.local_machine_id.read().await {

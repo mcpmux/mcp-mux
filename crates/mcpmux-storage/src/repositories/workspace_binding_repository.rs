@@ -606,6 +606,49 @@ mod tests {
         assert!(hits_other.is_empty());
     }
 
+    /// Regression: machine-scoped canonical binding (`client_id IS NULL`) must
+    /// match when the caller passes its OAuth `client_id` for the specific
+    /// lookup — the repo falls back to the machine-only row after no
+    /// client+machine row exists.
+    #[tokio::test]
+    async fn test_find_exact_for_machine_canonical_matches_registered_client() {
+        let (repo, space_id, fs_id) = fixture().await;
+        let db = repo.db.clone();
+        let machine_id = Uuid::new_v4();
+        let client_id = "mcp_36740f70";
+        let root = if cfg!(windows) {
+            "d:\\jsg-tech-check"
+        } else {
+            "/Users/joe/Desktop/Repos/Personal/jsg-tech-check"
+        };
+        let now = Utc::now().to_rfc3339();
+
+        {
+            let guard = db.lock().await;
+            guard
+                .connection()
+                .execute(
+                    "INSERT INTO machines (id, name, created_at, updated_at)
+                     VALUES (?1, 'Gondor', ?2, ?2)",
+                    params![machine_id.to_string(), now],
+                )
+                .unwrap();
+        }
+
+        let binding =
+            WorkspaceBinding::new_machine_scoped_multi(root, space_id, machine_id, vec![fs_id]);
+        repo.create(&binding).await.unwrap();
+
+        let hit = repo
+            .find_exact_for_machine(&machine_id, root, Some(client_id))
+            .await
+            .unwrap()
+            .expect("machine-scoped canonical binding should match registered client");
+        assert_eq!(hit.workspace_root, root);
+        assert_eq!(hit.machine_id, Some(machine_id));
+        assert!(hit.client_id.is_none());
+    }
+
     #[tokio::test]
     async fn test_find_exact_for_roots_is_exact_only() {
         // No ancestor inheritance: a binding on `outer` must NOT match a

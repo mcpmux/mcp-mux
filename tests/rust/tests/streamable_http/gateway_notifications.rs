@@ -159,6 +159,7 @@ impl TestGateway {
             reports_roots: false,
             roots_capability_known: false,
             machine_id: None,
+            client_icon: None,
         };
         inbound_client_repo
             .save_client(&test_client)

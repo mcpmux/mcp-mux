@@ -196,6 +196,7 @@ impl Fixture {
             reports_roots: false,
             roots_capability_known: false,
             machine_id: None,
+            client_icon: None,
         };
         self.client_repo.save_client(&c).await.unwrap();
     }
@@ -1144,6 +1145,42 @@ async fn request_machine_header_outranks_client_and_local_machine() {
         .unwrap();
     assert_eq!(with_rohan_header.source, ResolutionSource::WorkspaceBinding);
     assert_eq!(with_rohan_header.feature_set_ids, vec![f.fs_b_id]);
+}
+
+#[tokio::test]
+async fn wrong_request_machine_header_falls_back_to_client_machine_binding() {
+    // Native Cursor OAuth can inherit a stale X-Mcpmux-Machine-Id (e.g. Rohan
+    // from a shared tunnel config) while the binding + client tag live on Gondor.
+    let f = Fixture::new().await;
+    let gondor_id = f.make_machine("Gondor").await;
+    let rohan_id = f.make_machine("Rohan").await;
+    let root = normalize_workspace_root(if cfg!(windows) {
+        "d:\\jsg-tech-check"
+    } else {
+        "/Users/joe/Desktop/Repos/Personal/jsg-tech-check"
+    });
+    let client_id = "mcp_36740f70";
+
+    f.make_client(client_id).await;
+    f.client_repo
+        .set_machine_id(client_id, Some(gondor_id))
+        .await
+        .unwrap();
+
+    let mut binding = WorkspaceBinding::new(root.clone(), f.space_id, f.fs_a_id.clone());
+    binding.machine_id = Some(gondor_id);
+    f.binding_repo.create(&binding).await.unwrap();
+
+    f.session_roots.set("s", [root.as_str()]);
+    f.session_roots.set_roots_capable("s", true);
+
+    let resolver = f.resolver_with_local_machine(gondor_id);
+    let r = resolver
+        .resolve(Some("s"), Some(client_id), Some(rohan_id))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
 }
 
 #[tokio::test]

@@ -40,6 +40,7 @@ fn create_test_client(name: &str) -> InboundClient {
         reports_roots: false,
         roots_capability_known: false,
         machine_id: None,
+        client_icon: None,
     }
 }
 

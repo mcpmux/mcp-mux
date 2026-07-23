@@ -12,6 +12,7 @@ use mcpmux_core::{
     DomainEvent, FeatureSet, FeatureSetType, MemberMode, MemberType, ServerFeature,
     WorkspaceBinding, WorkspaceRootValidation,
 };
+use mcpmux_storage::InboundClientRepository;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio::sync::RwLock;
@@ -22,6 +23,21 @@ use super::gateway::GatewayAppState;
 use super::server_manager::ServerManagerState;
 use super::workspace_appearance::maybe_remove_orphaned_icon_file;
 use crate::state::AppState;
+
+fn inbound_client_repo(state: &AppState) -> InboundClientRepository {
+    InboundClientRepository::new(state.database())
+}
+
+/// Clear persisted prompt dismissals after a binding is saved for a root.
+async fn clear_binding_prompt_dismissals(
+    state: &AppState,
+    workspace_root: &str,
+) -> Result<(), String> {
+    inbound_client_repo(state)
+        .clear_binding_prompt_dismissals_for_root(workspace_root)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 /// Publish `WorkspaceBindingChanged` on the gateway's domain bus so
 /// MCPNotifier broadcasts `list_changed` to every peer whose session now
@@ -429,6 +445,8 @@ pub async fn create_workspace_binding(
         .await
         .map_err(|e| e.to_string())?;
 
+    clear_binding_prompt_dismissals(&state, &binding.workspace_root).await?;
+
     if binding_type == BindingType::Path {
         clear_appearance_for_bound_root(&state, &normalized).await?;
     }
@@ -533,6 +551,8 @@ pub async fn update_workspace_binding(
         .await
         .map_err(|e| e.to_string())?;
 
+    clear_binding_prompt_dismissals(&state, &updated.workspace_root).await?;
+
     if binding_type == BindingType::Path {
         clear_appearance_for_bound_root(&state, &normalized).await?;
     }
@@ -559,6 +579,40 @@ pub async fn update_workspace_binding(
         .await;
     }
     Ok(updated.into())
+}
+
+/// Record that the user closed the WorkspaceNeedsBinding panel without saving.
+#[tauri::command]
+pub async fn dismiss_workspace_binding_prompt(
+    client_id: String,
+    workspace_root: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    inbound_client_repo(&state)
+        .dismiss_binding_prompt(&client_id, &workspace_root)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Whether the binding prompt was dismissed for a client/root pair, or — when
+/// `client_id` is omitted — for any client on that workspace root.
+#[tauri::command]
+pub async fn is_workspace_binding_prompt_dismissed(
+    workspace_root: String,
+    client_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let repo = inbound_client_repo(&state);
+    match client_id {
+        Some(cid) if !cid.is_empty() => repo
+            .is_binding_prompt_dismissed(&cid, &workspace_root)
+            .await
+            .map_err(|e| e.to_string()),
+        _ => repo
+            .is_binding_prompt_dismissed_for_root(&workspace_root)
+            .await
+            .map_err(|e| e.to_string()),
+    }
 }
 
 /// Delete a binding by id.

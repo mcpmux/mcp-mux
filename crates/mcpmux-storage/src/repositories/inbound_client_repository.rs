@@ -1061,6 +1061,77 @@ impl InboundClientRepository {
 
         Ok(grants)
     }
+
+    /// True when the user dismissed the WorkspaceNeedsBinding prompt for this
+    /// `(client_id, workspace_root)` pair.
+    pub async fn is_binding_prompt_dismissed(
+        &self,
+        client_id: &str,
+        workspace_root: &str,
+    ) -> Result<bool> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workspace_binding_prompt_dismissals \
+                 WHERE client_id = ?1 AND workspace_root = ?2",
+                params![client_id, workspace_root],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(count > 0)
+    }
+
+    /// True when any client dismissed the prompt for this workspace root.
+    /// Used by the Workspaces page auto-open path when no client id is known.
+    pub async fn is_binding_prompt_dismissed_for_root(&self, workspace_root: &str) -> Result<bool> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workspace_binding_prompt_dismissals \
+                 WHERE workspace_root = ?1",
+                params![workspace_root],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(count > 0)
+    }
+
+    /// Record that the user closed the binding prompt without saving.
+    pub async fn dismiss_binding_prompt(
+        &self,
+        client_id: &str,
+        workspace_root: &str,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        conn.execute(
+            "INSERT OR REPLACE INTO workspace_binding_prompt_dismissals \
+             (client_id, workspace_root, dismissed_at) VALUES (?1, ?2, ?3)",
+            params![client_id, workspace_root, now],
+        )?;
+        debug!(
+            client_id,
+            workspace_root, "[OAuth] Dismissed workspace binding prompt"
+        );
+        Ok(())
+    }
+
+    /// Remove dismissals for a workspace root after a binding is saved.
+    pub async fn clear_binding_prompt_dismissals_for_root(
+        &self,
+        workspace_root: &str,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        conn.execute(
+            "DELETE FROM workspace_binding_prompt_dismissals WHERE workspace_root = ?1",
+            params![workspace_root],
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

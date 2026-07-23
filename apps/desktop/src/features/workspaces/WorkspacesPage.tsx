@@ -49,6 +49,7 @@ import {
   clearUnmappedReportedRoots,
   forgetReportedRoot,
   getWorkspaceEffectiveFeatures,
+  isWorkspaceBindingPromptDismissed,
   listReportedWorkspaceRoots,
   listWorkspaceBindings,
   type EffectiveFeature,
@@ -412,11 +413,20 @@ export function WorkspacesPage() {
     if (isLoading || isPanelOpen) return;
     const firstUnmapped = entries.find((e) => e.kind === 'unmapped-live');
     if (!firstUnmapped) return;
-    openBindingPanel({
-      mode: 'create-from-live',
-      workspaceRoot: firstUnmapped.root,
-      appearanceIcon: resolveEntryIcon(firstUnmapped) ?? undefined,
-    });
+
+    void (async () => {
+      try {
+        const dismissed = await isWorkspaceBindingPromptDismissed(firstUnmapped.root);
+        if (dismissed || useBindingPanelStore.getState().isOpen) return;
+        openBindingPanel({
+          mode: 'create-from-live',
+          workspaceRoot: firstUnmapped.root,
+          appearanceIcon: resolveEntryIcon(firstUnmapped) ?? undefined,
+        });
+      } catch {
+        /* best-effort — skip auto-open on check failure */
+      }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
 

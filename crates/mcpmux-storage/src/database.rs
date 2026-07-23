@@ -233,6 +233,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "public_url_rename",
         sql: include_str!("migrations/040_public_url_rename.sql"),
     },
+    Migration {
+        version: 41,
+        name: "workspace_binding_prompt_dismissals",
+        sql: include_str!("migrations/041_workspace_binding_prompt_dismissals.sql"),
+    },
 ];
 
 /// SQLite database wrapper.
@@ -773,7 +778,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
 
         let v16_name: String = db
             .conn

@@ -133,6 +133,28 @@ export async function deleteWorkspaceBinding(id: string): Promise<void> {
   return apiCall('delete_workspace_binding', { id });
 }
 
+/** Persist a WorkspaceNeedsBinding panel dismissal for a client/root pair. */
+export async function dismissWorkspaceBindingPrompt(
+  clientId: string,
+  workspaceRoot: string,
+): Promise<void> {
+  return apiCall('dismiss_workspace_binding_prompt', { clientId, workspaceRoot });
+}
+
+/**
+ * True when the user previously closed the binding prompt without saving.
+ * Omit `clientId` to check whether any client dismissed that workspace root.
+ */
+export async function isWorkspaceBindingPromptDismissed(
+  workspaceRoot: string,
+  clientId?: string | null,
+): Promise<boolean> {
+  return apiCall('is_workspace_binding_prompt_dismissed', {
+    workspaceRoot,
+    ...(clientId ? { clientId } : {}),
+  });
+}
+
 /** Convenience: build a `WorkspaceBindingInput` from a binding-shaped object. */
 export function toInput(b: WorkspaceBinding): WorkspaceBindingInput {
   return {

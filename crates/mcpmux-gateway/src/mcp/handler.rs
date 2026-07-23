@@ -155,6 +155,21 @@ impl McpMuxGatewayHandler {
                     resolved.space_id,
                     root_for_prompt,
                 ) {
+                    let dismissed = services
+                        .dependencies
+                        .inbound_client_repo
+                        .is_binding_prompt_dismissed(client_id, root)
+                        .await
+                        .unwrap_or(false);
+                    if dismissed {
+                        debug!(
+                            %client_id,
+                            workspace_root = root,
+                            "Skipping WorkspaceNeedsBinding — user dismissed this prompt"
+                        );
+                        return;
+                    }
+
                     // Lock the popup's Space field when the folder is scoped to
                     // a Space by base directory — the user shouldn't be able to
                     // bind it elsewhere.

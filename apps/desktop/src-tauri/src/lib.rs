@@ -1042,6 +1042,8 @@ pub fn run() {
             commands::forget_reported_root,
             commands::create_workspace_binding,
             commands::update_workspace_binding,
+            commands::dismiss_workspace_binding_prompt,
+            commands::is_workspace_binding_prompt_dismissed,
             commands::delete_workspace_binding,
             commands::validate_workspace_root,
             commands::get_workspace_effective_features,

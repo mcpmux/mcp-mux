@@ -20,6 +20,7 @@ import { apiCall } from '@/lib/api/transport';
 import {
   createWorkspaceBinding,
   deleteWorkspaceBinding,
+  dismissWorkspaceBindingPrompt,
   listWorkspaceBindings,
   updateWorkspaceBinding,
   validateWorkspaceRoot,
@@ -385,15 +386,6 @@ export function WorkspaceBindingPanel() {
     };
   }, [isOpen, payload, showError, t]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, close]);
-
   const formInitial = useMemo(
     () => (payload ? buildFormInitial(payload, spaces) : null),
     [payload, spaces],
@@ -426,6 +418,27 @@ export function WorkspaceBindingPanel() {
   const effectiveMachineId = isEdit
     ? bindingMachineId(machineId)
     : machineIds[0] ?? null;
+
+  /** Close the panel; record a dismissal for create-from-live prompts with a client id. */
+  const handlePanelClose = useCallback(() => {
+    const rootToDismiss =
+      payload?.workspaceRoot ?? payload?.binding?.workspace_root ?? workspaceRoot;
+    if (payload?.mode === 'create-from-live' && payload.clientId && rootToDismiss) {
+      void dismissWorkspaceBindingPrompt(payload.clientId, rootToDismiss).catch(
+        () => undefined,
+      );
+    }
+    close();
+  }, [payload, workspaceRoot, close]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handlePanelClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, handlePanelClose]);
 
   useEffect(() => {
     if (!isOpen || !payload || loadingData) return;
@@ -898,7 +911,7 @@ export function WorkspaceBindingPanel() {
     <>
       <div
         className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40 animate-in fade-in duration-200"
-        onClick={close}
+        onClick={handlePanelClose}
         data-testid="workspace-binding-panel-backdrop"
       />
       <div
@@ -942,7 +955,7 @@ export function WorkspaceBindingPanel() {
             />
             <button
               type="button"
-              onClick={close}
+              onClick={handlePanelClose}
               className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
               aria-label={t('panel.closeAria')}
             >
@@ -1268,7 +1281,7 @@ export function WorkspaceBindingPanel() {
                 )}
                 {createSubmitLabel}
               </Button>
-              <Button variant="secondary" size="md" onClick={close} disabled={submitting}>
+              <Button variant="secondary" size="md" onClick={handlePanelClose} disabled={submitting}>
                 {t('common:actions.cancel')}
               </Button>
             </div>

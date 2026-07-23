@@ -187,6 +187,10 @@ fn test_new_schema_objects_exist_after_migration() {
         "migration 036 must create inbound_client_api_keys"
     );
     assert!(
+        table_exists(&db, "workspace_binding_prompt_dismissals"),
+        "migration 041 must create workspace_binding_prompt_dismissals"
+    );
+    assert!(
         column_exists(&db, "workspace_bindings", "binding_type"),
         "migration 037 must add workspace_bindings.binding_type"
     );

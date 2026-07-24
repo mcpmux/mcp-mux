@@ -72,7 +72,7 @@ Machine catalog UUID is surfaced on all viewer identity surfaces via [`machine-i
 
 When multiple physical devices reach **one** gateway via a tunnel (`gateway.public_url`), the gateway cannot infer which laptop/desktop made the request from `gateway.local_machine_id` alone — that always identifies the host running McpMux (e.g. Gondor), not the device running Cursor (e.g. Rohan).
 
-**Fix:** each device's MCP client config sends `X-Mcpmux-Machine-Id: <machine-uuid>`. The resolver uses that header as the machine signal for binding lookup. When the header is present, client and gateway-local machine tags are skipped so a tunneled caller is not mistaken for the gateway host.
+**Fix:** each device's MCP client config sends `X-Mcpmux-Machine-Id: <machine-uuid>`. The resolver uses that header as the machine signal for binding lookup. When the header is present and matches the OAuth client's registered machine (or the caller is anonymous), client and gateway-local machine tags are skipped so a tunneled caller is not mistaken for the gateway host. If the header disagrees with the registered machine, it is treated as stale and the resolver falls through to client → local → global (Jul 23, 2026 — [`workspace-binding-popup-loop-fix.md`](./workspace-binding-popup-loop-fix.md)).
 
 See [`per-device-machine-header.md`](./per-device-machine-header.md) for full design, resolver priority, and client setup. User-facing docs: [Remote Access](/docs/remote-access/), [Workspaces](/docs/workspaces/), [Clients](/docs/clients/).
 

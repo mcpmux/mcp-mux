@@ -1,7 +1,7 @@
 # Per-Device Machine Identity Header
 
-**Last Updated:** Jun 30, 2026
-**Status:** Implemented (Jun 30, 2026)
+**Last Updated:** Jul 23, 2026
+**Status:** Implemented (Jun 30, 2026; stale-header fallthrough Jul 23, 2026)
 **Depends on:** `workspace-machine-binding.md`, `deny-by-default-bindable-callers.md`
 **Unblocks:** Machine-scoped bindings work when multiple physical devices share one tunneled gateway
 
@@ -28,11 +28,19 @@ Add optional per-request header `X-Mcpmux-Machine-Id: <machine-uuid>` in each de
 **Header present** (`X-Mcpmux-Machine-Id` with valid UUID):
 
 ```text
-1. Header machine id only
+1. Header machine id
 2. global binding (machine_id IS NULL)
 ```
 
-Client and gateway-local machine tags are skipped when the header is set, so a tunneled Rohan caller is not mistaken for Gondor.
+Then, only if the header **disagrees** with the OAuth client's registered `inbound_clients.machine_id` (stale / wrong header, e.g. cloud-agent config on a native localhost session):
+
+```text
+3. inbound_clients.machine_id
+4. gateway.local_machine_id
+5. global binding (already tried above; no-op if none)
+```
+
+If the header matches the registered machine, or the caller is anonymous (`client_id` absent), client and gateway-local tags stay skipped — tunneled Rohan caller is not mistaken for Gondor.
 
 ## Files modified
 
@@ -60,8 +68,9 @@ Client and gateway-local machine tags are skipped when the header is set, so a t
 ## Implementation notes
 
 - Malformed header values are ignored; full client → local → global chain applies.
-- When header is present (valid UUID), client and gateway-local machine tags are **not** consulted.
-- Tests: `request_machine_header_outranks_client_and_local_machine`, `request_machine_header_enables_deny_when_only_other_machine_bound`.
+- When header is present (valid UUID) **and** matches the OAuth client's registered machine (or caller is anonymous), client and gateway-local machine tags are **not** consulted.
+- When header is present but **disagrees** with the registered machine, treat it as stale and fall through to client → local → global (Jul 23, 2026 — see [`workspace-binding-popup-loop-fix.md`](./workspace-binding-popup-loop-fix.md)).
+- Tests: `request_machine_header_outranks_client_and_local_machine`, `request_machine_header_enables_deny_when_only_other_machine_bound`, `wrong_request_machine_header_falls_back_to_client_machine_binding`.
 - Validated Jun 30, 2026: 331 integration tests, clippy clean, desktop typecheck clean.
 
 ## Client setup
@@ -84,6 +93,7 @@ Copy the snippet from **Settings → Machine Identity** (viewer card or **Manage
 - [Workspaces](/docs/workspaces/) — machine-scoped bindings
 - [Clients](/docs/clients/) — multi-device tunnel setup
 - [workspace-machine-binding.md](./workspace-machine-binding.md) — machine catalog and binding model
+- [workspace-binding-popup-loop-fix.md](./workspace-binding-popup-loop-fix.md) — stale-header fallthrough when native Cursor carried the wrong machine id
 
 ```bash
 pnpm test:rust

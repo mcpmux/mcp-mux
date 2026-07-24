@@ -489,7 +489,7 @@ export function RegisterApiKeyClientModal({
                   data-testid="register-api-key-tab-cursor"
                   className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
                     activeTab === 'cursor'
-                      ? 'bg-[rgb(var(--accent))]/10 text-[rgb(var(--accent))]'
+                      ? 'bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] shadow-sm'
                       : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--text))]'
                   }`}
                   onClick={() => handleTabChange('cursor')}
@@ -503,7 +503,7 @@ export function RegisterApiKeyClientModal({
                   data-testid="register-api-key-tab-generic"
                   className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
                     activeTab === 'generic'
-                      ? 'bg-[rgb(var(--accent))]/10 text-[rgb(var(--accent))]'
+                      ? 'bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] shadow-sm'
                       : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--text))]'
                   }`}
                   onClick={() => handleTabChange('generic')}

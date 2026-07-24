@@ -178,21 +178,20 @@
       }
     },
     "cursor": {
-      "resultTitle": "Cursor config ready"
+      "resultTitle": "Cursor config ready",
+      "regenerateHint": "Need a new key? Rotate keeps the same client; New client creates a separate connection you can revoke later.",
+      "rotateKey": "Rotate key",
+      "newClient": "New client"
     }
   },
   "cursorBridge": {
-    "title": "Global Cursor setup (no per-repo files)",
-    "description": "Paste one config into ~/.cursor/mcp.json. Each Cursor window sends its own workspace folder via mcp-remote — no per-repo .cursor/mcp.json files needed.",
-    "gatewayStopped": "Start the gateway from the Dashboard before generating a config.",
     "generateHint": "Creates a dedicated API-key client and builds the full ~/.cursor/mcp.json snippet with the key embedded.",
     "generate": "Generate global config",
     "generating": "Generating…",
-    "regenerate": "Generate new key",
     "pasteInto": "Paste into ~/.cursor/mcp.json",
     "copy": "Copy config",
     "copied": "Copied",
-    "keyOnceWarning": "The API key is shown only in this snippet. Store it in ~/.cursor/mcp.json now — McpMux cannot display it again. Regenerating creates a new key.",
+    "keyOnceWarning": "The API key is shown only in this snippet. Store it in ~/.cursor/mcp.json now — McpMux cannot display it again.",
     "fallbackNote": "Per-repo install via Workspaces remains available if you prefer not to use npx/mcp-remote."
   }
 }

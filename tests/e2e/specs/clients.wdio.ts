@@ -70,6 +70,10 @@ describe('Connections - Page shell', () => {
     await registerBtn.click();
     await browser.pause(800);
 
+    const genericTab = await byTestId('register-api-key-tab-generic');
+    await genericTab.click();
+    await browser.pause(300);
+
     const nameInput = await byTestId('register-api-key-name');
     await nameInput.setValue('e2e-headless-bot');
 

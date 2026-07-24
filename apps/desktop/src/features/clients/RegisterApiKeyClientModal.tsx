@@ -20,7 +20,11 @@ import {
   X,
 } from 'lucide-react';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle, SearchableSelect } from '@mcpmux/ui';
-import { registerApiKeyClient, type RegisteredApiKeyClient } from '@/lib/api/gateway';
+import {
+  createClientApiKey,
+  registerApiKeyClient,
+  type RegisteredApiKeyClient,
+} from '@/lib/api/gateway';
 import {
   createMachine,
   getHostname,
@@ -192,9 +196,28 @@ export function RegisterApiKeyClientModal({
   };
 
   /**
-   * Regenerate Cursor snippet by minting a new client (same as legacy CursorBridgeSection).
+   * Rotate the existing session client's API key and rebuild the Cursor snippet.
    */
-  const handleRegenerateCursor = async () => {
+  const handleRotateKey = async () => {
+    if (!result) return;
+
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const rotated = await createClientApiKey(result.clientId);
+      setResult(rotated);
+      setCursorSnippet(buildCursorBridgeMcpJson(rotated.apiKey, gatewayUrl));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  /**
+   * Mint a fresh client for the Cursor preset, leaving the prior session client intact.
+   */
+  const handleNewClient = async () => {
     const client = await mintClient();
     if (!client) return;
 
@@ -339,20 +362,47 @@ export function RegisterApiKeyClientModal({
                   </p>
                 </div>
 
+                {error && (
+                  <p
+                    className="text-sm text-red-600 dark:text-red-400"
+                    data-testid="cursor-bridge-error"
+                  >
+                    {error}
+                  </p>
+                )}
+
+                <p className="text-xs text-[rgb(var(--muted))]">
+                  {t('registerModal.cursor.regenerateHint')}
+                </p>
+
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button
                     variant="secondary"
                     size="md"
-                    onClick={() => void handleRegenerateCursor()}
+                    onClick={() => void handleRotateKey()}
                     disabled={isSubmitting}
-                    data-testid="cursor-bridge-regenerate"
+                    data-testid="register-api-key-rotate-key"
                   >
                     {isSubmitting ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
                       <KeyRound className="mr-2 h-4 w-4" />
                     )}
-                    {t('cursorBridge.regenerate')}
+                    {t('registerModal.cursor.rotateKey')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => void handleNewClient()}
+                    disabled={isSubmitting}
+                    data-testid="register-api-key-new-client"
+                  >
+                    {isSubmitting ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <KeyRound className="mr-2 h-4 w-4" />
+                    )}
+                    {t('registerModal.cursor.newClient')}
                   </Button>
                   <Button
                     variant="primary"

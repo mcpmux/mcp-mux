@@ -71,6 +71,7 @@ import type {
 import type { FeaturesUpdatedEvent } from '@/lib/api/serverManager';
 import { ServerLogViewer } from '@/components/ServerLogViewer';
 import { ConfigEditorModal } from '@/components/ConfigEditorModal';
+import { CustomServerPanel } from './CustomServerPanel';
 import { ServerDefinitionModal, canEditServerDefinition } from '@/components/ServerDefinitionModal';
 import { SourceBadge } from '@/components/SourceBadge';
 import type { ClonedInstalledServer } from '@/lib/api/serverClone';
@@ -393,8 +394,12 @@ export function ServersPage() {
     dependents: ClonedInstalledServer[];
   } | null>(null);
   
-  // Config editor state
+  // Config editor state (manifest modal — Phase 4 adds menu entry)
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
+  const [customServerPanelSpace, setCustomServerPanelSpace] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   
   const viewSpace = useViewSpace();
   const navigate = useNavigate();
@@ -1662,7 +1667,9 @@ export function ServersPage() {
               )}
               <AddServerMenu
                 onDiscover={() => navigate('registry')}
-                onCustom={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
+                onCustom={() =>
+                  setCustomServerPanelSpace({ id: viewSpace.id, name: viewSpace.name })
+                }
               />
             </div>
           )}
@@ -1702,7 +1709,9 @@ export function ServersPage() {
             <div className="flex justify-center">
               <AddServerMenu
                 onDiscover={() => navigate('registry')}
-                onCustom={() => setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })}
+                onCustom={() =>
+                  setCustomServerPanelSpace({ id: viewSpace.id, name: viewSpace.name })
+                }
               />
             </div>
           )}
@@ -2776,6 +2785,16 @@ export function ServersPage() {
           />
         ) : null;
       })()}
+
+      {/* Custom server panel (Add custom server) */}
+      {customServerPanelSpace && (
+        <CustomServerPanel
+          spaceId={customServerPanelSpace.id}
+          spaceName={customServerPanelSpace.name}
+          onClose={() => setCustomServerPanelSpace(null)}
+          onSaved={() => loadData()}
+        />
+      )}
 
       {/* Config Editor Modal */}
       {editConfigSpace && (

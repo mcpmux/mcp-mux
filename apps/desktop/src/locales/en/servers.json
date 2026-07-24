@@ -277,6 +277,34 @@
       "line": "Line {{line}}: {{message}}"
     }
   },
+  "customServerPanel": {
+    "title": "Add Custom Server",
+    "subtitle": "{{spaceName}}",
+    "closeAria": "Close panel",
+    "modeForm": "Form",
+    "modeJson": "JSON",
+    "serverId": "Server ID",
+    "serverIdDesc": "Dictionary key under mcpServers — must be unique in this space.",
+    "serverIdPlaceholder": "custom-server",
+    "formComingSoon": "Guided form fields are coming soon. Use JSON mode to add a server now.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "schemaError": "Schema error",
+    "invalidJson": "Invalid JSON",
+    "editorLoadFailed": "Editor failed to load. You can still edit JSON below.",
+    "toast": {
+      "saved": "Custom server added",
+      "savedBody": "Server entry saved to your space config.",
+      "saveFailed": "Failed to save",
+      "invalidJsonTitle": "Invalid JSON",
+      "serverIdRequired": "Server ID is required"
+    },
+    "validation": {
+      "invalidJson": "Invalid JSON: {{message}}",
+      "line": "Line {{line}}: {{message}}"
+    }
+  },
   "definitionModal": {
     "subtitle": "Server Definition",
     "subtitleEditable": "Edit the server's config entry",

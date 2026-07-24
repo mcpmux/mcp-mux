@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Save, Loader2, AlertTriangle, Wand2, Plus } from 'lucide-react';
+import { X, Save, Loader2, AlertTriangle, Wand2, Plus, Search } from 'lucide-react';
 import { readSpaceConfig, saveSpaceConfig } from '@/lib/api/spaces';
 import { type Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
@@ -171,6 +171,20 @@ export function ConfigEditorModal({
     }
   }, [content, t]);
 
+  /**
+   * Whether Monaco's find widget is currently visible in the editor DOM.
+   */
+  const isFindWidgetOpen = useCallback((): boolean => {
+    return !!editorRef.current?.getDomNode()?.querySelector('.find-widget.visible');
+  }, []);
+
+  /**
+   * Open Monaco's built-in find widget for the JSON editor.
+   */
+  const handleSearch = useCallback(() => {
+    editorRef.current?.getAction('actions.find')?.run();
+  }, []);
+
   const handleInsertCustomServer = useCallback(() => {
     try {
       const parsed = JSON.parse(content || '{"mcpServers":{}}') as SpaceConfigJson;
@@ -260,24 +274,25 @@ export function ConfigEditorModal({
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+F to format
-      if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+      const mod = e.ctrlKey || e.metaKey;
+
+      if (mod && e.shiftKey && e.key === 'F') {
         e.preventDefault();
         handleFormat();
       }
-      // Ctrl+S to save
-      if (e.ctrlKey && e.key === 's') {
+
+      if (mod && e.key === 's') {
         e.preventDefault();
         handleSave();
       }
-      // Escape to close
-      if (e.key === 'Escape') {
+
+      if (e.key === 'Escape' && !isFindWidgetOpen()) {
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleFormat, handleSave, onClose]);
+  }, [handleFormat, handleSave, isFindWidgetOpen, onClose]);
 
   return (
     <>
@@ -286,11 +301,11 @@ export function ConfigEditorModal({
         onClose={(id) => toasts.find((toast) => toast.id === id)?.onClose(id)}
       />
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
         data-testid="config-editor-modal-overlay"
       >
         <div
-          className="flex h-[80vh] w-full max-w-4xl flex-col rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl"
+          className="flex h-[95vh] w-[95vw] flex-col rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl"
           data-testid="config-editor-modal"
         >
           {/* Header */}
@@ -339,6 +354,16 @@ export function ConfigEditorModal({
             >
               <Wand2 className="h-4 w-4" />
               {t('configEditorModal.format')}
+            </button>
+
+            <button
+              onClick={handleSearch}
+              disabled={isLoading || editorLoadFailed}
+              className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))] disabled:opacity-50"
+              title={t('configEditorModal.searchTitle')}
+            >
+              <Search className="h-4 w-4" />
+              {t('configEditorModal.search')}
             </button>
 
             <button

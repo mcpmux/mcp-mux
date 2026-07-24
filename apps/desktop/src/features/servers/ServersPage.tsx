@@ -398,7 +398,6 @@ export function ServersPage() {
   const [editConfigSpace, setEditConfigSpace] = useState<{ id: string; name: string } | null>(null);
   const [customServerPanelSpace, setCustomServerPanelSpace] = useState<{
     id: string;
-    name: string;
   } | null>(null);
   
   const viewSpace = useViewSpace();
@@ -1668,7 +1667,7 @@ export function ServersPage() {
               <AddServerMenu
                 onDiscover={() => navigate('registry')}
                 onCustom={() =>
-                  setCustomServerPanelSpace({ id: viewSpace.id, name: viewSpace.name })
+                  setCustomServerPanelSpace({ id: viewSpace.id })
                 }
                 onViewManifest={() =>
                   setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })
@@ -1713,7 +1712,7 @@ export function ServersPage() {
               <AddServerMenu
                 onDiscover={() => navigate('registry')}
                 onCustom={() =>
-                  setCustomServerPanelSpace({ id: viewSpace.id, name: viewSpace.name })
+                  setCustomServerPanelSpace({ id: viewSpace.id })
                 }
                 onViewManifest={() =>
                   setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })
@@ -2796,7 +2795,6 @@ export function ServersPage() {
       {customServerPanelSpace && (
         <CustomServerPanel
           spaceId={customServerPanelSpace.id}
-          spaceName={customServerPanelSpace.name}
           onClose={() => setCustomServerPanelSpace(null)}
           onSaved={() => loadData()}
         />

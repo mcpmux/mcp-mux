@@ -281,7 +281,6 @@
   },
   "customServerPanel": {
     "title": "Add Custom Server",
-    "subtitle": "{{spaceName}}",
     "closeAria": "Close panel",
     "modeForm": "Form",
     "modeJson": "JSON",

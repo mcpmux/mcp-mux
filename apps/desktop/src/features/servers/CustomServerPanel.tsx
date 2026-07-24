@@ -29,7 +29,6 @@ type PanelMode = 'form' | 'json';
 
 interface CustomServerPanelProps {
   spaceId: string;
-  spaceName: string;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -435,7 +434,7 @@ function CustomServerFormBody({
         tone="purple"
         title={t('customServerPanel.form.optionalSection')}
         subtitle={t('customServerPanel.form.optionalSectionDesc')}
-        defaultOpen={false}
+        defaultOpen
         testId="custom-server-optional-section"
       >
         <div className="space-y-4">
@@ -621,7 +620,7 @@ function collectFormValidationErrors(
 /**
  * Slide-in panel for adding a custom server via guided form or JSON editor.
  */
-export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: CustomServerPanelProps) {
+export function CustomServerPanel({ spaceId, onClose, onSaved }: CustomServerPanelProps) {
   const { t } = useTranslation('servers');
   const { success, error: showError } = useToast();
 
@@ -820,36 +819,31 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
         data-testid="custom-server-panel"
       >
         <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-start gap-3 flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
               <div className="w-11 h-11 flex-shrink-0 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg border border-[rgb(var(--border-subtle))]">
                 <Plus className="h-5 w-5 text-[rgb(var(--primary))]" />
               </div>
-              <div className="min-w-0">
-                <h2 className="text-lg font-bold text-[rgb(var(--foreground))]">
-                  {t('customServerPanel.title')}
-                </h2>
-                <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
-                  {t('customServerPanel.subtitle', { spaceName })}
-                </p>
-              </div>
+              <h2 className="text-lg font-bold text-[rgb(var(--foreground))] truncate">
+                {t('customServerPanel.title')}
+              </h2>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
-              aria-label={t('customServerPanel.closeAria')}
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
-          <div className="mt-4">
-            <ModeToggle
-              mode={mode}
-              onChange={setMode}
-              formLabel={t('customServerPanel.modeForm')}
-              jsonLabel={t('customServerPanel.modeJson')}
-            />
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <ModeToggle
+                mode={mode}
+                onChange={setMode}
+                formLabel={t('customServerPanel.modeForm')}
+                jsonLabel={t('customServerPanel.modeJson')}
+              />
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors"
+                aria-label={t('customServerPanel.closeAria')}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
           </div>
         </div>
 

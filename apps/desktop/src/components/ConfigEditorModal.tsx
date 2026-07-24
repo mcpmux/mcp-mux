@@ -400,7 +400,6 @@ export function ConfigEditorModal({
       {showCustomServerPanel && (
         <CustomServerPanel
           spaceId={spaceId}
-          spaceName={spaceName}
           onClose={() => setShowCustomServerPanel(false)}
           onSaved={() => {
             void loadConfig();

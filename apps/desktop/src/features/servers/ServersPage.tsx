@@ -112,6 +112,70 @@ function resolveCloneSource(
   return current;
 }
 
+/**
+ * Resolve the parent server row used to infer expected HTTP header keys for a clone.
+ */
+function getCloneHeaderParent(
+  server: ServerViewModelWithClone,
+  allServers: ServerViewModelWithClone[]
+): ServerViewModelWithClone | undefined {
+  if (!server.cloned_from) {
+    return undefined;
+  }
+
+  return (
+    allServers.find((candidate) => candidate.id === server.cloned_from) ??
+    resolveCloneSource(server, allServers)
+  );
+}
+
+/**
+ * Header keys a clone is expected to override based on its parent and HTTP definition.
+ */
+function getExpectedCloneHeaderKeys(
+  server: ServerViewModelWithClone,
+  allServers: ServerViewModelWithClone[]
+): string[] {
+  if (!server.cloned_from || server.transport.type !== 'http') {
+    return [];
+  }
+
+  const keys = new Set<string>();
+
+  const parent = getCloneHeaderParent(server, allServers);
+  if (parent?.extra_headers) {
+    for (const key of Object.keys(parent.extra_headers)) {
+      if (key.trim()) {
+        keys.add(key);
+      }
+    }
+  }
+
+  const inputs = server.transport.metadata?.inputs ?? [];
+  const requiredInputIds = new Set(
+    inputs.filter((input) => input.required).map((input) => input.id)
+  );
+  for (const [headerKey, headerValue] of Object.entries(server.transport.headers ?? {})) {
+    const match = headerValue.match(/\$\{input:([^}]+)\}/);
+    if (match && requiredInputIds.has(match[1])) {
+      keys.add(headerKey);
+    }
+  }
+
+  return [...keys];
+}
+
+/**
+ * Returns true when a clone is missing expected HTTP header overrides.
+ */
+function hasCloneMissingAuthHeaders(
+  server: ServerViewModelWithClone,
+  allServers: ServerViewModelWithClone[]
+): boolean {
+  const cloneHeaders = server.extra_headers ?? {};
+  return getExpectedCloneHeaderKeys(server, allServers).some((key) => !cloneHeaders[key]?.trim());
+}
+
 // Helper to merge definitions with states (same as registryStore)
 function mergeDefinitionsWithStates(
   definitions: ServerDefinition[],
@@ -388,6 +452,18 @@ export function ServersPage() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 5000);
   }, []);
+
+  /**
+   * Show a non-blocking toast when a clone is missing expected HTTP header overrides.
+   */
+  const warnCloneMissingAuthHeaders = useCallback(
+    (server: ServerViewModel) => {
+      if (hasCloneMissingAuthHeaders(server, installedServers)) {
+        showToast(t('cloneAuthWarning.connectToast'), 'warning');
+      }
+    },
+    [installedServers, showToast, t]
+  );
 
   const loadData = useCallback(async () => {
     try {
@@ -850,6 +926,8 @@ export function ServersPage() {
       return;
     }
 
+    warnCloneMissingAuthHeaders(server);
+
     setActionLoading(`enable-${server.id}`);
     // Optimistically mark as enabled so runtime status events (Connecting/Error)
     // are reflected in the UI immediately instead of showing stale "Enable" button
@@ -1216,6 +1294,7 @@ export function ServersPage() {
   
   // Retry connection - uses new ServerManager v2
   const handleRetry = async (server: ServerViewModel) => {
+    warnCloneMissingAuthHeaders(server);
     setActionLoading(`retry-${server.id}`);
     try {
       await retryConnectionV2(server.id);
@@ -1441,6 +1520,7 @@ export function ServersPage() {
   // Refresh server - Quick reconnect with EXISTING credentials
   // If succeeds → connected, if fails → shows Connect button
   const handleRefresh = async (server: ServerViewModel) => {
+    warnCloneMissingAuthHeaders(server);
     setActionLoading(`refresh-${server.id}`);
     try {
       await retryConnectionV2(server.id);
@@ -1455,6 +1535,7 @@ export function ServersPage() {
   // Reconnect server - Logout + auto-start OAuth (for OAuth servers)
   // For non-OAuth servers, just does a fresh connection
   const handleReconnect = async (server: ServerViewModel) => {
+    warnCloneMissingAuthHeaders(server);
     setActionLoading(`reconnect-${server.id}`);
     try {
       // OAuth is detected at runtime - check if server has oauth_connected or auth type
@@ -1793,6 +1874,15 @@ export function ServersPage() {
                             >
                               {t('connection.viewLogs')}
                             </button>
+                          </div>
+                        )}
+
+                        {hasCloneMissingAuthHeaders(server, installedServers) && (
+                          <div
+                            className="mt-2 px-3 py-2 rounded-lg text-xs bg-[rgb(var(--warning))]/10 text-[rgb(var(--warning))]"
+                            data-testid={`clone-auth-warning-${server.id}`}
+                          >
+                            {t('cloneAuthWarning.banner')}
                           </div>
                         )}
                       </div>

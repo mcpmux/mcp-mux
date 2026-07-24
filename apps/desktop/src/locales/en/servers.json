@@ -165,9 +165,16 @@
     "serverId": "Server ID",
     "toolPrefix": "Tool prefix",
     "checkingAvailability": "Checking availability…",
-    "footerNote": "The clone copies the server definition but not credentials. You will configure this account before enabling it.",
+    "headersPreviewTitle": "HTTP headers copied from source",
+    "headersPreviewDesc": "Header names from the source account are copied into the new clone. Update their values in Configure before enabling.",
+    "headersPreviewEmpty": "No custom HTTP headers on the source account.",
+    "footerNote": "The clone copies the server definition and HTTP header overrides from the source. Swap account-specific header values in Configure before enabling.",
     "creating": "Creating…",
     "createAccount": "Create account"
+  },
+  "cloneAuthWarning": {
+    "banner": "This clone may be using the wrong credentials — review its headers in Configure.",
+    "connectToast": "This clone is missing HTTP headers from its source — review Configure before connecting."
   },
   "uninstallClones": {
     "title": "Uninstall server with account clones?",

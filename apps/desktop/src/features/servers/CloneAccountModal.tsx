@@ -54,6 +54,10 @@ export function CloneAccountModal({
   const previewAlias = deriveCloneAlias(suffix);
   const hasSuffix = suffix.trim().length > 0;
   const hasCollision = hasSuffix && isAvailable === false;
+  const sourceHeaderKeys =
+    sourceServer.transport.type === 'http'
+      ? Object.keys(sourceServer.extra_headers ?? {}).filter((key) => key.trim())
+      : [];
 
   useEffect(() => {
     if (!open) {
@@ -289,6 +293,31 @@ export function CloneAccountModal({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   {t('cloneModal.checkingAvailability')}
                 </div>
+              )}
+            </div>
+          )}
+
+          {sourceServer.transport.type === 'http' && (
+            <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-dim))] p-3">
+              <p className="text-sm font-medium text-[rgb(var(--foreground))]">
+                {t('cloneModal.headersPreviewTitle')}
+              </p>
+              <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                {t('cloneModal.headersPreviewDesc')}
+              </p>
+              {sourceHeaderKeys.length > 0 ? (
+                <ul
+                  className="mt-2 space-y-1 font-mono text-xs text-[rgb(var(--foreground))]"
+                  data-testid="clone-headers-preview"
+                >
+                  {sourceHeaderKeys.map((headerKey) => (
+                    <li key={headerKey}>{headerKey}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-[rgb(var(--muted))]">
+                  {t('cloneModal.headersPreviewEmpty')}
+                </p>
               )}
             </div>
           )}

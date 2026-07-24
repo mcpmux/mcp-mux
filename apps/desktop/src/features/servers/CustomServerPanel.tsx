@@ -1,16 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Plus, Loader2, Check, AlertTriangle } from 'lucide-react';
+import type { TFunction } from 'i18next';
+import { X, Plus, Loader2, Check, AlertTriangle, Settings, SlidersHorizontal } from 'lucide-react';
 import { type Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { Button, useToast } from '@mcpmux/ui';
 import { readSpaceConfig, saveSpaceConfig } from '@/lib/api/spaces';
 import { MonacoJsonEditor } from '@/components/monaco-json-editor.component';
+import { CollapsibleSection } from '@/features/workspaces/WorkspacesPage';
 import {
+  buildServerEntryFromForm,
+  createDefaultFormState,
   createDefaultStdioEntry,
   nextCustomServerKey,
+  parseDefaultParamsJson,
   SINGLE_SERVER_ENTRY_SCHEMA,
   upsertServerEntry,
+  type CustomServerFormState,
+  type CustomServerTransportType,
+  type InputDefFormRow,
+  type KeyValueFormRow,
   type SpaceConfigJson,
 } from './custom-server-entry.helpers';
 
@@ -74,14 +83,553 @@ function ModeToggle({
 }
 
 /**
- * Slide-in panel for adding a custom server via JSON (Form mode stub until Phase 3).
+ * Reusable key/value row editor for env vars and HTTP headers.
+ */
+function KeyValueEditor({
+  rows,
+  onChange,
+  keyPlaceholder,
+  valuePlaceholder,
+  removeLabel,
+  addLabel,
+  testIdPrefix,
+}: {
+  rows: KeyValueFormRow[];
+  onChange: (rows: KeyValueFormRow[]) => void;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  removeLabel: string;
+  addLabel: string;
+  testIdPrefix: string;
+}) {
+  return (
+    <div className="space-y-2" data-testid={`${testIdPrefix}-rows`}>
+      {rows.map((row, idx) => (
+        <div key={idx} className="flex gap-2">
+          <input
+            type="text"
+            value={row.key}
+            onChange={(e) => {
+              const next = [...rows];
+              next[idx] = { ...row, key: e.target.value };
+              onChange(next);
+            }}
+            placeholder={keyPlaceholder}
+            className="input flex-1 font-mono text-sm"
+            data-testid={`${testIdPrefix}-key-${idx}`}
+          />
+          <input
+            type="text"
+            value={row.value}
+            onChange={(e) => {
+              const next = [...rows];
+              next[idx] = { ...row, value: e.target.value };
+              onChange(next);
+            }}
+            placeholder={valuePlaceholder}
+            className="input flex-1 font-mono text-sm"
+            data-testid={`${testIdPrefix}-value-${idx}`}
+          />
+          <button
+            type="button"
+            onClick={() => onChange(rows.filter((_, i) => i !== idx))}
+            className="px-2 py-1 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--error))] transition-colors"
+            title={removeLabel}
+            data-testid={`${testIdPrefix}-remove-${idx}`}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...rows, { key: '', value: '' }])}
+        className="text-xs text-[rgb(var(--primary))] hover:underline"
+        data-testid={`${testIdPrefix}-add`}
+      >
+        {addLabel}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Add/remove editor for metadata.inputs definition rows.
+ */
+function InputDefEditor({
+  rows,
+  onChange,
+}: {
+  rows: InputDefFormRow[];
+  onChange: (rows: InputDefFormRow[]) => void;
+}) {
+  const { t } = useTranslation('servers');
+  return (
+    <div className="space-y-3" data-testid="custom-server-input-defs">
+      {rows.map((row, idx) => (
+        <div
+          key={idx}
+          className="rounded-lg border border-[rgb(var(--border-subtle))] p-3 space-y-2"
+          data-testid={`custom-server-input-def-${idx}`}
+        >
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={row.id}
+              onChange={(e) => {
+                const next = [...rows];
+                next[idx] = { ...row, id: e.target.value };
+                onChange(next);
+              }}
+              placeholder={t('customServerPanel.form.inputIdPlaceholder')}
+              className="input flex-1 font-mono text-sm"
+              data-testid={`custom-server-input-def-id-${idx}`}
+            />
+            <input
+              type="text"
+              value={row.label}
+              onChange={(e) => {
+                const next = [...rows];
+                next[idx] = { ...row, label: e.target.value };
+                onChange(next);
+              }}
+              placeholder={t('customServerPanel.form.inputLabelPlaceholder')}
+              className="input flex-1 text-sm"
+              data-testid={`custom-server-input-def-label-${idx}`}
+            />
+            <button
+              type="button"
+              onClick={() => onChange(rows.filter((_, i) => i !== idx))}
+              className="px-2 py-1 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--error))] transition-colors"
+              title={t('customServerPanel.form.removeRow')}
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={row.type}
+              onChange={(e) => {
+                const next = [...rows];
+                next[idx] = { ...row, type: e.target.value as 'text' | 'password' };
+                onChange(next);
+              }}
+              className="input text-sm"
+              data-testid={`custom-server-input-def-type-${idx}`}
+            >
+              <option value="text">{t('customServerPanel.form.inputTypeText')}</option>
+              <option value="password">{t('customServerPanel.form.inputTypePassword')}</option>
+            </select>
+            <label className="flex items-center gap-1.5 text-xs text-[rgb(var(--foreground))]">
+              <input
+                type="checkbox"
+                checked={row.required}
+                onChange={(e) => {
+                  const next = [...rows];
+                  next[idx] = { ...row, required: e.target.checked };
+                  onChange(next);
+                }}
+                className="w-3.5 h-3.5 rounded border-[rgb(var(--border))]"
+              />
+              {t('customServerPanel.form.inputRequired')}
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-[rgb(var(--foreground))]">
+              <input
+                type="checkbox"
+                checked={row.secret}
+                onChange={(e) => {
+                  const next = [...rows];
+                  next[idx] = { ...row, secret: e.target.checked };
+                  onChange(next);
+                }}
+                className="w-3.5 h-3.5 rounded border-[rgb(var(--border))]"
+              />
+              {t('customServerPanel.form.inputSecret')}
+            </label>
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() =>
+          onChange([
+            ...rows,
+            { id: '', label: '', type: 'text', required: false, secret: false },
+          ])
+        }
+        className="text-xs text-[rgb(var(--primary))] hover:underline"
+        data-testid="custom-server-input-def-add"
+      >
+        {t('customServerPanel.form.addInputDef')}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Guided form fields for custom server creation (Required + Optional sections).
+ */
+function CustomServerFormBody({
+  form,
+  onChange,
+  formErrors,
+}: {
+  form: CustomServerFormState;
+  onChange: (form: CustomServerFormState) => void;
+  formErrors: string[];
+}) {
+  const { t } = useTranslation('servers');
+
+  const setTransport = (transportType: CustomServerTransportType) => {
+    onChange({ ...form, transportType });
+  };
+
+  return (
+    <div className="space-y-4">
+      {formErrors.length > 0 && (
+        <div
+          className="rounded-lg border border-[rgb(var(--error))]/30 bg-[rgb(var(--error))]/5 p-3 space-y-1"
+          data-testid="custom-server-form-errors"
+        >
+          {formErrors.map((msg) => (
+            <p key={msg} className="text-xs text-[rgb(var(--error))] flex items-center gap-1.5">
+              <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+              {msg}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <CollapsibleSection
+        icon={<Settings className="h-5 w-5" />}
+        tone="primary"
+        title={t('customServerPanel.form.requiredSection')}
+        subtitle={t('customServerPanel.form.requiredSectionDesc')}
+        defaultOpen
+        testId="custom-server-required-section"
+      >
+        <div className="space-y-4">
+          <div>
+            <label
+              htmlFor="custom-server-form-id"
+              className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+            >
+              {t('customServerPanel.serverId')}
+              <span className="text-[rgb(var(--error))] ml-1">*</span>
+            </label>
+            <p className="text-xs text-[rgb(var(--muted))] mb-2">
+              {t('customServerPanel.serverIdDesc')}
+            </p>
+            <input
+              id="custom-server-form-id"
+              type="text"
+              value={form.serverId}
+              onChange={(e) => onChange({ ...form, serverId: e.target.value })}
+              placeholder={t('customServerPanel.serverIdPlaceholder')}
+              className="input w-full font-mono"
+              data-testid="custom-server-form-server-id"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="custom-server-form-name"
+              className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+            >
+              {t('customServerPanel.form.displayName')}
+              <span className="text-[rgb(var(--error))] ml-1">*</span>
+            </label>
+            <p className="text-xs text-[rgb(var(--muted))] mb-2">
+              {t('customServerPanel.form.displayNameDesc')}
+            </p>
+            <input
+              id="custom-server-form-name"
+              type="text"
+              value={form.displayName}
+              onChange={(e) => onChange({ ...form, displayName: e.target.value })}
+              placeholder={t('customServerPanel.form.displayNamePlaceholder')}
+              className="input w-full"
+              data-testid="custom-server-form-display-name"
+            />
+          </div>
+
+          <div>
+            <span className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+              {t('customServerPanel.form.transportType')}
+              <span className="text-[rgb(var(--error))] ml-1">*</span>
+            </span>
+            <p className="text-xs text-[rgb(var(--muted))] mb-2">
+              {t('customServerPanel.form.transportTypeDesc')}
+            </p>
+            <div className="inline-flex rounded-lg border border-[rgb(var(--border))] p-0.5 gap-0.5">
+              {(['stdio', 'http'] as const).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setTransport(type)}
+                  aria-pressed={form.transportType === type}
+                  className={[
+                    'px-3 py-1.5 text-xs font-medium rounded-md transition-all',
+                    form.transportType === type
+                      ? 'bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))]'
+                      : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]',
+                  ].join(' ')}
+                  data-testid={`custom-server-form-transport-${type}`}
+                >
+                  {t(`customServerPanel.form.transport${type === 'stdio' ? 'Stdio' : 'Http'}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {form.transportType === 'stdio' ? (
+            <div>
+              <label
+                htmlFor="custom-server-form-command"
+                className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+              >
+                {t('customServerPanel.form.command')}
+                <span className="text-[rgb(var(--error))] ml-1">*</span>
+              </label>
+              <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                {t('customServerPanel.form.commandDesc')}
+              </p>
+              <input
+                id="custom-server-form-command"
+                type="text"
+                value={form.command}
+                onChange={(e) => onChange({ ...form, command: e.target.value })}
+                placeholder={t('customServerPanel.form.commandPlaceholder')}
+                className="input w-full font-mono"
+                data-testid="custom-server-form-command"
+              />
+            </div>
+          ) : (
+            <div>
+              <label
+                htmlFor="custom-server-form-url"
+                className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+              >
+                {t('customServerPanel.form.url')}
+                <span className="text-[rgb(var(--error))] ml-1">*</span>
+              </label>
+              <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                {t('customServerPanel.form.urlDesc')}
+              </p>
+              <input
+                id="custom-server-form-url"
+                type="url"
+                value={form.url}
+                onChange={(e) => onChange({ ...form, url: e.target.value })}
+                placeholder={t('customServerPanel.form.urlPlaceholder')}
+                className="input w-full font-mono"
+                data-testid="custom-server-form-url"
+              />
+            </div>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={<SlidersHorizontal className="h-5 w-5" />}
+        tone="purple"
+        title={t('customServerPanel.form.optionalSection')}
+        subtitle={t('customServerPanel.form.optionalSectionDesc')}
+        defaultOpen={false}
+        testId="custom-server-optional-section"
+      >
+        <div className="space-y-4">
+          <div>
+            <label
+              htmlFor="custom-server-form-description"
+              className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+            >
+              {t('customServerPanel.form.description')}
+            </label>
+            <textarea
+              id="custom-server-form-description"
+              value={form.description}
+              onChange={(e) => onChange({ ...form, description: e.target.value })}
+              placeholder={t('customServerPanel.form.descriptionPlaceholder')}
+              rows={2}
+              className="input w-full resize-y"
+              data-testid="custom-server-form-description"
+            />
+          </div>
+
+          {form.transportType === 'stdio' && (
+            <div>
+              <label
+                htmlFor="custom-server-form-args"
+                className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+              >
+                {t('customServerPanel.form.args')}
+              </label>
+              <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                {t('customServerPanel.form.argsDesc')}
+              </p>
+              <textarea
+                id="custom-server-form-args"
+                value={form.argsText}
+                onChange={(e) => onChange({ ...form, argsText: e.target.value })}
+                onBlur={(e) =>
+                  onChange({
+                    ...form,
+                    argsText: e.target.value
+                      .split('\n')
+                      .filter((line) => line.trim().length > 0)
+                      .join('\n'),
+                  })
+                }
+                placeholder={t('customServerPanel.form.argsPlaceholder')}
+                rows={3}
+                className="input w-full font-mono text-sm resize-y"
+                data-testid="custom-server-form-args"
+              />
+            </div>
+          )}
+
+          {form.transportType === 'stdio' && (
+            <div>
+              <span className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+                {t('customServerPanel.form.envVars')}
+              </span>
+              <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                {t('customServerPanel.form.envVarsStdio')}
+              </p>
+              <KeyValueEditor
+                rows={form.envRows}
+                onChange={(envRows) => onChange({ ...form, envRows })}
+                keyPlaceholder={t('customServerPanel.form.keyPlaceholder')}
+                valuePlaceholder={t('customServerPanel.form.valuePlaceholder')}
+                removeLabel={t('customServerPanel.form.removeRow')}
+                addLabel={t('customServerPanel.form.addEnvVar')}
+                testIdPrefix="custom-server-form-env"
+              />
+            </div>
+          )}
+
+          {form.transportType === 'http' && (
+            <div>
+              <span className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+                {t('customServerPanel.form.httpHeaders')}
+              </span>
+              <p className="text-xs text-[rgb(var(--muted))] mb-2">
+                {t('customServerPanel.form.httpHeadersDesc')}
+              </p>
+              <KeyValueEditor
+                rows={form.headerRows}
+                onChange={(headerRows) => onChange({ ...form, headerRows })}
+                keyPlaceholder={t('customServerPanel.form.headerNamePlaceholder')}
+                valuePlaceholder={t('customServerPanel.form.valuePlaceholder')}
+                removeLabel={t('customServerPanel.form.removeRow')}
+                addLabel={t('customServerPanel.form.addHeader')}
+                testIdPrefix="custom-server-form-header"
+              />
+            </div>
+          )}
+
+          <div>
+            <span className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1">
+              {t('customServerPanel.form.inputDefs')}
+            </span>
+            <p className="text-xs text-[rgb(var(--muted))] mb-2">
+              {t('customServerPanel.form.inputDefsDesc')}
+            </p>
+            <InputDefEditor
+              rows={form.inputDefs}
+              onChange={(inputDefs) => onChange({ ...form, inputDefs })}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="custom-server-form-default-params"
+              className="block text-sm font-medium text-[rgb(var(--foreground))] mb-1"
+            >
+              {t('customServerPanel.form.defaultParams')}
+            </label>
+            <p className="text-xs text-[rgb(var(--muted))] mb-2">
+              {t('customServerPanel.form.defaultParamsDesc')}{' '}
+              <code className="font-mono">{`{"cloudId": "abc123"}`}</code>
+            </p>
+            <textarea
+              id="custom-server-form-default-params"
+              value={form.defaultParamsJson}
+              onChange={(e) => onChange({ ...form, defaultParamsJson: e.target.value })}
+              placeholder="{}"
+              rows={3}
+              className="input w-full font-mono text-sm resize-y"
+              spellCheck={false}
+              data-testid="custom-server-form-default-params"
+            />
+            <div className="flex items-center gap-2 mt-2">
+              <label className="text-xs text-[rgb(var(--muted))]">
+                {t('customServerPanel.form.onCollision')}
+              </label>
+              <select
+                value={form.defaultParamsStrategy}
+                onChange={(e) =>
+                  onChange({
+                    ...form,
+                    defaultParamsStrategy: e.target.value as 'fill' | 'override',
+                  })
+                }
+                className="text-xs border border-[rgb(var(--border))] rounded px-2 py-1 bg-[rgb(var(--surface))] text-[rgb(var(--foreground))]"
+                data-testid="custom-server-form-default-params-strategy"
+              >
+                <option value="fill">{t('customServerPanel.form.callerWins')}</option>
+                <option value="override">{t('customServerPanel.form.defaultsWin')}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </CollapsibleSection>
+    </div>
+  );
+}
+
+/**
+ * Validate guided form required fields and default-params JSON before save.
+ */
+function collectFormValidationErrors(
+  form: CustomServerFormState,
+  t: TFunction<'servers'>,
+): string[] {
+  const errors: string[] = [];
+  if (!form.serverId.trim()) {
+    errors.push(t('customServerPanel.form.validation.serverIdRequired'));
+  }
+  if (!form.displayName.trim()) {
+    errors.push(t('customServerPanel.form.validation.displayNameRequired'));
+  }
+  if (form.transportType === 'stdio' && !form.command.trim()) {
+    errors.push(t('customServerPanel.form.validation.commandRequired'));
+  }
+  if (form.transportType === 'http' && !form.url.trim()) {
+    errors.push(t('customServerPanel.form.validation.urlRequired'));
+  }
+  const defaultParamsTrimmed = form.defaultParamsJson.trim();
+  if (defaultParamsTrimmed && defaultParamsTrimmed !== '{}') {
+    if (!parseDefaultParamsJson(form.defaultParamsJson)) {
+      errors.push(t('customServerPanel.form.validation.defaultParamsInvalid'));
+    }
+  }
+  return errors;
+}
+
+/**
+ * Slide-in panel for adding a custom server via guided form or JSON editor.
  */
 export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: CustomServerPanelProps) {
   const { t } = useTranslation('servers');
   const { success, error: showError } = useToast();
 
-  const [mode, setMode] = useState<PanelMode>('json');
+  const [mode, setMode] = useState<PanelMode>('form');
   const [serverKey, setServerKey] = useState('');
+  const [formState, setFormState] = useState<CustomServerFormState>(() =>
+    createDefaultFormState(''),
+  );
   const [jsonContent, setJsonContent] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -93,6 +641,12 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
   const [editorMounted, setEditorMounted] = useState(false);
   const [editorLoadFailed, setEditorLoadFailed] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+
+  const formValidationErrors = useMemo(
+    () => (mode === 'form' ? collectFormValidationErrors(formState, t) : []),
+    [mode, formState, t],
+  );
+  const isFormValid = formValidationErrors.length === 0;
 
   useEffect(() => {
     const timer = setTimeout(() => setEditorReady(true), 100);
@@ -111,6 +665,7 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
       const servers = parsed.mcpServers ?? {};
       const key = nextCustomServerKey(servers);
       setServerKey(key);
+      setFormState(createDefaultFormState(key));
       setJsonContent(JSON.stringify(createDefaultStdioEntry(key), null, 2));
       setIsValidJson(true);
       setValidationErrors([]);
@@ -175,7 +730,9 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
 
   /** Persist the edited entry into the space config file. */
   const handleSave = useCallback(async () => {
-    const trimmedKey = serverKey.trim();
+    const trimmedKey =
+      mode === 'form' ? formState.serverId.trim() : serverKey.trim();
+
     if (!trimmedKey) {
       showError(
         t('customServerPanel.toast.saveFailed'),
@@ -185,17 +742,27 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
     }
 
     let entry: Record<string, unknown>;
-    try {
-      entry = JSON.parse(jsonContent) as Record<string, unknown>;
-    } catch (e) {
-      const message = (e as Error).message;
-      setSaveError(t('customServerPanel.validation.invalidJson', { message }));
-      showError(t('customServerPanel.toast.invalidJsonTitle'), message);
-      return;
-    }
 
-    if (!isValidJson) {
-      return;
+    if (mode === 'form') {
+      const errors = collectFormValidationErrors(formState, t);
+      if (errors.length > 0) {
+        showError(t('customServerPanel.toast.saveFailed'), errors[0]);
+        return;
+      }
+      entry = buildServerEntryFromForm(formState);
+    } else {
+      try {
+        entry = JSON.parse(jsonContent) as Record<string, unknown>;
+      } catch (e) {
+        const message = (e as Error).message;
+        setSaveError(t('customServerPanel.validation.invalidJson', { message }));
+        showError(t('customServerPanel.toast.invalidJsonTitle'), message);
+        return;
+      }
+
+      if (!isValidJson) {
+        return;
+      }
     }
 
     setIsSaving(true);
@@ -216,6 +783,8 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
       setIsSaving(false);
     }
   }, [
+    mode,
+    formState,
     serverKey,
     jsonContent,
     isValidJson,
@@ -231,6 +800,13 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
     mode === 'json'
       ? 'w-full max-w-[720px] min-w-[600px]'
       : 'w-full max-w-[480px] min-w-[420px]';
+
+  const isSaveDisabled =
+    isSaving ||
+    isLoading ||
+    !!loadError ||
+    (mode === 'json' && !isValidJson) ||
+    (mode === 'form' && !isFormValid);
 
   return (
     <>
@@ -285,7 +861,11 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
           ) : loadError ? (
             <p className="text-sm text-[rgb(var(--error))]">{loadError}</p>
           ) : mode === 'form' ? (
-            <p className="text-sm text-[rgb(var(--muted))]">{t('customServerPanel.formComingSoon')}</p>
+            <CustomServerFormBody
+              form={formState}
+              onChange={setFormState}
+              formErrors={formValidationErrors}
+            />
           ) : (
             <>
               <div>
@@ -356,7 +936,7 @@ export function CustomServerPanel({ spaceId, spaceName, onClose, onSaved }: Cust
               variant="primary"
               size="md"
               onClick={() => void handleSave()}
-              disabled={isSaving || isLoading || !!loadError || (mode === 'json' && !isValidJson)}
+              disabled={isSaveDisabled}
               className="flex-1"
               data-testid="custom-server-panel-save"
             >

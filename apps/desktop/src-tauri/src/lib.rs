@@ -972,6 +972,7 @@ pub fn run() {
             commands::save_space_config,
             commands::remove_server_from_config,
             commands::update_server_in_config,
+            commands::update_cloned_server_definition,
             commands::refresh_tray_menu,
             // Server Discovery commands (v2)
             commands::discover_servers,

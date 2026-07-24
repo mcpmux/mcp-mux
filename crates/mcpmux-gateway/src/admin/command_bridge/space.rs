@@ -5,6 +5,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use mcpmux_core::{get_space_config_path, ApplicationServices, Space, UserServerEntry};
 use serde::Deserialize;
+use serde_json::Value;
 use tracing::info;
 use uuid::Uuid;
 
@@ -192,6 +193,21 @@ pub async fn update_server_in_config(
         "[command_bridge::space] Updated server '{}' in space '{}'",
         server_id, space_id
     );
+    Ok(())
+}
+
+/// Persist a manual-entry clone's definition to `installed_servers.cached_definition`.
+pub async fn update_cloned_server_definition(
+    ctx: &SpaceBridgeCtx<'_>,
+    space_id: &str,
+    server_id: &str,
+    entry: Value,
+) -> Result<()> {
+    let space_uuid = Uuid::parse_str(space_id)?;
+    ctx.services
+        .server()
+        .update_definition(space_uuid, server_id, entry)
+        .await?;
     Ok(())
 }
 

@@ -103,6 +103,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
             delete(write::remove_server_from_config).put(write::update_server_in_config),
         )
         .route(
+            "/api/v1/spaces/{space_id}/servers/{server_id}/definition",
+            put(write::update_cloned_server_definition),
+        )
+        .route(
             "/api/v1/spaces/{space_id}/base-dirs",
             get(read::list_space_base_dirs).post(write::add_space_base_dir),
         )

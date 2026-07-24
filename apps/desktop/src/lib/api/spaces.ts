@@ -72,6 +72,18 @@ export async function updateServerInConfig(
   return apiCall('update_server_in_config', { spaceId, serverId, entry });
 }
 
+/**
+ * Persist a manual-entry clone's definition to `installed_servers.cached_definition`.
+ * `entry` uses the same standard MCP format as `updateServerInConfig`.
+ */
+export async function updateClonedServerDefinition(
+  spaceId: string,
+  serverId: string,
+  entry: Record<string, unknown>,
+): Promise<void> {
+  return apiCall('update_cloned_server_definition', { spaceId, serverId, entry });
+}
+
 /** Reveal a space config file in the system editor (desktop only). */
 export async function openSpaceConfigFile(spaceId: string): Promise<void> {
   return shellOpenSpaceConfigFile(spaceId);

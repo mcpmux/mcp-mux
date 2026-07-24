@@ -455,6 +455,17 @@ pub async fn update_server_in_config(
     Ok(json!({ "ok": true }))
 }
 
+pub async fn update_cloned_server_definition(
+    ctx: &AdminBridgeCtx,
+    space_id: String,
+    server_id: String,
+    body: UpdateServerInConfigBody,
+) -> Result<Value> {
+    space::update_cloned_server_definition(&space_ctx(ctx), &space_id, &server_id, body.entry)
+        .await?;
+    Ok(json!({ "ok": true }))
+}
+
 // --- Feature sets ---
 
 pub async fn create_feature_set(ctx: &AdminBridgeCtx, body: CreateFeatureSetBody) -> Result<Value> {

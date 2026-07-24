@@ -46,6 +46,11 @@ export const spacesRoutes: Record<string, RouteHandler> = {
     path: `/api/v1/spaces/${encodeURIComponent(String(args.spaceId))}/config/servers/${encodeURIComponent(String(args.serverId))}`,
     body: { entry: args.entry },
   }),
+  update_cloned_server_definition: (args) => ({
+    method: 'PUT',
+    path: `/api/v1/spaces/${encodeURIComponent(String(args.spaceId))}/servers/${encodeURIComponent(String(args.serverId))}/definition`,
+    body: { entry: args.entry },
+  }),
   list_space_base_dirs: (args) => ({
     method: 'GET',
     path: `/api/v1/spaces/${encodeURIComponent(String(args.spaceId))}/base-dirs`,

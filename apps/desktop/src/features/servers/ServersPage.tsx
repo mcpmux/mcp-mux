@@ -71,7 +71,7 @@ import type {
 import type { FeaturesUpdatedEvent } from '@/lib/api/serverManager';
 import { ServerLogViewer } from '@/components/ServerLogViewer';
 import { ConfigEditorModal } from '@/components/ConfigEditorModal';
-import { ServerDefinitionModal } from '@/components/ServerDefinitionModal';
+import { ServerDefinitionModal, canEditServerDefinition } from '@/components/ServerDefinitionModal';
 import { SourceBadge } from '@/components/SourceBadge';
 import type { ClonedInstalledServer } from '@/lib/api/serverClone';
 import { listCloneDependents } from '@/lib/api/serverClone';
@@ -1964,7 +1964,7 @@ export function ServersPage() {
                         onLockToCurrentVersion={() => handleLockToCurrentVersion(server)}
                         onViewLogs={() => setLogViewerServer({ id: server.id, name: server.name })}
                         onViewDefinition={() => setDefinitionServer({ id: server.id, name: server.name })}
-                        canEditDefinition={server.source.type === 'UserSpace'}
+                        canEditDefinition={canEditServerDefinition(server)}
                         onCloneAccount={() =>
                           setCloneModalServer(resolveCloneSource(server, installedServers))
                         }
@@ -2680,6 +2680,7 @@ export function ServersPage() {
         return server ? (
           <ServerDefinitionModal
             server={server}
+            spaceId={viewSpace?.id}
             onClose={() => setDefinitionServer(null)}
             onSaved={() => loadData()}
           />

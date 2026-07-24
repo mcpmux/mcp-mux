@@ -7,7 +7,8 @@
 //! viewing in its own Zustand store (frontend-only state).
 
 use mcpmux_core::{
-    validate_workspace_root, Space, SpaceBaseDir, UserServerEntry, WorkspaceRootValidation,
+    application::ServerAppService, validate_workspace_root, InstalledServer, Space, SpaceBaseDir,
+    UserServerEntry, WorkspaceRootValidation,
 };
 use std::sync::Arc;
 use tauri::{AppHandle, State};
@@ -335,6 +336,31 @@ pub async fn update_server_in_config(
     );
 
     Ok(())
+}
+
+/// Persist a manual-entry clone's definition to `installed_servers.cached_definition`.
+#[tauri::command]
+pub async fn update_cloned_server_definition(
+    app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
+    space_id: String,
+    server_id: String,
+    entry: serde_json::Value,
+) -> Result<InstalledServer, String> {
+    if !entry.is_object() {
+        return Err("Server entry must be a JSON object".to_string());
+    }
+
+    let service_lock = app_service.read().await;
+    let service = service_lock
+        .as_ref()
+        .ok_or("ServerAppService not initialized")?;
+
+    let space_uuid = Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
+
+    service
+        .update_definition(space_uuid, &server_id, entry)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Refresh the system tray menu to reflect current spaces

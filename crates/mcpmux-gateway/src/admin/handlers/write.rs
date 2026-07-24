@@ -109,6 +109,17 @@ pub async fn update_server_in_config(
         .map_err(ApiError::from_bridge)
 }
 
+pub async fn update_cloned_server_definition(
+    State(state): State<AdminState>,
+    Path((space_id, server_id)): Path<(String, String)>,
+    Json(body): Json<UpdateServerInConfigBody>,
+) -> Result<Json<Value>, ApiError> {
+    bridge::update_cloned_server_definition(&state.bridge, space_id, server_id, body)
+        .await
+        .map(ok)
+        .map_err(ApiError::from_bridge)
+}
+
 pub async fn start_gateway(
     State(state): State<AdminState>,
     Json(body): Json<GatewayStartBody>,

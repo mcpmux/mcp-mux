@@ -368,6 +368,93 @@ impl ServerAppService {
         Ok(updated)
     }
 
+    /// Update the cached definition for a manual-entry installed server.
+    ///
+    /// Accepts the standard MCP `mcpServers` entry shape from the Definition editor.
+    /// Rejects servers whose `installation_source` is not `ManualEntry`.
+    ///
+    /// Emits: `ServerConfigUpdated`
+    pub async fn update_definition(
+        &self,
+        space_id: Uuid,
+        server_id: &str,
+        entry: serde_json::Value,
+    ) -> Result<InstalledServer> {
+        if !entry.is_object() {
+            return Err(anyhow!("Server entry must be a JSON object"));
+        }
+
+        let space_id_str = space_id.to_string();
+
+        let server = self
+            .server_repo
+            .get_by_server_id(&space_id_str, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server not installed"))?;
+
+        if server.source != InstallationSource::ManualEntry {
+            return Err(anyhow!(
+                "Definition updates via this path require installation_source ManualEntry"
+            ));
+        }
+
+        let existing = server
+            .get_definition()
+            .ok_or_else(|| anyhow!("Server has no cached definition"))?;
+
+        let user_entry: UserServerEntry = serde_json::from_value(entry)
+            .map_err(|e| anyhow!("Invalid server entry: {}", e))?;
+
+        let mut definition = user_entry.to_server_definition(
+            server_id,
+            &space_id_str,
+            std::path::PathBuf::new(),
+        );
+
+        definition.id = existing.id.clone();
+        definition.source = ServerSource::ManualEntry;
+        definition.categories = existing.categories.clone();
+        definition.badges = existing.badges.clone();
+        definition.hosting_type = existing.hosting_type;
+        definition.license = existing.license.clone();
+        definition.license_url = existing.license_url.clone();
+        definition.installation = existing.installation.clone();
+        definition.capabilities = existing.capabilities.clone();
+        definition.sponsored = existing.sponsored.clone();
+        definition.media = existing.media.clone();
+        definition.changelog_url = existing.changelog_url.clone();
+        if definition.publisher.is_none() {
+            definition.publisher = existing.publisher.clone();
+        }
+
+        let cached_def = serde_json::to_string(&definition)
+            .map_err(|e| anyhow!("Failed to serialize definition: {}", e))?;
+
+        self.server_repo
+            .update_cached_definition(
+                &server.id,
+                Some(definition.name.clone()),
+                Some(cached_def.clone()),
+            )
+            .await?;
+
+        info!(
+            space_id = %space_id,
+            server_id = server_id,
+            "[ServerAppService] Updated manual-entry server definition"
+        );
+
+        self.event_sender.emit(DomainEvent::ServerConfigUpdated {
+            space_id,
+            server_id: server_id.to_string(),
+        });
+
+        let mut updated = server;
+        updated.cached_definition = Some(cached_def);
+        updated.server_name = Some(definition.name);
+        Ok(updated)
+    }
+
     /// Clone an existing installed server into a new server ID with the given suffix.
     ///
     /// Emits: `ServerInstalled`

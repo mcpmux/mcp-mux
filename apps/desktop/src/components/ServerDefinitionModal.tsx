@@ -3,12 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { X, Copy, Check, Loader2, Save } from 'lucide-react';
 import type { ServerViewModel, ServerDefinition } from '../types/registry';
 import { MonacoJsonEditor } from './monaco-json-editor.component';
-import { updateServerInConfig } from '@/lib/api/spaces';
+import { updateClonedServerDefinition, updateServerInConfig } from '@/lib/api/spaces';
 
 const EDITOR_MOUNT_TIMEOUT_MS = 10_000;
 
 interface ServerDefinitionModalProps {
   server: ServerViewModel;
+  spaceId?: string;
   onClose: () => void;
   /** Called after a successful save so the caller can reload the server list. */
   onSaved?: () => void;
@@ -68,7 +69,19 @@ function buildEditableEntry(server: ServerViewModel): Record<string, unknown> {
   return entry;
 }
 
-export function ServerDefinitionModal({ server, onClose, onSaved }: ServerDefinitionModalProps) {
+/** Whether the Definition editor allows in-place edits for this server. */
+export function canEditServerDefinition(server: ServerViewModel): boolean {
+  return (
+    server.source.type === 'UserSpace' || server.installation_source?.type === 'manual_entry'
+  );
+}
+
+export function ServerDefinitionModal({
+  server,
+  spaceId,
+  onClose,
+  onSaved,
+}: ServerDefinitionModalProps) {
   const { t } = useTranslation('servers');
   const [copied, setCopied] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
@@ -77,7 +90,7 @@ export function ServerDefinitionModal({ server, onClose, onSaved }: ServerDefini
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const isEditable = server.source.type === 'UserSpace';
+  const isEditable = canEditServerDefinition(server);
   const [content, setContent] = useState(() =>
     JSON.stringify(isEditable ? buildEditableEntry(server) : extractDefinition(server), null, 2),
   );
@@ -150,14 +163,24 @@ export function ServerDefinitionModal({ server, onClose, onSaved }: ServerDefini
       return;
     }
 
-    if (server.source.type !== 'UserSpace') {
+    if (!isEditable) {
       return;
     }
 
     setIsSaving(true);
     setSaveError(null);
     try {
-      await updateServerInConfig(server.source.space_id, server.id, parsed);
+      if (server.installation_source?.type === 'manual_entry') {
+        if (!spaceId) {
+          setSaveError('Space ID is required to save this definition');
+          return;
+        }
+        await updateClonedServerDefinition(spaceId, server.id, parsed);
+      } else if (server.source.type === 'UserSpace') {
+        await updateServerInConfig(server.source.space_id, server.id, parsed);
+      } else {
+        return;
+      }
       onSaved?.();
       onClose();
     } catch (e) {
@@ -165,7 +188,7 @@ export function ServerDefinitionModal({ server, onClose, onSaved }: ServerDefini
     } finally {
       setIsSaving(false);
     }
-  }, [content, onClose, onSaved, server, t]);
+  }, [content, isEditable, onClose, onSaved, server, spaceId, t]);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">

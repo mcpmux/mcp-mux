@@ -123,6 +123,55 @@ pub async fn mcp_oauth_middleware(
     // key); when auth is disabled, fall back to an anonymous identity on the
     // default space.
     let authed_client_id = claims.map(|c| c.client_id).or(api_key_client_id);
+
+    // Revocation check: a JWT access token is a stateless, self-contained
+    // credential that stays cryptographically valid until it expires —
+    // deleting the client in the UI doesn't invalidate tokens it already
+    // issued. Confirm the client row still exists on every request so a
+    // revoked client is rejected on its very next call instead of continuing
+    // to work until natural token expiry.
+    let authed_client_id = match authed_client_id {
+        Some(cid) => match services
+            .dependencies
+            .inbound_client_repo
+            .get_client(&cid)
+            .await
+        {
+            Ok(Some(_)) => {
+                // `last_seen` otherwise only gets stamped by the /oauth/token
+                // grant handlers, which API-key clients (static `mcpk_`
+                // bearer, no OAuth dance) never hit — leaving their
+                // Connections-page status dot permanently "never seen"
+                // regardless of how active they are. Stamp it here instead,
+                // from the identity every request already resolves.
+                //
+                // ponytail: writes unconditionally on every request (no
+                // throttling) — fine for local single-user SQLite; if this
+                // ever shows up in profiling, bucket it to e.g. 10s windows
+                // using the just-fetched `client.last_seen` instead of
+                // writing every time.
+                if let Err(e) = services
+                    .dependencies
+                    .inbound_client_repo
+                    .update_client_last_seen(&cid)
+                    .await
+                {
+                    warn!(trace_id = %trace_id, client_id = %cid, "Failed to update last_seen: {}", e);
+                }
+                Some(cid)
+            }
+            Ok(None) => {
+                warn!(trace_id = %trace_id, client_id = %cid, "Client no longer registered (revoked) — rejecting");
+                None
+            }
+            Err(e) => {
+                warn!(trace_id = %trace_id, client_id = %cid, "Client lookup failed: {}", e);
+                None
+            }
+        },
+        None => None,
+    };
+
     let (client_id, space_id) = if let Some(cid) = authed_client_id {
         match services
             .space_resolver_service

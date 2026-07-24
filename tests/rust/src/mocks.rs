@@ -223,6 +223,28 @@ impl InstalledServerRepository for MockInstalledServerRepository {
         }
         Ok(())
     }
+
+    async fn set_display_name_override(&self, id: &Uuid, value: Option<String>) -> RepoResult<()> {
+        if let Some(server) = self.servers.write().unwrap().get_mut(id) {
+            server.display_name_override = value;
+        }
+        Ok(())
+    }
+
+    async fn update_version_cache(
+        &self,
+        id: &Uuid,
+        latest_available_version: Option<String>,
+        current_version: Option<String>,
+        version_checked_at: chrono::DateTime<chrono::Utc>,
+    ) -> RepoResult<()> {
+        if let Some(server) = self.servers.write().unwrap().get_mut(id) {
+            server.latest_available_version = latest_available_version;
+            server.current_version = Some(current_version.unwrap_or_default());
+            server.version_checked_at = Some(version_checked_at);
+        }
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -432,6 +454,7 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             member_type: MemberType::Feature,
             member_id: feature_id.to_string(),
             mode,
+            surfaced: false,
         };
         self.members
             .write()

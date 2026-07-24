@@ -13,7 +13,7 @@ export class FeatureSetsPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.heading = page.getByRole('heading', { name: 'Feature Sets' });
+    this.heading = page.getByRole('heading', { name: 'Bundles' });
     this.createButton = page.getByRole('button', { name: /Create|New/i });
     this.featureSetList = page.locator('[data-testid="featureset-list"]');
     this.featureSetCards = page.locator('[data-testid="featureset-card"]');

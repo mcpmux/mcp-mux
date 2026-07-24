@@ -3,16 +3,20 @@
 //! IPC commands for controlling the local MCP gateway server.
 
 use crate::commands::server_manager::ServerManagerState;
+use crate::services::ui_events::OAUTH_CONSENT_REQUEST_CHANNEL;
 use crate::AppState;
-use mcpmux_core::service::{allocate_dynamic_port, is_port_available};
+use mcpmux_core::service::{
+    allocate_dynamic_port, is_port_available, wait_for_port_available, AUTOSTART_PORT_WAIT,
+};
 use mcpmux_core::DomainEvent;
+use mcpmux_gateway::admin::ui_events::AdminUiEventBus;
 use mcpmux_gateway::{
     ConnectionContext, ConnectionResult, FeatureService, InstalledServerInfo, OAuthCompleteEvent,
     PoolService, ResolvedTransport, ServerKey, ServerManager,
 };
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
@@ -82,6 +86,18 @@ pub struct GatewayAppState {
     /// Surfaced to the desktop Workspaces tab so users can see + act on
     /// every folder connected clients are currently operating in.
     pub session_roots: Option<Arc<mcpmux_gateway::services::SessionRootsRegistry>>,
+    /// FeatureSet resolver for live machine-identity hot-reload.
+    pub feature_set_resolver: Option<Arc<mcpmux_gateway::services::FeatureSetResolverService>>,
+}
+
+/// Hot-reload the resolver's local machine identity after settings persist.
+pub(crate) async fn hot_reload_local_machine_id(
+    gateway_state: &Arc<RwLock<GatewayAppState>>,
+    id: Option<Uuid>,
+) {
+    if let Some(resolver) = gateway_state.read().await.feature_set_resolver.as_ref() {
+        resolver.set_local_machine_id(id).await;
+    }
 }
 
 /// Gracefully shuts down a running gateway and waits for the axum task
@@ -217,6 +233,7 @@ pub(crate) async fn load_network_access(app_state: &AppState) -> bool {
     load_network_access_from_repo(&app_state.settings_repository).await
 }
 
+/// Load the persisted inbound-auth toggle (`gateway.auth_disabled`).
 pub(crate) async fn load_gateway_auth_disabled_from_repo(
     settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
 ) -> bool {
@@ -229,6 +246,7 @@ pub(crate) async fn load_gateway_auth_disabled_from_repo(
         .unwrap_or(false)
 }
 
+/// Load the persisted inbound-auth toggle for the running app instance.
 pub(crate) async fn load_gateway_auth_disabled(app_state: &AppState) -> bool {
     load_gateway_auth_disabled_from_repo(&app_state.settings_repository).await
 }
@@ -264,26 +282,6 @@ pub(crate) async fn attach_approval_publisher<R: tauri::Runtime>(
     approval_broker: &Arc<mcpmux_gateway::services::ApprovalBroker>,
     app_handle: tauri::AppHandle<R>,
 ) {
-    // Restore the persisted "require approval" switch onto the broker (which is
-    // recreated on every gateway start). Default ON when unset. This is the
-    // single chokepoint both start paths (auto-start + start_gateway command)
-    // funnel through, so the setting always survives a restart.
-    {
-        use tauri::Manager;
-        let required = match app_handle.try_state::<AppState>() {
-            Some(app_state) => app_state
-                .settings_repository
-                .get("meta_tools.require_approval")
-                .await
-                .ok()
-                .flatten()
-                .map(|v| v != "false")
-                .unwrap_or(true),
-            None => true,
-        };
-        approval_broker.set_require_approval(required);
-    }
-
     let publisher: mcpmux_gateway::services::meta_tools::ApprovalPublisher = Arc::new(move |req| {
         let app_handle = app_handle.clone();
         Box::pin(async move {
@@ -446,7 +444,17 @@ pub fn start_domain_event_bridge(
             // window forward BEFORE emitting so the popup animates into a
             // visible window instead of rendering behind another app.
             if matches!(event, DomainEvent::WorkspaceNeedsBinding { .. }) {
-                focus_main_window(&app_handle_clone);
+                let has_web_admin = {
+                    let admin_state: tauri::State<
+                        '_,
+                        Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+                    > = app_handle_clone.state();
+                    let guard = admin_state.read().await;
+                    guard.event_hub.has_sse_subscribers()
+                };
+                if !has_web_admin {
+                    focus_main_window(&app_handle_clone);
+                }
             }
 
             // Map domain events to UI channels
@@ -458,9 +466,21 @@ pub fn start_domain_event_bridge(
                 "[Gateway] Forwarding domain event to UI"
             );
 
-            if let Err(e) = app_handle_clone.emit(channel, payload) {
-                error!("[Gateway] Failed to emit {} event: {}", channel, e);
-            }
+            // Emit to Tauri webview and admin SSE subscribers.
+            let ui_event_bus = {
+                let admin_state: tauri::State<
+                    '_,
+                    Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+                > = app_handle_clone.state();
+                let guard = admin_state.read().await;
+                guard.ui_event_bus.clone()
+            };
+            crate::services::ui_events::emit_ui_channel(
+                &app_handle_clone,
+                Some(&ui_event_bus),
+                channel,
+                payload,
+            );
         }
 
         info!("[Gateway] Domain event bridge stopped");
@@ -850,7 +870,61 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
             "builtin-server-config-changed",
             serde_json::json!({ "space_id": space_id }),
         ),
+        DomainEvent::WorkspaceAppearanceChanged { workspace_root } => (
+            "workspace-appearance-changed",
+            serde_json::json!({ "workspace_root": workspace_root }),
+        ),
+
+        DomainEvent::ServerVersionChecked {
+            space_id,
+            server_id,
+        } => (
+            "server-version-checked",
+            serde_json::json!({
+                "space_id": space_id,
+                "server_id": server_id,
+            }),
+        ),
+
+        DomainEvent::ServerUpdateAvailable {
+            space_id,
+            server_id,
+            current_version,
+            latest_version,
+        } => (
+            "server-update-available",
+            serde_json::json!({
+                "space_id": space_id,
+                "server_id": server_id,
+                "current_version": current_version,
+                "latest_version": latest_version,
+            }),
+        ),
     }
+}
+
+/// Wire OAuth consent notifications to the desktop webview and admin SSE bus.
+pub async fn wire_consent_ui_notifications(
+    app_handle: &AppHandle,
+    gateway_state: &Arc<RwLock<mcpmux_gateway::GatewayState>>,
+    ui_bus: Option<Arc<AdminUiEventBus>>,
+) {
+    let app = app_handle.clone();
+    let ui_bus_for_hook = ui_bus.clone();
+    let hook: mcpmux_gateway::ConsentUiNotifier = Arc::new(move |request_id: &str| {
+        crate::services::ui_events::emit_ui_channel(
+            &app,
+            ui_bus_for_hook.as_deref(),
+            OAUTH_CONSENT_REQUEST_CHANNEL,
+            serde_json::json!({ "requestId": request_id }),
+        );
+    });
+
+    gateway_state.write().await.set_consent_ui_hook(hook);
+    info!(
+        "[Gateway] Consent UI wired (Tauri + SSE={})",
+        ui_bus.is_some()
+    );
 }
 
 /// Create Gateway dependencies from app state using DI builder pattern
@@ -1049,6 +1123,7 @@ pub async fn start_gateway(
     let server_manager = server.server_manager();
     let grant_service = server.grant_service();
     let session_roots = server.session_roots();
+    let feature_set_resolver = server.feature_set_resolver();
 
     // Seed the system-wide inbound-auth toggle into the running gateway from
     // persisted settings (default: auth required). Live changes go through
@@ -1104,6 +1179,7 @@ pub async fn start_gateway(
     state.grant_service = Some(grant_service);
     state.approval_broker = Some(approval_broker);
     state.session_roots = Some(session_roots);
+    state.feature_set_resolver = Some(feature_set_resolver);
     info!(
         "[Gateway] Started — url={}, event_emitter={}, grant_service={}",
         url,
@@ -1124,6 +1200,30 @@ pub async fn start_gateway(
         }),
     ) {
         warn!("[Gateway] Failed to emit gateway-changed(started): {}", e);
+    }
+
+    // Sync admin server health endpoint and register SSE stream.
+    {
+        use crate::services::admin_server::{register_gateway_sse, set_gateway_running};
+        let admin_state: tauri::State<
+            '_,
+            Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+        > = app_handle.state();
+        let guard = admin_state.read().await;
+        set_gateway_running(&guard, true);
+        if let Some(gw_state) = state.gateway_state.clone() {
+            let admin_guard_clone = admin_state.clone();
+            let gw_state_clone = gw_state;
+            drop(guard);
+            let guard2 = admin_guard_clone.read().await;
+            register_gateway_sse(&guard2, &gw_state_clone).await;
+            wire_consent_ui_notifications(
+                &app_handle,
+                &gw_state_clone,
+                Some(guard2.ui_event_bus.clone()),
+            )
+            .await;
+        }
     }
 
     Ok(url)
@@ -1157,6 +1257,18 @@ pub async fn stop_gateway(
 
     if let Err(e) = app_handle.emit("gateway-changed", serde_json::json!({"action": "stopped"})) {
         warn!("[Gateway] Failed to emit gateway-changed(stopped): {}", e);
+    }
+
+    // Sync admin server health endpoint and clear SSE stream.
+    {
+        use crate::services::admin_server::{clear_gateway_sse, set_gateway_running};
+        let admin_state: tauri::State<
+            '_,
+            Arc<tokio::sync::RwLock<crate::services::AdminServerState>>,
+        > = app_handle.state();
+        let guard = admin_state.read().await;
+        set_gateway_running(&guard, false);
+        clear_gateway_sse(&guard).await;
     }
 
     Ok(())
@@ -1513,6 +1625,21 @@ pub async fn restart_gateway(
         shutdown_gateway_handle(h).await;
     }
 
+    // The shutdown above is graceful (or force-aborted after a 2s timeout),
+    // but the OS may hold the socket a moment longer than the in-process
+    // handle takes to resolve. Ride out that brief window the same way
+    // auto-start rides out the self-update restart race, so start_gateway's
+    // single is_port_available() check below doesn't spuriously report the
+    // port we just released as taken.
+    let (preferred_port, _source) = resolve_preferred_port(&app_state, port).await;
+    if !wait_for_port_available(preferred_port, AUTOSTART_PORT_WAIT).await {
+        warn!(
+            "[Gateway] Restart: port {} still unavailable after waiting — \
+             deferring to start_gateway's normal conflict handling",
+            preferred_port
+        );
+    }
+
     // Start with new config
     start_gateway(
         port,
@@ -1571,113 +1698,6 @@ pub async fn generate_gateway_config(
     };
 
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
-}
-
-/// Resolve the system's default space id (the `is_default` Space).
-async fn get_default_space_id(app_state: &AppState) -> Result<String, String> {
-    let space = app_state
-        .space_service
-        .get_default()
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?
-        .ok_or("No default space found")?;
-    Ok(space.id.to_string())
-}
-
-/// Connect an installed server to the gateway
-#[tauri::command]
-pub async fn connect_server(
-    server_id: String,
-    space_id: Option<String>,
-    app_state: State<'_, AppState>,
-    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
-) -> Result<(), String> {
-    info!("[Gateway] Connecting server: {}", server_id);
-
-    // Get space ID
-    let space_id_str = match space_id {
-        Some(sid) => sid,
-        None => get_default_space_id(&app_state).await?,
-    };
-
-    let space_uuid = Uuid::parse_str(&space_id_str).map_err(|e| e.to_string())?;
-
-    // Get the installed server from the database
-    let installed = app_state
-        .installed_server_repository
-        .get_by_server_id(&space_id_str, &server_id)
-        .await
-        .map_err(|e| {
-            error!(
-                "[Gateway] Failed to get installed server {}: {}",
-                server_id, e
-            );
-            e.to_string()
-        })?
-        .ok_or_else(|| {
-            warn!("[Gateway] Server not installed: {}", server_id);
-            format!("Server not installed: {}", server_id)
-        })?;
-
-    // Use cached definition (offline-first)
-    let server_definition = installed.get_definition().ok_or_else(|| {
-        warn!("[Gateway] Server has no cached definition: {}", server_id);
-        format!("Server has no cached definition: {}", server_id)
-    })?;
-
-    // Get pool service
-    let state = gateway_state.read().await;
-    if !state.running {
-        return Err("Gateway is not running".to_string());
-    }
-    let pool_service = state
-        .pool_service
-        .clone()
-        .ok_or("Pool service not initialized")?;
-    drop(state); // Release lock before async work
-
-    // Build transport config from cached definition + input values
-    let transport = mcpmux_gateway::pool::transport::resolution::build_transport_config(
-        &server_definition.transport,
-        &installed,
-        Some(app_state.data_dir()),
-    );
-
-    // Connect using pool service (manual connect from API)
-    let ctx = ConnectionContext::new(space_uuid, server_id.clone(), transport);
-    let result = pool_service.connect_server(&ctx).await;
-
-    match result {
-        ConnectionResult::Connected { reused, features } => {
-            info!(
-                "[Gateway] Server {} connected (reused: {}, features: {})",
-                server_id,
-                reused,
-                features.total_count()
-            );
-
-            Ok(())
-        }
-        ConnectionResult::Failed { error } => {
-            error!(
-                "[Gateway] Failed to connect server {}: {}",
-                server_id, error
-            );
-
-            Err(error)
-        }
-        ConnectionResult::OAuthRequired { auth_url } => {
-            warn!(
-                "[Gateway] Server {} requires OAuth authentication",
-                server_id
-            );
-
-            Err(format!(
-                "OAuth required. Please authenticate at: {}",
-                auth_url
-            ))
-        }
-    }
 }
 
 /// Disconnect a server from the gateway
@@ -1879,6 +1899,7 @@ pub async fn connect_all_enabled_servers(
                 &server_definition.transport,
                 &installed,
                 Some(app_state.data_dir()),
+                mcpmux_gateway::pool::transport::resolution::TransportResolutionOptions::default(),
             );
 
             servers_to_connect.push((server_info, transport, server_definition, installed));
@@ -1993,6 +2014,31 @@ pub struct PoolStatsResponse {
     pub total_instances: usize,
     pub connected_instances: usize,
     pub total_space_server_mappings: usize,
+}
+
+/// Reload (or stop-then-start) the web admin server based on current settings.
+///
+/// Call this after the user toggles `gateway.admin_enabled`, changes the admin
+/// port, or modifies Cloudflare Access settings so the admin server picks up the
+/// new configuration without requiring a full app restart.
+#[tauri::command]
+pub async fn reload_admin_server(
+    app_handle: tauri::AppHandle,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+    server_manager_state: State<'_, Arc<RwLock<ServerManagerState>>>,
+) -> Result<(), String> {
+    let admin_state: tauri::State<'_, Arc<tokio::sync::RwLock<crate::services::AdminServerState>>> =
+        app_handle.state();
+    let event_bus = mcpmux_core::create_shared_event_bus();
+    crate::services::admin_server::reload_admin_server(
+        app_handle.clone(),
+        admin_state.inner().clone(),
+        gateway_state.inner().clone(),
+        server_manager_state.inner().clone(),
+        event_bus,
+    )
+    .await;
+    Ok(())
 }
 
 #[cfg(test)]

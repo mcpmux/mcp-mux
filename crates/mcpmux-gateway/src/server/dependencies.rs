@@ -8,10 +8,11 @@ use std::sync::Arc;
 
 use crate::services::ClientMetadataService;
 use mcpmux_core::{
-    AppSettingsRepository, CimdMetadataFetcher, CredentialRepository, FeatureSetRepository,
-    InboundMcpClientRepository, InstalledServerRepository, OutboundOAuthRepository,
-    ServerDiscoveryService, ServerFeatureRepository, ServerLogManager, SpaceBaseDirRepository,
-    SpaceBuiltinConfigRepository, SpaceRepository, WorkspaceBindingRepository,
+    AppSettingsRepository, CimdMetadataFetcher, CredentialRepository, EventBus,
+    FeatureSetRepository, InboundMcpClientRepository, InstalledServerRepository,
+    OutboundOAuthRepository, ServerDiscoveryService, ServerFeatureRepository, ServerLogManager,
+    SpaceBaseDirRepository, SpaceBuiltinConfigRepository, SpaceRepository,
+    WorkspaceBindingRepository,
 };
 use mcpmux_storage::{Database, InboundClientRepository};
 use tokio::sync::Mutex;
@@ -59,6 +60,8 @@ pub struct GatewayDependencies {
     pub state_dir: Option<PathBuf>,
     /// App settings repository (for OAuth port persistence)
     pub settings_repo: Option<Arc<dyn AppSettingsRepository>>,
+    /// Application event bus (shared with desktop ApplicationServices)
+    pub event_bus: Option<Arc<EventBus>>,
 }
 
 impl GatewayDependencies {
@@ -115,6 +118,7 @@ impl GatewayDependencies {
             jwt_secret,
             state_dir,
             settings_repo: None, // Use builder for this
+            event_bus: None,
         }
     }
 }
@@ -136,6 +140,7 @@ pub struct DependenciesBuilder {
     jwt_secret: Option<zeroize::Zeroizing<[u8; mcpmux_storage::JWT_SECRET_SIZE]>>,
     state_dir: Option<PathBuf>,
     settings_repo: Option<Arc<dyn AppSettingsRepository>>,
+    event_bus: Option<Arc<EventBus>>,
 }
 
 impl DependenciesBuilder {
@@ -156,6 +161,7 @@ impl DependenciesBuilder {
             jwt_secret: None,
             state_dir: None,
             settings_repo: None,
+            event_bus: None,
         }
     }
 
@@ -214,6 +220,11 @@ impl DependenciesBuilder {
 
     pub fn with_settings_repo(mut self, repo: Arc<dyn AppSettingsRepository>) -> Self {
         self.settings_repo = Some(repo);
+        self
+    }
+
+    pub fn with_event_bus(mut self, bus: Arc<EventBus>) -> Self {
+        self.event_bus = Some(bus);
         self
     }
 
@@ -289,6 +300,7 @@ impl DependenciesBuilder {
             jwt_secret: self.jwt_secret,
             state_dir: self.state_dir,
             settings_repo: self.settings_repo,
+            event_bus: self.event_bus,
         })
     }
 }

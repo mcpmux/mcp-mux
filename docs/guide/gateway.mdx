@@ -19,7 +19,7 @@ ChatGPT ─────────┘                     ├──→ PostgreS
 The gateway receives MCP JSON-RPC requests from clients and:
 
 1. **Authenticates** the client using its access key
-2. **Resolves** the session's folder (its workspace root) to a Space + FeatureSet via the matching [Workspace](/docs/workspaces/) binding — falling back to the active Space when no folder is reported
+2. **Resolves** the session's folder (its workspace root) to a Space + FeatureSet via the matching [Workspace](/docs/workspaces/) binding — unmapped folders get no backend tools (deny-by-default)
 3. **Filters** the available tools, resources, and prompts to that resolved FeatureSet
 4. **Routes** each request to the correct backend MCP server
 5. **Returns** the response to the client
@@ -90,8 +90,35 @@ The dashboard shows real-time gateway status:
 - **Connected Servers** — count of actively connected backend servers
 - **Registered Clients** — count of AI clients that have connected
 
+
+## Web admin mode (remote UI)
+
+For operators who need the full McpMux UI from another device (phone, laptop) without screen sharing, enable **Web admin mode** in **Settings → Gateway**:
+
+- **Admin server** listens on `127.0.0.1:45819` by default (configurable port, never bind to `0.0.0.0`)
+- Serves the production React build at `/` and REST at `/api/v1/*`
+- **Cloudflare Access** (recommended): expose a dedicated admin hostname (e.g. `mux.example.com`) via `cloudflared` to `localhost:45819` and enable **Trust Cloudflare Access JWT** so only authenticated tunnel traffic reaches the app
+- **Local dev**: disable CF JWT trust to hit `http://127.0.0.1:45819` directly
+- **Health checks**: when CF Access trust is enabled, `/api/v1/health` also requires a valid `CF-Access-Jwt-Assertion` header. Cloudflare Tunnel origin probes do not send that header — use an external monitor or keep trust disabled on a dev-only admin instance rather than relying on tunnel health checks against `:45819`.
+- **Missing SPA build**: if `pnpm build:web:admin` has not been run, visiting `/` returns a 503 HTML page with build instructions instead of a blank 404.
+
+Build the SPA for admin serving from the repo root:
+
+```bash
+pnpm build:web:admin
+```
+
+The Tauri app resolves `apps/desktop/dist` when the admin server starts. MCP clients should continue using `http://localhost:45818/mcp` (or a separate MCP tunnel hostname such as `mcp.example.com`) — do not mix admin UI traffic onto the MCP gateway port.
+
+## Remote access (optional)
+
+Remote MCP and tunneled web admin are **optional**. The gateway stays on loopback; you expose it with Cloudflare Tunnel (or similar) and Cloudflare Access at the edge.
+
+For a high-level capability map — two-hostname layout, auth layers, Settings knobs, client config shape, and **per-device machine headers** for multi-device tunnel setups — see [Remote Access](/docs/remote-access/).
+
 ## Next Steps
 
+- [Remote Access](/docs/remote-access/) — optional HTTPS MCP and admin via tunnel + Access
 - [Set up Clients](/docs/clients/) to connect your AI applications
 - [Configure FeatureSets](/docs/feature-sets/) to control what each client can access
 - [Manage Servers](/docs/servers/) to add and configure backend MCP servers

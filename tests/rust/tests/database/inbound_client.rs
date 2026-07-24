@@ -39,6 +39,8 @@ fn create_test_client(name: &str) -> InboundClient {
         updated_at: now,
         reports_roots: false,
         roots_capability_known: false,
+        machine_id: None,
+        client_icon: None,
     }
 }
 
@@ -590,4 +592,42 @@ async fn test_update_last_seen() {
     // Now has last_seen
     let updated = repo.get_client(&client.client_id).await.unwrap().unwrap();
     assert!(updated.last_seen.is_some());
+}
+
+#[tokio::test]
+async fn test_workspace_binding_prompt_dismissals() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let repo = InboundClientRepository::new(db);
+
+    assert!(!repo
+        .is_binding_prompt_dismissed("mcp_test", "/tmp/project")
+        .await
+        .unwrap());
+
+    repo.dismiss_binding_prompt("mcp_test", "/tmp/project")
+        .await
+        .unwrap();
+
+    assert!(repo
+        .is_binding_prompt_dismissed("mcp_test", "/tmp/project")
+        .await
+        .unwrap());
+    assert!(repo
+        .is_binding_prompt_dismissed_for_root("/tmp/project")
+        .await
+        .unwrap());
+    assert!(!repo
+        .is_binding_prompt_dismissed("mcp_other", "/tmp/project")
+        .await
+        .unwrap());
+
+    repo.clear_binding_prompt_dismissals_for_root("/tmp/project")
+        .await
+        .unwrap();
+
+    assert!(!repo
+        .is_binding_prompt_dismissed("mcp_test", "/tmp/project")
+        .await
+        .unwrap());
 }

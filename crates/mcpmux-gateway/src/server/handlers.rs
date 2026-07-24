@@ -459,6 +459,15 @@ pub async fn oauth_authorize(
                 consent_token: Some(consent_token),
             },
         );
+        gateway_state.notify_consent_request(&request_id);
+        info!(
+            "[OAuth] Pending authorization stored: request_id='{}', client_id='{}', \
+             pending_count={}, expires_at={}",
+            request_id,
+            params.client_id,
+            gateway_state.pending_authorizations.len(),
+            expires_at
+        );
     }
 
     // Build deep link URL for the Tauri app (only request_id - app fetches details from backend)
@@ -472,191 +481,90 @@ pub async fn oauth_authorize(
 
     let app_name = branding::DISPLAY_NAME;
 
-    // HTML-escape the client-supplied display name before interpolating it
-    // into the consent page — DCR/CIMD `client_name` is attacker-controlled
-    // (reflected XSS otherwise). The raw name stays on the pending
-    // authorization for the desktop UI, which renders it as text via React.
-    let display_name_html = html_escape_text(&display_name);
-
     // When the gateway is exposed beyond loopback, a client that reached this
     // page from another machine can't complete the desktop consent (the
     // mcpmux:// deep link fires only on the host). Surface the API-key path so a
     // remote user isn't left at a dead end.
     let network_bind = state.read().await.network_bind;
     let network_note = if network_bind {
-        r#"<div style="margin-bottom:1.5rem;padding:0.85rem 1rem;border-radius:10px;background:rgba(218,119,86,0.08);border:1px solid rgba(218,119,86,0.25);color:#d8b08c;font-size:0.8rem;line-height:1.45;text-align:left;"><strong style="color:#DA7756;">Connecting from another machine?</strong> This approval only completes on the computer running McpMux. For a remote or headless client, register an <strong>API-key client</strong> in McpMux (Clients tab) and connect with that key &mdash; no browser approval needed.</div>"#
+        format!(
+            r#"<p style="margin:0 0 1rem;padding:0.85rem 1rem;border-radius:8px;background:rgba(218,119,86,0.12);border:1px solid rgba(218,119,86,0.3);color:#d8b08c;font-size:0.85rem;line-height:1.45;text-align:left;"><strong style="color:#DA7756;">Connecting from another machine?</strong> This approval only completes on the computer running {app_name}. For a remote or headless client, register an <strong>API-key client</strong> in {app_name} (Clients tab) and connect with that key instead of this browser flow.</p>"#
+        )
     } else {
-        ""
+        String::new()
+    };
+    let body_style = if network_bind {
+        String::new()
+    } else {
+        "display: none;".to_string()
+    };
+    let redirect_script = if network_bind {
+        String::new()
+    } else {
+        format!(
+            r#"
+    <script>
+        window.location.href = "{deep_link_url}";
+        setTimeout(function() {{
+            try {{ window.close(); }} catch(e) {{}}
+            // If window.close() was blocked, reveal the fallback.
+            document.body.style.display = '';
+        }}, 300);
+    </script>"#
+        )
     };
 
-    // HTML page that triggers the deep link
-    // The page shows a brief message while the app opens
-    // Industry standard: Don't auto-close, let user close after approval
+    // Minimal launcher page — fires the deep link and closes immediately on
+    // loopback binds. On network binds the fallback stays visible with guidance
+    // toward API-key clients because the deep link only works on the host.
     let html = format!(
         r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{app_name} - Authorization</title>
+    <title>{app_name}</title>
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            min-height: 100vh;
+            {body_style}
+        }}
+        .fallback {{
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #1a1210 0%, #2a1c17 50%, #1e1412 100%);
-            color: #e6e6e6;
-            padding: 1rem;
-        }}
-        .container {{
-            text-align: center;
-            max-width: 400px;
-        }}
-        .logo {{
-            width: 64px;
-            height: 64px;
-            margin: 0 auto 1.5rem;
-        }}
-        h1 {{
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 0.75rem;
-            color: #fff;
-        }}
-        .subtitle {{
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1210;
             color: #a0917e;
-            margin-bottom: 2rem;
-            line-height: 1.5;
+            text-align: center;
+            padding: 2rem;
         }}
-        .client-info {{
-            background: rgba(218,119,86,0.06);
-            border: 1px solid rgba(218,119,86,0.15);
-            border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-        }}
-        .client-name {{
-            font-weight: 500;
-            color: #DA7756;
-            margin-bottom: 0.25rem;
-        }}
-        .client-id {{
-            font-size: 0.75rem;
-            color: #7a6e62;
-            word-break: break-all;
-        }}
-        .action {{
-            margin-top: 1.5rem;
-        }}
-        .btn {{
+        a {{
             display: inline-block;
+            margin-top: 1.5rem;
             background: linear-gradient(135deg, #DA7756 0%, #B8553A 100%);
             color: #fff;
             padding: 0.75rem 2rem;
             border-radius: 8px;
             text-decoration: none;
             font-weight: 500;
-            transition: transform 0.2s, box-shadow 0.2s;
-            cursor: pointer;
-            border: none;
-            font-size: 1rem;
-        }}
-        .btn:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(218, 119, 86, 0.35);
-        }}
-        .btn-secondary {{
-            background: transparent;
-            border: 1px solid rgba(255,255,255,0.2);
-            color: #a0917e;
-            margin-top: 1rem;
-        }}
-        .btn-secondary:hover {{
-            background: rgba(255,255,255,0.05);
-            border-color: rgba(255,255,255,0.3);
-            box-shadow: none;
-            transform: none;
-        }}
-        .note {{
-            margin-top: 2rem;
-            font-size: 0.875rem;
-            color: #7a6e62;
         }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <svg class="logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <defs><linearGradient id="bg" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#DA7756"/><stop offset="100%" stop-color="#B8553A"/></linearGradient><mask id="m"><rect width="32" height="32" fill="white"/><circle cx="12" cy="17.5" r="1.75" fill="black"/><circle cx="20" cy="17.5" r="1.75" fill="black"/><ellipse cx="16" cy="20.6" rx="1" ry="0.75" fill="black"/></mask></defs>
-            <rect width="32" height="32" rx="7" fill="url(#bg)"/>
-            <path d="M 16 25.3 C 8.7 25.3 4.9 21.3 4.9 17.2 C 4.9 14 6.3 13.4 8.3 15.4 C 8.1 10.3 6.1 5 7.2 4.4 C 8.9 3.4 11.8 8.2 13.4 12.2 C 14.3 10.7 14.9 10.3 16 10.3 C 17.1 10.3 17.7 10.7 18.6 12.2 C 20.2 8.2 23.1 3.4 24.8 4.4 C 25.9 5 23.9 10.3 23.7 15.4 C 25.7 13.4 27.1 14 27.1 17.2 C 27.1 21.3 23.3 25.3 16 25.3 Z" fill="white" opacity="0.88" mask="url(#m)"/>
-            <path d="M 13.9 22.2 Q 16 24.3 18.1 22.2" stroke="white" stroke-width="0.9" stroke-linecap="round" fill="none" opacity="0.95"/>
-        </svg>
-        <h1>Authorization Request</h1>
-        <p class="subtitle">
-            Complete authorization in {app_name}
-        </p>
-
-        {network_note}
-
-        <div class="client-info">
-            <div class="client-name">{display_name_html}</div>
-            <div class="client-id">wants to connect</div>
+    <div class="fallback">
+        <div>
+            {network_note}
+            <p>Check {app_name} to complete authorization.</p>
+            <a href="{deep_link_url}">Open {app_name}</a>
         </div>
-
-        <div class="action">
-            <a href="{deep_link_url}" class="btn">Open {app_name}</a>
-            <button class="btn btn-secondary" onclick="window.close()">Close this tab</button>
-        </div>
-
-        <p class="note">
-            If prompted by your browser, click "Open" to allow.
-        </p>
     </div>
-    <script>
-        // Trigger deep link using an iframe to avoid window flash on Windows
-        // This method is less intrusive than window.location.href
-        (function() {{
-            var iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = "{deep_link_url}";
-            document.body.appendChild(iframe);
-
-            // Fallback: remove iframe after a short delay
-            // The protocol handler should have fired by then
-            setTimeout(function() {{
-                if (iframe.parentNode) {{
-                    iframe.parentNode.removeChild(iframe);
-                }}
-            }}, 1000);
-        }})();
-    </script>
+{redirect_script}
 </body>
 </html>"##
     );
 
     axum::response::Html(html).into_response()
-}
-
-/// Minimal HTML entity escaping for untrusted text interpolated into
-/// gateway-served HTML. Covers every character that can break out of a
-/// text node or a double-quoted attribute value.
-fn html_escape_text(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#39;"),
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 /// Helper to create OAuth error redirect

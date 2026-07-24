@@ -53,6 +53,7 @@
 
 pub mod crypto;
 mod database;
+mod key_migration;
 pub mod keychain;
 #[cfg(windows)]
 pub mod keychain_dpapi;
@@ -62,6 +63,7 @@ mod repositories;
 
 pub use crypto::{generate_master_key, FieldEncryptor, KEY_SIZE};
 pub use database::Database;
+pub use key_migration::migrate_file_key_encrypted_fields;
 pub use keychain::{
     generate_jwt_secret, JwtSecretProvider, KeychainJwtSecretProvider, KeychainKeyProvider,
     MasterKeyProvider, JWT_SECRET_SIZE,

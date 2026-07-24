@@ -6,8 +6,6 @@ import { AppStore, AppState } from './types';
 const initialState: AppState = {
   spaces: [],
   viewSpaceId: null,
-  activeNav: 'home',
-  pendingClientId: null,
   pendingSettingsSection: null,
   pendingWorkspaceNew: false,
   sidebarCollapsed: false,
@@ -67,17 +65,6 @@ export const useAppStore = create<AppStore>()(
           if (index !== -1) {
             state.spaces[index] = { ...state.spaces[index], ...updates };
           }
-        }),
-
-      // Navigation
-      navigateTo: (nav) =>
-        set((state) => {
-          state.activeNav = nav;
-        }),
-
-      setPendingClientId: (id) =>
-        set((state) => {
-          state.pendingClientId = id;
         }),
 
       setPendingSettingsSection: (section) =>

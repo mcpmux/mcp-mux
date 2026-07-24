@@ -2,44 +2,62 @@
  * Navigation model — the single source of truth for the sidebar.
  *
  * The app's IA follows the superapp plan (mcpmux.space/superapp/03-experience-design.md):
- * a "use" zone on top (today just Home; Chat and Agents land here later), a
- * "Library" zone for capabilities (Tools, Context, Discover; Models lands here
- * later), and a "Control" zone for routing & access (Apps, Workspaces,
- * FeatureSets, Spaces). Settings is pinned to the sidebar footer.
+ * a "use" zone on top (today just Dashboard; Chat and Agents land here later), a
+ * "Library" zone for capabilities (My Servers, Built-in, Search; Models lands here
+ * later), and a "Control" zone for routing & access (Clients, Projects, Bundles,
+ * Spaces). Settings is pinned to the sidebar footer.
  *
  * To add a future surface, append an entry to the right zone — the sidebar
  * renders from this data and nothing else.
  *
- * NOTE: `key` values are NavItem store keys and `testId`s are the e2e selector
- * contract (ADR-003) — both are stable identifiers. Only `label`/`icon`/`hint`
- * are presentation and safe to change.
+ * NOTE: `key` values are NavItem identifiers and `path` values are URL routes.
+ * `testId`s are the e2e selector contract (ADR-003) — both are stable identifiers.
+ * Only `labelKey`/`hintKey`/`icon` are presentation and safe to change.
  */
+import type { ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  Home,
-  Server,
+  LayoutDashboard,
   Sparkles,
-  Compass,
+  Search,
   Monitor,
   FolderOpen,
-  Wrench,
+  ShoppingBasket,
   Globe,
   Settings,
 } from 'lucide-react';
+import { McpNavIcon } from '@/components/McpNavIcon';
 import type { NavItem } from '@/stores/types';
+import type nav from '@/locales/en/nav.json';
+
+/** Top-level nav label keys (excludes nested `zones` / `hints` objects). */
+type NavLabelKey = Exclude<keyof typeof nav, 'zones' | 'hints'>;
+
+/** Sidebar hint keys under `nav.hints`. */
+type NavHintKey = `hints.${keyof typeof nav.hints}`;
+
+/** Zone section title keys under `nav.zones`. */
+type NavZoneTitleKey = `zones.${keyof typeof nav.zones}`;
+
+export type NavIcon = LucideIcon | ComponentType<{ className?: string }>;
 
 export interface NavEntry {
   key: NavItem;
-  label: string;
-  icon: LucideIcon;
+  /** Browser path for wouter routing (e.g. `/dashboard`). */
+  path: string;
+  /** i18n key under the `nav` namespace (e.g. `dashboard` → nav:dashboard). */
+  labelKey: NavLabelKey;
+  icon: NavIcon;
   testId: string;
-  /** One-line tooltip so newcomers learn the map by hovering. */
-  hint: string;
+  /** i18n key under nav:hints.* */
+  hintKey: NavHintKey;
+  /** Optional native tooltip when the visible label is an alias (e.g. Bundles → FeatureSets). */
+  labelTitleKey?: NavHintKey;
 }
 
 export interface NavZone {
-  /** Zone label; omitted for the top-level "use" zone. */
-  title?: string;
+  /** Zone label i18n key under nav:zones.*; omitted for the top-level "use" zone. */
+  titleKey?: NavZoneTitleKey;
   entries: NavEntry[];
 }
 
@@ -47,70 +65,79 @@ export const NAV_ZONES: NavZone[] = [
   {
     entries: [
       {
-        key: 'home',
-        label: 'Home',
-        icon: Home,
+        key: 'dashboard',
+        path: '/dashboard',
+        labelKey: 'dashboard',
+        icon: LayoutDashboard,
         testId: 'nav-dashboard',
-        hint: 'Your gateway, connections, and Space at a glance',
+        hintKey: 'hints.dashboard',
       },
     ],
   },
   {
-    title: 'Library',
+    titleKey: 'zones.library',
     entries: [
       {
         key: 'servers',
-        label: 'Tools',
-        icon: Server,
+        path: '/servers',
+        labelKey: 'myServers',
+        icon: McpNavIcon,
         testId: 'nav-my-servers',
-        hint: 'MCP servers installed in this Space',
+        hintKey: 'hints.myServers',
       },
       {
         key: 'builtin-servers',
-        label: 'Built-in',
+        path: '/builtin-servers',
+        labelKey: 'builtin',
         icon: Sparkles,
         testId: 'nav-builtin-servers',
-        hint: 'Capabilities McpMux itself provides — self-management now; memory & skills next',
+        hintKey: 'hints.builtin',
       },
       {
         key: 'registry',
-        label: 'Discover',
-        icon: Compass,
+        path: '/registry',
+        labelKey: 'search',
+        icon: Search,
         testId: 'nav-discover',
-        hint: 'Browse and install servers from the registry',
+        hintKey: 'hints.search',
       },
     ],
   },
   {
-    title: 'Control',
+    titleKey: 'zones.control',
     entries: [
       {
         key: 'clients',
-        label: 'Clients',
+        path: '/clients',
+        labelKey: 'clients',
         icon: Monitor,
         testId: 'nav-clients',
-        hint: 'AI clients connected through your gateway',
+        hintKey: 'hints.clients',
       },
       {
         key: 'workspaces',
-        label: 'Mapping',
+        path: '/workspaces',
+        labelKey: 'projects',
         icon: FolderOpen,
         testId: 'nav-workspaces',
-        hint: 'Route apps to tools — by folder or id',
+        hintKey: 'hints.projects',
       },
       {
         key: 'featuresets',
-        label: 'FeatureSets',
-        icon: Wrench,
+        path: '/featuresets',
+        labelKey: 'bundles',
+        icon: ShoppingBasket,
         testId: 'nav-featuresets',
-        hint: 'Curated tool bundles you can grant and map',
+        hintKey: 'hints.bundles',
+        labelTitleKey: 'hints.bundlesTooltip',
       },
       {
         key: 'spaces',
-        label: 'Spaces',
+        path: '/spaces',
+        labelKey: 'spaces',
         icon: Globe,
         testId: 'nav-spaces',
-        hint: 'Isolated contexts — work, personal, per client',
+        hintKey: 'hints.spaces',
       },
     ],
   },
@@ -119,8 +146,28 @@ export const NAV_ZONES: NavZone[] = [
 /** Pinned to the sidebar footer, below the scrolling zones. */
 export const NAV_SETTINGS: NavEntry = {
   key: 'settings',
-  label: 'Settings',
+  path: '/settings',
+  labelKey: 'settings',
   icon: Settings,
   testId: 'nav-settings',
-  hint: 'Preferences, gateway, and updates',
+  hintKey: 'hints.settings',
 };
+
+/** Flat list of every sidebar nav entry (zones + settings). */
+export const ALL_NAV_ENTRIES: NavEntry[] = [
+  ...NAV_ZONES.flatMap((zone) => zone.entries),
+  NAV_SETTINGS,
+];
+
+/** NavItem key → browser path. */
+export const NAV_PATH_MAP: Record<NavItem, string> = Object.fromEntries(
+  ALL_NAV_ENTRIES.map((entry) => [entry.key, entry.path])
+) as Record<NavItem, string>;
+
+/**
+ * Resolve a NavItem from a wouter pathname, defaulting to dashboard for unknown paths.
+ */
+export function navItemFromPath(pathname: string): NavItem {
+  const match = ALL_NAV_ENTRIES.find((entry) => entry.path === pathname);
+  return match?.key ?? 'dashboard';
+}

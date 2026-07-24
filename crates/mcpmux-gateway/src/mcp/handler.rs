@@ -101,9 +101,13 @@ impl McpMuxGatewayHandler {
         client_id: &str,
         session_id: Option<&str>,
         root_for_prompt: Option<&str>,
+        request_machine_id: Option<uuid::Uuid>,
     ) {
         let resolver = &services.feature_set_resolver;
-        match resolver.resolve(session_id, Some(client_id)).await {
+        match resolver
+            .resolve(session_id, Some(client_id), request_machine_id)
+            .await
+        {
             Ok(resolved) => {
                 info!(
                     %client_id,
@@ -143,6 +147,7 @@ impl McpMuxGatewayHandler {
                     resolved.source,
                     crate::services::ResolutionSource::Deny
                         | crate::services::ResolutionSource::SpaceDefault
+                        | crate::services::ResolutionSource::Unbound
                 );
                 if let (true, Some(sid), Some(space_id), Some(root)) = (
                     should_prompt,
@@ -150,6 +155,21 @@ impl McpMuxGatewayHandler {
                     resolved.space_id,
                     root_for_prompt,
                 ) {
+                    let dismissed = services
+                        .dependencies
+                        .inbound_client_repo
+                        .is_binding_prompt_dismissed(client_id, root)
+                        .await
+                        .unwrap_or(false);
+                    if dismissed {
+                        debug!(
+                            %client_id,
+                            workspace_root = root,
+                            "Skipping WorkspaceNeedsBinding — user dismissed this prompt"
+                        );
+                        return;
+                    }
+
                     // Lock the popup's Space field when the folder is scoped to
                     // a Space by base directory — the user shouldn't be able to
                     // bind it elsewhere.
@@ -191,11 +211,12 @@ impl McpMuxGatewayHandler {
         &self,
         session_id: Option<&str>,
         client_id: &str,
+        request_machine_id: Option<uuid::Uuid>,
     ) -> Result<(uuid::Uuid, Vec<String>), McpError> {
         let resolved = self
             .services
             .authorization_service
-            .resolve(session_id, Some(client_id))
+            .resolve(session_id, Some(client_id), request_machine_id)
             .await
             .map_err(|e| McpError::internal_error(format!("Failed to resolve: {e}"), None))?;
         let space_id = resolved.space_id.ok_or_else(|| {
@@ -225,6 +246,7 @@ impl McpMuxGatewayHandler {
         peer: &rmcp::service::Peer<RoleServer>,
         session_id: Option<&str>,
         client_id: &str,
+        request_machine_id: Option<uuid::Uuid>,
     ) {
         let Some(sid) = session_id else { return };
         // Fast path: already have a definitive answer (Some(roots),
@@ -317,6 +339,7 @@ impl McpMuxGatewayHandler {
                         &client_id,
                         Some(&session_id),
                         root_for_prompt.as_deref(),
+                        request_machine_id,
                     )
                     .await;
                 });
@@ -376,6 +399,12 @@ impl ServerHandler for McpMuxGatewayHandler {
         info.instructions = Some(
             "McpMux aggregates multiple MCP servers. Use tools/prompts/resources \
              from your authorized backend servers to do the user's work.\n\n\
+             Backend tools are NOT listed in tools/list unless individually \
+             surfaced in a FeatureSet. Do not call backend tools by qualified \
+             name (e.g. serverId_toolName) unless they appear in your tools/list. \
+             Default flow: mcpmux_search_tools → mcpmux_get_tool_schema → \
+             mcpmux_invoke_tool with server_id, bare tool name, and args. \
+             Surfaced tools are the opt-in exception for one-hop direct calls.\n\n\
              The `mcpmux_*` tools are different: they are McpMux's own \
              self-management / tool-optimization controls, NOT tools for the \
              user's task. Use them ONLY when the user is explicitly managing \
@@ -525,6 +554,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                 let notifier = self.notification_bridge.clone();
                 let client_id_str = oauth_ctx.client_id.clone();
                 let session_id_for_task = session_id.clone();
+                let request_machine_id = oauth_ctx.request_machine_id;
                 tokio::spawn(async move {
                     // Retry list_roots() on transport errors with bounded
                     // backoff. Without roots a roots-capable session is
@@ -598,7 +628,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                     // normalized them on insert. Passing `Some(root)`
                     // lets log_and_notify_resolution emit
                     // `WorkspaceNeedsBinding` if the resolver ended
-                    // up at `source = Deny` (i.e. no binding yet).
+                    // up at `source = Deny | Unbound` (i.e. no binding yet).
                     let root_for_prompt =
                         session_roots.get(&session_id_for_task).and_then(|roots| {
                             roots
@@ -613,6 +643,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                         &client_id_str,
                         Some(&session_id_for_task),
                         root_for_prompt.as_deref(),
+                        request_machine_id,
                     )
                     .await;
                 });
@@ -625,6 +656,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                     &oauth_ctx.client_id,
                     Some(&session_id),
                     None,
+                    oauth_ctx.request_machine_id,
                 )
                 .await;
             }
@@ -664,6 +696,7 @@ impl ServerHandler for McpMuxGatewayHandler {
         let notifier = self.notification_bridge.clone();
         let client_id_str = oauth_ctx.client_id.clone();
         let session_id_for_task = session_id.clone();
+        let request_machine_id = oauth_ctx.request_machine_id;
         tokio::spawn(async move {
             match peer.list_roots().await {
                 Ok(result) => {
@@ -695,6 +728,7 @@ impl ServerHandler for McpMuxGatewayHandler {
                         &client_id_str,
                         Some(&session_id_for_task),
                         root_for_prompt.as_deref(),
+                        request_machine_id,
                     )
                     .await;
                 }
@@ -727,21 +761,27 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         // Resolve routing once: the resolver returns the authoritative
         // (Space, FS) for this session — this may differ from oauth_ctx
         // when a WorkspaceBinding redirects to another space.
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
-        // Get tools via FeatureService — using the *resolved* space.
+        // Get advertised (surfaced) tools only — full invokable set is reachable
+        // via mcpmux_invoke_tool; non-surfaced tools stay off tools/list.
         let tools = self
             .services
             .pool_services
             .feature_service
-            .get_tools_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_advertised_tools_for_grants(&space_id.to_string(), &feature_set_ids)
             .await
             .map_err(|e| McpError::internal_error(format!("Failed to get tools: {}", e), None))?;
 
@@ -758,16 +798,13 @@ impl ServerHandler for McpMuxGatewayHandler {
             })
             .collect();
 
-        // Append the resolved Space's built-in `mcpmux_*` (Tool Optimization)
-        // tools. The set is empty when that built-in server is disabled for the
-        // Space, and any individual tools the Space has turned off are filtered
-        // out — all configured per Space via the Built-in Servers tab.
-        mcp_tools.extend(
-            self.services
-                .meta_tool_registry
-                .list_as_tools_for_space(&space_id)
-                .await,
-        );
+        // Append the built-in `mcpmux_*` meta tools (introspection + self-
+        // management). Only the small advertised core set is listed; the
+        // remainder stay callable but hidden. Gated by the global
+        // `gateway.meta_tools_enabled` master switch.
+        if self.services.meta_tool_registry.is_enabled().await {
+            mcp_tools.extend(self.services.meta_tool_registry.list_as_tools());
+        }
 
         // Log tool names at DEBUG level for visibility
         let tool_names: Vec<String> = mcp_tools.iter().map(|t| t.name.to_string()).collect();
@@ -805,14 +842,23 @@ impl ServerHandler for McpMuxGatewayHandler {
         // connection). Without the probe it resolves to empty FS ids and
         // fails "not allowed by the current grants" — breaking the
         // list==call invariant the list handlers already uphold.
-        self.ensure_roots_probed(&context.peer, session_id, &oauth_ctx.client_id)
-            .await;
+        self.ensure_roots_probed(
+            &context.peer,
+            session_id,
+            &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
+        )
+        .await;
 
         // Resolve routing once — the binding's target space is authoritative
         // (may differ from oauth_ctx.space_id). Needed both to gate the
         // per-Space meta tools below and to route a normal tool call.
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id, &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id,
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
         // Intercept meta tools (mcpmux_*) BEFORE feature-set filtering, gated
@@ -822,11 +868,7 @@ impl ServerHandler for McpMuxGatewayHandler {
         // normal "not found" error.
         if crate::services::is_meta_tool(&params.name)
             && self.services.meta_tool_registry.contains(&params.name)
-            && self
-                .services
-                .meta_tool_registry
-                .is_tool_enabled_for_space(&space_id, &params.name)
-                .await
+            && self.services.meta_tool_registry.is_enabled().await
         {
             // Note: client_id is the OAuth client identity (a URL for DCR-
             // registered clients like Claude, a UUID for others). The meta-
@@ -838,12 +880,114 @@ impl ServerHandler for McpMuxGatewayHandler {
             return match self
                 .services
                 .meta_tool_registry
-                .call(&params.name, &oauth_ctx.client_id, session_id, args)
+                .call_from_device(
+                    &params.name,
+                    &oauth_ctx.client_id,
+                    session_id,
+                    args,
+                    oauth_ctx.request_machine_id,
+                )
                 .await
             {
                 Ok(result) => Ok(result),
                 Err(e) => Ok(e.into_call_tool_result()),
             };
+        }
+
+        // Hard cut: non-surfaced backend tools must use mcpmux_invoke_tool.
+        // Surfaced tools stay in tools/list for one-hop calls.
+        let space_id_str = space_id.to_string();
+        if let Ok(Some((server_id, actual_tool_name))) = self
+            .services
+            .pool_services
+            .feature_service
+            .find_server_for_qualified_tool(&space_id_str, &params.name)
+            .await
+        {
+            let advertised = self
+                .services
+                .pool_services
+                .feature_service
+                .get_advertised_tools_for_grants(&space_id_str, &feature_set_ids)
+                .await
+                .map_err(|e| {
+                    McpError::internal_error(format!("Failed to get advertised tools: {}", e), None)
+                })?;
+
+            let is_surfaced = advertised
+                .iter()
+                .any(|feature| feature.qualified_name() == params.name.as_ref());
+
+            if !is_surfaced {
+                let invokable = self
+                    .services
+                    .pool_services
+                    .feature_service
+                    .get_invokable_tools_for_grants(&space_id_str, &feature_set_ids)
+                    .await
+                    .map_err(|e| {
+                        McpError::internal_error(
+                            format!("Failed to get invokable tools: {}", e),
+                            None,
+                        )
+                    })?;
+                let is_invokable = invokable.iter().any(|feature| {
+                    feature.qualified_name() == params.name.as_ref() && feature.is_available
+                });
+
+                let message = if !is_invokable {
+                    let inactive = self
+                        .services
+                        .pool_services
+                        .feature_service
+                        .list_inactive_discovery_tools(&space_id_str, &feature_set_ids, None)
+                        .await
+                        .map_err(|e| {
+                            McpError::internal_error(
+                                format!("Failed to list inactive tools: {}", e),
+                                None,
+                            )
+                        })?;
+                    if let Some(entry) = inactive.iter().find(|candidate| {
+                        candidate.feature.qualified_name() == params.name.as_ref()
+                    }) {
+                        format!(
+                            "Tool '{}' is inactive for this workspace → \
+                             mcpmux_bind_current_workspace({{ \"feature_set_id\": \"{}\" }}) \
+                             (discover bundles via mcpmux_search_tools with include_inactive: true \
+                             or mcpmux_list_feature_sets)",
+                            params.name, entry.bindable_feature_set_id
+                        )
+                    } else {
+                        format!(
+                            "Tool '{}' is not invokable — no FeatureSet in this Space contains it. \
+                             Ask the user to create a bundle in the McpMux desktop or web UI \
+                             (Workspaces → Feature Sets), then mcpmux_bind_current_workspace \
+                             with the new feature_set_id",
+                            params.name
+                        )
+                    }
+                } else {
+                    crate::pool::format_direct_call_redirect(
+                        &params.name,
+                        &server_id,
+                        &actual_tool_name,
+                    )
+                };
+
+                let error_code = if is_invokable {
+                    "use_invoke_tool"
+                } else {
+                    "bind_feature_set"
+                };
+                return Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::json!({
+                        "error": error_code,
+                        "message": message,
+                    })
+                    .to_string(),
+                )]));
+            }
         }
 
         // Call tool via routing service (handles auth and routing)
@@ -926,17 +1070,24 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
+        // Get advertised (surfaced) prompts only — full fetchable set is reachable
+        // via mcpmux meta-tools; non-surfaced prompts stay off prompts/list.
         let prompts = self
             .services
             .pool_services
             .feature_service
-            .get_prompts_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_advertised_prompts_for_grants(&space_id.to_string(), &feature_set_ids)
             .await
             .map_err(|e| McpError::internal_error(format!("Failed to get prompts: {}", e), None))?;
 
@@ -978,39 +1129,75 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
-        // Authorize + route by matching the requested qualified name against
-        // the resolved prompt set — the SAME encoding the list path uses
-        // (ServerFeature::qualified_name). Guarantees "if it lists, it's
-        // callable"; no dependency on the prefix-cache reverse lookup (which
-        // could be stale and reject a listed prompt). Mirrors call_tool.
+        let (server_id, prompt_name) = self
+            .services
+            .pool_services
+            .feature_service
+            .parse_qualified_prompt_name(&space_id.to_string(), &params.name)
+            .await
+            .map_err(|e| McpError::invalid_params(format!("Invalid prompt name: {}", e), None))?;
+
+        let advertised_prompts = self
+            .services
+            .pool_services
+            .feature_service
+            .get_advertised_prompts_for_grants(&space_id.to_string(), &feature_set_ids)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Failed to get advertised prompts: {}", e), None)
+            })?;
+
+        let is_surfaced = advertised_prompts
+            .iter()
+            .any(|p| p.server_id == server_id && p.feature_name == prompt_name);
+
+        if !is_surfaced {
+            let message = crate::pool::format_direct_fetch_prompt_redirect(
+                &params.name,
+                &server_id,
+                &prompt_name,
+            );
+            return Err(McpError::invalid_params(
+                serde_json::json!({
+                    "error": "use_fetch_prompt",
+                    "message": message,
+                })
+                .to_string(),
+                None,
+            ));
+        }
+
         let authorized_prompts = self
             .services
             .pool_services
             .feature_service
-            .get_prompts_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_fetchable_prompts_for_grants(&space_id.to_string(), &feature_set_ids)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)
             })?;
 
-        let (server_id, prompt_name) = match authorized_prompts
+        let is_authorized = authorized_prompts
             .iter()
-            .find(|p| p.is_available && p.qualified_name() == params.name)
-        {
-            Some(p) => (p.server_id.clone(), p.feature_name.clone()),
-            None => {
-                return Err(McpError::invalid_params(
-                    format!("Prompt '{}' not authorized", params.name),
-                    None,
-                ));
-            }
-        };
+            .any(|p| p.server_id == server_id && p.feature_name == prompt_name && p.is_available);
+
+        if !is_authorized {
+            return Err(McpError::invalid_params(
+                format!("Prompt '{}' not authorized", params.name),
+                None,
+            ));
+        }
 
         let result_value = self
             .services
@@ -1041,17 +1228,24 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
+        // Get advertised (surfaced) resources only — full readable set is reachable
+        // via mcpmux meta-tools; non-surfaced resources stay off resources/list.
         let resources = self
             .services
             .pool_services
             .feature_service
-            .get_resources_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_advertised_resources_for_grants(&space_id.to_string(), &feature_set_ids)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Failed to get resources: {}", e), None)
@@ -1091,38 +1285,60 @@ impl ServerHandler for McpMuxGatewayHandler {
             &context.peer,
             session_id_owned.as_deref(),
             &oauth_ctx.client_id,
+            oauth_ctx.request_machine_id,
         )
         .await;
         let (space_id, feature_set_ids) = self
-            .resolve_routing(session_id_owned.as_deref(), &oauth_ctx.client_id)
+            .resolve_routing(
+                session_id_owned.as_deref(),
+                &oauth_ctx.client_id,
+                oauth_ctx.request_machine_id,
+            )
             .await?;
 
-        // Authorize + route by matching the requested URI against the resolved
-        // resource set (resources are namespaced by URI, so qualified_name ==
-        // feature_name == uri). The server_id comes from the matched feature,
-        // so a listed resource is always readable. Mirrors call_tool / get_prompt.
         let authorized_resources = self
             .services
             .pool_services
             .feature_service
-            .get_resources_for_grants(&space_id.to_string(), &feature_set_ids)
+            .get_readable_resources_for_grants(&space_id.to_string(), &feature_set_ids)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)
             })?;
 
-        let server_id = match authorized_resources
+        let server_id = crate::pool::FeatureService::resolve_resource_server_from_grants(
+            &authorized_resources,
+            &params.uri,
+        )
+        .ok_or_else(|| {
+            McpError::invalid_params(format!("Resource '{}' not authorized", params.uri), None)
+        })?;
+
+        let advertised_resources = self
+            .services
+            .pool_services
+            .feature_service
+            .get_advertised_resources_for_grants(&space_id.to_string(), &feature_set_ids)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Failed to get advertised resources: {}", e), None)
+            })?;
+
+        let is_surfaced = advertised_resources
             .iter()
-            .find(|r| r.is_available && r.qualified_name() == params.uri)
-        {
-            Some(r) => r.server_id.clone(),
-            None => {
-                return Err(McpError::invalid_params(
-                    format!("Resource '{}' not authorized", params.uri),
-                    None,
-                ));
-            }
-        };
+            .any(|r| r.server_id == server_id && r.feature_name == params.uri);
+
+        if !is_surfaced {
+            let message = crate::pool::format_direct_read_redirect(&params.uri);
+            return Err(McpError::invalid_params(
+                serde_json::json!({
+                    "error": "use_read_resource",
+                    "message": message,
+                })
+                .to_string(),
+                None,
+            ));
+        }
 
         let contents_values = self
             .services

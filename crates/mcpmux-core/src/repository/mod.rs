@@ -4,11 +4,13 @@
 //! the implementation (SQLite, in-memory, etc.)
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::domain::{
-    Client, Credential, CredentialType, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
-    OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir, WorkspaceBinding,
+    path_is_within, Client, Credential, CredentialType, FeatureSet, FeatureSetMember,
+    InstalledServer, Machine, MemberMode, OutboundOAuthRegistration, ServerFeature, Space,
+    SpaceBaseDir, WorkspaceAppearance, WorkspaceBinding,
 };
 
 /// Result type for repository operations
@@ -125,6 +127,19 @@ pub trait InstalledServerRepository: Send + Sync {
         server_name: Option<String>,
         cached_definition: Option<String>,
     ) -> RepoResult<()>;
+
+    /// Pass `None` to clear the override (UI falls back to `server_name` /
+    /// `cached_definition.name` / `server_id` tail).
+    async fn set_display_name_override(&self, id: &Uuid, value: Option<String>) -> RepoResult<()>;
+
+    /// Persist notify-mode version probe results for one installation.
+    async fn update_version_cache(
+        &self,
+        id: &Uuid,
+        latest_available_version: Option<String>,
+        current_version: Option<String>,
+        version_checked_at: DateTime<Utc>,
+    ) -> RepoResult<()>;
 }
 
 /// ServerFeature repository trait
@@ -239,6 +254,25 @@ pub trait InboundMcpClientRepository: Send + Sync {
     async fn delete(&self, id: &Uuid) -> RepoResult<()>;
 }
 
+/// Machine repository trait — catalog of hosts that report workspace roots.
+#[async_trait]
+pub trait MachineRepository: Send + Sync {
+    /// List all registered machines.
+    async fn list(&self) -> RepoResult<Vec<Machine>>;
+
+    /// Get a machine by id.
+    async fn get(&self, id: &Uuid) -> RepoResult<Option<Machine>>;
+
+    /// Insert a new machine.
+    async fn create(&self, machine: &Machine) -> RepoResult<()>;
+
+    /// Update an existing machine.
+    async fn update(&self, machine: &Machine) -> RepoResult<()>;
+
+    /// Delete a machine by id.
+    async fn delete(&self, id: &Uuid) -> RepoResult<()>;
+}
+
 /// Workspace binding repository trait
 ///
 /// Bindings map normalized filesystem paths to FeatureSets on a per-Space basis.
@@ -277,11 +311,98 @@ pub trait WorkspaceBindingRepository: Send + Sync {
         candidate_roots: &[String],
     ) -> RepoResult<Option<WorkspaceBinding>>;
 
-    /// Resolve an **id-keyed** binding by exact-string match (no path
-    /// normalization). Used to route headless/remote clients by a client id or
-    /// an arbitrary label sent in `X-Mcpmux-Workspace`. Only `BindingType::Id`
-    /// bindings are considered, so a folder path can never collide with a label.
-    async fn find_by_id_key(&self, key: &str) -> RepoResult<Option<WorkspaceBinding>>;
+    /// Best-effort basename match for declared workspace roots.
+    ///
+    /// Compares the last path segment of each candidate against path-type
+    /// bindings' `workspace_root` basenames (ASCII case-insensitive). Does not
+    /// change exact-match semantics — used only for rootless declare-root
+    /// fall-through when no exact path binding matched.
+    async fn find_by_basename_for_roots(
+        &self,
+        candidate_roots: &[String],
+    ) -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Exact match for a machine-scoped binding on `workspace_root`.
+    ///
+    /// Matches bindings where `machine_id` equals the given value AND either:
+    /// - `client_id` is `None` (canonical machine binding), or
+    /// - `client_id` equals the given `client_id` (client+machine scoped binding).
+    ///
+    /// A client+machine scoped binding wins over a machine-only canonical binding
+    /// because it is more specific. Pass `client_id: None` to match canonical
+    /// machine bindings only.
+    async fn find_exact_for_machine(
+        &self,
+        machine_id: &Uuid,
+        workspace_root: &str,
+        client_id: Option<&str>,
+    ) -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Exact match for a global canonical binding (`machine_id` and `client_id`
+    /// both unset) on `workspace_root`.
+    async fn find_exact_global(&self, workspace_root: &str)
+        -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Lookup an id-type binding keyed by OAuth/API `client_id`.
+    ///
+    /// When `machine_id` is `Some`, matches a machine-scoped id binding on that
+    /// host. When `None`, matches a global id binding (`machine_id IS NULL`).
+    /// Path-type rows are never returned.
+    async fn find_by_id_key(
+        &self,
+        client_id: &str,
+        machine_id: Option<&Uuid>,
+    ) -> RepoResult<Option<WorkspaceBinding>>;
+
+    /// Resolve which binding applies for a set of candidate workspace roots by
+    /// longest-prefix containment.
+    ///
+    /// Returns the binding whose `workspace_root` is the longest prefix of (or
+    /// equals) any candidate. Every candidate MUST already be normalized. When
+    /// `client_id` is `Some`, the client's own scoped bindings are considered
+    /// alongside global (`client_id` unset) bindings — a scoped binding wins a
+    /// same-path tie so a client override shadows the global default. When
+    /// `client_id` is `None`, only global bindings are considered.
+    ///
+    /// Default impl scans `list_for_space` and matches in Rust on path-segment
+    /// boundaries — used by `mcpmux_bind_current_workspace` dedup.
+    async fn find_longest_prefix_match(
+        &self,
+        space_id: &Uuid,
+        client_id: Option<&str>,
+        candidate_roots: &[String],
+    ) -> RepoResult<Option<WorkspaceBinding>> {
+        let bindings = self.list_for_space(space_id).await?;
+        let mut best: Option<WorkspaceBinding> = None;
+        for binding in bindings {
+            let applies = match client_id {
+                Some(cid) => {
+                    binding.client_id.is_none() || binding.client_id.as_deref() == Some(cid)
+                }
+                None => binding.client_id.is_none(),
+            };
+            if !applies {
+                continue;
+            }
+            let contains_candidate = candidate_roots
+                .iter()
+                .any(|root| path_is_within(root, &binding.workspace_root));
+            if !contains_candidate {
+                continue;
+            }
+            let better = match &best {
+                Some(current) if binding.workspace_root.len() == current.workspace_root.len() => {
+                    binding.client_id.is_some() && current.client_id.is_none()
+                }
+                Some(current) => binding.workspace_root.len() > current.workspace_root.len(),
+                None => true,
+            };
+            if better {
+                best = Some(binding);
+            }
+        }
+        Ok(best)
+    }
 }
 
 /// Credential repository trait (local-only, never synced)
@@ -411,4 +532,43 @@ pub trait SpaceBuiltinConfigRepository: Send + Sync {
         tool_name: &str,
         enabled: bool,
     ) -> RepoResult<()>;
+}
+
+/// A persisted embedding keyed by content hash + model version.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddingRecord {
+    pub content_hash: String,
+    pub model_version: String,
+    pub vector: Vec<f32>,
+}
+
+/// Embedding repository trait — caches tool embedding vectors for semantic search.
+#[async_trait]
+pub trait EmbeddingRepository: Send + Sync {
+    /// Load vectors for a set of content hashes and a model version.
+    async fn get_many(
+        &self,
+        content_hashes: &[String],
+        model_version: &str,
+    ) -> RepoResult<Vec<EmbeddingRecord>>;
+
+    /// Insert or replace vectors by `(content_hash, model_version)`.
+    async fn upsert_many(&self, records: &[EmbeddingRecord]) -> RepoResult<()>;
+}
+
+/// Workspace appearance repository trait — icon overrides keyed by normalized
+/// workspace root (covers unmapped roots that have no binding).
+#[async_trait]
+pub trait WorkspaceAppearanceRepository: Send + Sync {
+    /// List all stored workspace appearance overrides.
+    async fn list(&self) -> RepoResult<Vec<WorkspaceAppearance>>;
+
+    /// Get a stored appearance by normalized workspace root.
+    async fn get(&self, workspace_root: &str) -> RepoResult<Option<WorkspaceAppearance>>;
+
+    /// Insert or update an appearance for a normalized workspace root.
+    async fn upsert(&self, appearance: &WorkspaceAppearance) -> RepoResult<()>;
+
+    /// Delete a stored appearance by normalized workspace root.
+    async fn delete(&self, workspace_root: &str) -> RepoResult<()>;
 }

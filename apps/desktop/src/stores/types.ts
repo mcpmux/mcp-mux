@@ -1,7 +1,7 @@
 import { Space } from '@/lib/api/spaces';
 
 export type NavItem =
-  | 'home'
+  | 'dashboard'
   | 'registry'
   | 'servers'
   | 'spaces'
@@ -22,13 +22,9 @@ export interface AppState {
    */
   viewSpaceId: string | null;
 
-  // Navigation
-  activeNav: NavItem;
-  /** Client ID to auto-select when navigating to Clients page */
-  pendingClientId: string | null;
-  /** Section to scroll to + flash when navigating to Settings (e.g. 'security'). */
+  /** Section to scroll to + flash when navigating to Settings (e.g. 'gateway'). */
   pendingSettingsSection: string | null;
-  /** When true, the Workspaces page opens the New-mapping walkthrough on arrival. */
+  /** When true, the Workspaces page opens the create binding panel on arrival. */
   pendingWorkspaceNew: boolean;
 
   // UI state
@@ -51,9 +47,6 @@ export interface AppActions {
   removeSpace: (id: string) => void;
   updateSpace: (id: string, updates: Partial<Space>) => void;
 
-  // Navigation
-  navigateTo: (nav: NavItem) => void;
-  setPendingClientId: (id: string | null) => void;
   setPendingSettingsSection: (section: string | null) => void;
   setPendingWorkspaceNew: (v: boolean) => void;
 

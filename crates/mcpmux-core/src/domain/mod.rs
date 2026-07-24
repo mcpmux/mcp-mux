@@ -12,11 +12,13 @@ mod credential;
 mod event;
 mod feature_set;
 mod installed_server;
+mod machine;
 mod outbound_oauth_registration;
 mod server;
 mod server_feature;
 mod server_log;
 mod space;
+mod workspace_appearance;
 mod workspace_binding;
 
 // Export event types first (ConnectionStatus is defined here)
@@ -31,13 +33,18 @@ pub use client::*;
 pub use config::*;
 pub use credential::*;
 pub use feature_set::*;
-pub use installed_server::{InstallationSource, InstalledServer};
+pub use installed_server::{
+    DefaultParamsStrategy, InstallationSource, InstalledServer, UpdatePolicy,
+};
+pub use machine::Machine;
 pub use outbound_oauth_registration::*;
 pub use server::*;
 pub use server_feature::*;
 pub use server_log::*;
 pub use space::*;
+pub use workspace_appearance::WorkspaceAppearance;
 pub use workspace_binding::{
-    longest_matching_base, normalize_workspace_root, path_is_within, validate_workspace_root,
-    BindingType, WorkspaceBinding, WorkspaceRootValidation,
+    longest_matching_base, normalize_optional_metadata, normalize_workspace_root, path_is_within,
+    resolve_workspace_icon, validate_workspace_root, BindingType, WorkspaceBinding,
+    WorkspaceRootValidation,
 };

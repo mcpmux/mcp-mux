@@ -4,10 +4,6 @@ import { Space } from '@/lib/api/spaces';
 // Typed selectors for better performance
 export const useSpaces = () => useAppStore((state) => state.spaces);
 export const useViewSpaceId = () => useAppStore((state) => state.viewSpaceId);
-export const useActiveNav = () => useAppStore((state) => state.activeNav);
-export const useNavigateTo = () => useAppStore((state) => state.navigateTo);
-export const usePendingClientId = () => useAppStore((state) => state.pendingClientId);
-export const useSetPendingClientId = () => useAppStore((state) => state.setPendingClientId);
 export const usePendingSettingsSection = () =>
   useAppStore((state) => state.pendingSettingsSection);
 export const useSetPendingSettingsSection = () =>

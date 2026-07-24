@@ -5,12 +5,11 @@
  * All URLs live here so we can update the target org / repo / site from one
  * place instead of grepping for hardcoded strings.
  *
- * Open-in-browser goes through `openUrl` (our Tauri command wrapping
- * `tauri-plugin-opener`) so the user's default browser handles the URL
- * rather than loading it inside the webview.
+ * Open-in-browser goes through `backend.shell.openExternal` so the user's
+ * default browser handles the URL rather than loading it inside the webview.
  */
 
-import { openUrl } from '@/lib/api/gateway';
+import { openExternal as shellOpenExternal } from '@/lib/backend/shell';
 
 export const CONTRIBUTE = {
   /** Main desktop + gateway repo. */
@@ -48,14 +47,8 @@ export const CONTRIBUTE = {
 } as const;
 
 /**
- * Open an external URL via the Tauri opener plugin. Falls back to the plugin
- * directly if our gateway wrapper fails (mirrors OAuthConsentModal's pattern).
+ * Open an external URL via the desktop shell opener (no-op fallback on web).
  */
 export async function openExternal(url: string): Promise<void> {
-  try {
-    await openUrl(url);
-  } catch {
-    const { openUrl: plugin } = await import('@tauri-apps/plugin-opener');
-    await plugin(url);
-  }
+  await shellOpenExternal(url);
 }

@@ -37,7 +37,9 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use super::gateway::GatewayAppState;
-use crate::state::AppState;
+use crate::services::ui_events::{
+    emit_ui_channel_from_app, OAUTH_CLIENT_CHANGED_CHANNEL, OAUTH_CONSENT_REQUEST_CHANNEL,
+};
 
 // ============================================================================
 // Deep Link Handling
@@ -65,7 +67,21 @@ pub fn route_or_buffer_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, u
                 *guard = Some(url.to_string());
             }
         }
-        _ => handle_deep_link(app, url),
+        Some(pending) => {
+            info!(
+                "[DeepLink] Webview ready — routing immediately: {} (ready={})",
+                url,
+                pending.webview_ready.load(Ordering::Acquire)
+            );
+            handle_deep_link(app, url);
+        }
+        None => {
+            warn!(
+                "[DeepLink] PendingInitialDeepLink state missing — routing anyway: {}",
+                url
+            );
+            handle_deep_link(app, url);
+        }
     }
 }
 
@@ -74,17 +90,16 @@ pub fn route_or_buffer_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, u
 /// any URL that arrived before mount.
 #[tauri::command]
 pub fn flush_pending_deep_link(app: tauri::AppHandle, pending: State<'_, PendingInitialDeepLink>) {
+    info!("[DeepLink] flush_pending_deep_link called — marking webview ready");
     pending.webview_ready.store(true, Ordering::Release);
     let buffered = pending.url.lock().ok().and_then(|mut g| g.take());
     if let Some(url) = buffered {
         info!("[DeepLink] Flushing buffered cold-start URL: {}", url);
         handle_deep_link(&app, &url);
+    } else {
+        info!("[DeepLink] flush_pending_deep_link: no buffered URL to drain");
     }
 }
-
-/// Event name for OAuth consent requests sent to frontend
-/// Now only contains request_id - frontend must call get_pending_consent
-pub const OAUTH_CONSENT_EVENT: &str = "oauth-consent-request";
 
 /// Event name for server install requests sent to frontend (from deep link)
 pub const SERVER_INSTALL_EVENT: &str = "server-install-request";
@@ -105,22 +120,7 @@ pub struct ServerInstallDeepLinkPayload {
 }
 
 /// Full consent request details returned by get_pending_consent
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConsentRequestDetails {
-    pub request_id: String,
-    pub client_id: String,
-    pub client_name: String,
-    pub redirect_uri: String,
-    pub scope: String,
-    pub state: Option<String>,
-    /// When this request expires (Unix timestamp)
-    pub expires_at: i64,
-    /// Cryptographic consent token (shared only via this IPC call, never over HTTP).
-    /// Must be returned in the approval request to prove the caller is the
-    /// legitimate desktop app UI—not an external script or bot.
-    pub consent_token: String,
-}
+pub use mcpmux_gateway::oauth::ConsentRequestDetails;
 
 /// Window within which an identical deep-link URL is treated as a duplicate
 /// and dropped. On a warm launch BOTH the deep-link plugin's `on_open_url` and
@@ -252,10 +252,16 @@ fn handle_authorize_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url:
     // Emit minimal payload - frontend will fetch details from backend
     let payload = OAuthDeepLinkPayload { request_id };
 
-    if let Err(e) = app.emit(OAUTH_CONSENT_EVENT, &payload) {
-        error!("[DeepLink] Failed to emit consent event: {}", e);
-        return;
-    }
+    emit_ui_channel_from_app(
+        app,
+        OAUTH_CONSENT_REQUEST_CHANNEL,
+        serde_json::json!({ "requestId": payload.request_id }),
+    );
+
+    info!(
+        "[DeepLink] Emitted Tauri event '{}' for request_id='{}'",
+        OAUTH_CONSENT_REQUEST_CHANNEL, payload.request_id
+    );
 
     // Focus the main window
     if let Some(window) = app.get_webview_window("main") {
@@ -362,49 +368,7 @@ fn handle_oauth_callback_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>,
 // ============================================================================
 
 /// Error type for consent operations
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConsentError {
-    pub code: String,
-    pub message: String,
-}
-
-impl ConsentError {
-    fn not_found(request_id: &str) -> Self {
-        Self {
-            code: "NOT_FOUND".to_string(),
-            message: format!(
-                "Authorization request '{}' not found or expired",
-                request_id
-            ),
-        }
-    }
-
-    fn expired(request_id: &str) -> Self {
-        Self {
-            code: "EXPIRED".to_string(),
-            message: format!("Authorization request '{}' has expired", request_id),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn already_processed(request_id: &str) -> Self {
-        Self {
-            code: "ALREADY_PROCESSED".to_string(),
-            message: format!(
-                "Authorization request '{}' has already been processed",
-                request_id
-            ),
-        }
-    }
-
-    fn gateway_unavailable() -> Self {
-        Self {
-            code: "GATEWAY_UNAVAILABLE".to_string(),
-            message: "Gateway is not running".to_string(),
-        }
-    }
-}
+pub use mcpmux_gateway::oauth::ConsentError;
 
 /// Get pending consent request details from backend
 ///
@@ -421,98 +385,33 @@ pub async fn get_pending_consent(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<ConsentRequestDetails, ConsentError> {
     info!(
-        "[OAuth] Fetching pending consent: request_id='{}'",
+        "[OAuth] Tauri get_pending_consent invoked: request_id='{}'",
         request_id
     );
-
     let app_state = gateway_state.read().await;
-
-    // Get gateway state
-    let gw_state = app_state
-        .gateway_state
-        .as_ref()
-        .ok_or_else(ConsentError::gateway_unavailable)?;
-
-    // Look up the pending authorization
-    let auth = {
-        let state = gw_state.read().await;
-        state.pending_authorizations.get(&request_id).cloned()
-    };
-
-    let auth = auth.ok_or_else(|| ConsentError::not_found(&request_id))?;
-
-    // Check if expired
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    if auth.expires_at < now {
-        warn!("[OAuth] Request '{}' has expired", request_id);
-        // Remove expired entry
-        let mut state = gw_state.write().await;
-        state.pending_authorizations.remove(&request_id);
-        return Err(ConsentError::expired(&request_id));
-    }
-
-    // Extract consent_token (required for security—ensures only the desktop
-    // app that retrieved this token via IPC can approve the request)
-    let consent_token = auth.consent_token.clone().ok_or_else(|| {
-        error!("[OAuth] Pending authorization missing consent_token");
-        ConsentError {
-            code: "NOT_FOUND".to_string(),
-            message: "Authorization request is missing consent token — it may have been created before this security update. Please retry.".to_string(),
-        }
+    let gw_state = app_state.gateway_state.as_ref().ok_or_else(|| {
+        warn!("[OAuth] get_pending_consent: gateway not running");
+        ConsentError::gateway_unavailable()
     })?;
-
-    // Build response with authoritative data from backend
-    // The client_name here comes from our database lookup in handlers.rs
-    let details = ConsentRequestDetails {
-        request_id: request_id.clone(),
-        client_id: auth.client_id.clone(),
-        client_name: auth
-            .client_name
-            .clone()
-            .unwrap_or_else(|| auth.client_id.clone()),
-        redirect_uri: auth.redirect_uri.clone(),
-        scope: auth.scope.clone().unwrap_or_default(),
-        state: auth.state.clone(),
-        expires_at: auth.expires_at,
-        consent_token,
-    };
-
-    info!(
-        "[OAuth] Consent details validated: client='{}' scopes='{}'",
-        details.client_name, details.scope
-    );
-
-    Ok(details)
+    let result = mcpmux_gateway::oauth::get_pending_consent(gw_state, request_id.clone()).await;
+    match &result {
+        Ok(details) => info!(
+            "[OAuth] get_pending_consent OK: request_id='{}', client='{}'",
+            request_id, details.client_name
+        ),
+        Err(err) => warn!(
+            "[OAuth] get_pending_consent failed: request_id='{}', code='{}', message='{}'",
+            request_id, err.code, err.message
+        ),
+    }
+    result
 }
 
 /// Request to approve or deny OAuth consent
-#[derive(Debug, Deserialize)]
-pub struct ConsentApprovalRequest {
-    /// The request_id from the pending authorization
-    pub request_id: String,
-    /// Whether the user approved the request
-    pub approved: bool,
-    /// Cryptographic consent token (must match the one issued via get_pending_consent).
-    /// This proves the caller obtained the token through Tauri IPC, not HTTP scraping.
-    pub consent_token: String,
-    /// Optional alias name for the client (set during approval).
-    pub client_alias: Option<String>,
-}
+pub use mcpmux_gateway::oauth::ConsentApprovalRequest;
 
 /// Response from consent approval
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConsentApprovalResponse {
-    /// Whether the approval was successful
-    pub success: bool,
-    /// The redirect URL for the client (with code or error)
-    pub redirect_url: String,
-    /// Optional error message
-    pub error: Option<String>,
-}
+pub use mcpmux_gateway::oauth::ConsentApprovalResponse;
 
 /// Approve or deny an OAuth consent request (direct state access)
 ///
@@ -523,173 +422,11 @@ pub async fn approve_oauth_consent(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
     request: ConsentApprovalRequest,
 ) -> Result<ConsentApprovalResponse, String> {
-    info!(
-        "[OAuth] Frontend consent {} for request_id: {}",
-        if request.approved {
-            "approved"
-        } else {
-            "denied"
-        },
-        request.request_id
-    );
-
     let app_state = gateway_state.read().await;
-
-    // Get gateway state
     let Some(ref gw_state) = app_state.gateway_state else {
         return Err("Gateway not running".to_string());
     };
-
-    // Look up the pending authorization
-    let pending = {
-        let state = gw_state.read().await;
-        state
-            .pending_authorizations
-            .get(&request.request_id)
-            .cloned()
-    };
-
-    let Some(pending) = pending else {
-        error!("[OAuth] Consent approval failed: request_id not found");
-        return Ok(ConsentApprovalResponse {
-            success: false,
-            redirect_url: String::new(),
-            error: Some("Authorization request not found or expired".to_string()),
-        });
-    };
-
-    // Validate consent_token: proves the caller obtained this token via Tauri
-    // IPC (get_pending_consent), not by scraping the HTTP authorization page.
-    match &pending.consent_token {
-        Some(expected_token) => {
-            if request.consent_token != *expected_token {
-                error!(
-                    "[OAuth] Consent token mismatch for request_id: {} — possible unauthorized approval attempt",
-                    request.request_id
-                );
-                return Err("Invalid consent token".to_string());
-            }
-        }
-        None => {
-            error!(
-                "[OAuth] Pending authorization missing consent_token for request_id: {}",
-                request.request_id
-            );
-            return Err("Consent token not available".to_string());
-        }
-    }
-
-    // Remove the pending authorization (it's been processed)
-    {
-        let mut state = gw_state.write().await;
-        state.pending_authorizations.remove(&request.request_id);
-    }
-
-    if !request.approved {
-        // User denied - redirect with error
-        // Client registration remains (unapproved) so they can try again later
-        let mut redirect_url = pending.redirect_uri.clone();
-        redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
-        redirect_url.push_str("error=access_denied&error_description=User+denied+the+request");
-        if let Some(ref state_param) = pending.state {
-            redirect_url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
-        }
-
-        info!(
-            "[OAuth] User denied consent for client: {}",
-            pending.client_id
-        );
-        return Ok(ConsentApprovalResponse {
-            success: true,
-            redirect_url,
-            error: None,
-        });
-    }
-
-    // User approved - generate authorization code
-    use uuid::Uuid;
-    let code = format!("mc_{}", Uuid::new_v4().to_string().replace("-", ""));
-
-    // Auth codes expire in 10 minutes (standard OAuth)
-    let code_expires_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64 + 600) // 10 minutes
-        .unwrap_or(i64::MAX);
-
-    // Store the authorization with the new code and update client alias if provided
-    {
-        let mut state = gw_state.write().await;
-
-        // Clone pending fields for new authorization
-        let new_pending = mcpmux_gateway::PendingAuthorization {
-            client_id: pending.client_id.clone(),
-            client_name: pending.client_name.clone(),
-            redirect_uri: pending.redirect_uri.clone(),
-            scope: pending.scope.clone(),
-            state: pending.state.clone(),
-            code_challenge: pending.code_challenge.clone(),
-            code_challenge_method: pending.code_challenge_method.clone(),
-            expires_at: code_expires_at,
-            consent_token: None, // Auth code entries don't need consent tokens
-        };
-
-        state.store_pending_authorization(&code, new_pending);
-
-        // Mark client as approved and store any alias override.
-        if let Some(repo) = state.inbound_client_repository() {
-            if let Err(e) = repo.approve_client(&pending.client_id).await {
-                error!("[OAuth] Failed to approve client: {}", e);
-            } else {
-                info!("[OAuth] Client approved: {}", pending.client_id);
-            }
-
-            if let Some(alias) = request
-                .client_alias
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-            {
-                if let Err(e) = repo
-                    .update_client_alias(&pending.client_id, Some(alias.clone()))
-                    .await
-                {
-                    error!("[OAuth] Failed to save client alias: {}", e);
-                } else {
-                    info!(
-                        "[OAuth] Set client alias '{}' for: {}",
-                        alias, pending.client_id
-                    );
-                }
-            }
-        }
-
-        // Emit domain event for client registration
-        state.emit_domain_event(mcpmux_core::DomainEvent::ClientRegistered {
-            client_id: pending.client_id.clone(),
-            client_name: pending.client_id.clone(), // Use client_name field
-            registration_type: Some("unknown".to_string()), // Will be updated when client metadata is fetched
-        });
-    }
-
-    // Build redirect URL with authorization code
-    let mut redirect_url = pending.redirect_uri.clone();
-    redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
-    redirect_url.push_str(&format!("code={}", code));
-    if let Some(ref state_param) = pending.state {
-        redirect_url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
-    }
-
-    info!(
-        "[OAuth] Authorization approved for client: {}, issuing code",
-        pending.client_id
-    );
-    info!("[OAuth] Redirect URL: {}", redirect_url);
-
-    Ok(ConsentApprovalResponse {
-        success: true,
-        redirect_url,
-        error: None,
-    })
+    mcpmux_gateway::oauth::approve_oauth_consent(gw_state, request).await
 }
 
 /// Get list of connected OAuth clients (direct service access)
@@ -731,6 +468,7 @@ pub async fn get_oauth_clients(
             registration_type: client.registration_type.as_str().to_string(),
             client_name: client.client_name,
             client_alias: client.client_alias,
+            client_icon: client.client_icon,
             redirect_uris: client.redirect_uris,
             scope: client.scope,
             approved: client.approved,
@@ -789,6 +527,7 @@ pub struct OAuthClientInfo {
     pub registration_type: String,
     pub client_name: String,
     pub client_alias: Option<String>,
+    pub client_icon: Option<String>,
     pub redirect_uris: Vec<String>,
     pub scope: Option<String>,
 
@@ -833,11 +572,13 @@ pub struct OAuthClientInfo {
 
 /// Request to update client settings.
 ///
-/// Only the alias is user-editable now — connection mode / space pin no
-/// longer exist.
+/// Only the alias and icon are user-editable now — connection mode /
+/// space pin no longer exist.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateClientSettingsRequest {
     pub client_alias: Option<String>,
+    #[serde(default)]
+    pub client_icon: Option<String>,
 }
 
 /// Update an OAuth client's settings (direct service access)
@@ -862,6 +603,9 @@ pub async fn update_oauth_client(
     repo.update_client_alias(&client_id, settings.client_alias)
         .await
         .map_err(|e| format!("Failed to update client: {}", e))?;
+    repo.update_client_icon(&client_id, settings.client_icon)
+        .await
+        .map_err(|e| format!("Failed to update client: {}", e))?;
 
     info!("[OAuth] Updated client: {}", client_id);
 
@@ -880,6 +624,7 @@ pub async fn update_oauth_client(
         registration_type: updated_client.registration_type.as_str().to_string(),
         client_name: updated_client.client_name,
         client_alias: updated_client.client_alias,
+        client_icon: updated_client.client_icon,
         redirect_uris: updated_client.redirect_uris,
         scope: updated_client.scope,
         approved: updated_client.approved,
@@ -901,7 +646,6 @@ pub async fn update_oauth_client(
 #[tauri::command]
 pub async fn delete_oauth_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
-    app: State<'_, AppState>,
     client_id: String,
 ) -> Result<(), String> {
     let app_state = gateway_state.read().await;
@@ -923,23 +667,6 @@ pub async fn delete_oauth_client(
 
     info!("[OAuth] Deleted client: {}", client_id);
 
-    // Best-effort: remove the auto-mapped clientId id-binding so a deleted
-    // client doesn't leave an orphan "<client_id> → Starter" mapping behind in
-    // the Mapping tab. Only API-key clients have such a binding; for DCR
-    // clients this is a no-op.
-    if let Ok(Some(b)) = app
-        .workspace_binding_repository
-        .find_by_id_key(&client_id)
-        .await
-    {
-        if let Err(e) = app.workspace_binding_repository.delete(&b.id).await {
-            warn!(
-                "[OAuth] failed to remove clientId mapping for {}: {}",
-                client_id, e
-            );
-        }
-    }
-
     // Emit domain event
     state.emit_domain_event(mcpmux_core::DomainEvent::ClientDeleted { client_id });
 
@@ -951,8 +678,7 @@ pub async fn delete_oauth_client(
 //
 // A "preregistered", pre-approved inbound client authenticated by a long-lived
 // API key. Unlike DCR clients it skips the browser-consent deep link, so
-// headless/remote clients can connect with just the key — the secure path when
-// the gateway is exposed over the network.
+// headless/remote clients can connect with just the key.
 // =============================================================================
 
 /// A newly-registered API-key client. `api_key` is returned ONCE at creation —
@@ -989,16 +715,15 @@ fn generate_api_key() -> (String, String, String) {
         uuid::Uuid::new_v4().simple()
     );
     let plaintext = format!("mcpk_{secret}");
-    let key_prefix: String = plaintext.chars().take(13).collect(); // "mcpk_" + 8 chars
+    let key_prefix: String = plaintext.chars().take(13).collect();
     (key_id, plaintext, key_prefix)
 }
 
-/// Register a new pre-approved client authenticated by an API key, optionally
-/// locked to a Space. The returned `api_key` is shown once and never stored.
+/// Register a new pre-approved client authenticated by an API key.
+/// The returned `api_key` is shown once and never stored.
 #[tauri::command]
 pub async fn register_api_key_client(
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
-    app: State<'_, AppState>,
     name: String,
     locked_space_id: Option<String>,
 ) -> Result<RegisteredApiKeyClient, String> {
@@ -1041,15 +766,23 @@ pub async fn register_api_key_client(
         updated_at: now,
         reports_roots: false,
         roots_capability_known: false,
+        machine_id: None,
+        client_icon: None,
     };
     repo.save_client(&client)
         .await
         .map_err(|e| format!("Failed to create client: {}", e))?;
 
-    if let Some(ref space) = locked_space_id {
-        repo.set_locked_space(&client_id, Some(space))
+    let locked_space = locked_space_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| uuid::Uuid::parse_str(s).map_err(|_| format!("Invalid locked_space_id: {s}")))
+        .transpose()?;
+    if let Some(space_id) = locked_space {
+        repo.set_locked_space(&client_id, Some(space_id))
             .await
-            .map_err(|e| format!("Failed to lock client to space: {}", e))?;
+            .map_err(|e| format!("Failed to set Space lock: {}", e))?;
     }
 
     let (key_id, plaintext, key_prefix) = generate_api_key();
@@ -1062,59 +795,19 @@ pub async fn register_api_key_client(
         trimmed, client_id
     );
 
-    // Best-effort: auto-create a clientId-keyed mapping → the (locked or
-    // default) Space's Starter, so the client routes sensibly out of the box
-    // and the mapping is visible + editable in the Mapping tab. A failure here
-    // must not undo the registration — without an explicit mapping the resolver
-    // still falls back to the default Starter.
-    if let Err(e) = auto_map_api_key_client(&app, &client_id, locked_space_id.as_deref()).await {
-        warn!(
-            "[OAuth] auto-map for {} failed (non-fatal): {}",
-            client_id, e
-        );
-    }
+    state.emit_domain_event(mcpmux_core::DomainEvent::ClientRegistered {
+        client_id: client_id.clone(),
+        client_name: trimmed.to_string(),
+        registration_type: Some("preregistered".to_string()),
+    });
 
     Ok(RegisteredApiKeyClient {
         client_id,
         client_name: trimmed.to_string(),
-        locked_space_id,
+        locked_space_id: locked_space.map(|id| id.to_string()),
         api_key: plaintext,
         key_prefix,
     })
-}
-
-/// Auto-create a clientId-keyed `id` mapping pointing at the (locked or
-/// default) Space's Starter FeatureSet, so a freshly-registered API-key client
-/// routes somewhere sensible by default and the operator can retarget it from
-/// the Mapping tab.
-async fn auto_map_api_key_client(
-    app: &AppState,
-    client_id: &str,
-    locked_space_id: Option<&str>,
-) -> Result<(), String> {
-    let space_id = match locked_space_id {
-        Some(s) => uuid::Uuid::parse_str(s).map_err(|e| e.to_string())?,
-        None => {
-            app.space_service
-                .get_default()
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or("no default Space configured")?
-                .id
-        }
-    };
-    let starter = app
-        .feature_set_repository
-        .get_starter_for_space(&space_id.to_string())
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or("Space has no Starter FeatureSet")?;
-    let binding =
-        mcpmux_core::WorkspaceBinding::new_id(client_id.to_string(), space_id, vec![starter.id]);
-    app.workspace_binding_repository
-        .create(&binding)
-        .await
-        .map_err(|e| e.to_string())
 }
 
 /// Issue an additional API key for an existing client (rotation). Returns the
@@ -1157,7 +850,8 @@ pub async fn create_client_api_key(
     let locked_space_id = repo
         .get_locked_space(&client_id)
         .await
-        .map_err(|e| format!("Failed to read client: {}", e))?;
+        .map_err(|e| format!("Failed to read Space lock: {}", e))?
+        .map(|id| id.to_string());
 
     Ok(RegisteredApiKeyClient {
         client_id,
@@ -1317,10 +1011,18 @@ pub async fn open_url(url: String) -> Result<(), String> {
                 Ok(())
             }
             Err(e) => {
-                // Connection refused likely means the client's server closed
-                // This can happen if the user took too long to approve
-                error!("[OAuth] Failed to deliver callback: {}", e);
-                Err(format!("Failed to deliver OAuth callback. The application may have timed out waiting. Please try again. Error: {}", e))
+                if e.is_connect() || e.is_timeout() {
+                    warn!(
+                        "[OAuth] Loopback callback listener unavailable ({}); skipping browser redirect",
+                        e
+                    );
+                    Ok(())
+                } else {
+                    error!("[OAuth] Failed to deliver callback: {}", e);
+                    Err(format!(
+                        "Failed to deliver OAuth callback. Please try again. Error: {e}"
+                    ))
+                }
             }
         }
     } else {
@@ -1397,15 +1099,14 @@ pub async fn grant_oauth_client_feature_set(
         .await
         .map_err(|e| format!("Failed to grant feature set: {}", e))?;
 
-    if let Err(e) = app_handle.emit(
-        "oauth-client-changed",
+    emit_ui_channel_from_app(
+        &app_handle,
+        OAUTH_CLIENT_CHANGED_CHANNEL,
         serde_json::json!({
             "action": "grants_updated",
             "client_id": client_id,
         }),
-    ) {
-        error!("[OAuth] Failed to emit oauth-client-changed event: {}", e);
-    }
+    );
 
     Ok(())
 }
@@ -1429,15 +1130,14 @@ pub async fn revoke_oauth_client_feature_set(
         .await
         .map_err(|e| format!("Failed to revoke feature set: {}", e))?;
 
-    if let Err(e) = app_handle.emit(
-        "oauth-client-changed",
+    emit_ui_channel_from_app(
+        &app_handle,
+        OAUTH_CLIENT_CHANGED_CHANNEL,
         serde_json::json!({
             "action": "grants_updated",
             "client_id": client_id,
         }),
-    ) {
-        error!("[OAuth] Failed to emit oauth-client-changed event: {}", e);
-    }
+    );
 
     Ok(())
 }

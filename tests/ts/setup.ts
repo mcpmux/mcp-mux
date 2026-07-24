@@ -56,7 +56,22 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
   disconnect: vi.fn(),
 }));
 
+/** Simulate the Tauri desktop shell so components use IPC instead of admin HTTP/SSE. */
+function enableTauriTestShell(): void {
+  (window as unknown as { __TAURI_INTERNALS__?: Record<string, unknown> }).__TAURI_INTERNALS__ =
+    {};
+}
+
+function disableTauriTestShell(): void {
+  delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+}
+
 // Reset mocks between tests
 beforeEach(() => {
   vi.clearAllMocks();
+  enableTauriTestShell();
+});
+
+afterEach(() => {
+  disableTauriTestShell();
 });

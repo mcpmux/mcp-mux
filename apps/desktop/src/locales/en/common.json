@@ -1,0 +1,126 @@
+{
+  "actions": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "save": "Save"
+  },
+  "loading": "Loading…",
+  "none": "None",
+  "spaceSwitcher": {
+    "selectSpace": "Select Space",
+    "noSpaces": "No Spaces",
+    "loadingSpaces": "Loading spaces…",
+    "emptyState": "No spaces found. Create one below.",
+    "defaultBadge": "Default",
+    "defaultTitle": "Routing fallback when no WorkspaceBinding matches",
+    "namePlaceholder": "Space name…",
+    "add": "Add",
+    "createNew": "Create new space"
+  },
+  "staleBuild": {
+    "title": "Web admin UI is out of date",
+    "descriptionBefore": "The served bundle does not match the running backend. From the repo root run",
+    "descriptionAfter": "then hard-refresh this page.",
+    "dismissAria": "Dismiss stale build warning"
+  },
+  "viewerIdentity": {
+    "banner": "Viewing from: {{name}}",
+    "statusLabel": "Viewer: {{name}}",
+    "statusUnset": "Viewer: unset",
+    "statusTitle": "Name this browser device (click to rename)",
+    "promptTitle": "Name this device",
+    "promptDesc": "Name this browser or app profile so you can tell which device you're using.",
+    "promptEditTitle": "Edit this device",
+    "promptEditDesc": "Update how this browser or app profile appears in McpMux.",
+    "namePlaceholder": "My Laptop",
+    "nameRequired": "Enter a name for this device",
+    "iconRequired": "Icon is required",
+    "hostnameRequired": "Hostname is required",
+    "saveFailed": "Could not save device name. Try again.",
+    "saving": "Saving…",
+    "save": "Continue",
+    "saveEdit": "Save",
+    "settingsHint": "Gateway identity, delete, and all machines:",
+    "settingsLink": "Settings → Machine Identity",
+    "rename": "Rename",
+    "close": "Close",
+    "idLabel": "Machine ID",
+    "idPendingHint": "Assigned after you continue, or paste an existing machine ID to link this profile.",
+    "linkIdPlaceholder": "Paste machine UUID",
+    "linkButton": "Link",
+    "copyUuid": "Copy UUID",
+    "copyHeader": "Copy MCP header",
+    "copied": "Copied",
+    "invalidId": "Enter a valid machine UUID",
+    "linkNotFound": "No machine with that ID exists",
+    "linkFailed": "Could not link machine. Try again."
+  },
+  "sourceBadge": {
+    "registry": "Registry",
+    "registryTitle": "Installed from registry",
+    "configFile": "Config File",
+    "configFileTitle": "From config: {{path}}",
+    "manual": "Manual",
+    "manualTitle": "Manually added",
+    "cloneTitle": "Cloned from {{serverId}}",
+    "cloneLabel": "Clone of {{serverId}}",
+    "uninstall": "Uninstall",
+    "removeFromConfig": "Remove from Config",
+    "remove": "Remove",
+    "confirmUserConfig": "This will remove \"{{serverName}}\" from your config file. You can re-add it by editing the config file.",
+    "confirmDefault": "Are you sure you want to uninstall \"{{serverName}}\"? You can reinstall it from the registry."
+  },
+  "connectIdes": {
+    "title": "Connect Your IDEs",
+    "descriptionPrefix": "VS Code & Cursor",
+    "description": "are one-click; the rest copy a config you paste into their MCP settings. Either path ends with an approval prompt in this app.",
+    "copyConfig": "Copy config",
+    "copyCommand": "Copy command",
+    "copied": "Copied — paste & follow above",
+    "addTo": "Add to {{name}}",
+    "ides": {
+      "vscode": {
+        "name": "VS Code",
+        "label": "VS Code",
+        "nextStep": "Opens VS Code and drops mcpmux into mcp.json. VS Code starts the server automatically — if it doesn't, open the Command Palette and run \"MCP: Show Installed Servers\", then click Start on mcpmux. The approval prompt lands on this page."
+      },
+      "cursor": {
+        "name": "Cursor",
+        "label": "Cursor",
+        "nextStep": "Opens Cursor and adds mcpmux to its config. Cursor does not auto-start new MCP servers — go to Settings → Features → MCP (or the MCP Tools panel) and toggle mcpmux on. The approval prompt lands on this page."
+      },
+      "windsurf": {
+        "name": "Windsurf",
+        "label": "Windsurf",
+        "nextStep": "Copies a JSON snippet. In Windsurf, open Cascade → MCP settings, paste mcpmux under mcpServers, and hit \"Refresh\" (or reload Windsurf). Approve on this page when Windsurf reaches the gateway."
+      },
+      "claude-code": {
+        "name": "Claude Code",
+        "label": "Claude",
+        "nextStep": "Copies a `claude mcp add` command. Run it in your shell — Claude Code loads mcpmux on the next `claude` invocation (existing sessions need /restart). Approve on this page when it connects."
+      },
+      "opencode": {
+        "name": "opencode",
+        "label": "opencode",
+        "nextStep": "Copies a JSON snippet. In opencode, paste it under \"mcp\" in opencode.json (project) or ~/.config/opencode/opencode.json (global), then restart opencode. Approve on this page when it connects."
+      },
+      "jetbrains": {
+        "name": "JetBrains IDEs",
+        "label": "JetBrains",
+        "nextStep": "Copies a JSON snippet. Paste into the AI Assistant MCP config, then restart the IDE — JetBrains only reads MCP config on startup. Approve on this page."
+      },
+      "android-studio": {
+        "name": "Android Studio",
+        "label": "Android",
+        "nextStep": "Copies a JSON snippet. Paste into Android Studio's AI Assistant MCP config, then restart the IDE. Approve on this page."
+      },
+      "copy-config": {
+        "name": "JSON Config",
+        "label": "JSON",
+        "nextStep": "Copies a generic MCP JSON snippet. Paste into any MCP-compatible client and follow its reload instructions. Approve on this page when it connects."
+      }
+    }
+  }
+}

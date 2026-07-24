@@ -26,7 +26,7 @@ use tracing::{debug, info, trace, warn};
 use uuid::Uuid;
 
 use crate::pool::FeatureService;
-use crate::services::FeatureSetResolverService;
+use crate::services::{EmbeddingWarmer, FeatureSetResolverService};
 
 /// MCP Notifier — sends `list_changed` notifications to connected sessions.
 ///
@@ -72,6 +72,9 @@ pub struct MCPNotifier {
     /// When a send is throttled we schedule exactly one retry for the end
     /// of the window; this set dedupes concurrent schedulers.
     pending_retries: Arc<Mutex<HashSet<(Uuid, NotificationType)>>>,
+    /// Optional background embedding warmer, triggered on server connect /
+    /// feature-refresh events so `mcpmux_search_tools` has warm vectors.
+    embedding_warmer: Arc<RwLock<Option<Arc<EmbeddingWarmer>>>>,
 }
 
 /// Type of list_changed notification for throttling
@@ -114,6 +117,13 @@ impl SessionEntry {
     }
 }
 
+/// Sort a session's roots so two sessions on the same folder set compare equal
+/// regardless of the order the registry returns them in.
+fn sorted_roots(mut roots: Vec<String>) -> Vec<String> {
+    roots.sort();
+    roots
+}
+
 impl MCPNotifier {
     pub fn new(
         feature_set_resolver: Arc<FeatureSetResolverService>,
@@ -126,7 +136,14 @@ impl MCPNotifier {
             throttle_tracker: Arc::new(RwLock::new(HashMap::new())),
             state_hashes: Arc::new(RwLock::new(HashMap::new())),
             pending_retries: Arc::new(Mutex::new(HashSet::new())),
+            embedding_warmer: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Attach an embedding warmer that runs on server connect / feature-refresh
+    /// events so the hybrid `mcpmux_search_tools` ranking has warm vectors.
+    pub fn set_embedding_warmer(&self, warmer: Arc<EmbeddingWarmer>) {
+        *self.embedding_warmer.write() = Some(warmer);
     }
 
     /// Calculate hash of all available features of a given type in a space
@@ -177,17 +194,76 @@ impl MCPNotifier {
         client_id: String,
         peer: Arc<Peer<RoleServer>>,
     ) {
-        let entry = SessionEntry::new(client_id.clone(), peer);
-        let mut sessions = self.sessions.write();
-        let is_reconnect = sessions.contains_key(&session_id);
-        sessions.insert(session_id.clone(), entry);
+        // A new session for the SAME (client_id, workspace root) supersedes any
+        // prior one. The mcp-remote bridge opens a fresh `mcp-session-id` on
+        // every reconnect but always targets one workspace root, so without
+        // this its stale sessions pile up — rmcp doesn't flip
+        // `is_transport_closed()` for them, so lazy reaping never removes them
+        // and every list_changed fans out to all of them (the 24-sessions-for-
+        // one-bridge-client amplification). Distinct roots — real multi-window
+        // editors — never match here, so they're preserved.
+        let superseded = self.collect_superseded_sessions(&session_id, &client_id);
+
+        let total_sessions = {
+            let entry = SessionEntry::new(client_id.clone(), peer);
+            let mut sessions = self.sessions.write();
+            for stale in &superseded {
+                sessions.remove(stale);
+            }
+            sessions.insert(session_id.clone(), entry);
+            sessions.len()
+        };
+
+        // Drop the superseded sessions' pinned roots so the resolver stops
+        // consulting them (mirrors reap_dead_sessions' registry cleanup).
+        let roots = self.feature_set_resolver.session_roots();
+        for stale in &superseded {
+            roots.remove(stale);
+        }
+
+        if !superseded.is_empty() {
+            info!(
+                %session_id,
+                %client_id,
+                superseded = superseded.len(),
+                "[MCPNotifier] ♻️ Superseded prior same-root sessions on reconnect"
+            );
+        }
         info!(
             %session_id,
             %client_id,
-            is_reconnect,
-            total_sessions = sessions.len(),
+            total_sessions,
             "[MCPNotifier] 📡 Registered session (stream not yet active)"
         );
+    }
+
+    /// Find prior sessions the newly-registering one supersedes: same OAuth
+    /// `client_id` AND same resolved workspace root.
+    ///
+    /// Returns empty when the new session has no known root yet — clients that
+    /// route via probed MCP `roots` (rather than the `X-Mcpmux-Workspace`
+    /// header) haven't responded to `roots/list` at registration time, so
+    /// there's nothing safe to match against and nothing is evicted.
+    fn collect_superseded_sessions(&self, new_session_id: &str, client_id: &str) -> Vec<String> {
+        let roots = self.feature_set_resolver.session_roots();
+        let new_root = roots.get(new_session_id).map(sorted_roots);
+        let Some(new_root) = new_root.filter(|r| !r.is_empty()) else {
+            return Vec::new();
+        };
+
+        let same_client: Vec<String> = {
+            let sessions = self.sessions.read();
+            sessions
+                .iter()
+                .filter(|(sid, e)| e.client_id == client_id && sid.as_str() != new_session_id)
+                .map(|(sid, _)| sid.clone())
+                .collect()
+        };
+
+        same_client
+            .into_iter()
+            .filter(|sid| roots.get(sid).map(sorted_roots).as_deref() == Some(new_root.as_slice()))
+            .collect()
     }
 
     /// Mark that a client has an active SSE stream and can receive notifications
@@ -251,6 +327,41 @@ impl MCPNotifier {
             prompts = prompts_hash,
             resources = resources_hash,
             "[MCPNotifier] 🔐 Primed feature hashes for space"
+        );
+    }
+
+    /// Drop bookkeeping for every live session belonging to a deleted client.
+    ///
+    /// rmcp doesn't expose a way to forcibly close a `Peer`'s underlying
+    /// transport from here (only `RunningService`, which we don't hold, can
+    /// do that) — so this can't hang up the socket. What it *can* do is stop
+    /// fanning out further notifications to it immediately, instead of
+    /// waiting on the lazy `is_transport_closed()` GC pass. The actual
+    /// connection gets cut on the client's next request via the DB-backed
+    /// revocation check in `oauth_middleware`.
+    fn drop_sessions_for_client(&self, client_id: &str) {
+        let removed: Vec<String> = {
+            let mut sessions = self.sessions.write();
+            let dead: Vec<String> = sessions
+                .iter()
+                .filter(|(_, e)| e.client_id == client_id)
+                .map(|(sid, _)| sid.clone())
+                .collect();
+            for sid in &dead {
+                sessions.remove(sid);
+            }
+            dead
+        };
+        if removed.is_empty() {
+            return;
+        }
+        for sid in &removed {
+            self.feature_set_resolver.session_roots().remove(sid);
+        }
+        info!(
+            %client_id,
+            removed = removed.len(),
+            "[MCPNotifier] 🗑️ Dropped sessions for deleted client"
         );
     }
 
@@ -447,6 +558,14 @@ impl MCPNotifier {
     /// This is enterprise-grade: consumers interpret events based on their context,
     /// not producers dictating what to do.
     async fn handle_event(&self, event: DomainEvent) {
+        // Revocation teardown runs ahead of (and regardless of) the
+        // capability-change filter below: a deleted client never implies a
+        // list_changed notification, but we still want its bookkeeping gone
+        // immediately rather than waiting for the next lazy GC pass.
+        if let DomainEvent::ClientDeleted { ref client_id } = event {
+            self.drop_sessions_for_client(client_id);
+        }
+
         // Only handle events that affect MCP capabilities
         if !event.affects_mcp_capabilities() {
             trace!(
@@ -633,6 +752,13 @@ impl MCPNotifier {
                         "[MCPNotifier] ServerStatusChanged - transient state, no notify"
                     );
                 }
+
+                if matches!(status, ConnectionStatus::Connected) {
+                    let warmer = self.embedding_warmer.read().clone();
+                    if let Some(warmer) = warmer {
+                        warmer.warm_server(space_id, server_id.clone());
+                    }
+                }
             }
 
             DomainEvent::ServerFeaturesRefreshed {
@@ -651,6 +777,10 @@ impl MCPNotifier {
                     "[MCPNotifier] ServerFeaturesRefreshed"
                 );
                 self.notify_all_list_changed(space_id, false).await;
+                let warmer = self.embedding_warmer.read().clone();
+                if let Some(warmer) = warmer {
+                    warmer.warm_server(space_id, server_id.clone());
+                }
             }
 
             // Other events that affect MCP capabilities are handled above
@@ -915,7 +1045,7 @@ impl MCPNotifier {
             }
             match self
                 .feature_set_resolver
-                .resolve(Some(&session_id), Some(&client_id))
+                .resolve(Some(&session_id), Some(&client_id), None)
                 .await
             {
                 Ok(resolved) if resolved.space_id == Some(space_id) => {

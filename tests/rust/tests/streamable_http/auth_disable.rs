@@ -114,6 +114,7 @@ impl Harness {
             &deps,
             event_tx.clone(),
             gateway_state,
+            None,
         ));
 
         let mcp_router = Router::new().route("/mcp", post(echo_client_id)).layer(

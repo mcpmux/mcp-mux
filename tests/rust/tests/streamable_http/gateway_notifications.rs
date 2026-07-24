@@ -158,6 +158,8 @@ impl TestGateway {
             updated_at: now,
             reports_roots: false,
             roots_capability_known: false,
+            machine_id: None,
+            client_icon: None,
         };
         inbound_client_repo
             .save_client(&test_client)
@@ -207,6 +209,7 @@ impl TestGateway {
             &deps,
             event_tx.clone(),
             gateway_state,
+            None,
         ));
 
         // Create MCPNotifier

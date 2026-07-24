@@ -8,7 +8,7 @@ description = "Integration tests for McpMux"
 [dependencies]
 # Internal crates
 mcpmux-core = { path = "../../crates/mcpmux-core" }
-mcpmux-gateway = { path = "../../crates/mcpmux-gateway" }
+mcpmux-gateway = { path = "../../crates/mcpmux-gateway", features = ["test-utils"] }
 mcpmux-storage = { path = "../../crates/mcpmux-storage" }
 mcpmux-mcp = { path = "../../crates/mcpmux-mcp" }
 

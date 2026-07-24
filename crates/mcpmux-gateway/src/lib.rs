@@ -8,6 +8,7 @@
 //! - Dependency Injection for clean architecture
 //! - Event-driven architecture via DomainEvent consumers
 
+pub mod admin;
 pub mod auth;
 pub mod consumers;
 pub mod logging;
@@ -15,15 +16,17 @@ pub mod mcp;
 pub mod oauth;
 pub mod permissions;
 pub mod pool;
+pub mod public_base_url;
 pub mod server;
 pub mod services;
 
+pub use admin::{AdminConfig, AdminServer, AdminServerHandle, DEFAULT_ADMIN_PORT};
 pub use auth::AccessKeyAuth;
 pub use oauth::{OAuthConfig, OAuthManager, OAuthToken};
 pub use permissions::{PermissionFilter, PermissionSet};
 pub use server::{
-    AutoConnectResult, DependenciesBuilder, GatewayConfig, GatewayDependencies, GatewayServer,
-    GatewayServerHandle, GatewayState, PendingAuthorization, StartupOrchestrator,
+    AutoConnectResult, ConsentUiNotifier, DependenciesBuilder, GatewayConfig, GatewayDependencies,
+    GatewayServer, GatewayServerHandle, GatewayState, PendingAuthorization, StartupOrchestrator,
 };
 
 // Pool module - SOLID architecture
@@ -76,7 +79,9 @@ pub use pool::{
 };
 
 // Services module
-pub use services::{EventEmitter, GrantService, PrefixCacheService};
+pub use services::{
+    routing_as_invoke_backend, EventEmitter, GrantService, InvokeToolBackend, PrefixCacheService,
+};
 
 // MCP module (rmcp-based implementation)
 pub use mcp::McpMuxGatewayHandler;

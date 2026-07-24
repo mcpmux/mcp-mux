@@ -7,8 +7,8 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("Tools")').click();
-      await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
+      await page.locator('nav button:has-text("My Servers")').click();
+      await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
 
       // Check for empty state with discover button
       const emptyState = page.locator('text=No servers installed');
@@ -23,7 +23,7 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("Tools")').click();
+      await page.locator('nav button:has-text("My Servers")').click();
 
       const emptyState = page.locator('text=No servers installed');
       if (await emptyState.isVisible().catch(() => false)) {
@@ -31,7 +31,7 @@ test.describe('Post-Action User Guidance', () => {
         await discoverBtn.click();
 
         // Should now be on the Discover page
-        await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Discover Servers' })).toBeVisible();
       }
     });
   });
@@ -42,7 +42,7 @@ test.describe('Post-Action User Guidance', () => {
       const registry = new RegistryPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("Discover")').click();
+      await page.locator('nav button:has-text("Search")').click();
       await expect(registry.heading).toBeVisible();
 
       // Toast container should exist for showing post-install guidance
@@ -54,7 +54,7 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("Discover")').click();
+      await page.locator('nav button:has-text("Search")').click();
 
       const installBtn = page.getByRole('button', { name: /Install/i }).first();
       if (await installBtn.isVisible()) {
@@ -72,7 +72,7 @@ test.describe('Post-Action User Guidance', () => {
       const dashboard = new DashboardPage(page);
       await dashboard.navigate();
 
-      await page.locator('nav button:has-text("Discover")').click();
+      await page.locator('nav button:has-text("Search")').click();
 
       const installBtn = page.getByRole('button', { name: /Install/i }).first();
       if (await installBtn.isVisible()) {
@@ -82,7 +82,7 @@ test.describe('Post-Action User Guidance', () => {
         await page.getByTestId('toast-action').click();
 
         // Should navigate to My Servers
-        await expect(page.getByRole('heading', { name: 'Tools' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'My Servers' })).toBeVisible();
       }
     });
   });

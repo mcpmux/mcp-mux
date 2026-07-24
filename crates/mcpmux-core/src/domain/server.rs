@@ -75,7 +75,7 @@ impl ServerDefinition {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(tag = "type")]
 pub enum ServerSource {
     /// Loaded from a user-defined JSON file in the spaces directory
@@ -88,6 +88,8 @@ pub enum ServerSource {
     Bundled,
     /// Loaded from a remote or custom registry (API, NPM, etc.)
     Registry { url: String, name: String },
+    /// Manually installed clone stored only in SQLite (not a user-space JSON file)
+    ManualEntry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

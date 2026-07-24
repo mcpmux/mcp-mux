@@ -254,7 +254,6 @@ function buildMockHandler() {
         case 'get_pool_stats': return { total_instances: 6, connected_instances: 6, total_space_server_mappings: 6 };
         case 'get_server_logs': return [];
         case 'get_server_log_file': return '/home/user/.local/share/com.mcpmux.desktop/logs';
-        case 'export_config': return '{}';
         case 'init_preset_clients': return null;
         case 'get_logs_path': return '/home/user/.local/share/com.mcpmux.desktop/logs';
         case 'get_startup_settings': return { autoLaunch: true, startMinimized: false, closeToTray: true };

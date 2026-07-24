@@ -23,6 +23,16 @@ McpMux works with any MCP-compatible client, including:
 
 All clients connect to the same endpoint: `http://localhost:45818/mcp`
 
+## Backend tools and the lean tool list
+
+Cursor and other clients only see backend tools in `tools/list` when those tools are **surfaced** in a FeatureSet (Bundles → edit a bundle → toggle **Surfaced** per tool). The default integration path is the built-in meta-tools:
+
+- `mcpmux_search_tools` — discover tools for the current workspace
+- `mcpmux_get_tool_schema` — read a tool's parameters
+- `mcpmux_invoke_tool` — invoke with `server_id`, bare `tool` name, and `args`
+
+Do not expect `user-mcpmux-<server>_<tool>` direct calls unless the tool is surfaced. See [Tool Optimization](/docs/tool-optimization/) for the full flow.
+
 ## Connecting and approval
 
 When a new client connects to the gateway, McpMux prompts you to **approve it** with one click. Approving registers the app and completes an **OAuth 2.1 + PKCE** handshake; its access key is stored in your OS keychain. (VS Code and Cursor can be connected in one click from the Home dashboard; other clients paste the gateway URL — see [Getting Started](/docs/getting-started/).)
@@ -35,9 +45,15 @@ The tools an app sees are decided by the **folder it reports** (its MCP workspac
 
 - Open your **backend repo** in any IDE and it sees your database and deploy tools; open a **docs folder** and it sees only search and filesystem.
 - Two different apps (say Cursor and VS Code) opening the **same folder** get the **same tools** — routing follows the folder, not the app's identity.
-- A session with **no reported folder** falls through to the **active Space's** FeatureSet.
+- A session with **no reported folder** and **no binding** gets **no backend tools** until you map the folder (deny-by-default).
 
 To control an app's tools, map its folder in the **Workspaces** tab (or let the AI do it with [Tool Optimization](/docs/tool-optimization/)) rather than configuring the app itself.
+
+### Multiple devices, one tunneled gateway
+
+If Cursor on your laptop and Cursor on your desktop both hit the **same** remote gateway (e.g. `https://mcp.example.com/mcp`), add `X-Mcpmux-Machine-Id` to **each** device's MCP config with that device's machine UUID from **Settings → Machine Identity**. Without it, machine-scoped bindings may resolve as the gateway host, not the device you're actually on.
+
+See [Remote Access](/docs/remote-access/) for the full headers example.
 
 ![A connected app — its toolset is decided by the Workspace binding for the folder it reports](https://mcpmux.com/screenshots/client-detail.png)
 

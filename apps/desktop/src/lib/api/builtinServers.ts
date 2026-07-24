@@ -1,4 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
+/** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
+import { apiCall } from './transport';
 
 /**
  * Built-in MCP servers that McpMux ships (e.g. "Tool Optimization", the
@@ -23,7 +24,7 @@ export interface BuiltinServer {
 
 /** List built-in servers with their enable state + per-tool toggles for a Space. */
 export async function listBuiltinServers(spaceId: string): Promise<BuiltinServer[]> {
-  return invoke('list_builtin_servers', { spaceId });
+  return apiCall('list_builtin_servers', { spaceId });
 }
 
 /** Enable/disable a built-in server for a Space. */
@@ -32,7 +33,7 @@ export async function setBuiltinServerEnabled(
   serverId: string,
   enabled: boolean
 ): Promise<void> {
-  return invoke('set_builtin_server_enabled', { spaceId, serverId, enabled });
+  return apiCall('set_builtin_server_enabled', { spaceId, serverId, enabled });
 }
 
 /** Enable/disable a single tool of a built-in server for a Space. */
@@ -42,5 +43,5 @@ export async function setBuiltinToolEnabled(
   toolName: string,
   enabled: boolean
 ): Promise<void> {
-  return invoke('set_builtin_tool_enabled', { spaceId, serverId, toolName, enabled });
+  return apiCall('set_builtin_tool_enabled', { spaceId, serverId, toolName, enabled });
 }

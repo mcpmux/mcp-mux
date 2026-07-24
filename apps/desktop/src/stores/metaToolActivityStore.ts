@@ -12,6 +12,12 @@
 import { create } from 'zustand';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { MetaToolAuditEvent } from '@/lib/api/metaTools';
+import {
+  acquireAdminSseConsumer,
+  releaseAdminSseConsumer,
+  subscribeAdminSseRaw,
+} from '@/lib/backend/events/admin-sse-hub';
+import { isTauri } from '@/lib/backend/data/transport';
 
 /** Ring-buffer size — most recent N invocations kept in memory. */
 export const MAX_META_TOOL_ROWS = 50;
@@ -37,6 +43,7 @@ export const useMetaToolActivityStore = create<MetaToolActivityState>((set) => (
 // changes) and is wired exactly once regardless of how many callers init it.
 let listening = false;
 let unlistenPromise: Promise<UnlistenFn> | null = null;
+let sseUnsubscribe: (() => void) | null = null;
 
 /**
  * Start the app-wide `meta-tool-invoked` listener (idempotent). Call once near
@@ -46,8 +53,29 @@ let unlistenPromise: Promise<UnlistenFn> | null = null;
 export function startMetaToolActivityListener(): void {
   if (listening) return;
   listening = true;
-  unlistenPromise = listen<MetaToolAuditEvent>('meta-tool-invoked', (event) => {
-    useMetaToolActivityStore.getState().push(event.payload);
+
+  if (isTauri()) {
+    unlistenPromise = listen<MetaToolAuditEvent>('meta-tool-invoked', (event) => {
+      useMetaToolActivityStore.getState().push(event.payload);
+    });
+    return;
+  }
+
+  acquireAdminSseConsumer();
+
+  sseUnsubscribe = subscribeAdminSseRaw('meta-tool-invoked', (payload) => {
+    try {
+      const data = payload as MetaToolAuditEvent;
+      useMetaToolActivityStore.getState().push(data);
+    } catch {
+      // ignore malformed frames
+    }
+  });
+
+  unlistenPromise = Promise.resolve(() => {
+    sseUnsubscribe?.();
+    sseUnsubscribe = null;
+    releaseAdminSseConsumer();
   });
 }
 
@@ -56,4 +84,5 @@ export function stopMetaToolActivityListener(): void {
   listening = false;
   void unlistenPromise?.then((fn) => fn()).catch(() => {});
   unlistenPromise = null;
+  sseUnsubscribe = null;
 }

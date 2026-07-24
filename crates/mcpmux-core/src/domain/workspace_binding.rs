@@ -25,34 +25,32 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// How a binding's `workspace_root` key is matched against a request.
+/// How a [`WorkspaceBinding`] is keyed during resolver lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum BindingType {
-    /// A normalized absolute folder path (the original behaviour). Matched
-    /// case-/separator-insensitively via [`normalize_workspace_root`].
+    /// Folder path binding (default) — matched via reported MCP roots.
     #[default]
     Path,
-    /// An arbitrary exact-match string — a client id, machine name, or any
-    /// label a headless/remote client sends in `X-Mcpmux-Workspace`. Matched
-    /// verbatim (no path normalization).
+    /// Client-id binding — matched via OAuth/API `client_id` when rootless.
     Id,
 }
 
 impl BindingType {
-    pub fn as_str(&self) -> &'static str {
+    /// Persisted SQLite enum value.
+    pub fn as_db_str(self) -> &'static str {
         match self {
-            BindingType::Path => "path",
-            BindingType::Id => "id",
+            Self::Path => "path",
+            Self::Id => "id",
         }
     }
 
-    /// Parse from storage; unknown values fall back to `Path` (the default for
-    /// pre-`binding_type` rows).
-    pub fn parse(s: &str) -> Self {
-        match s {
-            "id" => BindingType::Id,
-            _ => BindingType::Path,
+    /// Parse a row value; unknown strings fall back to `Path`.
+    pub fn from_db_str(raw: &str) -> Self {
+        if raw == "id" {
+            Self::Id
+        } else {
+            Self::Path
         }
     }
 }
@@ -65,8 +63,25 @@ impl BindingType {
 pub struct WorkspaceBinding {
     pub id: Uuid,
     pub workspace_root: String,
-    /// Whether `workspace_root` is a filesystem path or an arbitrary id key.
+    /// `Path` (default) keys on folder path; `Id` keys on OAuth/API client id
+    /// stored in `workspace_root`.
+    #[serde(default)]
     pub binding_type: BindingType,
+    /// Optional OAuth client scope. `None` is a global binding. When set
+    /// together with `machine_id`, resolution prefers the client+machine pair
+    /// over a machine-only canonical binding on the same path.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Optional machine scope. `None` is a global canonical binding shared
+    /// across all machines; `Some(id)` restricts the binding to that host.
+    #[serde(default)]
+    pub machine_id: Option<Uuid>,
+    /// Optional friendly display label shown in the UI instead of the path.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Optional icon: emoji, URL, or `local:workspace-icons/…` ref.
+    #[serde(default)]
+    pub icon: Option<String>,
     pub space_id: Uuid,
     /// Order matters for UI rendering only — the resolver treats them as
     /// a set. Stored in the `workspace_binding_feature_sets` junction
@@ -93,11 +108,27 @@ impl WorkspaceBinding {
         space_id: Uuid,
         feature_set_ids: Vec<String>,
     ) -> Self {
+        Self::new_scoped_multi(workspace_root, space_id, None, feature_set_ids)
+    }
+
+    /// Construct a binding optionally scoped to an OAuth `client_id`. A `None`
+    /// scope is a global binding; `Some(client_id)` restricts the binding to
+    /// that client during resolution when no machine identity is registered.
+    pub fn new_scoped_multi(
+        workspace_root: impl Into<String>,
+        space_id: Uuid,
+        client_id: Option<String>,
+        feature_set_ids: Vec<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             workspace_root: workspace_root.into(),
             binding_type: BindingType::Path,
+            client_id,
+            machine_id: None,
+            label: None,
+            icon: None,
             space_id,
             feature_set_ids,
             created_at: now,
@@ -105,15 +136,85 @@ impl WorkspaceBinding {
         }
     }
 
-    /// Construct an **id-keyed** binding: `key` is matched verbatim (exact
-    /// string, no path normalization) rather than as a folder. Used to route
-    /// headless/remote clients by a client id or an arbitrary label.
-    pub fn new_id(key: impl Into<String>, space_id: Uuid, feature_set_ids: Vec<String>) -> Self {
+    /// Construct an id-type binding for a rootless OAuth/API client. The
+    /// `client_id` argument is persisted as `workspace_root`; the optional
+    /// `client_id` scope column stays unset (path-scope semantics do not apply).
+    pub fn new_id(
+        client_id: impl Into<String>,
+        space_id: Uuid,
+        feature_set_id: impl Into<String>,
+    ) -> Self {
+        Self::new_id_multi(client_id, space_id, vec![feature_set_id.into()])
+    }
+
+    /// Construct an id-type binding with zero or more FeatureSets.
+    pub fn new_id_multi(
+        client_id: impl Into<String>,
+        space_id: Uuid,
+        feature_set_ids: Vec<String>,
+    ) -> Self {
+        let cid = client_id.into();
+        let now = Utc::now();
         Self {
+            id: Uuid::new_v4(),
+            workspace_root: cid,
             binding_type: BindingType::Id,
-            ..Self::new_multi(key, space_id, feature_set_ids)
+            client_id: None,
+            machine_id: None,
+            label: None,
+            icon: None,
+            space_id,
+            feature_set_ids,
+            created_at: now,
+            updated_at: now,
         }
     }
+
+    /// Construct a machine-scoped binding (`client_id` unset). Used when this
+    /// install or the caller's `X-Mcpmux-Machine-Id` header identifies the
+    /// physical host that owns the workspace folder.
+    pub fn new_machine_scoped_multi(
+        workspace_root: impl Into<String>,
+        space_id: Uuid,
+        machine_id: Uuid,
+        feature_set_ids: Vec<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            workspace_root: workspace_root.into(),
+            binding_type: BindingType::Path,
+            client_id: None,
+            machine_id: Some(machine_id),
+            label: None,
+            icon: None,
+            space_id,
+            feature_set_ids,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+/// Trim-empty helper for optional binding metadata fields.
+pub fn normalize_optional_metadata(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Resolve the icon to display for a workspace root.
+///
+/// Bound roots use `WorkspaceBinding.icon`; unmapped roots fall back to
+/// `WorkspaceAppearance`.
+pub fn resolve_workspace_icon(
+    binding: Option<&WorkspaceBinding>,
+    appearance: Option<&super::workspace_appearance::WorkspaceAppearance>,
+) -> Option<String> {
+    binding
+        .and_then(|b| b.icon.clone())
+        .or_else(|| appearance.map(|a| a.icon.clone()))
 }
 
 // ============================================================================
@@ -181,6 +282,14 @@ pub fn normalize_workspace_root(input: &str) -> String {
     // leading `/` is a URI artifact, not part of the path — drop it so the
     // drive-letter detector can fire on the following byte.
     let cleaned = strip_leading_slash_before_drive(&decoded);
+
+    // Some clients report roots using shell-style `~` shorthand instead of
+    // the real absolute path (observed from Cursor's `roots/list` and from
+    // `${workspaceFolder}` substitution through the mcp-remote bridge — see
+    // docs/manual/cursor-workspace-bridge.md). Gateway and client share a
+    // filesystem in that scenario, so expand against *this* machine's home
+    // directory before absoluteness detection runs.
+    let cleaned = expand_home_tilde(&cleaned);
 
     match detect_style(&cleaned) {
         Some(PathStyle::Posix) => normalize_posix(&cleaned),
@@ -255,6 +364,26 @@ fn reconstruct_uri_path(rest: &str) -> String {
     // A real remote host → UNC path `\\host\share\...`. Emit the `\\host`
     // prefix; normalize_windows_unc converts the remaining separators.
     format!("\\\\{host}{path}")
+}
+
+/// Expand a leading `~` (or `~/...`) to the current user's home directory.
+///
+/// Only the bare `~` prefix is handled — `~otheruser/...` is left untouched
+/// (POSIX shells resolve that via the password database, which we have no
+/// business doing here, and detect_style will simply reject it as relative).
+fn expand_home_tilde(path: &str) -> String {
+    let Some(rest) = path.strip_prefix('~') else {
+        return path.to_string();
+    };
+    if !rest.is_empty() && !rest.starts_with('/') && !rest.starts_with('\\') {
+        return path.to_string();
+    }
+    let Some(home) = dirs::home_dir() else {
+        return path.to_string();
+    };
+    let home = home.to_string_lossy();
+    let home = home.trim_end_matches(['/', '\\']);
+    format!("{home}{rest}")
 }
 
 fn strip_leading_slash_before_drive(path: &str) -> String {
@@ -786,9 +915,34 @@ mod tests {
             validate_workspace_root("./proj"),
             WorkspaceRootValidation::Invalid { .. }
         ));
+        // `~otheruser/proj` isn't a bare-home shorthand — still relative.
         assert!(matches!(
-            validate_workspace_root("~/proj"),
+            validate_workspace_root("~otheruser/proj"),
             WorkspaceRootValidation::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn normalize_expands_home_tilde() {
+        let home = dirs::home_dir().expect("test environment has a home dir");
+        let home_str = home
+            .to_string_lossy()
+            .trim_end_matches(['/', '\\'])
+            .to_string();
+
+        assert_eq!(
+            normalize_workspace_root("~/Desktop/proj"),
+            format!("{home_str}/Desktop/proj")
+        );
+        // Bare `~` alone expands to the home dir itself.
+        assert_eq!(normalize_workspace_root("~"), home_str);
+    }
+
+    #[test]
+    fn validate_accepts_home_tilde() {
+        assert!(matches!(
+            validate_workspace_root("~/Desktop/proj"),
+            WorkspaceRootValidation::Ok { .. }
         ));
     }
 
@@ -805,6 +959,22 @@ mod tests {
                 other => panic!("expected Invalid for {bad:?}, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn resolve_workspace_icon_prefers_binding_over_appearance() {
+        let space_id = Uuid::new_v4();
+        let mut bound = WorkspaceBinding::new("/proj", space_id, "fs");
+        bound.icon = Some("binding-icon".to_string());
+        let appearance = crate::domain::WorkspaceAppearance::new("/proj", "appearance-icon");
+        assert_eq!(
+            resolve_workspace_icon(Some(&bound), Some(&appearance)).as_deref(),
+            Some("binding-icon")
+        );
+        assert_eq!(
+            resolve_workspace_icon(None, Some(&appearance)).as_deref(),
+            Some("appearance-icon")
+        );
     }
 
     #[test]

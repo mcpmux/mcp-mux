@@ -8,9 +8,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use mcpmux_core::{
-    validate_workspace_root as validate_root, BindingType, DomainEvent, FeatureSet, FeatureSetType,
-    MemberMode, MemberType, ServerFeature, WorkspaceBinding, WorkspaceRootValidation,
+    normalize_optional_metadata, validate_workspace_root as validate_root, BindingType,
+    DomainEvent, FeatureSet, FeatureSetType, MemberMode, MemberType, ServerFeature,
+    WorkspaceBinding, WorkspaceRootValidation,
 };
+use mcpmux_storage::InboundClientRepository;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tokio::sync::RwLock;
@@ -19,7 +21,23 @@ use uuid::Uuid;
 
 use super::gateway::GatewayAppState;
 use super::server_manager::ServerManagerState;
+use super::workspace_appearance::maybe_remove_orphaned_icon_file;
 use crate::state::AppState;
+
+fn inbound_client_repo(state: &AppState) -> InboundClientRepository {
+    InboundClientRepository::new(state.database())
+}
+
+/// Clear persisted prompt dismissals after a binding is saved for a root.
+async fn clear_binding_prompt_dismissals(
+    state: &AppState,
+    workspace_root: &str,
+) -> Result<(), String> {
+    inbound_client_repo(state)
+        .clear_binding_prompt_dismissals_for_root(workspace_root)
+        .await
+        .map_err(|e| e.to_string())
+}
 
 /// Publish `WorkspaceBindingChanged` on the gateway's domain bus so
 /// MCPNotifier broadcasts `list_changed` to every peer whose session now
@@ -54,10 +72,13 @@ async fn emit_binding_changed(
 pub struct WorkspaceBindingDto {
     pub id: String,
     pub workspace_root: String,
-    /// `path` (folder, normalized) or `id` (arbitrary exact-match key).
-    pub binding_type: String,
+    pub label: Option<String>,
+    pub icon: Option<String>,
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
+    pub machine_id: Option<String>,
+    #[serde(default)]
+    pub binding_type: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -67,9 +88,12 @@ impl From<WorkspaceBinding> for WorkspaceBindingDto {
         Self {
             id: b.id.to_string(),
             workspace_root: b.workspace_root,
-            binding_type: b.binding_type.as_str().to_string(),
+            label: b.label,
+            icon: b.icon,
             space_id: b.space_id.to_string(),
             feature_set_ids: b.feature_set_ids,
+            machine_id: b.machine_id.map(|id| id.to_string()),
+            binding_type: Some(b.binding_type.as_db_str().to_string()),
             created_at: b.created_at.to_rfc3339(),
             updated_at: b.updated_at.to_rfc3339(),
         }
@@ -84,16 +108,105 @@ impl From<WorkspaceBinding> for WorkspaceBindingDto {
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceBindingInput {
     pub workspace_root: String,
+    pub label: Option<String>,
+    pub icon: Option<String>,
     pub space_id: String,
     pub feature_set_ids: Vec<String>,
-    /// `path` (default — folder, normalized + validated) or `id` (arbitrary
-    /// exact-match key, taken verbatim). Optional for backward compatibility.
+    #[serde(default)]
+    pub machine_id: Option<String>,
     #[serde(default)]
     pub binding_type: Option<String>,
 }
 
+fn parse_optional_machine_id(value: Option<&str>) -> Result<Option<Uuid>, String> {
+    match value {
+        None | Some("") => Ok(None),
+        Some(raw) => Uuid::parse_str(raw)
+            .map(Some)
+            .map_err(|e| format!("bad machine_id: {e}")),
+    }
+}
+
+/// True when two bindings would collide on the partial unique indexes.
+fn binding_scope_conflicts(
+    existing: &WorkspaceBinding,
+    root: &str,
+    machine_id: Option<Uuid>,
+    client_id: Option<&str>,
+) -> bool {
+    if existing.workspace_root != root {
+        return false;
+    }
+    existing.machine_id == machine_id && existing.client_id.as_deref() == client_id
+}
+
+fn parse_binding_type(value: Option<&str>) -> BindingType {
+    match value {
+        Some("id") => BindingType::Id,
+        _ => BindingType::Path,
+    }
+}
+
 fn parse_space_id(input: &WorkspaceBindingInput) -> Result<Uuid, String> {
     Uuid::parse_str(&input.space_id).map_err(|e| format!("bad space_id: {e}"))
+}
+
+/// Resolve label from input, preserving existing on update when omitted.
+fn resolve_binding_label(
+    input: &WorkspaceBindingInput,
+    existing: Option<&WorkspaceBinding>,
+) -> Option<String> {
+    if input.label.is_some() {
+        normalize_optional_metadata(&input.label)
+    } else {
+        existing.and_then(|b| b.label.clone())
+    }
+}
+
+/// Resolve icon from input, existing row, or unmapped appearance fallback.
+async fn resolve_binding_icon(
+    state: &AppState,
+    normalized_root: &str,
+    input: &WorkspaceBindingInput,
+    existing: Option<&WorkspaceBinding>,
+) -> Result<Option<String>, String> {
+    let mut icon = if input.icon.is_some() {
+        normalize_optional_metadata(&input.icon)
+    } else {
+        existing.and_then(|b| b.icon.clone())
+    };
+    if icon.is_none() {
+        if let Some(appearance) = state
+            .workspace_appearance_repository
+            .get(normalized_root)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            icon = Some(appearance.icon);
+        }
+    }
+    Ok(icon)
+}
+
+/// Drop appearance rows once a binding owns the root.
+async fn clear_appearance_for_bound_root(
+    state: &AppState,
+    normalized_root: &str,
+) -> Result<(), String> {
+    if state
+        .workspace_appearance_repository
+        .get(normalized_root)
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        state
+            .workspace_appearance_repository
+            .delete(normalized_root)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Clean + dedup the feature-set list (preserving order). An empty result is
@@ -181,6 +294,33 @@ pub async fn clear_unmapped_reported_roots(
     Ok(count)
 }
 
+/// Remove a single reported workspace root from the session registry.
+///
+/// Drops the root from every active MCP session that holds it, evicting
+/// sessions left with no roots. Unlike `clear_unmapped_reported_roots` this
+/// targets one specific path regardless of whether it has a binding. Returns
+/// `true` when the root was found and removed, `false` when the gateway is not
+/// running or the root wasn't in any session.
+#[tauri::command]
+pub async fn forget_reported_root(
+    root: String,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<bool, String> {
+    let guard = gateway_state.read().await;
+    let Some(reg) = guard.session_roots.as_ref() else {
+        return Ok(false);
+    };
+    let found = reg.forget_root(&root);
+    if found {
+        if let Some(ref gw) = guard.gateway_state {
+            gw.read()
+                .await
+                .emit_domain_event(DomainEvent::SessionRootsChanged);
+        }
+    }
+    Ok(found)
+}
+
 /// List every binding (sorted by workspace_root).
 #[tauri::command]
 pub async fn list_workspace_bindings(
@@ -236,26 +376,6 @@ fn normalize_and_validate(raw: &str) -> Result<String, String> {
     }
 }
 
-/// Resolve the storage key + type from the input. `path` bindings are
-/// normalized + validated (rejecting relative paths, filesystem roots, …);
-/// `id` bindings take the raw string verbatim (any non-empty label a headless
-/// client sends in `X-Mcpmux-Workspace`, e.g. a client id or machine name).
-fn resolve_key_and_type(input: &WorkspaceBindingInput) -> Result<(String, BindingType), String> {
-    match input.binding_type.as_deref() {
-        Some("id") => {
-            let key = input.workspace_root.trim();
-            if key.is_empty() {
-                return Err("Mapping id cannot be empty".into());
-            }
-            Ok((key.to_string(), BindingType::Id))
-        }
-        _ => Ok((
-            normalize_and_validate(&input.workspace_root)?,
-            BindingType::Path,
-        )),
-    }
-}
-
 /// Create a binding. Path is normalized + validated server-side so the UI
 /// can pass raw input (Windows paths, file:// URIs, trailing slashes).
 #[tauri::command]
@@ -266,26 +386,58 @@ pub async fn create_workspace_binding(
 ) -> Result<WorkspaceBindingDto, String> {
     let space_id = parse_space_id(&input)?;
     let feature_set_ids = validate_fs_list(&input)?;
-    let (key, binding_type) = resolve_key_and_type(&input)?;
+    let binding_type = parse_binding_type(input.binding_type.as_deref());
+    let machine_id = parse_optional_machine_id(input.machine_id.as_deref())?;
 
-    // Reject a duplicate key up front with a readable message. The schema
+    let (normalized, binding) = if binding_type == BindingType::Id {
+        let client_key = input.workspace_root.trim();
+        if client_key.is_empty() {
+            return Err("client id cannot be empty".into());
+        }
+        let mut binding = WorkspaceBinding::new_id_multi(client_key, space_id, feature_set_ids);
+        binding.machine_id = machine_id;
+        binding.label = resolve_binding_label(&input, None);
+        binding.icon = normalize_optional_metadata(&input.icon);
+        (client_key.to_string(), binding)
+    } else {
+        let normalized = normalize_and_validate(&input.workspace_root)?;
+        let binding = WorkspaceBinding {
+            id: Uuid::new_v4(),
+            workspace_root: normalized.clone(),
+            binding_type: BindingType::Path,
+            client_id: None,
+            machine_id,
+            label: resolve_binding_label(&input, None),
+            icon: resolve_binding_icon(&state, &normalized, &input, None).await?,
+            space_id,
+            feature_set_ids,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        (normalized, binding)
+    };
+
+    // Reject a duplicate folder up front with a readable message. The schema
     // already enforces `UNIQUE(workspace_root)`, but that surfaces an opaque
     // SQLite constraint error — this gives the UI something a user can act on.
+
     let existing = state
         .workspace_binding_repository
         .list()
         .await
         .map_err(|e| e.to_string())?;
-    if existing.iter().any(|b| b.workspace_root == key) {
+    if existing.iter().any(|b| {
+        b.binding_type == binding_type && binding_scope_conflicts(b, &normalized, machine_id, None)
+    }) {
+        let noun = if binding_type == BindingType::Id {
+            "client mapping"
+        } else {
+            "mapping"
+        };
         return Err(format!(
-            "A mapping already exists for {key}. Edit the existing mapping instead of adding a second one."
+            "A {noun} already exists for {normalized}. Edit the existing mapping instead of adding a second one."
         ));
     }
-
-    let binding = match binding_type {
-        BindingType::Id => WorkspaceBinding::new_id(key.clone(), space_id, feature_set_ids),
-        BindingType::Path => WorkspaceBinding::new_multi(key.clone(), space_id, feature_set_ids),
-    };
 
     state
         .workspace_binding_repository
@@ -293,9 +445,16 @@ pub async fn create_workspace_binding(
         .await
         .map_err(|e| e.to_string())?;
 
+    clear_binding_prompt_dismissals(&state, &binding.workspace_root).await?;
+
+    if binding_type == BindingType::Path {
+        clear_appearance_for_bound_root(&state, &normalized).await?;
+    }
+
     info!(
         binding_id = %binding.id,
         root = %binding.workspace_root,
+        ?binding_type,
         %space_id,
         feature_sets = ?binding.feature_set_ids,
         "[workspace_binding] created",
@@ -310,8 +469,6 @@ pub async fn create_workspace_binding(
     Ok(binding.into())
 }
 
-/// Update an existing binding. Accepts full input so the UI can edit any
-/// axis (root, target space, target FS) in one call.
 #[tauri::command]
 pub async fn update_workspace_binding(
     id: String,
@@ -322,24 +479,8 @@ pub async fn update_workspace_binding(
     let id_uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
     let space_id = parse_space_id(&input)?;
     let feature_set_ids = validate_fs_list(&input)?;
-    let (key, binding_type) = resolve_key_and_type(&input)?;
-
-    // If the edit moved the mapping onto a key another mapping already owns,
-    // reject with a readable message rather than tripping the DB UNIQUE
-    // constraint. Exclude this binding's own row.
-    let all = state
-        .workspace_binding_repository
-        .list()
-        .await
-        .map_err(|e| e.to_string())?;
-    if all
-        .iter()
-        .any(|b| b.id != id_uuid && b.workspace_root == key)
-    {
-        return Err(format!(
-            "Another mapping already uses {key}. Pick a different key."
-        ));
-    }
+    let binding_type = parse_binding_type(input.binding_type.as_deref());
+    let machine_id = parse_optional_machine_id(input.machine_id.as_deref())?;
 
     let existing = state
         .workspace_binding_repository
@@ -347,12 +488,57 @@ pub async fn update_workspace_binding(
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("binding not found: {}", id))?;
+
+    let normalized = if binding_type == BindingType::Id {
+        let client_key = input.workspace_root.trim();
+        if client_key.is_empty() {
+            return Err("client id cannot be empty".into());
+        }
+        client_key.to_string()
+    } else {
+        normalize_and_validate(&input.workspace_root)?
+    };
+
+    // If the edit moved the folder onto a path another mapping already owns,
+    // reject with a readable message rather than tripping the DB UNIQUE
+    // constraint. Exclude this binding's own row.
+    let all = state
+        .workspace_binding_repository
+        .list()
+        .await
+        .map_err(|e| e.to_string())?;
+    if all.iter().any(|b| {
+        b.id != id_uuid
+            && b.binding_type == binding_type
+            && binding_scope_conflicts(b, &normalized, machine_id, None)
+    }) {
+        return Err(format!(
+            "Another mapping already uses {normalized}. Pick a different folder."
+        ));
+    }
+
     let old_space_id = existing.space_id;
+    let previous_icon = existing.icon.clone();
+    let client_id = existing.client_id.clone();
+    let label = resolve_binding_label(&input, Some(&existing));
+    let icon = if binding_type == BindingType::Id {
+        if input.icon.is_some() {
+            normalize_optional_metadata(&input.icon)
+        } else {
+            existing.icon.clone()
+        }
+    } else {
+        resolve_binding_icon(&state, &normalized, &input, Some(&existing)).await?
+    };
 
     let updated = WorkspaceBinding {
         id: existing.id,
-        workspace_root: key,
+        workspace_root: normalized.clone(),
         binding_type,
+        client_id,
+        machine_id,
+        label,
+        icon,
         space_id,
         feature_set_ids,
         created_at: existing.created_at,
@@ -364,6 +550,16 @@ pub async fn update_workspace_binding(
         .update(&updated)
         .await
         .map_err(|e| e.to_string())?;
+
+    clear_binding_prompt_dismissals(&state, &updated.workspace_root).await?;
+
+    if binding_type == BindingType::Path {
+        clear_appearance_for_bound_root(&state, &normalized).await?;
+    }
+
+    if previous_icon.as_deref() != updated.icon.as_deref() {
+        maybe_remove_orphaned_icon_file(&state, previous_icon.as_deref()).await?;
+    }
 
     // Notify the NEW target space first (peers that now route via this
     // binding). If the space changed, also notify the OLD target so peers
@@ -383,6 +579,40 @@ pub async fn update_workspace_binding(
         .await;
     }
     Ok(updated.into())
+}
+
+/// Record that the user closed the WorkspaceNeedsBinding panel without saving.
+#[tauri::command]
+pub async fn dismiss_workspace_binding_prompt(
+    client_id: String,
+    workspace_root: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    inbound_client_repo(&state)
+        .dismiss_binding_prompt(&client_id, &workspace_root)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Whether the binding prompt was dismissed for a client/root pair, or — when
+/// `client_id` is omitted — for any client on that workspace root.
+#[tauri::command]
+pub async fn is_workspace_binding_prompt_dismissed(
+    workspace_root: String,
+    client_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let repo = inbound_client_repo(&state);
+    match client_id {
+        Some(cid) if !cid.is_empty() => repo
+            .is_binding_prompt_dismissed(&cid, &workspace_root)
+            .await
+            .map_err(|e| e.to_string()),
+        _ => repo
+            .is_binding_prompt_dismissed_for_root(&workspace_root)
+            .await
+            .map_err(|e| e.to_string()),
+    }
 }
 
 /// Delete a binding by id.
@@ -408,6 +638,7 @@ pub async fn delete_workspace_binding(
         .map_err(|e| e.to_string())?;
 
     if let Some(b) = existing {
+        maybe_remove_orphaned_icon_file(&state, b.icon.as_deref()).await?;
         emit_binding_changed(gateway_state.inner(), b.space_id, b.workspace_root).await;
     }
     Ok(())
@@ -586,6 +817,7 @@ fn enrich_feature(
 #[tauri::command]
 pub async fn get_workspace_effective_features(
     workspace_root: String,
+    machine_id: Option<String>,
     state: State<'_, AppState>,
     sm_state: State<'_, Arc<RwLock<ServerManagerState>>>,
 ) -> Result<WorkspaceEffectiveFeaturesDto, String> {
@@ -596,6 +828,8 @@ pub async fn get_workspace_effective_features(
         WorkspaceRootValidation::Invalid { reason } => return Err(reason),
     };
 
+    let parsed_machine_id = parse_optional_machine_id(machine_id.as_deref())?;
+
     // 2. Default Space — the routing fallback.
     let default_space = state
         .space_service
@@ -604,12 +838,28 @@ pub async fn get_workspace_effective_features(
         .map_err(|e| e.to_string())?
         .ok_or("No default Space configured")?;
 
-    // 3. Tier 1: longest-prefix workspace binding match.
-    let binding = state
-        .workspace_binding_repository
-        .find_exact_for_roots(std::slice::from_ref(&normalized))
-        .await
-        .map_err(|e| e.to_string())?;
+    // 3. Binding lookup: machine-scoped when machine_id is set, else legacy exact match.
+    let binding = if let Some(mid) = parsed_machine_id {
+        match state
+            .workspace_binding_repository
+            .find_exact_for_machine(&mid, &normalized, None)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(b) => Some(b),
+            None => state
+                .workspace_binding_repository
+                .find_exact_global(&normalized)
+                .await
+                .map_err(|e| e.to_string())?,
+        }
+    } else {
+        state
+            .workspace_binding_repository
+            .find_exact_for_roots(std::slice::from_ref(&normalized))
+            .await
+            .map_err(|e| e.to_string())?
+    };
 
     let (source, binding_id, space_id, fs_ids) = match binding {
         Some(b) => (

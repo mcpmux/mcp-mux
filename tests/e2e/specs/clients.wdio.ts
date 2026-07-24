@@ -24,8 +24,8 @@ describe('Connections - Page shell', () => {
     // Heading has been renamed.
     expect(pageSource.includes('Clients')).toBe(true);
 
-    // The page routes users to the Mapping tab for any routing questions.
-    expect(pageSource.includes('Mapping')).toBe(true);
+    // The page routes users to the Projects tab for any routing questions.
+    expect(pageSource.includes('Projects')).toBe(true);
   });
 
   it('TC-CL-002: Open side panel and verify legacy routing controls are gone', async () => {
@@ -69,6 +69,10 @@ describe('Connections - Page shell', () => {
     const registerBtn = await byTestId('register-api-key-client-btn');
     await registerBtn.click();
     await browser.pause(800);
+
+    const genericTab = await byTestId('register-api-key-tab-generic');
+    await genericTab.click();
+    await browser.pause(300);
 
     const nameInput = await byTestId('register-api-key-name');
     await nameInput.setValue('e2e-headless-bot');

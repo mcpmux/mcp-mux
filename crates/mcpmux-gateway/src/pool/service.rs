@@ -352,6 +352,24 @@ impl PoolService {
         }
     }
 
+    /// Insert a placeholder instance for unit tests.
+    #[cfg(test)]
+    pub(crate) fn insert_test_instance(&self, space_id: Uuid, server_id: &str) {
+        use std::collections::HashMap;
+
+        use super::instance::{InstanceKey, ServerInstance};
+        use super::transport::TransportType;
+
+        let instance_key = InstanceKey::stdio(space_id, "echo", &[], &HashMap::new());
+        let instance = Arc::new(ServerInstance::new(
+            instance_key,
+            server_id.to_string(),
+            TransportType::Stdio,
+        ));
+        self.instances
+            .insert((space_id, server_id.to_string()), instance);
+    }
+
     /// Disconnect a server (logout - clears tokens but keeps DCR)
     pub async fn disconnect_server(&self, space_id: Uuid, server_id: &str) -> Result<()> {
         // Cancel any pending OAuth flows first
@@ -556,4 +574,278 @@ pub struct InstalledServerInfo {
     pub server_id: String,
     pub requires_oauth: bool,
     pub has_credentials: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pool::{ConnectionService, FeatureService, OutboundOAuthManager, TokenService};
+    use crate::services::PrefixCacheService;
+    use async_trait::async_trait;
+    use mcpmux_core::{
+        Credential, CredentialRepository, CredentialType, FeatureSetRepository,
+        OutboundOAuthRegistration, OutboundOAuthRepository, ServerFeature, ServerFeatureRepository,
+    };
+
+    #[derive(Clone)]
+    struct MockCredentialRepo;
+
+    #[async_trait]
+    impl CredentialRepository for MockCredentialRepo {
+        async fn get(
+            &self,
+            _space_id: &Uuid,
+            _server_id: &str,
+            _credential_type: &CredentialType,
+        ) -> anyhow::Result<Option<Credential>> {
+            Ok(None)
+        }
+
+        async fn get_all(
+            &self,
+            _space_id: &Uuid,
+            _server_id: &str,
+        ) -> anyhow::Result<Vec<Credential>> {
+            Ok(vec![])
+        }
+
+        async fn save(&self, _credential: &Credential) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn delete(
+            &self,
+            _space_id: &Uuid,
+            _server_id: &str,
+            _credential_type: &CredentialType,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn delete_all(&self, _space_id: &Uuid, _server_id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn clear_tokens(&self, _space_id: &Uuid, _server_id: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn list_for_space(&self, _space_id: &Uuid) -> anyhow::Result<Vec<Credential>> {
+            Ok(vec![])
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockOAuthRepo;
+
+    #[async_trait]
+    impl OutboundOAuthRepository for MockOAuthRepo {
+        async fn get(
+            &self,
+            _space_id: &Uuid,
+            _server_id: &str,
+        ) -> anyhow::Result<Option<OutboundOAuthRegistration>> {
+            Ok(None)
+        }
+
+        async fn save(&self, _registration: &OutboundOAuthRegistration) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _space_id: &Uuid, _server_id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn list_for_space(
+            &self,
+            _space_id: &Uuid,
+        ) -> anyhow::Result<Vec<OutboundOAuthRegistration>> {
+            Ok(vec![])
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockFeatureRepo;
+
+    #[async_trait]
+    impl ServerFeatureRepository for MockFeatureRepo {
+        async fn list_for_space(
+            &self,
+            _space_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<Vec<ServerFeature>> {
+            Ok(vec![])
+        }
+
+        async fn list_for_server(
+            &self,
+            _space_id: &str,
+            _server_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<Vec<ServerFeature>> {
+            Ok(vec![])
+        }
+
+        async fn get(&self, _id: &Uuid) -> mcpmux_core::repository::RepoResult<Option<ServerFeature>> {
+            Ok(None)
+        }
+
+        async fn upsert(
+            &self,
+            _feature: &ServerFeature,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn upsert_many(
+            &self,
+            _features: &[ServerFeature],
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &Uuid) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn mark_unavailable(
+            &self,
+            _space_id: &str,
+            _server_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn delete_for_server(
+            &self,
+            _space_id: &str,
+            _server_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockFeatureSetRepo;
+
+    #[async_trait]
+    impl FeatureSetRepository for MockFeatureSetRepo {
+        async fn list(&self) -> mcpmux_core::repository::RepoResult<Vec<mcpmux_core::FeatureSet>> {
+            Ok(vec![])
+        }
+
+        async fn list_by_space(
+            &self,
+            _space_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<Vec<mcpmux_core::FeatureSet>> {
+            Ok(vec![])
+        }
+
+        async fn get(
+            &self,
+            _id: &str,
+        ) -> mcpmux_core::repository::RepoResult<Option<mcpmux_core::FeatureSet>> {
+            Ok(None)
+        }
+
+        async fn get_with_members(
+            &self,
+            _id: &str,
+        ) -> mcpmux_core::repository::RepoResult<Option<mcpmux_core::FeatureSet>> {
+            Ok(None)
+        }
+
+        async fn create(
+            &self,
+            _feature_set: &mcpmux_core::FeatureSet,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _feature_set: &mcpmux_core::FeatureSet,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _id: &str) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn get_starter_for_space(
+            &self,
+            _space_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<Option<mcpmux_core::FeatureSet>> {
+            Ok(None)
+        }
+
+        async fn ensure_builtin_for_space(
+            &self,
+            _space_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn add_feature_member(
+            &self,
+            _feature_set_id: &str,
+            _feature_id: &str,
+            _mode: mcpmux_core::MemberMode,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn remove_feature_member(
+            &self,
+            _feature_set_id: &str,
+            _feature_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<()> {
+            Ok(())
+        }
+
+        async fn get_feature_members(
+            &self,
+            _feature_set_id: &str,
+        ) -> mcpmux_core::repository::RepoResult<Vec<mcpmux_core::FeatureSetMember>> {
+            Ok(vec![])
+        }
+    }
+
+    fn create_test_pool_service() -> PoolService {
+        let credential_repo = Arc::new(MockCredentialRepo);
+        let backend_oauth_repo = Arc::new(MockOAuthRepo);
+        let token_service = Arc::new(TokenService::new(
+            credential_repo.clone(),
+            backend_oauth_repo.clone(),
+        ));
+        let oauth_manager = Arc::new(OutboundOAuthManager::new());
+        let prefix_cache = Arc::new(PrefixCacheService::new());
+        let connection_service = Arc::new(ConnectionService::new(
+            token_service.clone(),
+            oauth_manager,
+            credential_repo,
+            backend_oauth_repo,
+            prefix_cache.clone(),
+        ));
+        let feature_service = Arc::new(FeatureService::new(
+            Arc::new(MockFeatureRepo),
+            Arc::new(MockFeatureSetRepo),
+            prefix_cache,
+        ));
+        PoolService::new(connection_service, feature_service, token_service)
+    }
+
+    #[test]
+    fn remove_instance_evicts_pooled_server_entry() {
+        let pool = create_test_pool_service();
+        let space_id = Uuid::new_v4();
+        let server_id = "pooled-server";
+
+        pool.insert_test_instance(space_id, server_id);
+        assert_eq!(pool.stats().total_instances, 1);
+
+        pool.remove_instance(space_id, server_id);
+
+        assert_eq!(pool.stats().total_instances, 0);
+        assert!(pool.get_instance(space_id, server_id).is_none());
+    }
 }

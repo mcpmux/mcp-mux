@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent } from '@testing-library/react';
 import { ServerCard } from '../../../apps/desktop/src/features/registry/ServerCard';
 import type { ServerViewModel } from '../../../apps/desktop/src/types/registry';
+import { renderWithI18n } from '../render-with-i18n.helpers';
 
 function makeServer(overrides: Partial<ServerViewModel> = {}): ServerViewModel {
   return {
@@ -41,13 +42,13 @@ describe('ServerCard', () => {
   describe('icon rendering', () => {
     it('should render fallback icon when icon is null', () => {
       const server = makeServer({ icon: null });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByTestId('server-icon-fallback')).toHaveTextContent('📦');
     });
 
     it('should render emoji icon as text', () => {
       const server = makeServer({ icon: '🔐' });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByTestId('server-icon-emoji')).toHaveTextContent('🔐');
     });
 
@@ -55,7 +56,7 @@ describe('ServerCard', () => {
       const server = makeServer({
         icon: 'https://avatars.githubusercontent.com/u/314135?v=4',
       });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       const img = screen.getByTestId('server-icon-img');
       expect(img.tagName).toBe('IMG');
       expect(img).toHaveAttribute(
@@ -68,7 +69,7 @@ describe('ServerCard', () => {
       const server = makeServer({
         icon: 'https://example.com/broken-icon.png',
       });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       const img = screen.getByTestId('server-icon-img');
       fireEvent.error(img);
       expect(screen.getByTestId('server-icon-fallback')).toHaveTextContent('📦');
@@ -78,13 +79,13 @@ describe('ServerCard', () => {
   describe('server info', () => {
     it('should render server name', () => {
       const server = makeServer({ name: 'GitHub MCP Server' });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByText('GitHub MCP Server')).toBeInTheDocument();
     });
 
     it('should render description', () => {
       const server = makeServer({ description: 'Manage GitHub repos' });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByText('Manage GitHub repos')).toBeInTheDocument();
     });
 
@@ -92,7 +93,7 @@ describe('ServerCard', () => {
       const server = makeServer({
         categories: ['cloud', 'developer-tools', 'productivity'],
       });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByText('cloud')).toBeInTheDocument();
       expect(screen.getByText('developer-tools')).toBeInTheDocument();
       expect(screen.getByText('productivity')).toBeInTheDocument();
@@ -102,7 +103,7 @@ describe('ServerCard', () => {
       const server = makeServer({
         categories: ['cloud', 'developer-tools', 'productivity', 'extra'],
       });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByText('+1')).toBeInTheDocument();
     });
   });
@@ -110,19 +111,19 @@ describe('ServerCard', () => {
   describe('actions', () => {
     it('should render Install button for non-installed server', () => {
       const server = makeServer({ is_installed: false });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByText('Install')).toBeInTheDocument();
     });
 
     it('should render Uninstall button for installed server', () => {
       const server = makeServer({ is_installed: true });
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByText('Uninstall')).toBeInTheDocument();
     });
 
     it('should call onViewDetails when card is clicked', () => {
       const server = makeServer();
-      render(<ServerCard server={server} {...defaultProps} />);
+      renderWithI18n(<ServerCard server={server} {...defaultProps} />);
       fireEvent.click(screen.getByTestId(`server-card-${server.id}`));
       expect(defaultProps.onViewDetails).toHaveBeenCalledWith(server);
     });

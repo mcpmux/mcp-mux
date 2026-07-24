@@ -1,0 +1,45 @@
+{
+  "approval": {
+    "title": "An MCP client wants to change your tools",
+    "toolLabel": "tool:",
+    "crossClientWarning": {
+      "before": "This change affects every connection in this Space — not just the one requesting it. Other connected clients will see a new toolset on their next ",
+      "after": "."
+    },
+    "diff": {
+      "before": "Before",
+      "after": "After",
+      "delta": "Delta",
+      "emptyDelta": "—"
+    },
+    "deny": "Deny",
+    "alwaysForSession": "Always for this session",
+    "alwaysForSessionTitle": "Allow this (client, tool) pair without prompting again until the gateway restarts",
+    "allowOnce": "Allow once",
+    "spaceLabel": "Space:",
+    "manageLink": "Don't ask again — manage approval prompts",
+    "manageLinkTitle": "Deny this request and open the Built-in tab, where you can turn off approval prompts for tool changes",
+    "morePending_one": "{{count}} more pending…",
+    "morePending_other": "{{count}} more pending…"
+  },
+  "grants": {
+    "title": "Meta-tool auto-approvals",
+    "description": {
+      "before": "\"Always for this session\" approvals granted to clients for specific ",
+      "after": " tools. Wipes on gateway restart."
+    },
+    "loading": "Loading…",
+    "empty": "No auto-approvals yet. Each dialog defaults to \"Allow once\".",
+    "clientPrefix": "client {{id}}…",
+    "revoke": "Revoke"
+  },
+  "audit": {
+    "title": "Recent meta-tool activity",
+    "description": {
+      "before": "Every call to ",
+      "middle": " made by a connected MCP client. Live — last {{count}} entries."
+    },
+    "empty": "No activity yet. Rows appear as MCP clients call meta tools.",
+    "clientPrefix": "client {{id}}…"
+  }
+}

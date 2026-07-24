@@ -140,6 +140,8 @@ fn build_inbound_client_from_request(
         // on the first `initialize` for any session of this client.
         reports_roots: false,
         roots_capability_known: false,
+        machine_id: None,
+        client_icon: None,
     }
 }
 

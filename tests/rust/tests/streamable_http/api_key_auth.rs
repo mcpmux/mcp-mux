@@ -82,9 +82,6 @@ impl Harness {
             .await
             .expect("set default");
 
-        // Register a Preregistered, approved client + an API key over the SAME
-        // database Arc the gateway's middleware reads from, so a write here is
-        // visible to the middleware's own repo instance.
         let client_repo = Arc::new(InboundClientRepository::new(database.clone()));
         let client_id = format!("mcp_{}", &Uuid::new_v4().simple().to_string()[..8]);
         let now = chrono::Utc::now().to_rfc3339();
@@ -111,6 +108,8 @@ impl Harness {
             updated_at: now,
             reports_roots: false,
             roots_capability_known: false,
+            machine_id: None,
+            client_icon: None,
         };
         client_repo.save_client(&client).await.expect("save client");
         let key_id = Uuid::new_v4().to_string();
@@ -147,13 +146,14 @@ impl Harness {
         let (event_tx, _) = broadcast::channel::<DomainEvent>(64);
         let mut gw_state = GatewayState::new(event_tx.clone());
         gw_state.set_base_url("http://127.0.0.1:0".to_string());
-        gw_state.set_auth_disabled(false); // auth REQUIRED — the key must carry it
+        gw_state.set_auth_disabled(false);
         let gateway_state = Arc::new(tokio::sync::RwLock::new(gw_state));
 
         let services = Arc::new(ServiceContainer::initialize(
             &deps,
             event_tx.clone(),
             gateway_state,
+            None,
         ));
 
         let router = Router::new().route("/mcp", post(echo_client_id)).layer(
@@ -231,7 +231,6 @@ async fn unknown_api_key_is_rejected() {
 #[tokio::test]
 async fn revoked_api_key_is_rejected() {
     let h = Harness::start().await;
-    // Sanity: it authenticates before revocation.
     assert_eq!(
         h.post_with_bearer(&h.api_key).await.status(),
         reqwest::StatusCode::OK

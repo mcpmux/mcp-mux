@@ -7,7 +7,7 @@ test.describe('FeatureSets Page', () => {
     await dashboard.navigate();
     
     // Click FeatureSets in sidebar (force: true for Firefox compatibility)
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Check heading (use first() to avoid multiple matches)
     await expect(page.getByRole('heading', { name: 'Feature Sets' }).first()).toBeVisible();
@@ -17,7 +17,7 @@ test.describe('FeatureSets Page', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     await expect(page.getByRole('heading', { name: 'Feature Sets' }).first()).toBeVisible();
     
     // Page should have content
@@ -30,7 +30,7 @@ test.describe('FeatureSets Page', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // There are usually built-in feature sets like "All Features", "Default"
     const builtInSets = page.locator('text=/All Features|Default|Server:/i');
@@ -46,7 +46,7 @@ test.describe('FeatureSet Details', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Page should have elements
     const cards = page.locator('[class*="rounded"][class*="border"]');
@@ -61,7 +61,7 @@ test.describe('FeatureSet Details', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Server-specific sets show the server name
     const serverSets = page.locator('text=/Server:/i');
@@ -77,7 +77,7 @@ test.describe('Feature Set Toast Container', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     await expect(page.getByRole('heading', { name: 'Feature Sets' }).first()).toBeVisible();
     
     await expect(page.getByRole('main').getByTestId('toast-container')).toBeAttached();
@@ -90,7 +90,7 @@ test.describe('Feature Set Operations with Toast', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Open create modal
     await page.getByRole('button', { name: /Create New/i }).click();
@@ -116,7 +116,7 @@ test.describe('Feature Set Operations with Toast', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Find a custom feature set to delete (not built-in)
     const customSet = page.locator('[data-testid="feature-set-card"]').first();
@@ -142,7 +142,7 @@ test.describe('Feature Set Operations with Toast', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Open create modal
     await page.getByRole('button', { name: /Create New/i }).click();
@@ -162,7 +162,7 @@ test.describe('Feature Set Panel Save Toast', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Click on a configurable feature set (Default or Custom)
     const configurableSet = page.locator('[data-testid^="featureset-card-"]').first();
@@ -187,7 +187,7 @@ test.describe('Feature Set Panel Save Toast', () => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
     
     // Click on a feature set
     const featureSetCard = page.locator('[data-testid^="featureset-card-"]').first();

@@ -1,0 +1,87 @@
+{
+  "title": "Bundles",
+  "subtitle": "Manage reusable collections of features, prompts, and resources",
+  "searchPlaceholder": "Search feature sets...",
+  "create": "Create Feature Set",
+  "explainer": {
+    "titlePrefix": "FeatureSets are bound to",
+    "titleHighlight": "workspace roots",
+    "body": "Each Space gets one auto-created Default set. Routing is decided per reported folder via Workspaces — sessions whose root isn't bound fall back to the default Space's Default set."
+  },
+  "empty": {
+    "noMatchTitle": "No feature sets match your search",
+    "noCreatedTitle": "No feature sets created",
+    "noMatchDesc": "Try adjusting your search terms",
+    "noCreatedDesc": "Create a feature set to group tools and resources together for easy access control."
+  },
+  "type": {
+    "starter": "Starter",
+    "custom": "Custom"
+  },
+  "card": {
+    "starterBadge": "Starter",
+    "starterBadgeTitle": "Auto-seeded with this Space. Edit, rename, or delete freely — no special routing role; bindings and per-client grants pick FeatureSets explicitly.",
+    "noDescription": "No description provided.",
+    "members_one": "{{count}} member",
+    "members_other": "{{count}} members",
+    "configure": "Configure"
+  },
+  "createModal": {
+    "title": "Create Feature Set",
+    "nameLabel": "Name *",
+    "namePlaceholder": "e.g., GitHub Read Only",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "What this feature set allows...",
+    "iconLabel": "Icon (emoji)",
+    "iconPlaceholder": "🔧",
+    "create": "Create"
+  },
+  "toast": {
+    "created": "Feature set created",
+    "createdBody": "\"{{name}}\" has been created successfully",
+    "createFailed": "Failed to create feature set",
+    "deleted": "Feature set deleted",
+    "deletedBody": "\"{{name}}\" has been deleted",
+    "deleteFailed": "Failed to delete feature set",
+    "updated": "Feature set updated",
+    "updatedBody": "\"{{name}}\" has been saved",
+    "saveFailed": "Failed to save feature set",
+    "changesSaved": "Changes saved",
+    "changesSavedBody_one": "\"{{name}}\" has been updated with {{count}} feature",
+    "changesSavedBody_other": "\"{{name}}\" has been updated with {{count}} features",
+    "saveChangesFailed": "Failed to save changes"
+  },
+  "panel": {
+    "starter": "STARTER",
+    "starterTitle": "Auto-created with this Space. Edit, rename, or delete freely — no special routing role.",
+    "generalInfo": "General Information",
+    "nameLabel": "Name *",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "What this feature set allows...",
+    "iconLabel": "Icon (emoji)",
+    "iconPlaceholder": "🔧",
+    "starterNote": "Starter FeatureSet:",
+    "starterNoteBody": "auto-created with this Space. It's an ordinary FeatureSet — edit, rename, or delete it freely. No special routing role: Workspace bindings and per-client grants pick FeatureSets explicitly.",
+    "includedFeatures": "Included Features",
+    "selectedCount": "{{selected}} / {{total}} selected",
+    "searchPlaceholder": "Search features...",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "noFeaturesMatch": "No features found matching your search",
+    "enableAll": "Enable All",
+    "disableAll": "Disable All",
+    "surface": "Surface",
+    "surfaceToolTitle": "Promote this included tool into the client tools/list for direct one-hop calls. The checkbox only grants invoke access via search + mcpmux_invoke_tool—it does not add the tool to tools/list.",
+    "surfaceResourceTitle": "Promote this included resource into the client resources/list for direct one-hop reads. The checkbox only grants read access via search + mcpmux_read_resource—it does not add the resource to resources/list.",
+    "surfacePromptTitle": "Promote this included prompt into the client prompts/list for direct one-hop fetches. The checkbox only grants fetch access via search + mcpmux_fetch_prompt—it does not add the prompt to prompts/list.",
+    "delete": "Delete",
+    "saving": "Saving...",
+    "saveChanges": "Save Changes",
+    "nameRequired": "Name is required."
+  },
+  "confirm": {
+    "deleteTitle": "Delete feature set",
+    "deleteMessage": "Delete \"{{name}}\"? This cannot be undone.",
+    "deleteLabel": "Delete"
+  }
+}

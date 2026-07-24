@@ -29,11 +29,7 @@ Each Space is an independent environment containing:
 
 ### Active Space
 
-Only one Space can be **active** at a time. The active Space is the **fallback** for any session whose folder isn't mapped to a specific Space via a [Workspace](/docs/workspaces/) binding. It determines:
-
-- Which servers the gateway connects to
-- Which tools an unmapped session sees (its active-Space FeatureSet)
-- Which credentials are injected into server connections
+Only one Space can be **active** at a time. The active Space sets the default gateway context — which servers are available and which credentials are injected when a session has a workspace binding. Unmapped folders get **no backend tools** by default; you must create an explicit [Workspace](/docs/workspaces/) binding to enable access. The Starter bundle is an opt-in default you can bind deliberately, not a silent fallback.
 
 Switching the active Space immediately changes what servers and tools are available — no restart required.
 
@@ -82,7 +78,7 @@ Navigate to **Spaces** in McpMux and click **Create Space**. Give it a name and 
 
 ### Switching Active Space
 
-Click on any Space to set it as active. The dashboard and server list update immediately to reflect the new context. Any session whose folder isn't mapped to a specific Space follows the active Space automatically.
+Click on any Space to set it as active. The dashboard and server list update immediately to reflect the new context. Unmapped folders stay denied until you bind them to a Space and FeatureSet.
 
 ### Deleting a Space
 

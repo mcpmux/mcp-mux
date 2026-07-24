@@ -184,44 +184,55 @@ fn test_new_schema_objects_exist_after_migration() {
     let db = Database::open_in_memory().expect("open");
     assert!(
         table_exists(&db, "inbound_client_api_keys"),
-        "migration 020 must create inbound_client_api_keys"
+        "migration 036 must create inbound_client_api_keys"
+    );
+    assert!(
+        table_exists(&db, "workspace_binding_prompt_dismissals"),
+        "migration 041 must create workspace_binding_prompt_dismissals"
     );
     assert!(
         column_exists(&db, "workspace_bindings", "binding_type"),
-        "migration 021 must add workspace_bindings.binding_type"
+        "migration 037 must add workspace_bindings.binding_type"
     );
     assert!(
         column_exists(&db, "inbound_clients", "locked_space_id"),
-        "migration 022 must add inbound_clients.locked_space_id"
+        "migration 038 must add inbound_clients.locked_space_id"
     );
 }
 
 #[test]
 fn test_pending_migrations_apply_to_an_existing_older_database() {
     // Reproduce the real upgrade that surfaced "no such table:
-    // inbound_client_api_keys" in the field: a DB created before 020/021/022
+    // inbound_client_api_keys" in the field: a DB created before 036/037/038
     // existed, reopened by a newer build. The pending migrations MUST apply.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("mcpmux.db");
 
-    // 1. Fully migrate, then roll the schema back to a pre-020 state.
+    // 1. Fully migrate, then roll the schema back to a pre-036 state.
     {
         let db = Database::open(&path).expect("open");
         db.connection()
             .execute_batch(
-                "DELETE FROM schema_migrations WHERE version >= 20;
+                "DELETE FROM schema_migrations WHERE version >= 36;
                  DROP TABLE IF EXISTS inbound_client_api_keys;
+                 DROP INDEX IF EXISTS idx_wb_root_global;
+                 DROP INDEX IF EXISTS idx_wb_root_machine;
+                 DROP INDEX IF EXISTS idx_wb_root_scoped;
+                 DROP INDEX IF EXISTS idx_wb_id_global;
+                 DROP INDEX IF EXISTS idx_wb_id_machine;
+                 DROP INDEX IF EXISTS idx_workspace_bindings_binding_type;
+                 DROP INDEX IF EXISTS idx_inbound_clients_locked_space_id;
                  ALTER TABLE workspace_bindings DROP COLUMN binding_type;
                  ALTER TABLE inbound_clients DROP COLUMN locked_space_id;",
             )
-            .expect("roll schema back to pre-020");
+            .expect("roll schema back to pre-036");
         assert!(
             !table_exists(&db, "inbound_client_api_keys"),
             "precondition: the rolled-back DB is missing the table"
         );
     }
 
-    // 2. Reopen — run_migrations() must re-apply 020/021/022.
+    // 2. Reopen — run_migrations() must re-apply 036/037/038.
     let db = Database::open(&path).expect("reopen older DB");
     assert!(
         table_exists(&db, "inbound_client_api_keys"),

@@ -7,7 +7,7 @@ test.describe('Navigation', () => {
     await dashboard.navigate();
 
     await expect(dashboard.heading).toBeVisible();
-    await expect(page.locator('text=Your AI control plane')).toBeVisible();
+    await expect(page.locator('text=Welcome to McpMux')).toBeVisible();
   });
 
   test('should navigate to settings page', async ({ page }) => {
@@ -23,32 +23,31 @@ test.describe('Navigation', () => {
     await dashboard.navigate();
 
     // My Servers
-    await page.locator('nav button:has-text("Tools")').click({ force: true });
-    await expect(page.locator('h1:has-text("Tools")')).toBeVisible();
+    await page.locator('nav button:has-text("My Servers")').click({ force: true });
+    await expect(page.locator('h1:has-text("My Servers")')).toBeVisible();
 
     // Discover
-    await page.locator('nav button:has-text("Discover")').click({ force: true });
-    await expect(page.locator('h1:has-text("Discover")')).toBeVisible();
+    await page.locator('nav button:has-text("Search")').click({ force: true });
+    await expect(page.locator('h1:has-text("Discover Servers")')).toBeVisible();
 
-    // Mapping (the workspace→tools mapping tab; nav label was renamed from
-    // "Workspaces", but the page heading is still "Workspaces").
-    await page.locator('nav button:has-text("Mapping")').click({ force: true });
-    await expect(page.locator('h1:has-text("Workspaces")')).toBeVisible();
+    // Projects (the folder → bundle mapping tab)
+    await page.locator('nav button:has-text("Projects")').last().click({ force: true });
+    await expect(page.locator('h1:has-text("Projects")')).toBeVisible();
 
     // FeatureSets
-    await page.locator('nav button:has-text("FeatureSets")').click({ force: true });
-    await expect(page.locator('h1:has-text("FeatureSets")')).toBeVisible();
+    await page.locator('nav button:has-text("Bundles")').click({ force: true });
+    await expect(page.locator('h1:has-text("Bundles")')).toBeVisible();
 
     // Clients
-    await page.locator('nav button:has-text("Apps")').click({ force: true });
-    await expect(page.locator('h1:has-text("Apps")')).toBeVisible();
+    await page.locator('nav button:has-text("Clients")').click({ force: true });
+    await expect(page.locator('h1:has-text("Connections")')).toBeVisible();
 
     // Settings
     await page.locator('nav button:has-text("Settings")').click({ force: true });
     await expect(page.locator('h1:has-text("Settings")')).toBeVisible();
 
     // Back to Dashboard
-    await page.locator('nav button:has-text("Home")').click({ force: true });
+    await page.locator('nav button:has-text("Dashboard")').click({ force: true });
     await expect(dashboard.heading).toBeVisible();
   });
 });

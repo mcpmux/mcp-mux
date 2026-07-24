@@ -2,19 +2,23 @@
 
 mod app_settings_repository;
 mod credential_repository;
+mod embedding_repository;
 mod feature_set_repository;
 mod inbound_client_repository;
 mod inbound_mcp_client_repository;
 mod installed_server_repository;
+mod machine_repository;
 mod outbound_oauth_client_repository;
 mod server_feature_repository;
 mod space_base_dir_repository;
 mod space_builtin_config_repository;
 mod space_repository;
+mod workspace_appearance_repository;
 mod workspace_binding_repository;
 
 pub use app_settings_repository::SqliteAppSettingsRepository;
 pub use credential_repository::SqliteCredentialRepository;
+pub use embedding_repository::{hash_embedding_content, SqliteEmbeddingRepository};
 pub use feature_set_repository::SqliteFeatureSetRepository;
 pub use inbound_client_repository::{
     ApiKeyAuth, AuthorizationCode, InboundApiKey, InboundClient, InboundClientRepository,
@@ -22,6 +26,7 @@ pub use inbound_client_repository::{
 };
 pub use inbound_mcp_client_repository::SqliteInboundMcpClientRepository;
 pub use installed_server_repository::SqliteInstalledServerRepository;
+pub use machine_repository::SqliteMachineRepository;
 pub use outbound_oauth_client_repository::SqliteOutboundOAuthRepository;
 pub use server_feature_repository::{
     FeatureType, ServerFeature, ServerFeatureRepository, SqliteServerFeatureRepository,
@@ -29,4 +34,5 @@ pub use server_feature_repository::{
 pub use space_base_dir_repository::SqliteSpaceBaseDirRepository;
 pub use space_builtin_config_repository::SqliteSpaceBuiltinConfigRepository;
 pub use space_repository::SqliteSpaceRepository;
+pub use workspace_appearance_repository::SqliteWorkspaceAppearanceRepository;
 pub use workspace_binding_repository::SqliteWorkspaceBindingRepository;

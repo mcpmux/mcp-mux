@@ -130,18 +130,118 @@ const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 20,
-        name: "inbound_client_api_keys",
-        sql: include_str!("migrations/020_inbound_client_api_keys.sql"),
+        name: "workspace_binding_label",
+        sql: include_str!("migrations/020_workspace_binding_label.sql"),
     },
     Migration {
         version: 21,
-        name: "binding_type",
-        sql: include_str!("migrations/021_binding_type.sql"),
+        name: "installed_server_cloned_from",
+        sql: include_str!("migrations/021_installed_server_cloned_from.sql"),
     },
     Migration {
         version: 22,
+        name: "installed_server_display_name_override",
+        sql: include_str!("migrations/022_installed_server_display_name_override.sql"),
+    },
+    Migration {
+        version: 23,
+        name: "feature_set_member_surfaced",
+        sql: include_str!("migrations/023_feature_set_member_surfaced.sql"),
+    },
+    Migration {
+        version: 24,
+        name: "workspace_icons",
+        sql: include_str!("migrations/024_workspace_icons.sql"),
+    },
+    Migration {
+        version: 25,
+        name: "tool_embeddings",
+        sql: include_str!("migrations/025_tool_embeddings.sql"),
+    },
+    Migration {
+        version: 26,
+        name: "installed_server_default_params",
+        sql: include_str!("migrations/026_installed_server_default_params.sql"),
+    },
+    Migration {
+        version: 27,
+        name: "workspace_binding_client_scope",
+        sql: include_str!("migrations/027_workspace_binding_client_scope.sql"),
+    },
+    Migration {
+        version: 28,
+        name: "server_update_policy",
+        sql: include_str!("migrations/028_server_update_policy.sql"),
+    },
+    Migration {
+        version: 29,
+        name: "server_version_cache",
+        sql: include_str!("migrations/029_server_version_cache.sql"),
+    },
+    Migration {
+        version: 30,
+        name: "default_params_strategy",
+        sql: include_str!("migrations/030_default_params_strategy.sql"),
+    },
+    Migration {
+        version: 31,
+        name: "server_current_version",
+        sql: include_str!("migrations/031_server_current_version.sql"),
+    },
+    Migration {
+        version: 32,
+        name: "workspace_icon_backfill",
+        sql: include_str!("migrations/032_workspace_icon_backfill.sql"),
+    },
+    Migration {
+        version: 33,
+        name: "machines",
+        sql: include_str!("migrations/033_machines.sql"),
+    },
+    Migration {
+        version: 34,
+        name: "workspace_binding_machine_scope",
+        sql: include_str!("migrations/034_workspace_binding_machine_scope.sql"),
+    },
+    Migration {
+        version: 35,
+        name: "inbound_client_machine",
+        sql: include_str!("migrations/035_inbound_client_machine.sql"),
+    },
+    Migration {
+        version: 36,
+        name: "inbound_client_api_keys",
+        sql: include_str!("migrations/036_inbound_client_api_keys.sql"),
+    },
+    Migration {
+        version: 37,
+        name: "workspace_binding_type",
+        sql: include_str!("migrations/037_workspace_binding_type.sql"),
+    },
+    Migration {
+        version: 38,
         name: "inbound_client_locked_space",
-        sql: include_str!("migrations/022_inbound_client_locked_space.sql"),
+        sql: include_str!("migrations/038_inbound_client_locked_space.sql"),
+    },
+    Migration {
+        version: 39,
+        name: "inbound_client_icon",
+        sql: include_str!("migrations/039_inbound_client_icon.sql"),
+    },
+    Migration {
+        version: 40,
+        name: "public_url_rename",
+        sql: include_str!("migrations/040_public_url_rename.sql"),
+    },
+    Migration {
+        version: 41,
+        name: "workspace_binding_prompt_dismissals",
+        sql: include_str!("migrations/041_workspace_binding_prompt_dismissals.sql"),
+    },
+    Migration {
+        version: 42,
+        name: "backfill_approved_clients",
+        sql: include_str!("migrations/042_backfill_approved_clients.sql"),
     },
 ];
 
@@ -198,6 +298,12 @@ impl Database {
     fn run_migrations(&self) -> Result<()> {
         // First, ensure the schema_migrations table exists
         self.ensure_migrations_table()?;
+
+        // Fork `dev`/`i18n` used migration numbers 16–27 for features that the
+        // upstream+port line maps to 20–31, while upstream 16–19 were never
+        // applied. Reconcile before the normal loop so we don't re-run fork SQL
+        // under the new numbers (e.g. duplicate `update_policy` at v28).
+        self.reconcile_fork_numbering()?;
 
         // Get current schema version
         let current_version = self.get_schema_version();
@@ -353,6 +459,79 @@ impl Database {
                 [],
             )?;
         }
+        Ok(())
+    }
+
+    /// Whether `schema_migrations` uses fork-era numbering (v16 =
+    /// `workspace_binding_label` instead of upstream `space_builtin_servers`).
+    fn is_fork_numbered_schema(&self) -> bool {
+        self.conn
+            .query_row(
+                "SELECT name FROM schema_migrations WHERE version = 16",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map(|name| name == "workspace_binding_label")
+            .unwrap_or(false)
+    }
+
+    /// Upgrade a fork-numbered database to the upstream+port migration ledger.
+    ///
+    /// Physical schema from fork v16–27 already matches port v20–31; upstream
+    /// v16–19 tables/columns are applied here, then migration records are
+    /// rewritten so the normal runner sees v31 and stops.
+    fn reconcile_fork_numbering(&self) -> Result<()> {
+        if !self.is_fork_numbered_schema() {
+            return Ok(());
+        }
+
+        info!("Detected fork-era migration numbering; reconciling to upstream+port schema...");
+
+        let fk_was_on = self.foreign_keys_enabled();
+        if fk_was_on {
+            self.conn.pragma_update(None, "foreign_keys", "OFF")?;
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        for migration in MIGRATIONS.iter().filter(|m| (16..=19).contains(&m.version)) {
+            info!(
+                "Applying upstream migration {} ({}) during fork reconcile...",
+                migration.version, migration.name
+            );
+            self.conn.execute_batch(migration.sql).with_context(|| {
+                format!(
+                    "Failed upstream migration {} ({}) during fork reconcile",
+                    migration.version, migration.name
+                )
+            })?;
+        }
+
+        self.conn
+            .execute("DELETE FROM schema_migrations WHERE version >= 16", [])?;
+
+        // Fork dev/i18n only ever stamped through port v32; newer migrations
+        // must run via the normal loop after reconcile rewrites the ledger.
+        const FORK_RECONCILE_LEDGER_CAP: i64 = 32;
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|m| (16..=FORK_RECONCILE_LEDGER_CAP).contains(&m.version))
+        {
+            self.conn.execute(
+                "INSERT INTO schema_migrations (version, name, applied_at) \
+                 VALUES (?1, ?2, datetime('now'))",
+                rusqlite::params![migration.version, migration.name],
+            )?;
+        }
+
+        tx.commit()?;
+
+        if fk_was_on {
+            self.foreign_key_check()?;
+            self.conn.pragma_update(None, "foreign_keys", "ON")?;
+        }
+
+        info!("Fork-era migration numbering reconciled to version 32");
         Ok(())
     }
 
@@ -540,6 +719,136 @@ mod tests {
         assert_eq!(clients, 1, "inbound client must survive the rebuilds");
     }
 
+    /// Fork `dev`/`i18n` stamped port features at v16–27; upstream+port expects
+    /// upstream v16–19 plus port v20–32. Reconcile must not re-run fork SQL.
+    #[test]
+    fn fork_numbered_schema_reconciles_to_port_numbering() {
+        use rusqlite::{params, Connection};
+
+        const FORK_NAMES: &[&str] = &[
+            "workspace_binding_label",
+            "installed_server_cloned_from",
+            "installed_server_display_name_override",
+            "feature_set_member_surfaced",
+            "workspace_icons",
+            "tool_embeddings",
+            "installed_server_default_params",
+            "workspace_binding_client_scope",
+            "server_update_policy",
+            "server_version_cache",
+            "default_params_strategy",
+            "server_current_version",
+            "workspace_icon_backfill",
+        ];
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let db = Database { conn };
+        db.ensure_migrations_table().unwrap();
+
+        for m in MIGRATIONS.iter().filter(|m| m.version <= 15) {
+            db.conn.execute_batch(m.sql).unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at) \
+                     VALUES (?1, ?2, datetime('now'))",
+                    params![m.version, m.name],
+                )
+                .unwrap();
+        }
+
+        for (i, m) in MIGRATIONS
+            .iter()
+            .filter(|m| (20..=32).contains(&m.version))
+            .enumerate()
+        {
+            let fork_version = 16 + i as i64;
+            db.conn.execute_batch(m.sql).unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at) \
+                     VALUES (?1, ?2, datetime('now'))",
+                    params![fork_version, FORK_NAMES[i]],
+                )
+                .unwrap();
+        }
+
+        db.run_migrations().unwrap();
+
+        let version: i64 = db
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 42);
+
+        let v16_name: String = db
+            .conn
+            .query_row(
+                "SELECT name FROM schema_migrations WHERE version = 16",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(v16_name, "space_builtin_servers");
+
+        let has_builtin: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type='table' AND name='space_builtin_servers'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_builtin, 1);
+
+        let has_update_policy: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('installed_servers') \
+                 WHERE name='update_policy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_update_policy, 1, "fork column must survive reconcile");
+    }
+
+    /// Set `MCPMUX_RECONCILE_TEST_DB` to a fork-era DB copy to verify reconcile end-to-end.
+    #[test]
+    fn reconcile_fork_backup_when_env_set() {
+        let Ok(path) = std::env::var("MCPMUX_RECONCILE_TEST_DB") else {
+            return;
+        };
+        let path = Path::new(&path);
+        assert!(path.exists(), "test db path must exist: {:?}", path);
+
+        let db = Database::open(path).unwrap();
+        let version: i64 = db
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 36);
+
+        let v16_name: String = db
+            .conn
+            .query_row(
+                "SELECT name FROM schema_migrations WHERE version = 16",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(v16_name, "space_builtin_servers");
+    }
+
     #[test]
     fn test_persistent_database() {
         let temp_dir = TempDir::new().unwrap();
@@ -568,5 +877,114 @@ mod tests {
             .unwrap();
 
         assert_eq!(name, "Test");
+    }
+
+    /// Migration 40 must carry an old `gateway.public_url` row over to
+    /// `gateway.public_base_url` (the key current code actually reads) and
+    /// remove the superseded key, without clobbering an already-current row.
+    #[test]
+    fn migration_40_renames_public_url_setting_key() {
+        use rusqlite::{params, Connection};
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let db = Database { conn };
+        db.ensure_migrations_table().unwrap();
+
+        // Apply migrations up to v39, recording each as applied.
+        const PRE_RENAME: i64 = 39;
+        for m in MIGRATIONS.iter().filter(|m| m.version <= PRE_RENAME) {
+            db.conn.execute_batch(m.sql).unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at) \
+                     VALUES (?1, ?2, datetime('now'))",
+                    params![m.version, m.name],
+                )
+                .unwrap();
+        }
+
+        // Seed the OLD key, simulating an install that predates the rename.
+        db.conn
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) \
+                 VALUES ('gateway.public_url', 'https://mcp.example.com', datetime('now'))",
+                [],
+            )
+            .unwrap();
+
+        db.run_migrations().unwrap();
+
+        let new_value: String = db
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'gateway.public_base_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_value, "https://mcp.example.com");
+
+        let old_key_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_settings WHERE key = 'gateway.public_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_key_count, 0, "old key must be removed");
+    }
+
+    /// If the new key is already present (e.g. the user re-saved the setting
+    /// as a workaround), migration 40 must not overwrite it with the old
+    /// value — `INSERT OR IGNORE` should be a no-op for that row.
+    #[test]
+    fn migration_40_does_not_overwrite_existing_new_key() {
+        use rusqlite::{params, Connection};
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let db = Database { conn };
+        db.ensure_migrations_table().unwrap();
+
+        const PRE_RENAME: i64 = 39;
+        for m in MIGRATIONS.iter().filter(|m| m.version <= PRE_RENAME) {
+            db.conn.execute_batch(m.sql).unwrap();
+            db.conn
+                .execute(
+                    "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at) \
+                     VALUES (?1, ?2, datetime('now'))",
+                    params![m.version, m.name],
+                )
+                .unwrap();
+        }
+
+        db.conn
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) \
+                 VALUES ('gateway.public_url', 'https://stale.example.com', datetime('now'))",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) \
+                 VALUES ('gateway.public_base_url', 'https://current.example.com', datetime('now'))",
+                [],
+            )
+            .unwrap();
+
+        db.run_migrations().unwrap();
+
+        let new_value: String = db
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'gateway.public_base_url'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_value, "https://current.example.com");
     }
 }

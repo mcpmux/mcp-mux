@@ -28,6 +28,16 @@ Start a request with **`@mux`** and the assistant knows to drive these tools ins
 
 A typical flow: **discover** what's available (`list`/`search`), **compose** a focused FeatureSet of just the tools needed (`manage_feature_set`), then **pin** the current folder to it (`bind_current_workspace`) so it sticks for every future session.
 
+## Invoking backend tools from Cursor
+
+McpMux keeps `tools/list` lean on purpose. Backend tools (Playwright, GitHub, etc.) are **not** advertised unless you toggle **Surfaced** on that tool in the **Bundles** editor (`FeatureSetPanel`). Agents should call backend work through:
+
+1. `mcpmux_search_tools` — find the tool
+2. `mcpmux_get_tool_schema` — read params
+3. `mcpmux_invoke_tool` — run with `server_id`, bare `tool` name, and `args`
+
+Direct calls like `user-mcpmux-github_create_issue` only work when that tool is surfaced. Everything else goes through `mcpmux_invoke_tool`.
+
 ## Reads are silent, writes are gated
 
 Read tools run silently — the AI explores freely. Anything that changes your setup pops a **one-click approval dialog** that names the **exact Space** it will affect and shows the precise tool diff. The AI proposes; you decide.

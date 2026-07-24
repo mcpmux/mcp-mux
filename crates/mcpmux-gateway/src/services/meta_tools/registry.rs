@@ -4,24 +4,48 @@
 //! dispatches a tool name to its handler and exposes `list()` for the MCP
 //! `tools/list` response.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use mcpmux_core::{
-    builtin_server, DomainEvent, FeatureSetRepository, InboundMcpClientRepository,
-    ServerFeatureRepository, SpaceBuiltinConfigRepository, SpaceRepository,
-    WorkspaceBindingRepository, TOOL_OPTIMIZATION_SERVER_ID,
+    DomainEvent, EmbeddingRepository, FeatureSetRepository, InboundMcpClientRepository,
+    InstalledServerRepository, ServerFeatureRepository, ServerLogManager, SpaceRepository,
+    WorkspaceBindingRepository,
 };
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::broadcast;
+use tracing::debug;
 use uuid::Uuid;
 
 use super::approval::ApprovalBroker;
-use crate::pool::FeatureService;
-use crate::services::{FeatureSetResolverService, SessionRootsRegistry};
+use super::disclosure_backend::DisclosureBackend;
+use super::invoke_backend::InvokeToolBackend;
+use crate::pool::{FeatureService, ServerManager};
+use crate::services::{
+    EmbeddingService, FeatureSetResolverService, PromptDiscoveryService, ResourceDiscoveryService,
+    SessionRootsRegistry, ToolDiscoveryService, ToolIndex,
+};
+
+/// Stable hash of sorted `feature_set_ids` for per-session search cache keys.
+pub fn feature_set_ids_fingerprint(feature_set_ids: &[String]) -> u64 {
+    let mut ids = feature_set_ids.to_vec();
+    ids.sort();
+    let mut hasher = DefaultHasher::new();
+    for id in ids {
+        id.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// App-settings key that toggles the entire `mcpmux_*` namespace.
+/// Present + "false" → hidden; missing or anything else → enabled.
+pub const META_TOOLS_ENABLED_KEY: &str = "gateway.meta_tools_enabled";
 
 /// Context injected into every meta-tool invocation.
 ///
@@ -34,21 +58,37 @@ pub struct MetaToolContext {
     pub feature_set_repo: Arc<dyn FeatureSetRepository>,
     pub binding_repo: Arc<dyn WorkspaceBindingRepository>,
     pub server_feature_repo: Arc<dyn ServerFeatureRepository>,
+    pub installed_server_repo: Arc<dyn InstalledServerRepository>,
     pub resolver: Arc<FeatureSetResolverService>,
     pub feature_service: Arc<FeatureService>,
+    /// Backend invoke path — required for `mcpmux_invoke_tool`.
+    pub invoke_backend: Option<Arc<dyn InvokeToolBackend>>,
+    pub tool_discovery: Arc<ToolDiscoveryService>,
+    pub resource_discovery: Arc<ResourceDiscoveryService>,
+    pub prompt_discovery: Arc<PromptDiscoveryService>,
+    /// Backend read/fetch path — required for `mcpmux_read_resource` / `mcpmux_fetch_prompt`.
+    pub disclosure_backend: Option<Arc<dyn DisclosureBackend>>,
     pub session_roots: Arc<SessionRootsRegistry>,
     pub approval_broker: Arc<ApprovalBroker>,
     /// Broadcast domain events (e.g. ToolsChanged) so MCPNotifier can push
     /// `tools/list_changed` to connected peers after a write mutates state.
     pub domain_event_tx: broadcast::Sender<DomainEvent>,
-    /// App-settings repo (retained for future built-in servers; the meta-tools
-    /// enablement now lives in `builtin_config_repo`, scoped per Space).
+    /// App-settings repo for the `gateway.meta_tools_enabled` master switch.
+    /// Optional because older dependency builders may not have wired it.
+    /// When absent the switch defaults to ENABLED (matches the product default).
     pub settings_repo: Option<Arc<dyn mcpmux_core::AppSettingsRepository>>,
-    /// Per-Space built-in-server config. Gates whether the Tool Optimization
-    /// (`mcpmux_*`) server + its individual tools are advertised for a given
-    /// Space. Optional because some dependency builders / tests don't wire it;
-    /// when absent the server defaults to ENABLED with all tools on.
-    pub builtin_config_repo: Option<Arc<dyn SpaceBuiltinConfigRepository>>,
+    /// Runtime connection status for installed servers (pool orchestrator).
+    pub server_manager: Arc<ServerManager>,
+    /// Per-server log tail reader (`current.log`); same source as the desktop UI.
+    pub log_manager: Arc<ServerLogManager>,
+    /// Per-session active tool index for `mcpmux_search_tools` (fingerprint-keyed).
+    pub search_cache: Arc<DashMap<String, (u64, ToolIndex)>>,
+    /// Global embedding vectors keyed by content hash.
+    pub embedding_store: Arc<DashMap<String, Vec<f32>>>,
+    /// Persistent embedding repository backing `embedding_store` hydration.
+    pub embedding_repo: Arc<dyn EmbeddingRepository>,
+    /// Local ONNX embedding service for hybrid tool ranking.
+    pub embeddings: Arc<EmbeddingService>,
 }
 
 /// Per-request metadata threaded through every tool call.
@@ -62,6 +102,13 @@ pub struct MetaToolCall<'a> {
     /// JSON arguments supplied in `CallToolRequestParams.arguments`.
     pub args: Value,
     pub ctx: &'a MetaToolContext,
+    /// Write tools set this before returning `Ok` to override the default
+    /// `"allow_once"` audit decision (e.g. workspace bind).
+    pub audit_decision: Arc<Mutex<Option<&'static str>>>,
+    /// Physical device identity from the caller's `X-Mcpmux-Machine-Id`
+    /// header, when the transport carries one. `None` for local/stdio
+    /// callers and for tests that don't exercise per-device routing.
+    pub request_machine_id: Option<Uuid>,
 }
 
 /// Errors a meta tool can surface that map cleanly to `CallToolResult::error`.
@@ -161,72 +208,46 @@ impl MetaToolRegistry {
         self.tools.contains_key(name)
     }
 
-    /// Is the Tool Optimization (`mcpmux_*`) built-in server enabled for this
-    /// Space? Reads the per-Space override, falling back to the descriptor's
-    /// `default_enabled` (ON). When no config repo is wired (older builders /
-    /// tests), defaults to ON.
-    pub async fn is_server_enabled_for_space(&self, space_id: &Uuid) -> bool {
-        let Some(repo) = self.ctx.builtin_config_repo.as_ref() else {
+    /// Master switch: are meta tools enabled in app settings? When disabled,
+    /// the gateway handler hides `mcpmux_*` from `list_tools` and routes
+    /// `call_tool` invocations straight to the feature-set path (where they
+    /// will miss and return "tool not found").
+    ///
+    /// Default when the setting is missing or the repo is not wired: ON.
+    /// Default when the setting value is unparseable: ON (fail-open on the
+    /// discoverability side; security-sensitive writes still require approval).
+    pub async fn is_enabled(&self) -> bool {
+        let Some(repo) = self.ctx.settings_repo.as_ref() else {
             return true;
         };
-        let default = builtin_server(TOOL_OPTIMIZATION_SERVER_ID)
-            .map(|d| d.default_enabled)
-            .unwrap_or(true);
-        repo.server_enabled_override(&space_id.to_string(), TOOL_OPTIMIZATION_SERVER_ID)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(default)
-    }
-
-    /// Tool names disabled for this Space (empty when no config repo / none).
-    async fn disabled_tools_for_space(&self, space_id: &Uuid) -> Vec<String> {
-        match self.ctx.builtin_config_repo.as_ref() {
-            Some(repo) => repo
-                .disabled_tools(&space_id.to_string(), TOOL_OPTIMIZATION_SERVER_ID)
-                .await
-                .unwrap_or_default(),
-            None => Vec::new(),
+        match repo.get(META_TOOLS_ENABLED_KEY).await {
+            Ok(Some(v)) => !matches!(v.as_str(), "false" | "0"),
+            _ => true,
         }
     }
 
-    /// Whether a specific meta tool is advertised/callable for a Space — the
-    /// server must be enabled and the individual tool not disabled. Used by the
-    /// `call_tool` interception path so a disabled tool can't be invoked.
-    pub async fn is_tool_enabled_for_space(&self, space_id: &Uuid, tool_name: &str) -> bool {
-        if !self.is_server_enabled_for_space(space_id).await {
-            return false;
-        }
-        !self
-            .disabled_tools_for_space(space_id)
-            .await
-            .iter()
-            .any(|n| n == tool_name)
-    }
-
-    /// The `rmcp::model::Tool` list advertised to a Space — the enabled tools
-    /// of the Tool Optimization server, or empty when that server is disabled
-    /// for the Space.
-    pub async fn list_as_tools_for_space(&self, space_id: &Uuid) -> Vec<Tool> {
-        if !self.is_server_enabled_for_space(space_id).await {
-            return Vec::new();
-        }
-        let disabled = self.disabled_tools_for_space(space_id).await;
-        self.list_as_tools()
-            .into_iter()
-            .filter(|t| !disabled.iter().any(|d| d == t.name.as_ref()))
-            .collect()
-    }
-
-    /// The full unfiltered `rmcp::model::Tool` list (every registered tool,
-    /// ignoring per-Space config). Used by the per-Space filter above.
+    /// The `rmcp::model::Tool` list advertised to clients.
+    ///
+    /// Only [`super::CORE_META_TOOLS`] are included. The remaining registered
+    /// tools are hidden from `tools/list` but remain fully callable — agents
+    /// reach them through the error/hint recovery strings that name them.
     pub fn list_as_tools(&self) -> Vec<Tool> {
-        self.tools
+        let mut tools: Vec<_> = self
+            .tools
             .values()
+            .filter(|t| super::CORE_META_TOOLS.contains(&t.name()))
             .map(|t| {
-                let schema: serde_json::Map<String, Value> =
-                    serde_json::from_value(t.input_schema()).unwrap_or_default();
-                let mut tool = Tool::new(t.name(), t.description(), Arc::new(schema));
+                let name = t.name();
+                let schema: serde_json::Map<String, Value> = match serde_json::from_value(
+                    t.input_schema(),
+                ) {
+                    Ok(map) => map,
+                    Err(e) => {
+                        debug!(tool = name, error = %e, "meta tool input_schema parse failed; advertising empty schema");
+                        serde_json::Map::new()
+                    }
+                };
+                let mut tool = Tool::new(name, t.description(), Arc::new(schema));
                 // Annotate writes so well-behaved clients surface the hint.
                 if t.is_write() {
                     let mut ann = tool.annotations.unwrap_or_default();
@@ -240,7 +261,14 @@ impl MetaToolRegistry {
                 }
                 tool
             })
-            .collect()
+            .collect();
+        tools.sort_by_key(|t| {
+            super::CORE_META_TOOLS
+                .iter()
+                .position(|name| *name == t.name.as_ref())
+                .unwrap_or(usize::MAX)
+        });
+        tools
     }
 
     /// Dispatch. Caller (the MCP handler) has already verified the name
@@ -257,21 +285,47 @@ impl MetaToolRegistry {
         session_id: Option<&str>,
         args: Value,
     ) -> Result<CallToolResult, MetaToolError> {
+        self.call_from_device(name, client_id, session_id, args, None)
+            .await
+    }
+
+    /// Like [`Self::call`] but threads through the caller's physical device
+    /// identity (`X-Mcpmux-Machine-Id`) when the transport has one, so
+    /// device-scoped meta tools (workspace binding) write and resolve
+    /// against the same machine the resolver would pick for this caller.
+    pub async fn call_from_device(
+        &self,
+        name: &str,
+        client_id: &str,
+        session_id: Option<&str>,
+        args: Value,
+        request_machine_id: Option<Uuid>,
+    ) -> Result<CallToolResult, MetaToolError> {
         let tool = self
             .tools
             .get(name)
             .ok_or_else(|| MetaToolError::InvalidArgument(format!("unknown meta tool: {name}")))?;
         let is_write = tool.is_write();
+        let audit_decision = Arc::new(Mutex::new(None));
         let call = MetaToolCall {
             client_id,
             session_id,
             args: args.clone(),
             ctx: &self.ctx,
+            audit_decision: audit_decision.clone(),
+            request_machine_id,
         };
         let result = tool.call(call).await;
 
         let (decision, summary) = match &result {
-            Ok(_) if is_write => ("allow_once", format!("{name} succeeded")),
+            Ok(_) if is_write => (
+                audit_decision
+                    .lock()
+                    .ok()
+                    .and_then(|g| *g)
+                    .unwrap_or("allow_once"),
+                format!("{name} succeeded"),
+            ),
             Ok(_) => ("read", format!("{name} read")),
             Err(MetaToolError::ApprovalDenied) => ("deny", format!("{name} denied by user")),
             Err(MetaToolError::ApprovalTimedOut) => ("timeout", format!("{name} timed out")),
@@ -296,5 +350,15 @@ impl MetaToolRegistry {
 
     pub fn context(&self) -> &MetaToolContext {
         &self.ctx
+    }
+
+    /// Evict cached active index for one MCP session.
+    pub fn evict_search_cache_for_session(&self, session_id: &str) {
+        self.ctx.search_cache.remove(session_id);
+    }
+
+    /// Whether a session has a cached active search index entry.
+    pub fn search_cache_contains(&self, session_id: &str) -> bool {
+        self.ctx.search_cache.contains_key(session_id)
     }
 }

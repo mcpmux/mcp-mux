@@ -18,7 +18,8 @@ import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
 import zedIcon from '@/assets/client-icons/zed.svg';
 import { ClientBrandIcon } from '@/components/ClientBrandIcon';
 import { getGatewayStatus } from '@/lib/api/gateway';
-import { useNavigateTo, useSetPendingSettingsSection } from '@/stores';
+import { useNavigate } from '@/hooks/use-navigate.hook';
+import { useSetPendingSettingsSection } from '@/stores';
 
 /** Brand icon per supported client id (falls back to a generic glyph). opencode
  *  ships theme-specific marks, so it carries a dark variant. */
@@ -88,7 +89,7 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
   const [results, setResults] = useState<WorkspaceInstallResult[] | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const navigateTo = useNavigateTo();
+  const navigate = useNavigate();
   const setPendingSettingsSection = useSetPendingSettingsSection();
 
   useEffect(() => {
@@ -200,7 +201,7 @@ export function WorkspaceInstallPanel({ workspaceRoot }: { workspaceRoot: string
               className="mt-2 h-7 text-xs"
               onClick={() => {
                 setPendingSettingsSection('security');
-                navigateTo('settings');
+                navigate('settings');
               }}
               data-testid="workspace-install-open-auth-settings"
             >

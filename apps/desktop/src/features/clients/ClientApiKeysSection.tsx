@@ -22,6 +22,9 @@ interface ClientApiKeysSectionProps {
   onSuccess: (title: string, body?: string) => void;
 }
 
+/**
+ * Lists and manages API keys for a preregistered inbound client.
+ */
 export function ClientApiKeysSection({ clientId, onError, onSuccess }: ClientApiKeysSectionProps) {
   const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -172,8 +175,8 @@ export function ClientApiKeysSection({ clientId, onError, onSuccess }: ClientApi
       )}
 
       <p className="mt-2 text-xs text-[rgb(var(--muted))]">
-        This client authenticates with an API key as a Bearer token. Keys are stored hashed — revoke
-        a leaked one and mint a new key.
+        This client authenticates with an API key as a Bearer token. Keys are stored hashed —
+        revoke a leaked one and mint a new key.
       </p>
     </section>
   );

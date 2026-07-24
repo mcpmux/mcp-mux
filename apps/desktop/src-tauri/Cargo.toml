@@ -15,7 +15,7 @@ tauri-build = { version = "2", features = [] }
 serde_json.workspace = true
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2"
@@ -46,8 +46,15 @@ notify = { version = "7", default-features = false, features = [
     "macos_fsevent",
 ] }
 notify-debouncer-mini = "0.5"
+hostname.workspace = true
 
 # Internal crates (path-only, no version needed)
 mcpmux-core.workspace = true
 mcpmux-gateway.workspace = true
 mcpmux-storage.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-contacts = { version = "0.3", features = ["CNContactStore", "block2"] }
+block2 = "0.6"

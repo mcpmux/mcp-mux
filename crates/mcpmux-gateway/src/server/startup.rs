@@ -254,6 +254,7 @@ impl StartupOrchestrator {
             &definition.transport,
             server,
             self.dependencies.state_dir.as_deref(),
+            crate::pool::transport::resolution::TransportResolutionOptions::default(),
         );
 
         // Explicitly set state to connecting in ServerManager BEFORE starting connection

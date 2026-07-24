@@ -2,6 +2,8 @@
  * Registry types for MCP server browsing and installation.
  */
 
+import type { UpdatePolicy } from '@/lib/api/settings';
+
 /** Input definition from registry */
 export interface InputDefinition {
   id: string;
@@ -101,6 +103,24 @@ export interface InstalledServerState {
   extra_headers: Record<string, string>;
   oauth_connected: boolean;
   source: InstallationSource; // How this server was installed
+  /** Per-invoke default params merged into tool calls. */
+  default_params?: Record<string, unknown>;
+  /** Merge strategy for default_params: 'fill' (caller wins) or 'override' (defaults win). */
+  default_params_strategy?: 'fill' | 'override';
+  /** User-supplied display label that survives user-config sync. */
+  display_name_override?: string | null;
+  /** Source server ID if this was cloned. */
+  cloned_from?: string | null;
+  /** Package update policy for npx/uvx stdio transports. */
+  update_policy?: UpdatePolicy;
+  /** Pinned semver when policy is `pinned`. */
+  pinned_version?: string | null;
+  /** Latest registry version from the most recent probe. */
+  latest_available_version?: string | null;
+  /** Resolved installed version from the most recent probe. */
+  current_version?: string | null;
+  /** When the version probe last ran for this install. */
+  version_checked_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -123,6 +143,24 @@ export interface ServerViewModel extends ServerDefinition {
   args_append?: string[];
   /** Extra HTTP headers (http only) */
   extra_headers?: Record<string, string>;
+  /** Per-invoke default params merged into tool calls. */
+  default_params?: Record<string, unknown>;
+  /** Merge strategy for default_params. */
+  default_params_strategy?: 'fill' | 'override';
+  /** User-supplied display label that survives user-config sync. */
+  display_name_override?: string | null;
+  /** Source server ID if this was cloned. */
+  cloned_from?: string | null;
+  /** Package update policy for npx/uvx stdio transports. */
+  update_policy?: UpdatePolicy;
+  /** Pinned semver when policy is `pinned`. */
+  pinned_version?: string | null;
+  /** Latest registry version from the most recent probe. */
+  latest_available_version?: string | null;
+  /** Resolved installed version from the most recent probe. */
+  current_version?: string | null;
+  /** When the version probe last ran for this install. */
+  version_checked_at?: string | null;
 }
 
 /** Registry category */

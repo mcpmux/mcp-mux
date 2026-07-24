@@ -7,8 +7,8 @@
 //! viewing in its own Zustand store (frontend-only state).
 
 use mcpmux_core::{
-    application::UserSpaceSyncService, validate_workspace_root, Space, SpaceBaseDir,
-    WorkspaceRootValidation,
+    application::ServerAppService, validate_workspace_root, InstalledServer, Space, SpaceBaseDir,
+    UserServerEntry, WorkspaceRootValidation,
 };
 use std::sync::Arc;
 use tauri::{AppHandle, State};
@@ -106,6 +106,45 @@ pub async fn create_space(
     Ok(space)
 }
 
+/// Update a space's display metadata (name, icon, description).
+#[tauri::command]
+pub async fn update_space(
+    id: String,
+    name: Option<String>,
+    icon: Option<String>,
+    description: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<Space, String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+
+    let space = state
+        .space_service
+        .update(uuid, name, icon, description)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Emit domain event if gateway is running
+    let gw_state = gateway_state.read().await;
+    if let Some(ref gw) = gw_state.gateway_state {
+        let gw = gw.read().await;
+        gw.emit_domain_event(mcpmux_core::DomainEvent::SpaceUpdated {
+            space_id: uuid,
+            name: space.name.clone(),
+        });
+    }
+
+    // Update system tray menu to reflect the rename
+    if let Err(e) = tray::update_tray_spaces(&app, &state).await {
+        warn!("Failed to update tray menu: {}", e);
+    }
+
+    info!("[update_space] Space '{}' updated successfully", uuid);
+
+    Ok(space)
+}
+
 /// Delete a space.
 #[tauri::command]
 pub async fn delete_space(
@@ -199,24 +238,6 @@ pub async fn save_space_config(
     std::fs::write(&config_path, content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
-    // Do not rely solely on the debounced file watcher. The UI reloads immediately
-    // after this command returns, so sync the just-saved file into InstalledServer
-    // records synchronously to avoid stale/missing custom-server state.
-    let sync_service = UserSpaceSyncService::new(state.installed_server_repository.clone());
-    let sync_result = sync_service
-        .sync_from_file(&space_id, &config_path)
-        .await
-        .map_err(|e| format!("Failed to sync custom server config: {}", e))?;
-
-    if sync_result.has_changes() {
-        info!(
-            "[save_space_config] Synced custom server config: {} added, {} updated, {} removed",
-            sync_result.added.len(),
-            sync_result.updated.len(),
-            sync_result.removed.len()
-        );
-    }
-
     Ok(())
 }
 
@@ -264,6 +285,82 @@ pub async fn remove_server_from_config(
     }
 
     Ok(false)
+}
+
+/// Replace a custom server's entry in the space configuration file.
+///
+/// Matches the target `mcpServers` key by comparing its normalized form
+/// (see `UserServerEntry::normalize_server_id`) against `server_id`, since
+/// the installed server id is normalized but the raw JSON key may not be.
+#[tauri::command]
+pub async fn update_server_in_config(
+    space_id: String,
+    server_id: String,
+    entry: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if !entry.is_object() {
+        return Err("Server entry must be a JSON object".to_string());
+    }
+
+    let config_path = state.space_config_path(&space_id)?;
+
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let mut config: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+
+    let servers = config
+        .get_mut("mcpServers")
+        .and_then(|v| v.as_object_mut())
+        .ok_or_else(|| "Config file has no mcpServers object".to_string())?;
+
+    let matching_key = servers
+        .keys()
+        .find(|key| UserServerEntry::normalize_server_id(key) == server_id)
+        .cloned()
+        .ok_or_else(|| format!("Server '{}' not found in config", server_id))?;
+
+    servers.insert(matching_key, entry);
+
+    let new_content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    std::fs::write(&config_path, new_content)
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    info!(
+        "[update_server_in_config] Updated server '{}' in space '{}'",
+        server_id, space_id
+    );
+
+    Ok(())
+}
+
+/// Persist a manual-entry clone's definition to `installed_servers.cached_definition`.
+#[tauri::command]
+pub async fn update_cloned_server_definition(
+    app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
+    space_id: String,
+    server_id: String,
+    entry: serde_json::Value,
+) -> Result<InstalledServer, String> {
+    if !entry.is_object() {
+        return Err("Server entry must be a JSON object".to_string());
+    }
+
+    let service_lock = app_service.read().await;
+    let service = service_lock
+        .as_ref()
+        .ok_or("ServerAppService not initialized")?;
+
+    let space_uuid = Uuid::parse_str(&space_id).map_err(|e| e.to_string())?;
+
+    service
+        .update_definition(space_uuid, &server_id, entry)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Refresh the system tray menu to reflect current spaces

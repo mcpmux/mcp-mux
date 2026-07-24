@@ -1,4 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
+/** @deprecated Prefer `@/lib/backend` — shim during facade migration. */
+import { openUrl as shellOpenUrl } from '@/lib/backend/shell';
+
+import { apiCall } from './transport';
 
 /**
  * Gateway status.
@@ -11,45 +14,10 @@ export interface GatewayStatus {
 }
 
 /**
- * Public URL advertised by the gateway in OAuth metadata.
- */
-export interface GatewayPublicUrlSettings {
-  configuredPublicBaseUrl: string | null;
-  activePublicBaseUrl: string | null;
-  localBaseUrl: string | null;
-}
-
-/**
- * Config export format.
- */
-export type ExportFormat = 'cursor' | 'vscode' | 'claude';
-
-/**
  * Get gateway status.
  */
 export async function getGatewayStatus(spaceId?: string): Promise<GatewayStatus> {
-  return invoke('get_gateway_status', { spaceId });
-}
-
-/**
- * Get the configured and currently-active public gateway URL settings.
- */
-export async function getGatewayPublicUrlSettings(): Promise<GatewayPublicUrlSettings> {
-  return invoke('get_gateway_public_url_settings');
-}
-
-/**
- * Set the public base URL advertised in OAuth metadata. Pass null to clear it.
- */
-export async function setGatewayPublicBaseUrl(publicBaseUrl: string | null): Promise<void> {
-  return invoke('set_gateway_public_base_url', { publicBaseUrl });
-}
-
-/**
- * Clear the public base URL and return to local-only localhost metadata.
- */
-export async function resetGatewayPublicBaseUrl(): Promise<void> {
-  return invoke('reset_gateway_public_base_url');
+  return apiCall('get_gateway_status', { spaceId });
 }
 
 /**
@@ -69,7 +37,7 @@ export interface GatewayStartProbe {
  * Does not start anything — used by the UI to decide whether to prompt.
  */
 export async function probeGatewayStart(port?: number): Promise<GatewayStartProbe> {
-  return invoke('probe_gateway_start', { port });
+  return apiCall('probe_gateway_start', { port });
 }
 
 /**
@@ -89,7 +57,7 @@ export interface PendingPortConflict {
  * double-mount.
  */
 export async function takePendingPortConflict(): Promise<PendingPortConflict | null> {
-  return invoke('take_pending_port_conflict');
+  return apiCall('take_pending_port_conflict');
 }
 
 /**
@@ -122,7 +90,7 @@ export async function startGateway(opts?: {
   port?: number;
   allowDynamicFallback?: boolean;
 }): Promise<string> {
-  return invoke('start_gateway', {
+  return apiCall('start_gateway', {
     port: opts?.port,
     allowDynamicFallback: opts?.allowDynamicFallback,
   });
@@ -132,7 +100,7 @@ export async function startGateway(opts?: {
  * Stop the gateway server.
  */
 export async function stopGateway(): Promise<void> {
-  return invoke('stop_gateway');
+  return apiCall('stop_gateway');
 }
 
 /**
@@ -142,17 +110,10 @@ export async function restartGateway(opts?: {
   port?: number;
   allowDynamicFallback?: boolean;
 }): Promise<string> {
-  return invoke('restart_gateway', {
+  return apiCall('restart_gateway', {
     port: opts?.port,
     allowDynamicFallback: opts?.allowDynamicFallback,
   });
-}
-
-/**
- * Export config for a client.
- */
-export async function exportConfig(format: ExportFormat, clientId?: string): Promise<string> {
-  return invoke('export_config', { format, clientId });
 }
 
 /**
@@ -166,31 +127,20 @@ export interface BackendStatus {
 }
 
 /**
- * Connect an installed server to the gateway.
- */
-export async function connectServer(serverId: string): Promise<void> {
-  return invoke('connect_server', { serverId });
-}
-
-/**
  * Disconnect a server from the gateway.
  * @param serverId - The server ID to disconnect
  * @param spaceId - The space ID (required for proper space isolation)
  * @param logout - If true, also delete stored credentials (OAuth tokens)
  */
-export async function disconnectServer(
-  serverId: string,
-  spaceId: string,
-  logout?: boolean
-): Promise<void> {
-  return invoke('disconnect_server', { serverId, spaceId, logout });
+export async function disconnectServer(serverId: string, spaceId: string, logout?: boolean): Promise<void> {
+  return apiCall('disconnect_server', { serverId, spaceId, logout });
 }
 
 /**
  * List all connected backend servers.
  */
 export async function listConnectedServers(): Promise<BackendStatus[]> {
-  return invoke('list_connected_servers');
+  return apiCall('list_connected_servers');
 }
 
 /**
@@ -200,13 +150,13 @@ export type RegistrationType = 'cimd' | 'dcr' | 'preregistered';
 
 /**
  * Inbound client (unified OAuth + MCP model)
- *
+ * 
  * Represents apps connecting TO McpMux (e.g., Cursor, VS Code, Claude Desktop).
  * Supports three MCP registration approaches:
  * - CIMD: Client ID Metadata Documents (client_id is a URL)
  * - DCR: Dynamic Client Registration (server generates client_id)
  * - Preregistered: Server pre-configures client_id
- *
+ * 
  * Per RFC 7591, clients self-identify via metadata they provide.
  * Use `logo_uri`, `software_id`, and `client_name` for client identification.
  */
@@ -215,22 +165,24 @@ export interface OAuthClient {
   registration_type: RegistrationType;
   client_name: string;
   client_alias: string | null;
+  /** User-set emoji override for the Connections-page icon; `null` falls back to logo_uri / known-client resolution. */
+  client_icon: string | null;
   redirect_uris: string[];
   scope: string | null;
-
+  
   // Approval status - true if user has explicitly approved this client
   approved: boolean;
-
+  
   // RFC 7591 Client Metadata (use these for client identification)
-  logo_uri?: string | null; // URL for client's logo
-  client_uri?: string | null; // URL of client's homepage
-  software_id?: string | null; // Unique identifier (e.g., "com.cursor.app")
-  software_version?: string | null; // Client software version
-
+  logo_uri?: string | null;  // URL for client's logo
+  client_uri?: string | null;  // URL of client's homepage
+  software_id?: string | null;  // Unique identifier (e.g., "com.cursor.app")
+  software_version?: string | null;  // Client software version
+  
   // CIMD-specific fields (only used when registration_type='cimd')
-  metadata_url?: string | null; // URL where metadata was fetched
-  metadata_cached_at?: string | null; // When we last fetched
-  metadata_cache_ttl?: number | null; // Cache duration in seconds
+  metadata_url?: string | null;  // URL where metadata was fetched
+  metadata_cached_at?: string | null;  // When we last fetched
+  metadata_cache_ttl?: number | null;  // Cache duration in seconds
 
   last_seen: string | null;
   created_at: string;
@@ -254,17 +206,18 @@ export interface OAuthClient {
 }
 
 /**
- * Update client settings request. Only the display alias is editable.
+ * Update client settings request. Only the display alias and icon are editable.
  */
 export interface UpdateClientRequest {
   client_alias?: string;
+  client_icon?: string;
 }
 
 /**
  * List all registered OAuth clients (Cursor, Claude, etc.)
  */
 export async function listOAuthClients(): Promise<OAuthClient[]> {
-  return invoke('get_oauth_clients');
+  return apiCall('get_oauth_clients');
 }
 
 /**
@@ -274,14 +227,14 @@ export async function updateOAuthClient(
   clientId: string,
   settings: UpdateClientRequest
 ): Promise<OAuthClient> {
-  return invoke('update_oauth_client', { clientId, settings });
+  return apiCall('update_oauth_client', { clientId, settings });
 }
 
 /**
  * Delete an OAuth client.
  */
 export async function deleteOAuthClient(clientId: string): Promise<void> {
-  return invoke('delete_oauth_client', { clientId });
+  return apiCall('delete_oauth_client', { clientId });
 }
 
 // =============================================================================
@@ -303,8 +256,11 @@ export async function deleteOAuthClient(clientId: string): Promise<void> {
  * means the rootless fallback would deny — consumer should render the
  * "no defaults configured" empty state.
  */
-export async function getOAuthClientGrants(clientId: string, spaceId: string): Promise<string[]> {
-  return invoke('get_oauth_client_grants', { clientId, spaceId });
+export async function getOAuthClientGrants(
+  clientId: string,
+  spaceId: string
+): Promise<string[]> {
+  return apiCall('get_oauth_client_grants', { clientId, spaceId });
 }
 
 /**
@@ -316,7 +272,7 @@ export async function grantOAuthClientFeatureSet(
   spaceId: string,
   featureSetId: string
 ): Promise<void> {
-  return invoke('grant_oauth_client_feature_set', {
+  return apiCall('grant_oauth_client_feature_set', {
     clientId,
     spaceId,
     featureSetId,
@@ -331,20 +287,12 @@ export async function revokeOAuthClientFeatureSet(
   spaceId: string,
   featureSetId: string
 ): Promise<void> {
-  return invoke('revoke_oauth_client_feature_set', {
+  return apiCall('revoke_oauth_client_feature_set', {
     clientId,
     spaceId,
     featureSetId,
   });
 }
-
-// =============================================================================
-// API-key clients (manually registered, host-issued credentials)
-// =============================================================================
-//
-// A pre-approved inbound client authenticated by a long-lived API key. Skips
-// the browser-consent deep link, so headless/remote clients can connect with
-// just the key — the secure path when the gateway is exposed over the network.
 
 /** A newly-registered API-key client. `apiKey` is shown ONCE — store it now. */
 export interface RegisteredApiKeyClient {
@@ -367,14 +315,17 @@ export interface ApiKeyInfo {
 }
 
 /**
- * Register a pre-approved client authenticated by an API key, optionally locked
- * to a space. The returned key is shown once and never retrievable again.
+ * Register a pre-approved client authenticated by an API key.
+ * The returned key is shown once and never retrievable again.
  */
 export async function registerApiKeyClient(
   name: string,
   lockedSpaceId?: string | null
 ): Promise<RegisteredApiKeyClient> {
-  return invoke('register_api_key_client', { name, lockedSpaceId: lockedSpaceId ?? null });
+  return apiCall('register_api_key_client', {
+    name,
+    lockedSpaceId: lockedSpaceId ?? null,
+  });
 }
 
 /** Issue an additional API key for an existing client (rotation). Shown once. */
@@ -382,17 +333,17 @@ export async function createClientApiKey(
   clientId: string,
   label?: string | null
 ): Promise<RegisteredApiKeyClient> {
-  return invoke('create_client_api_key', { clientId, label: label ?? null });
+  return apiCall('create_client_api_key', { clientId, label: label ?? null });
 }
 
 /** List a client's API keys (metadata only — never the secret). */
 export async function listClientApiKeys(clientId: string): Promise<ApiKeyInfo[]> {
-  return invoke('list_client_api_keys', { clientId });
+  return apiCall('list_client_api_keys', { clientId });
 }
 
 /** Revoke an API key (it can never authenticate again). */
 export async function revokeClientApiKey(keyId: string): Promise<void> {
-  return invoke('revoke_client_api_key', { keyId });
+  return apiCall('revoke_client_api_key', { keyId });
 }
 
 /**
@@ -411,7 +362,7 @@ export interface BulkConnectResult {
  * This is typically called on gateway startup.
  */
 export async function connectAllEnabledServers(): Promise<BulkConnectResult> {
-  return invoke('connect_all_enabled_servers');
+  return apiCall('connect_all_enabled_servers');
 }
 
 /**
@@ -427,7 +378,7 @@ export interface PoolStats {
  * Get server pool statistics.
  */
 export async function getPoolStats(): Promise<PoolStats> {
-  return invoke('get_pool_stats');
+  return apiCall('get_pool_stats');
 }
 
 /**
@@ -439,20 +390,25 @@ export interface RefreshResult {
   refresh_failed: number;
 }
 
+let refreshOAuthOnStartupPromise: Promise<RefreshResult> | null = null;
+
 /**
  * Refresh OAuth tokens on startup for all installed HTTP servers.
  * This should be called during app initialization before connecting to servers.
  */
 export async function refreshOAuthTokensOnStartup(): Promise<RefreshResult> {
-  return invoke('refresh_oauth_tokens_on_startup');
+  if (!refreshOAuthOnStartupPromise) {
+    refreshOAuthOnStartupPromise = apiCall<RefreshResult>('refresh_oauth_tokens_on_startup');
+  }
+  return refreshOAuthOnStartupPromise;
 }
 
 /**
  * Open a URL using the system's default handler.
- *
+ * 
  * This is needed for custom protocol URLs (like `cursor://`) that
  * the webview's opener plugin may not be allowed to open directly.
  */
 export async function openUrl(url: string): Promise<void> {
-  return invoke('open_url', { url });
+  return shellOpenUrl(url);
 }

@@ -7,8 +7,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use mcpmux_core::{InstallationSource, InstalledServer, InstalledServerRepository};
+use mcpmux_core::{
+    DefaultParamsStrategy, InstallationSource, InstalledServer, InstalledServerRepository,
+    UpdatePolicy,
+};
 use rusqlite::{params, OptionalExtension};
+use serde_json::Value;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -30,6 +34,15 @@ struct RawServerRow {
     created_at: String,
     updated_at: String,
     source: Option<String>,
+    cloned_from: Option<String>,
+    display_name_override: Option<String>,
+    default_params: Option<String>,
+    update_policy: String,
+    pinned_version: Option<String>,
+    latest_available_version: Option<String>,
+    version_checked_at: Option<String>,
+    default_params_strategy: Option<String>,
+    current_version: Option<String>,
 }
 
 /// SQLite-backed implementation of InstalledServerRepository.
@@ -121,6 +134,17 @@ impl SqliteInstalledServerRepository {
         serde_json::to_string(vec).unwrap_or_else(|_| "[]".to_string())
     }
 
+    /// Parse JSON string to a `HashMap<String, Value>` (for `default_params`).
+    fn parse_json_value_map(s: Option<String>) -> HashMap<String, Value> {
+        s.and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    }
+
+    /// Serialize a `HashMap<String, Value>` to JSON string (for `default_params`).
+    fn serialize_json_value_map(map: &HashMap<String, Value>) -> String {
+        serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string())
+    }
+
     /// Serialize InstallationSource to database string format.
     /// Format: "registry" | "user_config:/path/to/file.json" | "manual_entry"
     fn serialize_source(source: &InstallationSource) -> String {
@@ -151,7 +175,9 @@ impl SqliteInstalledServerRepository {
     /// Standard column list for SELECT queries
     const SELECT_COLUMNS: &'static str =
         "id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
-         args_append, extra_headers, oauth_connected, created_at, updated_at, source";
+         args_append, extra_headers, oauth_connected, created_at, updated_at, source, cloned_from,
+         display_name_override, default_params, update_policy, pinned_version,
+         latest_available_version, version_checked_at, default_params_strategy, current_version";
 
     /// Extract raw row data (used in the closure passed to rusqlite).
     fn extract_row(row: &rusqlite::Row) -> rusqlite::Result<RawServerRow> {
@@ -170,6 +196,15 @@ impl SqliteInstalledServerRepository {
             created_at: row.get(11)?,
             updated_at: row.get(12)?,
             source: row.get(13)?,
+            cloned_from: row.get(14)?,
+            display_name_override: row.get(15)?,
+            default_params: row.get(16)?,
+            update_policy: row.get(17)?,
+            pinned_version: row.get(18)?,
+            latest_available_version: row.get(19)?,
+            version_checked_at: row.get(20)?,
+            default_params_strategy: row.get(21)?,
+            current_version: row.get(22)?,
         })
     }
 
@@ -189,8 +224,21 @@ impl SqliteInstalledServerRepository {
             env_overrides: Self::parse_json_map(row.env_overrides),
             args_append: Self::parse_json_vec(row.args_append),
             extra_headers: Self::parse_json_map(row.extra_headers),
+            default_params: Self::parse_json_value_map(row.default_params),
+            default_params_strategy: row
+                .default_params_strategy
+                .as_deref()
+                .map(DefaultParamsStrategy::from_db_str)
+                .unwrap_or_default(),
             oauth_connected: row.oauth_connected,
             source: Self::parse_source(row.source),
+            cloned_from: row.cloned_from,
+            display_name_override: row.display_name_override,
+            update_policy: UpdatePolicy::from_db_str(&row.update_policy),
+            pinned_version: row.pinned_version,
+            latest_available_version: row.latest_available_version,
+            current_version: row.current_version,
+            version_checked_at: row.version_checked_at.as_deref().map(Self::parse_datetime),
             created_at: Self::parse_datetime(&row.created_at),
             updated_at: Self::parse_datetime(&row.updated_at),
         })
@@ -298,8 +346,10 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         conn.execute(
             "INSERT INTO installed_servers
              (id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
-              args_append, extra_headers, oauth_connected, created_at, updated_at, source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              args_append, extra_headers, oauth_connected, created_at, updated_at, source, cloned_from,
+              display_name_override, default_params, update_policy, pinned_version,
+              latest_available_version, version_checked_at, default_params_strategy, current_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 server.id.to_string(),
                 server.space_id,
@@ -315,6 +365,15 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.created_at.to_rfc3339(),
                 server.updated_at.to_rfc3339(),
                 Self::serialize_source(&server.source),
+                server.cloned_from,
+                server.display_name_override,
+                Self::serialize_json_value_map(&server.default_params),
+                server.update_policy.as_db_str(),
+                server.pinned_version,
+                server.latest_available_version,
+                server.version_checked_at.map(|dt| dt.to_rfc3339()),
+                server.default_params_strategy.as_db_str(),
+                server.current_version,
             ],
         )?;
         Ok(())
@@ -330,7 +389,10 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             "UPDATE installed_servers
              SET server_name = ?2, cached_definition = ?3, input_values = ?4, enabled = ?5,
                  env_overrides = ?6, args_append = ?7, extra_headers = ?8, oauth_connected = ?9,
-                 updated_at = ?10, source = ?11
+                 updated_at = ?10, source = ?11, cloned_from = ?12, display_name_override = ?13,
+                 default_params = ?14, update_policy = ?15, pinned_version = ?16,
+                 latest_available_version = ?17, version_checked_at = ?18,
+                 default_params_strategy = ?19, current_version = ?20
              WHERE id = ?1",
             params![
                 server.id.to_string(),
@@ -344,6 +406,15 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.oauth_connected,
                 Utc::now().to_rfc3339(),
                 Self::serialize_source(&server.source),
+                server.cloned_from,
+                server.display_name_override,
+                Self::serialize_json_value_map(&server.default_params),
+                server.update_policy.as_db_str(),
+                server.pinned_version,
+                server.latest_available_version,
+                server.version_checked_at.map(|dt| dt.to_rfc3339()),
+                server.default_params_strategy.as_db_str(),
+                server.current_version,
             ],
         )?;
         Ok(())
@@ -458,6 +529,43 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server_name,
                 cached_definition,
                 Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    async fn set_display_name_override(&self, id: &Uuid, value: Option<String>) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+
+        conn.execute(
+            "UPDATE installed_servers SET display_name_override = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id.to_string(), value, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    async fn update_version_cache(
+        &self,
+        id: &Uuid,
+        latest_available_version: Option<String>,
+        current_version: Option<String>,
+        version_checked_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+
+        conn.execute(
+            "UPDATE installed_servers
+             SET latest_available_version = ?2, current_version = ?3,
+                 version_checked_at = ?4, updated_at = ?5
+             WHERE id = ?1",
+            params![
+                id.to_string(),
+                latest_available_version,
+                current_version,
+                version_checked_at.to_rfc3339(),
+                Utc::now().to_rfc3339(),
             ],
         )?;
         Ok(())

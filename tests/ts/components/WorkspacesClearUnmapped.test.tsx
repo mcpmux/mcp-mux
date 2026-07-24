@@ -41,12 +41,42 @@ vi.mock('@/lib/api/featureSets', () => ({
   isStarterFeatureSet: vi.fn(() => false),
 }));
 
-vi.mock('@/stores', () => ({
-  useSpaces: () => [],
-  usePendingWorkspaceNew: () => false,
-  useSetPendingWorkspaceNew: () => () => {},
+vi.mock('@/lib/api/workspaceAppearances', () => ({
+  listWorkspaceAppearances: vi.fn().mockResolvedValue([]),
+  deleteWorkspaceAppearance: vi.fn(),
+  upsertWorkspaceAppearance: vi.fn(),
+  uploadWorkspaceIcon: vi.fn(),
 }));
 
+vi.mock('@/lib/api/machines', () => ({
+  listMachines: vi.fn().mockResolvedValue([]),
+  getLocalMachineId: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@/lib/backend/events', () => ({
+  useWorkspaceEvents: () => ({
+    subscribe: vi.fn(() => () => {}),
+    subscribeMany: vi.fn(() => () => {}),
+  }),
+  useWorkspaceEventListener: vi.fn(),
+}));
+
+vi.mock('@/stores', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/stores')>();
+  return {
+    ...actual,
+    useSpaces: () => [],
+    usePendingWorkspaceNew: () => false,
+    useSetPendingWorkspaceNew: () => () => {},
+  };
+});
+
+vi.mock('@/hooks/use-viewer-identity.hook', () => ({
+  useViewerIdentity: () => ({ machineId: null, isLoading: false }),
+  ViewerIdentityProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+import { renderWithI18n } from '../render-with-i18n.helpers';
 import { WorkspacesPage } from '@/features/workspaces/WorkspacesPage';
 
 describe('WorkspacesPage – clear unmapped', () => {
@@ -57,7 +87,7 @@ describe('WorkspacesPage – clear unmapped', () => {
   });
 
   it('hides the "Clear unmapped" button when nothing is unmapped', async () => {
-    render(<WorkspacesPage />);
+    renderWithI18n(<WorkspacesPage />);
     await waitFor(() => expect(listReportedWorkspaceRootsMock).toHaveBeenCalled());
     expect(screen.queryByTestId('workspaces-clear-unmapped')).toBeNull();
   });
@@ -67,7 +97,7 @@ describe('WorkspacesPage – clear unmapped', () => {
     clearUnmappedReportedRootsMock.mockResolvedValue(1);
     const user = userEvent.setup();
 
-    render(<WorkspacesPage />);
+    renderWithI18n(<WorkspacesPage />);
 
     // Button shows because one live-reported root has no binding.
     const clearBtn = await screen.findByTestId('workspaces-clear-unmapped');

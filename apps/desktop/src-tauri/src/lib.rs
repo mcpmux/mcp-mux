@@ -9,6 +9,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 mod commands;
+mod macos_dock;
+mod macos_permissions;
+mod main_window;
 mod services;
 mod state;
 mod tray;
@@ -128,6 +131,21 @@ fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Return git/build metadata stamped into the binary by `build.rs`.
+///
+/// The admin UI uses this to detect a stale SPA bundle — it compares the
+/// SHA here against the one baked into the on-disk `web-admin` bundle, and
+/// prompts the user to run `pnpm build:web:admin` after pulling new UI changes.
+#[tauri::command]
+fn get_build_info() -> serde_json::Value {
+    serde_json::json!({
+        "git_sha": env!("MCPMUX_BUILD_GIT_SHA"),
+        "git_branch": env!("MCPMUX_BUILD_GIT_BRANCH"),
+        "commit_time": env!("MCPMUX_BUILD_COMMIT_TIME"),
+        "build_time": env!("MCPMUX_BUILD_TIME"),
+    })
+}
+
 /// Get the on-disk bundle version (macOS only).
 ///
 /// After a Homebrew Cask upgrade, the `.app` bundle on disk has the new version
@@ -245,19 +263,7 @@ pub fn run() {
                 }
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                if let Err(e) = window.show() {
-                    warn!("Failed to show window: {}", e);
-                }
-                if let Err(e) = window.unminimize() {
-                    warn!("Failed to unminimize window: {}", e);
-                }
-                if let Err(e) = window.set_focus() {
-                    warn!("Failed to focus window: {}", e);
-                }
-            } else {
-                warn!("Main window not found");
-            }
+            main_window::show_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -269,6 +275,16 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            if commands::should_start_hidden() {
+                macos_dock::set_dock_visible(app.handle(), false);
+            }
+
+            // Register McpMux with macOS TCC for resources that spawned MCP
+            // servers may need. Without this, the app never appears in
+            // Privacy & Security → Contacts and child reads of AddressBook
+            // hit a silent EPERM. Idempotent + non-blocking.
+            macos_permissions::ensure_contacts_registered();
+
             info!("Initializing application state...");
 
             // Get data directory (Local, not Roaming - machine-specific data)
@@ -460,7 +476,7 @@ pub fn run() {
                     .with_log_manager(server_log_manager)
                     .with_database(db_for_gateway)
                     .with_state_dir(app_data_dir.clone())
-                    .with_settings_repo(settings_repo);
+                    .with_settings_repo(settings_repo.clone());
 
                 if let Some(secret) = jwt_secret {
                     deps_builder = deps_builder.with_jwt_secret(secret);
@@ -498,6 +514,7 @@ pub fn run() {
                 let event_emitter = server.event_emitter();
                 let grant_service = server.grant_service();
                 let session_roots = server.session_roots();
+                let feature_set_resolver = server.feature_set_resolver();
                 let approval_broker = server.approval_broker();
 
                 // Wire the approval broker to the desktop event bus so
@@ -548,6 +565,31 @@ pub fn run() {
                 state.grant_service = Some(grant_service);
                 state.approval_broker = Some(approval_broker);
                 state.session_roots = Some(session_roots);
+                state.feature_set_resolver = Some(feature_set_resolver);
+
+                // Attach the admin SSE bus so inbound OAuth consent reaches the
+                // web admin (not just the desktop webview) on the auto-start path.
+                let ui_bus = if let Some(admin) =
+                    app_handle_for_sm.try_state::<Arc<RwLock<services::AdminServerState>>>()
+                {
+                    let admin_guard = admin.read().await;
+                    services::admin_server::set_gateway_running(&admin_guard, true);
+                    if let Some(ref gw) = state.gateway_state {
+                        services::admin_server::register_gateway_sse(&admin_guard, gw).await;
+                    }
+                    Some(admin_guard.ui_event_bus.clone())
+                } else {
+                    None
+                };
+
+                if let Some(ref gw) = state.gateway_state {
+                    crate::commands::gateway::wire_consent_ui_notifications(
+                        &app_handle_for_sm,
+                        gw,
+                        ui_bus.clone(),
+                    )
+                    .await;
+                }
 
                 info!(
                     "Gateway auto-started successfully on {} - GrantService initialized: {}",
@@ -570,14 +612,38 @@ pub fn run() {
                 }
             });
 
-            app.manage(gateway_state);
-            app.manage(server_manager_state);
+            app.manage(gateway_state.clone());
+            app.manage(server_manager_state.clone());
+
+            // Create and manage admin server state, then start admin server
+            {
+                let admin_state = Arc::new(tokio::sync::RwLock::new(
+                    services::admin_server::AdminServerState::new(),
+                ));
+                let app_handle_for_admin = app.handle().clone();
+                let gw_state_for_admin = gateway_state.clone();
+                let sm_state_for_admin = server_manager_state.clone();
+                let event_bus_for_admin = event_bus.clone();
+                let admin_state_clone = admin_state.clone();
+                app.manage(admin_state);
+                tauri::async_runtime::spawn(async move {
+                    services::admin_server::start_admin_server_if_enabled(
+                        app_handle_for_admin,
+                        admin_state_clone,
+                        gw_state_for_admin,
+                        sm_state_for_admin,
+                        event_bus_for_admin,
+                    )
+                    .await;
+                });
+            }
 
             // Start file watcher for user space config files (hot-reload)
             {
                 let app_state: tauri::State<'_, AppState> = app.state();
                 let spaces_dir = app_state.spaces_dir().to_path_buf();
                 let installed_repo = app_state.installed_server_repository.clone();
+                let event_sender_for_sync = event_bus.sender();
                 let app_handle_for_watcher = app.handle().clone();
 
                 // Use the well-known default space UUID
@@ -585,25 +651,54 @@ pub fn run() {
                 let default_space_id = "00000000-0000-0000-0000-000000000001".to_string();
 
                 tauri::async_runtime::spawn(async move {
+                    let app_handle_success = app_handle_for_watcher.clone();
+                    let app_handle_error = app_handle_for_watcher;
 
                     // Create file watcher with UI event emitter
                     match services::SpaceFileWatcher::new(
                         spaces_dir.clone(),
-                        Arc::new(mcpmux_core::application::UserSpaceSyncService::new(installed_repo)),
+                        Arc::new(
+                            mcpmux_core::application::UserSpaceSyncService::new(installed_repo)
+                                .with_event_sender(event_sender_for_sync),
+                        ),
                         default_space_id,
-                        Some(move |space_id: &str, result: &mcpmux_core::application::SyncResult| {
-                            // Emit event to refresh UI
-                            if result.has_changes() {
-                                if let Err(e) = app_handle_for_watcher.emit("space-servers-updated", serde_json::json!({
-                                    "space_id": space_id,
-                                    "added": result.added,
-                                    "updated": result.updated,
-                                    "removed": result.removed,
-                                })) {
-                                    warn!("[FileWatcher] Failed to emit event: {}", e);
-                                }
-                            }
-                        }),
+                        services::SpaceFileWatcherEmitters {
+                            on_success: Some(Arc::new(
+                                move |space_id: &str, result: &mcpmux_core::application::SyncResult| {
+                                    if result.has_changes() {
+                                        if let Err(e) = app_handle_success.emit(
+                                            "space-servers-updated",
+                                            serde_json::json!({
+                                                "space_id": space_id,
+                                                "added": result.added,
+                                                "updated": result.updated,
+                                                "removed": result.removed,
+                                                "adopted_count": result.adopted.len(),
+                                                "error_count": result.errors.len(),
+                                            }),
+                                        ) {
+                                            warn!("[FileWatcher] Failed to emit event: {}", e);
+                                        }
+                                    }
+                                },
+                            )),
+                            on_error: Some(Arc::new(
+                                move |space_id: &str, message: &str| {
+                                    if let Err(e) = app_handle_error.emit(
+                                        "space-servers-sync-failed",
+                                        serde_json::json!({
+                                            "space_id": space_id,
+                                            "message": message,
+                                        }),
+                                    ) {
+                                        warn!(
+                                            "[FileWatcher] Failed to emit sync failure: {}",
+                                            e
+                                        );
+                                    }
+                                },
+                            )),
+                        },
                     ) {
                         Ok(_watcher) => {
                             info!("[FileWatcher] Started watching: {:?}", spaces_dir);
@@ -684,9 +779,7 @@ pub fn run() {
                                 Ok(Some(value)) if value == "true" => {
                                     // Close to tray - hide window instead of closing
                                     info!("[Window] Close requested, hiding to tray");
-                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
-                                        let _ = window.hide();
-                                    }
+                                    main_window::hide_main_window_to_tray(&app_handle_clone);
                                 }
                                 Ok(Some(value)) if value == "false" => {
                                     // Actually close the app
@@ -696,9 +789,7 @@ pub fn run() {
                                 _ => {
                                     // Default behavior: close to tray
                                     info!("[Window] Close requested (default), hiding to tray");
-                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
-                                        let _ = window.hide();
-                                    }
+                                    main_window::hide_main_window_to_tray(&app_handle_clone);
                                 }
                             }
                         });
@@ -711,7 +802,7 @@ pub fn run() {
                 // Check if app should start hidden (auto-launch with --hidden flag)
                 if commands::should_start_hidden() {
                     info!("[Window] Starting hidden (--hidden flag present)");
-                    let _ = main_window.hide();
+                    main_window::hide_main_window_to_tray(app.handle());
                 }
             }
 
@@ -870,10 +961,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_version,
             get_bundle_version,
+            get_build_info,
             // Space commands
             commands::list_spaces,
             commands::get_space,
             commands::create_space,
+            commands::update_space,
             commands::delete_space,
             commands::list_space_base_dirs,
             commands::add_space_base_dir,
@@ -882,6 +975,8 @@ pub fn run() {
             commands::read_space_config,
             commands::save_space_config,
             commands::remove_server_from_config,
+            commands::update_server_in_config,
+            commands::update_cloned_server_definition,
             commands::refresh_tray_menu,
             // Server Discovery commands (v2)
             commands::discover_servers,
@@ -898,6 +993,12 @@ pub fn run() {
             commands::set_server_enabled,
             commands::set_server_oauth_connected,
             commands::save_server_inputs,
+            commands::set_server_display_name,
+            commands::clone_server,
+            commands::is_clone_id_available,
+            commands::suggest_clone_suffix,
+            commands::list_clone_dependents,
+            commands::update_server_package,
             // FeatureSet commands
             commands::list_feature_sets,
             commands::list_feature_sets_by_space,
@@ -926,13 +1027,28 @@ pub fn run() {
             commands::create_client,
             commands::delete_client,
             commands::init_preset_clients,
+            // Machine catalog + local install identity
+            commands::list_machines,
+            commands::create_machine,
+            commands::update_machine,
+            commands::delete_machine,
+            commands::get_local_machine_id,
+            commands::set_local_machine_id,
+            commands::get_viewer_machine_id,
+            commands::set_viewer_machine_id,
+            commands::get_client_machine_id,
+            commands::set_client_machine_id,
+            commands::get_hostname,
             // Workspace binding commands (resolver v2)
             commands::list_workspace_bindings,
             commands::list_workspace_bindings_for_space,
             commands::list_reported_workspace_roots,
             commands::clear_unmapped_reported_roots,
+            commands::forget_reported_root,
             commands::create_workspace_binding,
             commands::update_workspace_binding,
+            commands::dismiss_workspace_binding_prompt,
+            commands::is_workspace_binding_prompt_dismissed,
             commands::delete_workspace_binding,
             commands::validate_workspace_root,
             commands::get_workspace_effective_features,
@@ -940,6 +1056,15 @@ pub fn run() {
             commands::list_workspace_install_clients,
             commands::generate_workspace_config_snippet,
             commands::install_workspace_mcp_config,
+            // Workspace appearance commands
+            commands::list_workspace_appearances,
+            commands::upsert_workspace_appearance,
+            commands::delete_workspace_appearance,
+            commands::upload_workspace_icon,
+            commands::resolve_workspace_icon_path,
+            // Meta-tools toggle
+            commands::get_meta_tools_enabled,
+            commands::set_meta_tools_enabled,
             // Meta-tool approval (self-management mcpmux_* tools)
             commands::respond_to_meta_tool_approval,
             commands::list_meta_tool_grants,
@@ -976,8 +1101,8 @@ pub fn run() {
             commands::start_gateway,
             commands::stop_gateway,
             commands::restart_gateway,
+            commands::reload_admin_server,
             commands::generate_gateway_config,
-            commands::connect_server,
             commands::disconnect_server,
             commands::list_connected_servers,
             commands::connect_all_enabled_servers,
@@ -1008,7 +1133,6 @@ pub fn run() {
             commands::cancel_auth_v2,
             commands::retry_connection,
             commands::logout_server,
-            commands::disconnect_server_v2,
             // Log commands
             commands::get_server_logs,
             commands::clear_server_logs,
@@ -1021,10 +1145,15 @@ pub fn run() {
             // Startup settings commands
             commands::get_startup_settings,
             commands::update_startup_settings,
-            commands::get_auto_install_updates,
-            commands::set_auto_install_updates,
             commands::get_update_channel,
             commands::set_update_channel,
+            commands::get_auto_install_updates,
+            commands::get_server_update_settings,
+            commands::update_server_update_settings,
+            commands::check_all_server_updates,
+            commands::check_server_version,
+            commands::get_admin_web_settings,
+            commands::update_admin_web_settings,
             commands::get_workspace_mapping_prompt_enabled,
             commands::set_workspace_mapping_prompt_enabled,
         ])

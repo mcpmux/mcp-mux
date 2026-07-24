@@ -1,3 +1,5 @@
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { useConfirm } from '@mcpmux/ui';
 import {
   probeGatewayStart,
@@ -16,15 +18,13 @@ export type GatewayStartOutcome =
   | { status: 'started'; url: string; fellBackToDynamic: boolean; port: number }
   | { status: 'cancelled' };
 
-function sourceLabel(source: 'override' | 'configured' | 'default'): string {
-  switch (source) {
-    case 'configured':
-      return 'your configured gateway port';
-    case 'default':
-      return 'the default gateway port';
-    case 'override':
-      return 'the requested gateway port';
-  }
+type PortSource = 'override' | 'configured' | 'default';
+
+/**
+ * Returns the localized label for which gateway port source is in conflict.
+ */
+function sourceLabel(t: TFunction<'clients'>, source: PortSource): string {
+  return t(`gatewayConfirm.source.${source}`);
 }
 
 /**
@@ -38,6 +38,8 @@ function sourceLabel(source: 'override' | 'configured' | 'default'): string {
  * error is thrown — the caller can exit silently.
  */
 export function useGatewayControl() {
+  const { t } = useTranslation('clients');
+  const { t: tCommon } = useTranslation('common');
   const { confirm, ConfirmDialogElement } = useConfirm();
 
   const runStart = async (
@@ -58,13 +60,13 @@ export function useGatewayControl() {
 
     console.log('[Gateway] preferred port taken → prompting user');
     const ok = await confirm({
-      title: 'Gateway port is in use',
-      message:
-        `${capitalize(sourceLabel(probe.source))} (:${probe.preferredPort}) is already ` +
-        `taken by another process. Start the gateway on a different port that the system ` +
-        `picks automatically? Your IDE configs will need to be updated to point at the new ` +
-        `port.`,
-      confirmLabel: 'Use another port',
+      title: t('gatewayConfirm.title'),
+      message: t('gatewayConfirm.portTakenMessage', {
+        sourceLabel: sourceLabel(t, probe.source),
+        port: probe.preferredPort,
+      }),
+      confirmLabel: t('gatewayConfirm.confirmLabel'),
+      cancelLabel: tCommon('actions.cancel'),
       variant: 'default',
     });
 
@@ -88,8 +90,7 @@ export function useGatewayControl() {
   const start = async (opts?: { port?: number }): Promise<GatewayStartOutcome> => {
     try {
       return await runStart(
-        (allowFallback) =>
-          startGateway({ port: opts?.port, allowDynamicFallback: allowFallback }),
+        (allowFallback) => startGateway({ port: opts?.port, allowDynamicFallback: allowFallback }),
         opts?.port
       );
     } catch (err) {
@@ -102,12 +103,18 @@ export function useGatewayControl() {
   };
 
   const restart = async (opts?: { port?: number }): Promise<GatewayStartOutcome> => {
+    // Unlike start(), restart never pre-probes the port: the gateway we're
+    // about to replace is still holding it at probe time, so
+    // probeGatewayStart() would see our own listener and spuriously report
+    // the port as taken. Restart owns the port by definition — go straight
+    // to restartGateway() and only surface the confirm dialog on a genuine
+    // bind failure (handleBindFailure), same as a real conflict from start().
+    console.log('[Gateway] restart → skipping pre-probe, going straight to restartGateway');
     try {
-      return await runStart(
-        (allowFallback) =>
-          restartGateway({ port: opts?.port, allowDynamicFallback: allowFallback }),
-        opts?.port
-      );
+      const url = await restartGateway({ port: opts?.port, allowDynamicFallback: false });
+      const port = parsePortFromUrl(url) ?? opts?.port ?? 0;
+      console.log('[Gateway] restart ok →', url);
+      return { status: 'started', url, port, fellBackToDynamic: false };
     } catch (err) {
       return await handleBindFailure(err, opts?.port, (allowFallback) =>
         restartGateway({ port: opts?.port, allowDynamicFallback: allowFallback })
@@ -123,11 +130,13 @@ export function useGatewayControl() {
     const pie = parsePortInUseError(err);
     if (!pie) throw err;
     const ok = await confirm({
-      title: 'Gateway port is in use',
-      message:
-        `${capitalize(sourceLabel(pie.source))} (:${pie.port}) is already in use. ` +
-        `Start on a different port?`,
-      confirmLabel: 'Use another port',
+      title: t('gatewayConfirm.title'),
+      message: t('gatewayConfirm.portTakenShortMessage', {
+        sourceLabel: sourceLabel(t, pie.source),
+        port: pie.port,
+      }),
+      confirmLabel: t('gatewayConfirm.confirmLabel'),
+      cancelLabel: tCommon('actions.cancel'),
     });
     if (!ok) return { status: 'cancelled' };
     const url = await invoker(true);
@@ -142,11 +151,10 @@ export function useGatewayControl() {
   return { start, restart, ConfirmDialogElement };
 }
 
+/**
+ * Extracts the TCP port from a gateway URL string.
+ */
 function parsePortFromUrl(url: string): number | null {
   const match = /:(\d+)(?:\/|$)/.exec(url);
   return match ? Number(match[1]) : null;
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }

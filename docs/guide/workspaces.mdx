@@ -40,6 +40,24 @@ Open the **Workspaces** tab and click **Add mapping**:
 
 Unmapped folders receive no tools until you map them — an explicit, fail-closed default so a new project never silently inherits another's access.
 
+## Machine-scoped bindings
+
+Bindings can be scoped to a **specific machine** (your Mac Studio, laptop, cloud agent) instead of applying globally. A path bound only on **Gondor** does not grant tools when the session is treated as **Rohan** — you get the bind prompt instead.
+
+**Local MCP** (`localhost:45818`): the gateway knows which install it is via `gateway.local_machine_id`; machine-scoped bindings resolve automatically.
+
+**Shared tunnel** (one gateway, many devices): each device's MCP config must send its machine identity so the gateway can tell devices apart:
+
+```json
+{
+  "headers": {
+    "X-Mcpmux-Machine-Id": "<machine-uuid>"
+  }
+}
+```
+
+Copy the snippet from **Settings → Machine Identity → Manage all machines → Copy MCP header**. See [Remote Access](/docs/remote-access/) for the full tunneled client example.
+
 The FeatureSet you pick is the exact toolset the folder resolves to — choose which tools, prompts, and resources from each server it's allowed to use:
 
 ![The FeatureSet a folder resolves to — pick exactly which tools each server contributes](https://mcpmux.com/screenshots/featureset-detail.png)
@@ -58,3 +76,4 @@ The pin is a Workspace mapping — it sticks for every future session from that 
 - [FeatureSets](/docs/feature-sets/) — the curated toolsets a Workspace grants
 - [Tool Optimization](/docs/tool-optimization/) — let the AI map folders for itself
 - [Clients](/docs/clients/) — how connected apps report the folder that drives routing
+- [Remote Access](/docs/remote-access/) — per-device machine header when using a shared tunneled gateway

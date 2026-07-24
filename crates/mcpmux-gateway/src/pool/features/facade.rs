@@ -1,6 +1,7 @@
 //! Feature Service Facade - Unified API delegating to specialized services
 
 use anyhow::Result;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::pool::instance::McpClient;
@@ -10,6 +11,8 @@ use mcpmux_core::{FeatureSetRepository, FeatureType, ServerFeature, ServerFeatur
 use super::{
     CachedFeatures, FeatureDiscoveryService, FeatureResolutionService, FeatureRoutingService,
 };
+
+pub use super::resolution::InactiveDiscoveryEntry;
 
 /// Unified facade providing all feature operations (Facade pattern)
 pub struct FeatureService {
@@ -95,6 +98,144 @@ impl FeatureService {
         self.resolution
             .resolve_feature_sets(space_id, feature_set_ids, Some(FeatureType::Tool))
             .await
+    }
+
+    /// Resolve granted feature sets to tools invokable via search/invoke ACL.
+    /// Alias of [`Self::get_tools_for_grants`] surfaced for meta-tool discovery.
+    pub async fn get_invokable_tools_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+    ) -> Result<Vec<ServerFeature>> {
+        self.get_tools_for_grants(space_id, feature_set_ids).await
+    }
+
+    /// Tools promoted into client `tools/list` (surfaced backend tools only).
+    pub async fn get_advertised_tools_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+    ) -> Result<Vec<ServerFeature>> {
+        if feature_set_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let invokable = self
+            .get_invokable_tools_for_grants(space_id, feature_set_ids)
+            .await?;
+        let surfaced_ids = self
+            .resolution
+            .resolve_surfaced_feature_ids(feature_set_ids)
+            .await?;
+
+        Ok(invokable
+            .into_iter()
+            .filter(|f| surfaced_ids.contains(&f.id.to_string()))
+            .collect())
+    }
+
+    /// Resolve granted feature sets to resources readable via search/read ACL.
+    pub async fn get_readable_resources_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+    ) -> Result<Vec<ServerFeature>> {
+        self.get_resources_for_grants(space_id, feature_set_ids)
+            .await
+    }
+
+    /// Resources promoted into client `resources/list` (surfaced backend resources only).
+    pub async fn get_advertised_resources_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+    ) -> Result<Vec<ServerFeature>> {
+        if feature_set_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let readable = self
+            .get_readable_resources_for_grants(space_id, feature_set_ids)
+            .await?;
+        let surfaced_ids = self
+            .resolution
+            .resolve_surfaced_feature_ids(feature_set_ids)
+            .await?;
+
+        Ok(readable
+            .into_iter()
+            .filter(|f| surfaced_ids.contains(&f.id.to_string()))
+            .collect())
+    }
+
+    /// Resolve granted feature sets to prompts fetchable via search/fetch ACL.
+    pub async fn get_fetchable_prompts_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+    ) -> Result<Vec<ServerFeature>> {
+        self.get_prompts_for_grants(space_id, feature_set_ids).await
+    }
+
+    /// Prompts promoted into client `prompts/list` (surfaced backend prompts only).
+    pub async fn get_advertised_prompts_for_grants(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+    ) -> Result<Vec<ServerFeature>> {
+        if feature_set_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let fetchable = self
+            .get_fetchable_prompts_for_grants(space_id, feature_set_ids)
+            .await?;
+        let surfaced_ids = self
+            .resolution
+            .resolve_surfaced_feature_ids(feature_set_ids)
+            .await?;
+
+        Ok(fetchable
+            .into_iter()
+            .filter(|f| surfaced_ids.contains(&f.id.to_string()))
+            .collect())
+    }
+
+    /// Catalog tools in the Space that require binding a FeatureSet before invoke.
+    pub async fn list_inactive_discovery_tools(
+        &self,
+        space_id: &str,
+        feature_set_ids: &[String],
+        query_id: Option<&str>,
+    ) -> Result<Vec<InactiveDiscoveryEntry>> {
+        let invokable = self
+            .get_invokable_tools_for_grants(space_id, feature_set_ids)
+            .await?;
+        let invokable_keys: HashSet<(String, String)> = invokable
+            .iter()
+            .filter(|f| f.feature_type == FeatureType::Tool)
+            .map(|f| (f.server_id.clone(), f.feature_name.clone()))
+            .collect();
+
+        self.resolution
+            .list_inactive_tools_for_discovery(space_id, &invokable_keys, query_id)
+            .await
+    }
+
+    /// Resolve the owning server for `uri` among grant-visible readable resources.
+    ///
+    /// Clone servers can expose the same URI as their parent; grant-scoped
+    /// resolution ensures reads route to the bound clone, not an inactive parent.
+    pub fn resolve_resource_server_from_grants(
+        readable: &[ServerFeature],
+        uri: &str,
+    ) -> Option<String> {
+        readable
+            .iter()
+            .find(|f| {
+                f.feature_type == FeatureType::Resource && f.feature_name == uri && f.is_available
+            })
+            .map(|f| f.server_id.clone())
     }
 
     pub async fn get_prompts_for_grants(

@@ -32,6 +32,10 @@ Run everything from `mcp-mux/`:
 | `pnpm setup` | First-time dev environment setup (PowerShell on Windows). |
 | `pnpm dev` | Tauri desktop dev mode (Rust + React hot-reload). |
 | `pnpm dev:web` | Web UI only via Vite — no Rust, no Tauri shell. |
+| `pnpm dev:admin` | Full stack + web admin: `tauri dev` with admin enabled, opens browser at `:1420` once the gateway is stable. Primary dev driver. |
+| `pnpm dev:web:admin` | Browser-only admin UI; auto-starts the backend detached if it isn't already up. |
+| `pnpm dev:stop` | Quit McpMux.app and free the dev ports (`:1420`, `:45818`, `:45819`). |
+| `pnpm dev:rebuild` | Force `cargo build --workspace` (debug) without launching — recovery for stale binaries. |
 | `pnpm build` | Production Tauri build for the current platform. |
 | `pnpm validate` | Full correctness gate — runs the items below in sequence. |
 | `pnpm lint` | ESLint (recursive) + `cargo clippy --workspace -- -D warnings`. |
@@ -39,6 +43,8 @@ Run everything from `mcp-mux/`:
 | `pnpm format` | `prettier --write .` + `cargo fmt --all`. |
 | `pnpm format:check` | Formatting check (no writes). |
 | `pnpm typecheck` | Recursive TypeScript typecheck. |
+
+**Hot-reload while developing:** `pnpm dev:admin` keeps the desktop window, the `:1420` browser tab (Vite HMR), and the CF tunnel / `:45819` static UI in sync. TS/CSS changes hot-reload instantly on `:1420`; the same edits trigger `vite build --watch` to rebuild `apps/desktop/dist/` for `:45819` and remote tunnel tabs (hard-refresh those after each rebuild, ~10s). Rust changes in any workspace crate trigger `tauri dev` to recompile and restart the backend automatically. Rust is compiled, so "auto-reload" means recompile + process restart, not live patching. After a stalled restart, orphaned backend, or stale binary, recover with `pnpm dev:stop && pnpm dev:rebuild && pnpm dev:admin`. The repo's `.vscode/settings.json` sets `rust-analyzer.cargo.targetDir` so the editor's `cargo check` doesn't fight `tauri dev` over `target/` (avoids double compiles). When `.env` carries CF Access credentials the admin runs with `cf_access=true`; the dev scripts' health probes send `adminCfProbeHeaders()` so `/api/v1/health` doesn't 401. One-off production bundle: `pnpm build:web:admin`.
 
 **Before claiming a change is done**, run `pnpm validate` (or the relevant subset) — it mirrors what CI enforces.
 

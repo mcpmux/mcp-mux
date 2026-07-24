@@ -311,6 +311,17 @@ pub trait WorkspaceBindingRepository: Send + Sync {
         candidate_roots: &[String],
     ) -> RepoResult<Option<WorkspaceBinding>>;
 
+    /// Best-effort basename match for declared workspace roots.
+    ///
+    /// Compares the last path segment of each candidate against path-type
+    /// bindings' `workspace_root` basenames (ASCII case-insensitive). Does not
+    /// change exact-match semantics — used only for rootless declare-root
+    /// fall-through when no exact path binding matched.
+    async fn find_by_basename_for_roots(
+        &self,
+        candidate_roots: &[String],
+    ) -> RepoResult<Option<WorkspaceBinding>>;
+
     /// Exact match for a machine-scoped binding on `workspace_root`.
     ///
     /// Matches bindings where `machine_id` equals the given value AND either:

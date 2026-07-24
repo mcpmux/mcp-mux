@@ -531,9 +531,33 @@ impl FeatureSetResolverService {
                 if roots_capable_known == Some(false) {
                     // True rootless client declared a root (e.g. via
                     // `mcpmux_set_workspace_root`) but it didn't exact-match any
-                    // binding — fall through to Tier 3 grant lookup instead of
-                    // hard-denying. The pre-Tier-3 gate treats the declared root
-                    // as the identity signal it was waiting for.
+                    // binding — try repo-name (basename) match, then fall through
+                    // to Tier 3 grant lookup. The pre-Tier-3 gate treats the
+                    // declared root as the identity signal it was waiting for.
+                    if let Some(binding) = self
+                        .binding_repo
+                        .find_by_basename_for_roots(&reported_roots)
+                        .await?
+                    {
+                        if Self::binding_matches_space_lock(&binding, space_lock) {
+                            debug!(
+                                workspace_root = %binding.workspace_root,
+                                space_id = %binding.space_id,
+                                feature_sets = ?binding.feature_set_ids,
+                                "[FeatureSetResolver] rootless session resolved via basename WorkspaceBinding",
+                            );
+                            return Ok(ResolvedFeatureSet {
+                                feature_set_ids: binding.feature_set_ids,
+                                space_id: Some(binding.space_id),
+                                source: ResolutionSource::WorkspaceBinding,
+                            });
+                        }
+                        debug!(
+                            binding_space = %binding.space_id,
+                            ?space_lock,
+                            "[FeatureSetResolver] basename binding outside locked Space — ignored",
+                        );
+                    }
                     debug!(
                         session_id = %sid,
                         "[FeatureSetResolver] rootless session declared root but no binding matched — fall through to Tier 3",

@@ -162,6 +162,20 @@ impl SqliteWorkspaceBindingRepository {
     const SELECT_COLS: &'static str =
         "id, workspace_root, space_id, created_at, updated_at, client_id, machine_id, label, icon, binding_type";
 
+    /// Last path segment of a normalized workspace root for basename matching.
+    fn workspace_root_basename(normalized: &str) -> Option<String> {
+        if normalized.is_empty() {
+            return None;
+        }
+        let sep = if normalized.contains('\\') { '\\' } else { '/' };
+        normalized
+            .trim_end_matches(sep)
+            .rsplit(sep)
+            .next()
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_ascii_lowercase)
+    }
+
     /// Fetch bindings + their FeatureSet lists in two queries.
     /// `where_clause` is appended to the binding SELECT (use `""` for none);
     /// `string_params` are bound to its placeholders in order.
@@ -321,6 +335,30 @@ impl WorkspaceBindingRepository for SqliteWorkspaceBindingRepository {
                 .find(|b| b.binding_type == BindingType::Path && &b.workspace_root == root)
             {
                 return Ok(Some(b.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn find_by_basename_for_roots(
+        &self,
+        candidate_roots: &[String],
+    ) -> Result<Option<WorkspaceBinding>> {
+        if candidate_roots.is_empty() {
+            return Ok(None);
+        }
+
+        let bindings = self.list().await?;
+        for root in candidate_roots {
+            let Some(declared) = Self::workspace_root_basename(root) else {
+                continue;
+            };
+            if let Some(binding) = bindings.iter().find(|b| {
+                b.binding_type == BindingType::Path
+                    && Self::workspace_root_basename(&b.workspace_root)
+                        .is_some_and(|basename| basename == declared)
+            }) {
+                return Ok(Some(binding.clone()));
             }
         }
         Ok(None)

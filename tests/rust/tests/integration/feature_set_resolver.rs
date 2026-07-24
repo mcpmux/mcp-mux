@@ -625,6 +625,72 @@ async fn rootless_declared_unmatched_root_falls_through_to_grant() {
 }
 
 #[tokio::test]
+async fn rootless_declared_root_basename_match_routes_to_binding_not_grant() {
+    // Phase 2: a declared cloud path whose basename matches a desktop binding
+    // resolves to that binding's FeatureSet(s), not the blanket grant.
+    let f = Fixture::new().await;
+    let client_id = "rootless.example/basename-match";
+    f.make_client(client_id).await;
+    f.client_repo
+        .grant_feature_set(client_id, &f.space_id.to_string(), &f.starter_fs_id)
+        .await
+        .unwrap();
+
+    let desktop_root = if cfg!(windows) {
+        "d:\\users\\joe\\desktop\\repos\\personal\\mcp-mux"
+    } else {
+        "/Users/joe/Desktop/Repos/Personal/mcp-mux"
+    };
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(desktop_root),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    let cloud_root = if cfg!(windows) {
+        "d:\\workspace\\mcp-mux"
+    } else {
+        "/workspace/mcp-mux"
+    };
+    f.session_roots.set_roots_capable("s", false);
+    f.session_roots.set("s", [cloud_root]);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+    assert_ne!(r.feature_set_ids, vec![f.starter_fs_id]);
+}
+
+#[tokio::test]
+async fn rootless_declared_unmatched_root_without_grant_is_unbound() {
+    // Regression: basename miss with no grant still denies (Phase 1 + Phase 2).
+    let f = Fixture::new().await;
+    let client_id = "rootless.example/no-grant-unmatched";
+    f.make_client(client_id).await;
+
+    let cloud_root = if cfg!(windows) {
+        "d:\\workspace\\unknown-repo"
+    } else {
+        "/workspace/unknown-repo"
+    };
+    f.session_roots.set_roots_capable("s", false);
+    f.session_roots.set("s", [cloud_root]);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
+}
+
+#[tokio::test]
 async fn roots_capable_unmapped_root_stays_unbound_not_grant() {
     // Regression: Tier 1b hard-deny for roots-capable sessions is unchanged.
     let f = Fixture::new().await;

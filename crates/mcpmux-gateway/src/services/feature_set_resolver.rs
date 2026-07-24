@@ -12,8 +12,11 @@
 //!
 //!     // Tier 1b — roots reported, no binding matched
 //!     if session reported roots AND no binding matched:
-//!         return (scoped_space, [], Unbound)   // deny by default
-//!         // (upstream emits WorkspaceNeedsBinding so the user can bind)
+//!         if roots_capable == false (true rootless):
+//!             fall through to Tier 3 (declare-root gate + grant lookup)
+//!         else:
+//!             return (scoped_space, [], Unbound)   // deny by default
+//!             // (upstream emits WorkspaceNeedsBinding so the user can bind)
 //!
 //!     // Tier 1c — declared `roots` but they haven't arrived yet
 //!     if session declared `roots` AND none yet in registry:
@@ -28,7 +31,10 @@
 //!
 //!     // Signal 3 — client identity (rootless-by-design: Claude.ai web, …)
 //!     if client has grants in the default space:
-//!         return (default_space, grants, ClientGrant)
+//!         if rootless session AND no declared root yet:
+//!             return ([], default_space, PendingRoots)   // meta tools only
+//!         else:
+//!             return (default_space, grants, ClientGrant)
 //!
 //!     // Tier 4 — no roots, no id binding, no grants
 //!     return (default_space, [], Unbound)
@@ -522,21 +528,34 @@ impl FeatureSetResolverService {
                     );
                 }
                 // Tier 1b: had roots, no binding (or binding outside lock).
-                // The folder is unmapped — deny by default. When locked, scope
-                // `space_id` to the locked Space; otherwise longest-prefix base dir.
-                let target_space = if space_lock.is_some() {
-                    deny_space_id
+                if roots_capable_known == Some(false) {
+                    // True rootless client declared a root (e.g. via
+                    // `mcpmux_set_workspace_root`) but it didn't exact-match any
+                    // binding — fall through to Tier 3 grant lookup instead of
+                    // hard-denying. The pre-Tier-3 gate treats the declared root
+                    // as the identity signal it was waiting for.
+                    debug!(
+                        session_id = %sid,
+                        "[FeatureSetResolver] rootless session declared root but no binding matched — fall through to Tier 3",
+                    );
                 } else {
-                    self.space_for_roots(&reported_roots)
-                        .await?
-                        .unwrap_or(default_space_id)
-                };
-                debug!(
-                    %target_space,
-                    scoped_by_base_dir = target_space != default_space_id,
-                    "[FeatureSetResolver] roots reported but no binding matched — Unbound",
-                );
-                return Ok(self.unbound(target_space));
+                    // Roots-capable or still-probing session: unmapped folder
+                    // denies by default. When locked, scope `space_id` to the
+                    // locked Space; otherwise longest-prefix base dir.
+                    let target_space = if space_lock.is_some() {
+                        deny_space_id
+                    } else {
+                        self.space_for_roots(&reported_roots)
+                            .await?
+                            .unwrap_or(default_space_id)
+                    };
+                    debug!(
+                        %target_space,
+                        scoped_by_base_dir = target_space != default_space_id,
+                        "[FeatureSetResolver] roots reported but no binding matched — Unbound",
+                    );
+                    return Ok(self.unbound(target_space));
+                }
             }
 
             // Tier 1c: client declared `roots` but none have ARRIVED yet
@@ -627,6 +646,30 @@ impl FeatureSetResolverService {
                 .get_grants_for_space(cid, &grant_space_id.to_string())
                 .await?;
             if !grants.is_empty() {
+                // Pre-Tier-3 gate: rootless sessions must declare a workspace
+                // root (via `mcpmux_set_workspace_root` or equivalent) before
+                // the blanket grant unlocks. Reuses PendingRoots so meta tools
+                // stay reachable while the client self-unblocks.
+                if let Some(sid) = session_id {
+                    if self.session_roots.is_roots_capable(sid) == Some(false) {
+                        let has_declared_root = self
+                            .session_roots
+                            .get(sid)
+                            .is_some_and(|roots| !roots.is_empty());
+                        if !has_declared_root {
+                            debug!(
+                                session_id = %sid,
+                                client_id = %cid,
+                                "[FeatureSetResolver] rootless session has grant but no declared root — PendingRoots",
+                            );
+                            return Ok(ResolvedFeatureSet {
+                                feature_set_ids: vec![],
+                                space_id: Some(grant_space_id),
+                                source: ResolutionSource::PendingRoots,
+                            });
+                        }
+                    }
+                }
                 debug!(
                     client_id = %cid,
                     space_id = %grant_space_id,

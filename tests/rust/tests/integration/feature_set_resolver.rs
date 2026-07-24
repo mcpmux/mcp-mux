@@ -554,8 +554,15 @@ async fn rootless_client_uses_grants() {
         .await
         .unwrap();
 
-    // Session declared no roots capability — Tier-2 grant lookup applies.
+    // Session declared no roots capability — Tier-3 grant lookup applies once
+    // the session has declared a workspace root (declare-root gate).
     f.session_roots.set_roots_capable("s", false);
+    let declared = if cfg!(windows) {
+        "d:\\workspace\\repo"
+    } else {
+        "/workspace/repo"
+    };
+    f.session_roots.set("s", [declared]);
     let r = f
         .resolver
         .resolve(Some("s"), Some(client_id), None)
@@ -563,6 +570,82 @@ async fn rootless_client_uses_grants() {
         .unwrap();
     assert_eq!(r.source, ResolutionSource::ClientGrant);
     assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn rootless_client_with_grant_but_no_declared_root_is_pending() {
+    // Phase 1 gate: blanket grant does not unlock until the rootless client
+    // declares a workspace root (e.g. via mcpmux_set_workspace_root).
+    let f = Fixture::new().await;
+    let client_id = "rootless.example/grant-no-declare";
+    f.make_client(client_id).await;
+    f.client_repo
+        .grant_feature_set(client_id, &f.space_id.to_string(), &f.fs_a_id)
+        .await
+        .unwrap();
+
+    f.session_roots.set_roots_capable("s", false);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::PendingRoots);
+    assert!(r.feature_set_ids.is_empty());
+    assert_eq!(r.space_id, Some(f.space_id));
+}
+
+#[tokio::test]
+async fn rootless_declared_unmatched_root_falls_through_to_grant() {
+    // Tier 1b fall-through: a true rootless client that declared a root with
+    // no exact binding match must still reach its blanket grant (today's
+    // fallback), not hard-deny.
+    let f = Fixture::new().await;
+    let client_id = "rootless.example/cloud-agent";
+    f.make_client(client_id).await;
+    f.client_repo
+        .grant_feature_set(client_id, &f.space_id.to_string(), &f.fs_a_id)
+        .await
+        .unwrap();
+
+    let cloud_root = if cfg!(windows) {
+        "d:\\workspace\\repo"
+    } else {
+        "/workspace/repo"
+    };
+    f.session_roots.set_roots_capable("s", false);
+    f.session_roots.set("s", [cloud_root]);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::ClientGrant);
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn roots_capable_unmapped_root_stays_unbound_not_grant() {
+    // Regression: Tier 1b hard-deny for roots-capable sessions is unchanged.
+    let f = Fixture::new().await;
+    let client_id = "cursor.example/unmapped";
+    f.make_client(client_id).await;
+    f.client_repo
+        .grant_feature_set(client_id, &f.space_id.to_string(), &f.fs_a_id)
+        .await
+        .unwrap();
+
+    let other = if cfg!(windows) { "d:\\tmp" } else { "/tmp" };
+    f.session_roots.set("s", [other]);
+    f.session_roots.set_roots_capable("s", true);
+    let r = f
+        .resolver
+        .resolve(Some("s"), Some(client_id), None)
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
+    assert_ne!(r.feature_set_ids, vec![f.fs_a_id]);
 }
 
 #[tokio::test]

@@ -45,10 +45,8 @@ import { listSpaces, type Space } from '@/lib/api/spaces';
 import { ServerIcon } from '@/components/ServerIcon';
 import { useBindingPanelStore } from '@/stores/bindingPanelStore';
 import { useViewerIdentity } from '@/hooks/use-viewer-identity.hook';
+import { RoutingFields, SaveStatusPill, ScopeFields } from './workspace-binding-form.component';
 import {
-  RoutingFields,
-  SaveStatusPill,
-  ScopeFields,
   bindingMachineId,
   bindingScopeConflicts,
   buildBindingPayload,
@@ -59,7 +57,7 @@ import {
   sameBindingInput,
   type RootValidationState,
   type SaveStatus,
-} from './workspace-binding-form.component';
+} from './workspace-binding-form.helpers';
 import {
   CollapsibleSection,
   EffectiveFeaturesContent,

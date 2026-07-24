@@ -135,6 +135,52 @@
     }
   },
   "fallbackClientName": "Client",
+  "registerModal": {
+    "title": "Register client (API key)",
+    "tabs": {
+      "cursor": "Cursor",
+      "generic": "Generic client"
+    },
+    "whichShouldIUse": "Which should I use?",
+    "space": {
+      "label": "Lock to a Space",
+      "noLock": "No lock — resolve across all Spaces",
+      "hint": "Optional. When set, the client can only use bindings or grants inside this Space. It still needs an explicit mapping — lock alone grants no tools."
+    },
+    "machine": {
+      "label": "Machine",
+      "noMachine": "No machine — assign later if needed",
+      "hint": "Optional. Tags the client so tunneled routing (the X-Mcpmux-Machine-Id header) and the Connections list can identify which device it's connecting from."
+    },
+    "comparison": {
+      "pathColumn": "Path",
+      "bestForColumn": "Best for",
+      "setupColumn": "Setup",
+      "cursorBridge": {
+        "path": "Cursor bridge (this modal, Cursor tab)",
+        "bestFor": "Cursor, all repos, zero per-repo files",
+        "setup": "Paste one snippet into ~/.cursor/mcp.json"
+      },
+      "genericKey": {
+        "path": "Generic API key (this modal, Generic tab)",
+        "bestFor": "Headless/CI/remote clients that can't complete browser OAuth",
+        "setup": "Copy key into client config manually"
+      },
+      "workspacesInstall": {
+        "path": "Per-repo Workspaces install",
+        "bestFor": "Cursor users who don't want an npx/Node dependency",
+        "setup": "One-click install per folder in Workspaces"
+      },
+      "oauthDeepLink": {
+        "path": "OAuth deep link",
+        "bestFor": "VS Code, Claude Code, other IDEs with reliable roots reporting",
+        "setup": "One click from the empty-state onboarding"
+      }
+    },
+    "cursor": {
+      "resultTitle": "Cursor config ready"
+    }
+  },
   "cursorBridge": {
     "title": "Global Cursor setup (no per-repo files)",
     "description": "Paste one config into ~/.cursor/mcp.json. Each Cursor window sends its own workspace folder via mcp-remote — no per-repo .cursor/mcp.json files needed.",

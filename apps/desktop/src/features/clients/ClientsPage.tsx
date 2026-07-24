@@ -456,6 +456,7 @@ export default function ClientsPage() {
 
       {showRegister && (
         <RegisterApiKeyClientModal
+          gatewayUrl={gatewayStatus.url || 'http://localhost:45818'}
           onClose={() => setShowRegister(false)}
           onRegistered={(client) => {
             success('Client registered', `"${client.clientName}" can authenticate with its API key.`);

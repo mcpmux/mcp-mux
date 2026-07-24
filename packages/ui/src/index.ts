@@ -14,6 +14,11 @@ export { Button } from './components/common/Button';
 export { Input } from './components/common/Input';
 export { SearchField } from './components/common/SearchField';
 export type { SearchFieldProps } from './components/common/SearchField';
+export { SearchableSelect } from './components/common/SearchableSelect';
+export type {
+  SearchableSelectProps,
+  SearchableSelectOption,
+} from './components/common/SearchableSelect';
 export { ChipButton } from './components/common/ChipButton';
 export type { ChipButtonProps, ChipButtonVariant } from './components/common/ChipButton';
 export {

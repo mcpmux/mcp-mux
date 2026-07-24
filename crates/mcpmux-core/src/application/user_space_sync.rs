@@ -9,9 +9,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tracing::{debug, info};
+use uuid::Uuid;
 
 use crate::domain::config::UserSpaceConfig;
-use crate::domain::{InstallationSource, InstalledServer, ServerDefinition};
+use crate::domain::{DomainEvent, InstallationSource, InstalledServer, ServerDefinition};
+use crate::event_bus::EventSender;
 use crate::repository::InstalledServerRepository;
 
 /// Result of a sync operation
@@ -54,12 +56,40 @@ enum SyncOutcome {
 /// Service for syncing user space JSON config files to InstalledServer records
 pub struct UserSpaceSyncService {
     installed_repo: Arc<dyn InstalledServerRepository>,
+    event_sender: Option<EventSender>,
 }
 
 impl UserSpaceSyncService {
     /// Create a new sync service
     pub fn new(installed_repo: Arc<dyn InstalledServerRepository>) -> Self {
-        Self { installed_repo }
+        Self {
+            installed_repo,
+            event_sender: None,
+        }
+    }
+
+    /// Attach an event sender so definition updates emit `ServerConfigUpdated`.
+    pub fn with_event_sender(mut self, sender: EventSender) -> Self {
+        self.event_sender = Some(sender);
+        self
+    }
+
+    /// Emit `ServerConfigUpdated` when a wired event sender is present.
+    fn emit_server_config_updated(&self, space_id: &str, server_id: &str) {
+        let Some(sender) = &self.event_sender else {
+            return;
+        };
+        let Ok(space_uuid) = Uuid::parse_str(space_id) else {
+            debug!(
+                "Skipping ServerConfigUpdated emit for {space_id}/{server_id}: invalid space UUID"
+            );
+            return;
+        };
+
+        sender.emit(DomainEvent::ServerConfigUpdated {
+            space_id: space_uuid,
+            server_id: server_id.to_string(),
+        });
     }
 
     /// Ensure no two user-config entries normalize to the same MCP server id.
@@ -197,7 +227,8 @@ impl UserSpaceSyncService {
                 }
                 Ok(SyncOutcome::Updated) => {
                     debug!("Updated server: {}", server_id);
-                    result.updated.push(server_id);
+                    result.updated.push(server_id.clone());
+                    self.emit_server_config_updated(space_id, &server_id);
                 }
                 Ok(SyncOutcome::Adopted) => {
                     info!("Adopted server from another source: {}", server_id);
@@ -686,5 +717,50 @@ mod tests {
             err.to_string().contains("All 2 servers failed to sync"),
             "unexpected error: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn sync_from_file_emits_server_config_updated_on_definition_update() {
+        use crate::EventBus;
+
+        let space_id = "00000000-0000-0000-0000-000000000001";
+        let bus = EventBus::new();
+        let mut receiver = bus.subscribe();
+        let repo = Arc::new(InMemoryInstalledServerRepository::new());
+        let (_dir, file_path) = write_config_file(
+            r#"{ "mcpServers": {
+                "alpha": { "command": "echo", "name": "Alpha v1" }
+            } }"#,
+        )
+        .await;
+
+        repo.seed(
+            InstalledServer::new(space_id, "alpha")
+                .with_source(InstallationSource::UserConfig {
+                    file_path: file_path.clone(),
+                })
+                .with_enabled(true),
+        )
+        .await;
+
+        let service = UserSpaceSyncService::new(repo).with_event_sender(bus.sender());
+        tokio::fs::write(
+            &file_path,
+            r#"{ "mcpServers": {
+                "alpha": { "command": "echo", "name": "Alpha v2" }
+            } }"#,
+        )
+        .await
+        .expect("rewrite config file");
+
+        let result = service
+            .sync_from_file(space_id, &file_path)
+            .await
+            .expect("sync should update existing server");
+        assert_eq!(result.updated, vec!["alpha".to_string()]);
+
+        let event = receiver.recv().await.expect("ServerConfigUpdated should emit");
+        assert_eq!(event.type_name(), "server_config_updated");
+        assert_eq!(event.server_id(), Some("alpha"));
     }
 }

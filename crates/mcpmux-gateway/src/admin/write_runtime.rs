@@ -178,8 +178,64 @@ impl GatewayWriteRuntime for LiveGatewayWriteRuntime {
         Err(gateway_write_unavailable())
     }
 
-    async fn retry_connection(&self, _space_id: String, _server_id: String) -> Result<Value> {
-        Err(gateway_write_unavailable())
+    async fn retry_connection(&self, space_id: String, server_id: String) -> Result<Value> {
+        let space_uuid = Uuid::parse_str(&space_id)?;
+
+        self.pool_service.remove_instance(space_uuid, &server_id);
+
+        let installed = self
+            .installed_server_repo
+            .get_by_server_id(&space_id, &server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server not found: {space_id}/{server_id}"))?;
+
+        let server_definition = installed
+            .get_definition()
+            .ok_or_else(|| anyhow!("Server {server_id} has no cached definition"))?;
+
+        let key = ServerKey::new(space_uuid, &server_id);
+        self.server_manager.set_connecting(&key).await;
+
+        let transport = build_transport_config(
+            &server_definition.transport,
+            &installed,
+            Some(&self.data_dir),
+            TransportResolutionOptions::default(),
+        );
+
+        let ctx = ConnectionContext::auto(space_uuid, server_id.clone(), transport);
+        let result = self.pool_service.connect_server(&ctx).await;
+
+        match result {
+            ConnectionResult::Connected { features, .. } => {
+                self.server_manager.set_connected(&key, features).await;
+            }
+            ConnectionResult::OAuthRequired { .. } => {
+                self.server_manager.set_auth_required(&key, None).await;
+                if let Err(error) = self
+                    .feature_service
+                    .mark_unavailable(&space_id, &server_id)
+                    .await
+                {
+                    warn!("[LiveGatewayWriteRuntime] Failed to mark features unavailable: {error}");
+                }
+            }
+            ConnectionResult::Failed { error } => {
+                self.server_manager.set_error(&key, error.clone()).await;
+                if let Err(mark_error) = self
+                    .feature_service
+                    .mark_unavailable(&space_id, &server_id)
+                    .await
+                {
+                    warn!(
+                        "[LiveGatewayWriteRuntime] Failed to mark features unavailable: {mark_error}"
+                    );
+                }
+                return Err(anyhow!(error));
+            }
+        }
+
+        Ok(json!({ "ok": true }))
     }
 
     async fn update_server_package(&self, space_id: String, server_id: String) -> Result<Value> {

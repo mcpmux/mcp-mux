@@ -31,6 +31,8 @@
 
 mod mcp_notifier;
 mod oauth_handler;
+mod server_config_handler;
 
 pub use mcp_notifier::MCPNotifier;
 pub use oauth_handler::OAuthEventHandler;
+pub use server_config_handler::ServerConfigUpdatedHandler;

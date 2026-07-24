@@ -643,6 +643,7 @@ pub fn run() {
                 let app_state: tauri::State<'_, AppState> = app.state();
                 let spaces_dir = app_state.spaces_dir().to_path_buf();
                 let installed_repo = app_state.installed_server_repository.clone();
+                let event_sender_for_sync = event_bus.sender();
                 let app_handle_for_watcher = app.handle().clone();
 
                 // Use the well-known default space UUID
@@ -656,7 +657,10 @@ pub fn run() {
                     // Create file watcher with UI event emitter
                     match services::SpaceFileWatcher::new(
                         spaces_dir.clone(),
-                        Arc::new(mcpmux_core::application::UserSpaceSyncService::new(installed_repo)),
+                        Arc::new(
+                            mcpmux_core::application::UserSpaceSyncService::new(installed_repo)
+                                .with_event_sender(event_sender_for_sync),
+                        ),
                         default_space_id,
                         services::SpaceFileWatcherEmitters {
                             on_success: Some(Arc::new(

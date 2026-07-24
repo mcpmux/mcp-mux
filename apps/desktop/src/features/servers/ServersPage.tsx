@@ -1670,6 +1670,9 @@ export function ServersPage() {
                 onCustom={() =>
                   setCustomServerPanelSpace({ id: viewSpace.id, name: viewSpace.name })
                 }
+                onViewManifest={() =>
+                  setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })
+                }
               />
             </div>
           )}
@@ -1711,6 +1714,9 @@ export function ServersPage() {
                 onDiscover={() => navigate('registry')}
                 onCustom={() =>
                   setCustomServerPanelSpace({ id: viewSpace.id, name: viewSpace.name })
+                }
+                onViewManifest={() =>
+                  setEditConfigSpace({ id: viewSpace.id, name: viewSpace.name })
                 }
               />
             </div>

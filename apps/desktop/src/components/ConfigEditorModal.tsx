@@ -8,6 +8,7 @@ import { useToast, ToastContainer } from '@mcpmux/ui';
 import USER_SPACE_CONFIG_SCHEMA from '../../../../schemas/user-space.schema.json';
 import { RequestServerCTA } from './Contribute';
 import { MonacoJsonEditor } from './monaco-json-editor.component';
+import { CustomServerPanel } from '@/features/servers/CustomServerPanel';
 
 const EDITOR_MOUNT_TIMEOUT_MS = 10_000;
 
@@ -22,39 +23,6 @@ type SpaceConfigJson = {
   mcpServers?: Record<string, unknown>;
   [key: string]: unknown;
 };
-
-const CUSTOM_SERVER_BASE_KEY = 'custom-server';
-
-function nextCustomServerKey(servers: Record<string, unknown>): string {
-  let suffix = 1;
-
-  while (true) {
-    const key = suffix === 1 ? CUSTOM_SERVER_BASE_KEY : CUSTOM_SERVER_BASE_KEY + '-' + suffix;
-    if (!(key in servers)) {
-      return key;
-    }
-    suffix += 1;
-  }
-}
-
-function addCustomServerDraft(config: SpaceConfigJson): SpaceConfigJson {
-  const mcpServers = { ...(config.mcpServers ?? {}) };
-  const key = nextCustomServerKey(mcpServers);
-  const suffix =
-    key === CUSTOM_SERVER_BASE_KEY ? '' : ' ' + key.replace(CUSTOM_SERVER_BASE_KEY + '-', '');
-
-  mcpServers[key] = {
-    name: 'New Custom Server' + suffix,
-    command: '',
-    args: [],
-    env: {},
-  };
-
-  return {
-    ...config,
-    mcpServers,
-  };
-}
 
 export function ConfigEditorModal({
   spaceId,
@@ -72,6 +40,7 @@ export function ConfigEditorModal({
   const [editorReady, setEditorReady] = useState(false);
   const [editorMounted, setEditorMounted] = useState(false);
   const [editorLoadFailed, setEditorLoadFailed] = useState(false);
+  const [showCustomServerPanel, setShowCustomServerPanel] = useState(false);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const { toasts, success, error: showError } = useToast();
 
@@ -185,19 +154,12 @@ export function ConfigEditorModal({
     editorRef.current?.getAction('actions.find')?.run();
   }, []);
 
+  /**
+   * Open the guided custom-server panel docked over this manifest editor.
+   */
   const handleInsertCustomServer = useCallback(() => {
-    try {
-      const parsed = JSON.parse(content || '{"mcpServers":{}}') as SpaceConfigJson;
-      setContent(JSON.stringify(addCustomServerDraft(parsed), null, 2));
-      setIsValidJson(true);
-      setError(null);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setIsValidJson(false);
-      setError(t('configEditorModal.validation.invalidJson', { message }));
-      showError(t('configEditorModal.toast.invalidJsonTitle'), message);
-    }
-  }, [content, showError, t]);
+    setShowCustomServerPanel(true);
+  }, []);
 
   // Configure Monaco before mount to set up JSON schema validation
   const handleEditorBeforeMount = (monaco: Monaco) => {
@@ -434,6 +396,17 @@ export function ConfigEditorModal({
           )}
         </div>
       </div>
+
+      {showCustomServerPanel && (
+        <CustomServerPanel
+          spaceId={spaceId}
+          spaceName={spaceName}
+          onClose={() => setShowCustomServerPanel(false)}
+          onSaved={() => {
+            void loadConfig();
+          }}
+        />
+      )}
     </>
   );
 }

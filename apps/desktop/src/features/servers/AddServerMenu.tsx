@@ -11,14 +11,16 @@ import {
 interface AddServerMenuProps {
   /** Opens the Discover page to browse the community server registry. */
   onDiscover: () => void;
-  /** Opens the Space JSON editor to add a custom server definition. */
+  /** Opens the guided custom-server panel (Form / JSON). */
   onCustom: () => void;
+  /** Opens the full-space JSON manifest editor. */
+  onViewManifest: () => void;
 }
 
 /**
- * Dropdown for the two ways to add MCP servers: registry discover vs custom JSON.
+ * Dropdown for adding MCP servers: registry discover, guided custom setup, or full manifest.
  */
-export function AddServerMenu({ onDiscover, onCustom }: AddServerMenuProps) {
+export function AddServerMenu({ onDiscover, onCustom, onViewManifest }: AddServerMenuProps) {
   const { t } = useTranslation('servers');
 
   return (
@@ -39,11 +41,18 @@ export function AddServerMenu({ onDiscover, onCustom }: AddServerMenuProps) {
           data-testid="add-server-option-discover"
         />
         <DropdownMenuItem
-          icon={FileJson}
+          icon={Plus}
           label={t('addMenu.custom')}
           description={t('addMenu.customDesc')}
           onSelect={onCustom}
           data-testid="add-server-option-custom"
+        />
+        <DropdownMenuItem
+          icon={FileJson}
+          label={t('addMenu.viewManifest')}
+          description={t('addMenu.viewManifestDesc')}
+          onSelect={onViewManifest}
+          data-testid="add-server-option-view-manifest"
         />
       </DropdownMenuContent>
     </DropdownMenu>

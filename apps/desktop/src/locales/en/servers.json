@@ -189,7 +189,9 @@
     "discover": "Discover from registry",
     "discoverDesc": "Browse the community catalog — install with guided setup, OAuth, and credential fields.",
     "custom": "Add custom server",
-    "customDesc": "Edit your Space JSON config for local CLIs, private servers, or anything not in the registry."
+    "customDesc": "Guided setup for local CLIs, private servers, or anything not in the registry.",
+    "viewManifest": "View full server manifest",
+    "viewManifestDesc": "Edit the entire Space JSON file — all servers, metadata, and raw config."
   },
   "filters": {
     "appliedTitle": "Applied filters",

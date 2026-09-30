@@ -11,10 +11,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  authorize:
+    uses: ./.github/workflows/require-release-manager.yml
+
   # ─────────────────────────────────────────────────────────────
   # Nightly: Build for testing (manual trigger only)
   # ─────────────────────────────────────────────────────────────
   nightly:
+    needs: authorize
     strategy:
       fail-fast: false
       matrix:

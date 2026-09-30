@@ -78,7 +78,9 @@ jobs:
       - name: Set build version
         if: inputs.set_version != ''
         shell: bash
-        run: node scripts/set-version.mjs "${{ inputs.set_version }}"
+        env:
+          SET_VERSION: ${{ inputs.set_version }}
+        run: node scripts/set-version.mjs "$SET_VERSION"
 
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-latest'

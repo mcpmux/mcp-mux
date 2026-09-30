@@ -18,6 +18,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Manual runs are limited to release managers; pushes to main pass through.
+  authorize:
+    uses: ./.github/workflows/require-release-manager.yml
+
   # ─────────────────────────────────────────────────────────────
   # Release Please: Create/update release PR with version bump
   #
@@ -35,6 +39,7 @@ jobs:
   #   to the new release with all artifacts already attached
   # ─────────────────────────────────────────────────────────────
   release-please:
+    needs: authorize
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -215,10 +220,11 @@ jobs:
   # are attached, so /releases/latest always has all assets
   # ─────────────────────────────────────────────────────────────
   publish-release:
-    needs: [release-please, build-release]
+    needs: [authorize, release-please, build-release]
     # Run after a successful build OR when manually re-publishing an existing release
     if: >-
       always() &&
+      needs.authorize.result == 'success' &&
       (
         needs.build-release.result == 'success' ||
         (github.event_name == 'workflow_dispatch' && inputs.tag != '')
@@ -233,10 +239,16 @@ jobs:
       # typed "0.1.1" or "v0.1.1" in the workflow_dispatch input.
       - name: Resolve tag
         id: resolve
+        env:
+          # Passed via env, never interpolated into the script: inputs.tag is free text.
+          RAW: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
         run: |
-          RAW="${{ inputs.tag || needs.release-please.outputs.tag_name }}"
           TAG="${RAW#v}"       # strip leading v if present
           TAG="v${TAG}"        # re-add it consistently
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag must look like v0.1.1"
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Validate existing release has assets

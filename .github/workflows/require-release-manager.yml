@@ -1,0 +1,31 @@
+name: Require Release Manager
+
+# Reusable gate for workflows that sign or publish builds. Collaborators with
+# write access can start any workflow_dispatch workflow, so manual runs are
+# limited to the logins in the RELEASE_MANAGERS repository variable
+# (space- or comma-separated). Only repo admins can edit that variable.
+# Other events (e.g. push to main) pass straight through.
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check who started this run
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ACTOR: ${{ github.triggering_actor }}
+          MANAGERS: ${{ vars.RELEASE_MANAGERS }}
+        run: |
+          set -euo pipefail
+          for m in ${MANAGERS//,/ }; do
+            if [ "$m" = "$ACTOR" ]; then
+              echo "$ACTOR is a release manager"
+              exit 0
+            fi
+          done
+          echo "::error::Only logins listed in the RELEASE_MANAGERS repository variable can start this workflow manually"
+          exit 1

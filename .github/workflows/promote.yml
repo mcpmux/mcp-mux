@@ -22,7 +22,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  authorize:
+    uses: ./.github/workflows/require-release-manager.yml
+
   prepare:
+    needs: authorize
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -36,10 +40,15 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
+          # Passed via env, never interpolated into the script: it's free text.
+          PRE_TAG_INPUT: ${{ inputs.prerelease_tag }}
         run: |
           set -euo pipefail
-          PRE_TAG="${{ inputs.prerelease_tag }}"
-          PRE_TAG="v${PRE_TAG#v}"   # normalize leading v
+          PRE_TAG="v${PRE_TAG_INPUT#v}"   # normalize leading v
+          if ! [[ "$PRE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::prerelease_tag must look like v0.4.0-pre.318"
+            exit 1
+          fi
           # Strip the pre-release (-<n>) and any +build suffix to get the
           # stable version, e.g. 0.4.0-185 -> 0.4.0.
           STABLE_VERSION=$(printf '%s' "${PRE_TAG#v}" | sed -E 's/-.*$//; s/\+.*$//')
@@ -59,6 +68,7 @@ jobs:
             exit 1
           fi
 
+          echo "pre_tag=$PRE_TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "stable_version=$STABLE_VERSION" >> "$GITHUB_OUTPUT"
           echo "stable_tag=$STABLE_TAG" >> "$GITHUB_OUTPUT"
@@ -74,7 +84,7 @@ jobs:
             -f tag_name="${{ steps.resolve.outputs.stable_tag }}" \
             -f target_commitish="${{ steps.resolve.outputs.sha }}" \
             -f name="${{ steps.resolve.outputs.stable_tag }}" \
-            -f body="Promoted from ${{ inputs.prerelease_tag }}." \
+            -f body="Promoted from ${{ steps.resolve.outputs.pre_tag }}." \
             -F draft=true -F prerelease=false \
             --jq '.id')
           echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"

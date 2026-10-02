@@ -1046,13 +1046,16 @@ pub fn run() {
                 {
                     let gw_state = gw_state.inner().clone();
                     tauri::async_runtime::block_on(async move {
-                        let handle = {
+                        let (handle, pool_service) = {
                             let mut state = gw_state.write().await;
                             state.running = false;
                             state.url = None;
                             state.bound_port = None;
-                            state.handle.take()
+                            (state.handle.take(), state.pool_service.take())
                         };
+                            if let Some(pool) = pool_service {
+                                pool.shutdown().await;
+                            }
                         if let Some(h) = handle {
                             info!("[Gateway] ExitRequested — gracefully shutting down gateway");
                             crate::commands::gateway::shutdown_gateway_handle(h).await;

@@ -2712,6 +2712,7 @@ dependencies = [
  "oauth2",
  "open",
  "parking_lot",
+ "process-wrap",
  "rand 0.8.5",
  "reqwest 0.13.2",
  "rmcp",
@@ -2728,6 +2729,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "which",
+ "windows 0.62.2",
  "zeroize",
 ]
 
@@ -2739,6 +2741,7 @@ dependencies = [
  "async-trait",
  "hex",
  "mcpmux-core",
+ "process-wrap",
  "reqwest 0.13.2",
  "ring",
  "rmcp",
@@ -2748,6 +2751,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "windows 0.62.2",
 ]
 
 [[package]]

@@ -9,10 +9,6 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 
-#[cfg(windows)]
-#[allow(unused_imports)] // Trait is used via method call in closure
-use std::os::windows::process::CommandExt;
-
 use anyhow::{Context, Result};
 use rmcp::{
     model::{
@@ -20,13 +16,147 @@ use rmcp::{
         ListToolsResult, Tool,
     },
     service::RunningService,
-    transport::{ConfigureCommandExt, TokioChildProcess},
+    transport::TokioChildProcess,
     ClientHandler, RoleClient, ServiceExt,
 };
 use serde_json::Value;
+#[cfg(not(windows))]
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
+
+#[cfg(windows)]
+use process_wrap::tokio::{CommandWrap, CreationFlags, KillOnDrop};
+#[cfg(not(windows))]
+use rmcp::transport::ConfigureCommandExt;
+#[cfg(windows)]
+use windows::Win32::System::Threading::PROCESS_CREATION_FLAGS;
+
+/// Windows job-object containment for a spawned stdio server.
+///
+/// `process-wrap`'s built-in `JobObject` wrapper creates the child *suspended*
+/// so it can attach before the child spawns descendants, then resumes it. On
+/// Windows that resume allocates the child's console **with a visible window**,
+/// which defeats `CREATE_NO_WINDOW` and makes the server pop open a terminal.
+/// This wrapper attaches the kill-on-close job after the child is created and
+/// running, keeping the console suppressed while still terminating the whole
+/// process tree on drop.
+#[cfg(windows)]
+mod job_tree {
+    use std::io;
+
+    use process_wrap::tokio::{ChildWrapper, CommandWrap, CommandWrapper};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    /// Attaches the spawned child to a kill-on-close Job Object.
+    #[derive(Debug)]
+    pub struct JobTree;
+
+    /// Raw job handle. `HANDLE` is not `Send`, but moving one between threads
+    /// is sound; process-wrap marks its equivalent newtype the same way.
+    #[derive(Debug, Clone, Copy)]
+    struct JobHandle(HANDLE);
+
+    unsafe impl Send for JobHandle {}
+    unsafe impl Sync for JobHandle {}
+
+    /// Owns the job handle: closing it terminates every process in the job.
+    #[derive(Debug)]
+    struct JobOwner(JobHandle);
+
+    impl Drop for JobOwner {
+        fn drop(&mut self) {
+            // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE tears down the whole tree here.
+            unsafe {
+                let _ = CloseHandle(self.0 .0);
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct JobTreeChild {
+        inner: Box<dyn ChildWrapper>,
+        job: JobOwner,
+    }
+
+    impl ChildWrapper for JobTreeChild {
+        fn inner(&self) -> &dyn ChildWrapper {
+            self.inner.inner()
+        }
+
+        fn inner_mut(&mut self) -> &mut dyn ChildWrapper {
+            self.inner.inner_mut()
+        }
+
+        fn into_inner(self: Box<Self>) -> Box<dyn ChildWrapper> {
+            // Leave the job handle open: closing it would terminate the whole
+            // tree and leave the returned Child useless. This mirrors
+            // process-wrap's own JobObjectChild::into_inner.
+            let this = *self;
+            std::mem::forget(this.job);
+            this.inner.into_inner()
+        }
+    }
+
+    impl CommandWrapper for JobTree {
+        /// Attach the already-running child to the kill-on-close job.
+        ///
+        /// The child is briefly running outside any job between
+        /// `CreateProcess` and this call; attaching before execution would
+        /// require `CREATE_SUSPENDED`, which is what makes the terminal window
+        /// reappear. See the equivalent wrapper in `mcpmux-gateway` for the
+        /// full reasoning and measurements.
+        fn wrap_child(
+            &mut self,
+            inner: Box<dyn ChildWrapper>,
+            _core: &CommandWrap,
+        ) -> io::Result<Box<dyn ChildWrapper>> {
+            let job = unsafe { create_kill_on_close_job()? };
+
+            let handle = inner
+                .inner_child()
+                .raw_handle()
+                .ok_or_else(|| io::Error::other("spawned child has no process handle"))?;
+
+            let process = HANDLE(handle);
+            if let Err(e) = unsafe { AssignProcessToJobObject(job.0, process) } {
+                drop(JobOwner(job));
+                return Err(io::Error::other(format!(
+                    "AssignProcessToJobObject failed: {e}"
+                )));
+            }
+
+            Ok(Box::new(JobTreeChild {
+                inner,
+                job: JobOwner(job),
+            }))
+        }
+    }
+
+    unsafe fn create_kill_on_close_job() -> io::Result<JobHandle> {
+        // Wrap immediately so the `?` below still closes the handle on failure.
+        let owned = JobOwner(JobHandle(CreateJobObjectW(None, None)?));
+
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        SetInformationJobObject(
+            owned.0 .0,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )?;
+
+        let handle = owned.0;
+        std::mem::forget(owned);
+        Ok(handle)
+    }
+}
 
 /// Transport configuration for MCP server connections
 #[derive(Debug, Clone)]
@@ -74,6 +204,28 @@ pub struct ServerInfo {
 
 /// Type alias for a connected MCP client
 pub type McpClient = RunningService<RoleClient, McpClientHandler>;
+
+/// Build a stdio child command whose descendants share the application's
+/// lifecycle on Windows.
+#[cfg(windows)]
+fn stdio_child_command(
+    executable: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> CommandWrap {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut command = CommandWrap::with_new(executable, |cmd| {
+        cmd.args(args).envs(env).stderr(Stdio::null());
+    });
+    // CREATE_NO_WINDOW must be the only console-related flag: adding
+    // CREATE_SUSPENDED (as process-wrap's JobObject does) brings the terminal
+    // window back. The kill-on-close job is attached after spawn instead.
+    command.wrap(CreationFlags(PROCESS_CREATION_FLAGS(CREATE_NO_WINDOW)));
+    command.wrap(KillOnDrop);
+    command.wrap(job_tree::JobTree);
+    command
+}
 
 /// Custom client handler for McpMux
 #[derive(Clone)]
@@ -129,35 +281,19 @@ impl McpSession {
         let args_for_closure = parsed_args.clone();
         let env = env.clone();
 
-        // Create child process transport using the POC pattern
-        let transport = TokioChildProcess::new(
-            Command::new(&executable).configure(move |cmd| {
-                cmd.args(&args_for_closure)
-                    .envs(&env)
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true);
+        #[cfg(windows)]
+        let child_command = stdio_child_command(&executable, &args_for_closure, &env);
 
-                // Platform-specific child process isolation.
-                //
-                // Windows: In release builds the app uses `windows_subsystem = "windows"`
-                // (GUI subsystem), which causes Windows to allocate a new visible console
-                // for any spawned console-subsystem child process. CREATE_NO_WINDOW
-                // suppresses this.
-                //
-                // Unix (macOS/Linux): Create a new process group so terminal signals
-                // (SIGINT, SIGTSTP) sent to the parent don't propagate to MCP server
-                // child processes.
-                #[cfg(windows)]
-                {
-                    const CREATE_NO_WINDOW: u32 = 0x08000000;
-                    cmd.creation_flags(CREATE_NO_WINDOW);
-                }
-                #[cfg(unix)]
-                {
-                    cmd.process_group(0);
-                }
-            })
-        ).context(format!(
+        #[cfg(not(windows))]
+        let child_command = Command::new(&executable).configure(move |cmd| {
+            cmd.args(&args_for_closure)
+                .envs(&env)
+                .stderr(Stdio::null())
+                .kill_on_drop(true);
+            cmd.process_group(0);
+        });
+
+        let transport = TokioChildProcess::new(child_command).context(format!(
             "Failed to spawn child process. Command not found: {}. Ensure it's installed and in PATH.",
             executable
         ))?;
@@ -423,6 +559,16 @@ impl Default for ServerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn stdio_child_command_contains_windows_tree_containment() {
+        let command = stdio_child_command("cmd.exe", &[], &HashMap::new());
+
+        assert!(command.has_wrap::<CreationFlags>());
+        assert!(command.has_wrap::<KillOnDrop>());
+        assert!(command.has_wrap::<job_tree::JobTree>());
+    }
 
     #[test]
     fn test_connection_status() {

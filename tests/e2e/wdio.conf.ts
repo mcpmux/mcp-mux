@@ -36,22 +36,9 @@ const MOCK_BUNDLE_API_PORT = 8787;
 const STUB_MCP_HTTP_PORT = 3457;
 const STUB_MCP_OAUTH_PORT = 3458;
 
-// App data directory (platform-specific)
-// Windows: %LOCALAPPDATA%/com.mcpmux.desktop/
-// Linux: ~/.local/share/com.mcpmux.desktop/
-function getAppDataDir(): string {
-  if (process.platform === 'win32') {
-    return path.join(
-      process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-      'com.mcpmux.desktop'
-    );
-  } else {
-    // Linux (and other Unix-like)
-    return path.join(os.homedir(), '.local', 'share', 'com.mcpmux.desktop');
-  }
-}
-
-const APP_DATA_DIR = getAppDataDir();
+// Keep E2E data outside the user's McpMux profile. The desktop app accepts this
+// directory only when MCPMUX_E2E_TEST is also set.
+const APP_DATA_DIR = path.join(os.tmpdir(), 'mcpmux-e2e');
 const BUNDLE_CACHE_PATH = path.join(APP_DATA_DIR, 'cache', 'registry-bundle.json');
 
 // Path to built app
@@ -65,6 +52,14 @@ function checkAppBuilt(): void {
   if (!fs.existsSync(APP_PATH)) {
     console.error(`\n[ERROR] App not built. Expected at: ${APP_PATH}`);
     console.error('Run "pnpm build" first.\n');
+    process.exit(1);
+  }
+
+  // A binary built before MCPMUX_E2E_DATA_DIR support silently ignores it and would
+  // run every spec against the developer's real McpMux profile.
+  if (!fs.readFileSync(APP_PATH).includes('MCPMUX_E2E_DATA_DIR')) {
+    console.error(`\n[ERROR] App at ${APP_PATH} does not support MCPMUX_E2E_DATA_DIR.`);
+    console.error('Rebuild it with "pnpm build" so E2E stays out of your real profile.\n');
     process.exit(1);
   }
 }
@@ -144,17 +139,20 @@ async function waitForServer(port: number, name: string, timeout = 30000): Promi
 // Start mock servers
 async function startMockServers(): Promise<void> {
   const mocksDir = path.resolve('./tests/e2e/mocks');
+  const tsxCli = path.resolve('./node_modules/tsx/dist/cli.mjs');
+
+  function startMockServer(scriptPath: string, port: number): ChildProcess {
+    return spawn(process.execPath, [tsxCli, scriptPath], {
+      env: { ...process.env, PORT: String(port) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  }
 
   // Start Mock Bundle API
   console.log('[e2e] Starting Mock Bundle API...');
-  mockBundleApi = spawn(
-    'pnpm',
-    ['exec', 'tsx', path.join(mocksDir, 'mock-bundle-api', 'server.ts')],
-    {
-      env: { ...process.env, PORT: String(MOCK_BUNDLE_API_PORT) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
-    }
+  mockBundleApi = startMockServer(
+    path.join(mocksDir, 'mock-bundle-api', 'server.ts'),
+    MOCK_BUNDLE_API_PORT
   );
   mockBundleApi.stdout?.on('data', (data) =>
     console.log(`[mock-bundle-api] ${data.toString().trim()}`)
@@ -165,14 +163,9 @@ async function startMockServers(): Promise<void> {
 
   // Start Stub MCP HTTP Server
   console.log('[e2e] Starting Stub MCP HTTP Server...');
-  stubMcpHttp = spawn(
-    'pnpm',
-    ['exec', 'tsx', path.join(mocksDir, 'stub-mcp-server', 'http-server.ts')],
-    {
-      env: { ...process.env, PORT: String(STUB_MCP_HTTP_PORT) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
-    }
+  stubMcpHttp = startMockServer(
+    path.join(mocksDir, 'stub-mcp-server', 'http-server.ts'),
+    STUB_MCP_HTTP_PORT
   );
   stubMcpHttp.stdout?.on('data', (data) =>
     console.log(`[stub-mcp-http] ${data.toString().trim()}`)
@@ -183,14 +176,9 @@ async function startMockServers(): Promise<void> {
 
   // Start Stub MCP OAuth Server
   console.log('[e2e] Starting Stub MCP OAuth Server...');
-  stubMcpOauth = spawn(
-    'pnpm',
-    ['exec', 'tsx', path.join(mocksDir, 'stub-mcp-server', 'http-oauth-server.ts')],
-    {
-      env: { ...process.env, PORT: String(STUB_MCP_OAUTH_PORT) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
-    }
+  stubMcpOauth = startMockServer(
+    path.join(mocksDir, 'stub-mcp-server', 'http-oauth-server.ts'),
+    STUB_MCP_OAUTH_PORT
   );
   stubMcpOauth.stdout?.on('data', (data) =>
     console.log(`[stub-mcp-oauth] ${data.toString().trim()}`)
@@ -209,18 +197,22 @@ async function startMockServers(): Promise<void> {
 
 // Stop all mock servers
 function stopMockServers(): void {
-  if (mockBundleApi) {
-    mockBundleApi.kill();
-    mockBundleApi = null;
+  for (const server of [mockBundleApi, stubMcpHttp, stubMcpOauth]) {
+    // Skip servers that already exited: their PID may have been reused by an unrelated
+    // process, which taskkill /T would take down along with its children.
+    if (!server?.pid || server.exitCode !== null || server.signalCode !== null) {
+      continue;
+    }
+
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/F', '/T', '/PID', String(server.pid)], { stdio: 'ignore' });
+    } else {
+      server.kill();
+    }
   }
-  if (stubMcpHttp) {
-    stubMcpHttp.kill();
-    stubMcpHttp = null;
-  }
-  if (stubMcpOauth) {
-    stubMcpOauth.kill();
-    stubMcpOauth = null;
-  }
+  mockBundleApi = null;
+  stubMcpHttp = null;
+  stubMcpOauth = null;
 }
 
 function closeTauriDriver() {
@@ -296,6 +288,45 @@ function killMcpmuxProcesses(): void {
     console.log('[e2e] Killed any existing mcpmux processes');
   } catch (error) {
     // Ignore errors - process may not exist
+  }
+}
+
+function killTauriDriverProcesses(): void {
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/F', '/T', '/IM', 'tauri-driver.exe'], { stdio: 'ignore' });
+      // tauri-driver starts msedgedriver.exe as a child. A driver killed earlier (e.g. by
+      // closeTauriDriver) leaves it orphaned, outside the /T tree, still holding port 4445.
+      spawnSync('taskkill', ['/F', '/IM', 'msedgedriver.exe'], { stdio: 'ignore' });
+    } else {
+      spawnSync('pkill', ['-9', 'tauri-driver'], { stdio: 'ignore' });
+    }
+  } catch {
+    // Ignore errors - the driver may not be running.
+  }
+}
+
+function killGatewayPortProcess(): void {
+  try {
+    if (process.platform === 'win32') {
+      const result = spawnSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8' });
+      const pids = new Set<number>();
+
+      for (const line of result.stdout.split(/\r?\n/)) {
+        const match = line.match(/^\s*TCP\s+\S+:45818\s+\S+\s+\S+\s+(\d+)\s*$/i);
+        if (match) {
+          pids.add(Number(match[1]));
+        }
+      }
+
+      for (const pid of pids) {
+        spawnSync('taskkill', ['/F', '/PID', String(pid)], { stdio: 'ignore' });
+      }
+    } else {
+      spawnSync('fuser', ['-k', '-9', '45818/tcp'], { stdio: 'ignore' });
+    }
+  } catch {
+    // Ignore errors - nothing may be listening on the gateway port.
   }
 }
 
@@ -444,9 +475,8 @@ export const config: Options.Testrunner = {
     // tauri-driver starts the app. This avoids EBUSY errors from trying
     // to delete the SQLite DB while the app still holds a lock on it.
     killMcpmuxProcesses();
-    if (process.platform !== 'win32') {
-      spawnSync('pkill', ['-9', 'tauri-driver'], { stdio: 'ignore' });
-    }
+    killTauriDriverProcesses();
+    killGatewayPortProcess();
     // Brief pause to let processes fully exit
     await new Promise((resolve) => setTimeout(resolve, 2000));
     clearSingleInstanceLock();
@@ -473,17 +503,13 @@ export const config: Options.Testrunner = {
     // --- Aggressive cleanup from previous spec ---
     // Kill any leftover tauri-driver processes (may remain if previous spec crashed).
     // This is safe to do here because no tauri-driver should be running between specs.
-    if (process.platform !== 'win32') {
-      spawnSync('pkill', ['-9', 'tauri-driver'], { stdio: 'ignore' });
-    }
+    killTauriDriverProcesses();
     // Kill any leftover mcpmux app processes and clear single-instance lock
     killMcpmuxProcesses();
     clearSingleInstanceLock();
 
     // Free the gateway port (45818) in case mcpmux didn't release it
-    if (process.platform !== 'win32') {
-      spawnSync('fuser', ['-k', '-9', '45818/tcp'], { stdio: 'ignore' });
-    }
+    killGatewayPortProcess();
 
     // Wait for OS to fully reclaim process resources (ports, file locks, etc.)
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -506,6 +532,7 @@ export const config: Options.Testrunner = {
         ...process.env,
         MCPMUX_REGISTRY_URL: `http://localhost:${MOCK_BUNDLE_API_PORT}`,
         MCPMUX_E2E_TEST: '1',
+        MCPMUX_E2E_DATA_DIR: APP_DATA_DIR,
       },
     });
 
@@ -549,8 +576,9 @@ export const config: Options.Testrunner = {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   },
 
-  // Clean up mock servers after all tests complete
+  // Clean up mock servers and the last spec's driver after all tests complete
   onComplete: function () {
     stopMockServers();
+    killTauriDriverProcesses();
   },
 };

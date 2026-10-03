@@ -36,6 +36,14 @@ const APP_IDENTIFIER: &str = env!("TAURI_APP_IDENTIFIER");
 /// - macOS: ~/Library/Application Support/<identifier>/
 /// - Linux: ~/.local/share/<identifier>/
 fn get_app_data_dir() -> std::path::PathBuf {
+    if std::env::var_os("MCPMUX_E2E_TEST").is_some() {
+        if let Some(path) = std::env::var_os("MCPMUX_E2E_DATA_DIR") {
+            if !path.is_empty() {
+                return path.into();
+            }
+        }
+    }
+
     dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(APP_IDENTIFIER)
@@ -272,10 +280,7 @@ pub fn run() {
             info!("Initializing application state...");
 
             // Get data directory (Local, not Roaming - machine-specific data)
-            let data_dir = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to get app local data directory");
+            let data_dir = get_app_data_dir();
             let app_data_dir = data_dir.clone();
 
             // Create and manage application state

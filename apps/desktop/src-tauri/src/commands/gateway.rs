@@ -853,50 +853,20 @@ fn map_domain_event_to_ui(event: &DomainEvent) -> (&'static str, serde_json::Val
     }
 }
 
-/// Create Gateway dependencies from app state using DI builder pattern
+/// Create Gateway dependencies from app state using DI builder pattern.
 ///
-/// Centralizes dependency construction following Dependency Injection principles.
-/// All external dependencies are explicitly injected, making the Gateway testable.
+/// Thin wrapper around [`AppState::runtime`]'s
+/// [`mcpmux_runtime::Runtime::build_gateway_dependencies`]. Kept as a
+/// free function so the existing `start_gateway` command can pass it
+/// through unchanged.
 fn create_gateway_dependencies(
     app_state: &AppState,
     _app_handle: tauri::AppHandle,
 ) -> Result<mcpmux_gateway::GatewayDependencies, String> {
-    // Load JWT signing secret (DPAPI on Windows, keychain elsewhere)
-    let jwt_secret = match mcpmux_storage::create_jwt_secret_provider(app_state.data_dir()) {
-        Ok(provider) => match provider.get_or_create_secret() {
-            Ok(secret) => {
-                info!("[Gateway] JWT signing secret loaded");
-                Some(secret)
-            }
-            Err(e) => {
-                warn!("[Gateway] Failed to load JWT secret: {}", e);
-                None
-            }
-        },
-        Err(e) => {
-            warn!("[Gateway] Failed to create JWT secret provider: {}", e);
-            None
-        }
-    };
-
-    // Build dependencies using builder pattern (DI)
-    let mut builder = mcpmux_gateway::DependenciesBuilder::new()
-        .with_installed_server_repo(app_state.installed_server_repository.clone())
-        .with_credential_repo(app_state.credential_repository.clone())
-        .with_backend_oauth_repo(app_state.backend_oauth_repository.clone())
-        .with_feature_repo(app_state.server_feature_repository_core.clone())
-        .with_feature_set_repo(app_state.feature_set_repository.clone())
-        .with_server_discovery(app_state.server_discovery.clone())
-        .with_log_manager(app_state.server_log_manager.clone())
-        .with_database(app_state.database())
-        .with_state_dir(app_state.data_dir().to_path_buf())
-        .with_settings_repo(app_state.settings_repository.clone());
-
-    if let Some(secret) = jwt_secret {
-        builder = builder.with_jwt_secret(secret);
-    }
-
-    builder.build().map_err(|e: String| e)
+    app_state
+        .runtime()
+        .build_gateway_dependencies()
+        .map_err(|e| e.to_string())
 }
 
 /// Get gateway status, optionally scoped to a specific space
@@ -1037,8 +1007,10 @@ pub async fn start_gateway(
         enable_cors: true,
     };
 
-    // Create self-contained gateway server with DI
-    // Gateway will auto-initialize all services and auto-connect enabled servers
+    // Create self-contained gateway server with DI.
+    // Gateway will auto-initialize all services and auto-connect enabled servers.
+    // JWT secret + repo wiring + encryption live in the runtime — see
+    // `mcpmux_runtime::Runtime::build_gateway_server`.
     let server = mcpmux_gateway::GatewayServer::new(config, dependencies);
 
     // Get references to services before spawning
@@ -1138,7 +1110,7 @@ pub async fn stop_gateway(
     // Take the handle out under the lock, then drop the guard BEFORE
     // awaiting the shutdown — otherwise the lock is held for up to 2s
     // and every concurrent status query blocks.
-    let handle = {
+    let (handle, pool_service) = {
         let mut state = gateway_state.write().await;
         if !state.running {
             return Err("Gateway is not running".to_string());
@@ -1147,8 +1119,12 @@ pub async fn stop_gateway(
         state.running = false;
         state.url = None;
         state.bound_port = None;
-        handle
+        (handle, state.pool_service.take())
     };
+
+    if let Some(pool) = pool_service {
+        pool.shutdown().await;
+    }
 
     if let Some(h) = handle {
         info!("[Gateway] Stop requested — shutting down gracefully");
@@ -1501,14 +1477,18 @@ pub async fn restart_gateway(
     info!("[Gateway] Restart requested — tearing down current state");
     // Take handle out under lock; drop lock before awaiting shutdown so
     // start_gateway below can re-acquire it.
-    let handle = {
+    let (handle, pool_service) = {
         let mut state = gateway_state.write().await;
         let handle = state.handle.take();
+        let pool_service = state.pool_service.take();
         state.running = false;
         state.url = None;
         state.bound_port = None;
-        handle
+        (handle, pool_service)
     };
+    if let Some(pool) = pool_service {
+        pool.shutdown().await;
+    }
     if let Some(h) = handle {
         shutdown_gateway_handle(h).await;
     }

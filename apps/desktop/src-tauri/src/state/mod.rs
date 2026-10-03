@@ -1,211 +1,133 @@
-//! Application state management.
+//! Application state shared between Tauri commands.
 //!
-//! This module contains the global application state that is shared
-//! between Tauri commands.
+//! Thin wrapper around [`mcpmux_runtime::Runtime`]. The runtime owns the
+//! data directory lock, SQLite database, encryption, repositories,
+//! discovery, log manager, event bus, and gateway bootstrap; this struct
+//! re-exposes those fields under the names the existing commands expect
+//! and holds the Tauri-only state (file-watcher handles, server-app
+//! service, etc.) that does not belong in the runtime.
+//!
+//! [`AppState`] derefs to [`Runtime`] so every existing
+//! `app_state.<field>` access — `data_dir`, `encryptor`,
+//! `gateway_port_service`, `space_service`, `server_discovery`,
+//! `server_log_manager` — keeps working. Fields whose names on the
+//! runtime (`repositories.app_settings`, `repositories.installed_server`,
+//! …) differ from the legacy desktop names
+//! (`settings_repository`, `installed_server_repository`, …) are
+//! aliased below as Arc clones; nothing in the command layer needs to
+//! change in this PR.
+
+use std::ops::Deref;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use mcpmux_core::{
-    AppSettingsRepository, AppSettingsService, CredentialRepository, FeatureSetRepository,
-    GatewayPortService, InboundMcpClientRepository, InstalledServerRepository, LogConfig,
-    OutboundOAuthRepository, ServerDiscoveryService,
-    ServerFeatureRepository as CoreServerFeatureRepository, ServerLogManager,
-    SpaceBaseDirRepository, SpaceBuiltinConfigRepository, SpaceRepository, SpaceService,
-    WorkspaceBindingRepository,
+    AppSettingsRepository, CredentialRepository, FeatureSetRepository, InboundMcpClientRepository,
+    InstalledServerRepository, ServerFeatureRepository, SpaceBaseDirRepository,
+    SpaceBuiltinConfigRepository, WorkspaceBindingRepository,
 };
-use mcpmux_storage::{
-    Database, FieldEncryptor, SqliteAppSettingsRepository, SqliteCredentialRepository,
-    SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
-    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository, SqliteSpaceBaseDirRepository,
-    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
-};
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::info;
+use mcpmux_runtime::Runtime;
+use mcpmux_storage::{Database, SqliteServerFeatureRepository};
 
 /// Global application state accessible from commands.
 pub struct AppState {
-    /// Base data directory for the app
-    data_dir: PathBuf,
-    /// Directory for space configuration files
-    spaces_dir: PathBuf,
-    /// App settings repository (for direct access when needed)
+    /// The shared runtime. Held by `Arc` so the lock + database + repos
+    /// outlive the bootstrap function and any future CLI can read them.
+    runtime: Arc<Runtime>,
+
+    /// Aliases for fields renamed by the runtime extraction. See the
+    /// module-level docs for the full mapping.
     pub settings_repository: Arc<dyn AppSettingsRepository>,
-    /// Gateway port service (handles port resolution with settings)
-    pub gateway_port_service: Arc<GatewayPortService>,
-    /// Service for managing spaces
-    pub space_service: SpaceService,
-    /// Server discovery service for loading servers from API/bundled/user spaces
-    pub server_discovery: Arc<ServerDiscoveryService>,
-    /// Server log manager for file-based logging
-    pub server_log_manager: Arc<ServerLogManager>,
-    /// Installed server repository (per-space installations)
     pub installed_server_repository: Arc<dyn InstalledServerRepository>,
-    /// Credential repository (with encryption)
     pub credential_repository: Arc<dyn CredentialRepository>,
-    /// Backend OAuth repository (our DCR with remote MCP servers)
-    pub backend_oauth_repository: Arc<dyn OutboundOAuthRepository>,
-    /// FeatureSet repository for permission bundles
     pub feature_set_repository: Arc<dyn FeatureSetRepository>,
-    /// Client repository for AI clients
     pub client_repository: Arc<dyn InboundMcpClientRepository>,
-    /// Workspace-root -> FeatureSet bindings (resolver v2)
     pub workspace_binding_repository: Arc<dyn WorkspaceBindingRepository>,
-    /// Per-Space base directories (scope a workspace root to a Space by prefix)
     pub space_base_dir_repository: Arc<dyn SpaceBaseDirRepository>,
-    /// Per-Space built-in server config (Tool Optimization enablement + tool toggles)
     pub space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository>,
-    /// Server feature repository for discovered MCP features (implements core trait)
     pub server_feature_repository: Arc<SqliteServerFeatureRepository>,
-    /// Server feature repository cast to core trait (for gateway services)
-    pub server_feature_repository_core: Arc<dyn CoreServerFeatureRepository>,
-    /// Field encryptor (used for credential repository creation)
-    #[allow(dead_code)]
-    pub encryptor: Arc<FieldEncryptor>,
-    /// Shared database connection (kept alive for the app lifetime)
-    #[allow(dead_code)]
-    db: Arc<Mutex<Database>>,
+    pub server_feature_repository_core: Arc<dyn ServerFeatureRepository>,
 }
 
 impl AppState {
-    /// Create a new application state with the given data directory.
+    /// Build the application state for the given data directory.
+    ///
+    /// Delegates to [`mcpmux_runtime::RuntimeBuilder`] for everything
+    /// environment-neutral: lock acquisition, key provider, SQLite +
+    /// migrations, repository graph, JWT secret, event bus.
+    ///
+    /// The setup closure runs synchronously; Tauri's `async_runtime`
+    /// provides the Tokio context so the runtime's `build()` can use
+    /// `block_in_place` internally.
     pub fn new(data_dir: PathBuf) -> anyhow::Result<Self> {
-        // Ensure data directory exists
-        std::fs::create_dir_all(&data_dir)?;
-
-        // Get or create master key (DPAPI on Windows, OS Keychain elsewhere)
-        info!("Retrieving master key...");
-        let key_provider = mcpmux_storage::create_key_provider(&data_dir)?;
-        let master_key = key_provider.get_or_create_key()?;
-        info!("Master key retrieved successfully");
-
-        // Create field encryptor
-        let encryptor = Arc::new(FieldEncryptor::new(&master_key)?);
-
-        // Open database
-        let db_path = data_dir.join("mcpmux.db");
-        info!("Opening database at {:?}", db_path);
-
-        let db = Database::open(&db_path)?;
-        let db = Arc::new(Mutex::new(db));
-
-        // Initialize repositories
-        let space_repository: Arc<dyn SpaceRepository> =
-            Arc::new(SqliteSpaceRepository::new(db.clone()));
-
-        let installed_server_repository: Arc<dyn InstalledServerRepository> = Arc::new(
-            SqliteInstalledServerRepository::new(db.clone(), encryptor.clone()),
-        );
-
-        let credential_repository: Arc<dyn CredentialRepository> = Arc::new(
-            SqliteCredentialRepository::new(db.clone(), encryptor.clone()),
-        );
-
-        let backend_oauth_repository: Arc<dyn OutboundOAuthRepository> =
-            Arc::new(SqliteOutboundOAuthRepository::new(db.clone()));
-
-        let feature_set_repository: Arc<dyn FeatureSetRepository> =
-            Arc::new(SqliteFeatureSetRepository::new(db.clone()));
-
-        let client_repository: Arc<dyn InboundMcpClientRepository> =
-            Arc::new(SqliteInboundMcpClientRepository::new(db.clone()));
-
-        let workspace_binding_repository: Arc<dyn WorkspaceBindingRepository> =
-            Arc::new(SqliteWorkspaceBindingRepository::new(db.clone()));
-
-        let space_base_dir_repository: Arc<dyn SpaceBaseDirRepository> =
-            Arc::new(SqliteSpaceBaseDirRepository::new(db.clone()));
-
-        let space_builtin_config_repository: Arc<dyn SpaceBuiltinConfigRepository> =
-            Arc::new(SqliteSpaceBuiltinConfigRepository::new(db.clone()));
-
-        let server_feature_repository = Arc::new(SqliteServerFeatureRepository::new(db.clone()));
-        let server_feature_repository_core: Arc<dyn CoreServerFeatureRepository> =
-            server_feature_repository.clone();
-
-        // Create app settings repository and services
-        let settings_repository: Arc<dyn AppSettingsRepository> =
-            Arc::new(SqliteAppSettingsRepository::new(db.clone()));
-        let settings_service = Arc::new(AppSettingsService::new(settings_repository.clone()));
-        let gateway_port_service = Arc::new(GatewayPortService::new(settings_repository.clone()));
-
-        // Create services
-        let space_service = SpaceService::with_feature_set_repository(
-            space_repository,
-            feature_set_repository.clone(),
-        );
-
-        // Create server discovery service
-        // Spaces directory is relative to app data_dir (single source of truth)
-        let spaces_dir = data_dir.join("spaces");
-        std::fs::create_dir_all(&spaces_dir)?;
-        info!("Using spaces directory: {:?}", spaces_dir);
-
-        let registry_url = std::env::var("MCPMUX_REGISTRY_URL")
-            .unwrap_or_else(|_| "https://api.mcpmux.com".to_string());
-        info!("Using Registry API URL: {}", registry_url);
-
-        let server_discovery = Arc::new(
-            ServerDiscoveryService::new(data_dir.clone(), spaces_dir.clone())
-                .with_registry_api(registry_url)
-                .with_settings_service(settings_service),
-        );
-
-        // Create server log manager
-        let log_config = LogConfig {
-            base_dir: data_dir.join("logs"),
-            max_file_size: 10 * 1024 * 1024, // 10MB
-            max_files: 30,                   // 30 files
-            compress: true,
-        };
-        let server_log_manager = Arc::new(ServerLogManager::new(log_config));
-
-        info!("Application state initialized successfully");
+        let runtime = tauri::async_runtime::block_on(async {
+            mcpmux_runtime::RuntimeBuilder::new()
+                .with_data_dir(data_dir)
+                // After an in-place update the OS relaunches the new build
+                // before the old process has exited and released the lock;
+                // wait it out the same way gateway auto-start waits for the
+                // port instead of failing setup.
+                .with_lock_wait(mcpmux_core::service::AUTOSTART_PORT_WAIT)
+                .build()
+                .await
+        })?;
 
         Ok(Self {
-            data_dir,
-            spaces_dir,
-            settings_repository,
-            gateway_port_service,
-            space_service,
-            server_discovery,
-            server_log_manager,
-            installed_server_repository,
-            credential_repository,
-            backend_oauth_repository,
-            feature_set_repository,
-            client_repository,
-            workspace_binding_repository,
-            space_base_dir_repository,
-            space_builtin_config_repository,
-            server_feature_repository,
-            server_feature_repository_core,
-            encryptor,
-            db,
+            settings_repository: runtime.repositories.app_settings.clone(),
+            installed_server_repository: runtime.repositories.installed_server.clone(),
+            credential_repository: runtime.repositories.credential.clone(),
+            feature_set_repository: runtime.repositories.feature_set.clone(),
+            client_repository: runtime.repositories.client.clone(),
+            workspace_binding_repository: runtime.repositories.workspace_binding.clone(),
+            space_base_dir_repository: runtime.repositories.space_base_dir.clone(),
+            space_builtin_config_repository: runtime.repositories.space_builtin_config.clone(),
+            server_feature_repository: runtime.repositories.server_feature.clone(),
+            server_feature_repository_core: runtime.repositories.server_feature_core.clone(),
+            runtime,
         })
     }
 
-    /// Get the shared database connection for use by other components (e.g., gateway)
-    pub fn database(&self) -> Arc<Mutex<Database>> {
-        self.db.clone()
+    /// Shared database handle. Used by the gateway bootstrap and the
+    /// desktop's OAuth flow; aliases the runtime's `database` field for
+    /// callers that read it as a method.
+    pub fn database(&self) -> Arc<tokio::sync::Mutex<Database>> {
+        self.runtime.database.clone()
     }
 
-    /// Get the base data directory for the app
-    pub fn data_dir(&self) -> &std::path::Path {
-        &self.data_dir
+    /// Data directory root. Kept as a method (returning `&Path`) so
+    /// callers that did `app_state.data_dir().to_path_buf()` keep working.
+    pub fn data_dir(&self) -> &Path {
+        &self.runtime.data_dir
     }
 
-    /// Get the spaces configuration directory
+    /// Spaces configuration directory. Same rationale as [`Self::data_dir`].
     #[allow(dead_code)]
-    pub fn spaces_dir(&self) -> &std::path::Path {
-        &self.spaces_dir
+    pub fn spaces_dir(&self) -> &Path {
+        &self.runtime.spaces_dir
     }
 
     /// Get the path to a specific space's config file.
     ///
-    /// Fails when `space_id` is not a valid UUID — the id arrives over IPC,
-    /// so this is the path-traversal guard for every space-config command.
+    /// Fails when `space_id` is not a valid UUID — the id arrives over
+    /// IPC, so this is the path-traversal guard for every space-config
+    /// command.
     pub fn space_config_path(&self, space_id: &str) -> Result<PathBuf, String> {
-        mcpmux_core::get_space_config_path(&self.spaces_dir, space_id)
+        mcpmux_core::get_space_config_path(&self.runtime.spaces_dir, space_id)
             .map_err(|e| format!("Invalid space id '{space_id}': {e}"))
+    }
+
+    /// Access the underlying runtime for the few callers that need it
+    /// (gateway construction in `commands/gateway.rs`, event-bridge
+    /// subscribers in Phase 2).
+    pub fn runtime(&self) -> &Arc<Runtime> {
+        &self.runtime
+    }
+}
+
+impl Deref for AppState {
+    type Target = Runtime;
+
+    fn deref(&self) -> &Runtime {
+        &self.runtime
     }
 }

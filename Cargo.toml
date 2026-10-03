@@ -1,10 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/cli",
+    "apps/daemon",
     "apps/desktop/src-tauri",
+    "crates/mcpmux-control",
     "crates/mcpmux-core",
     "crates/mcpmux-gateway",
     "crates/mcpmux-mcp",
+    "crates/mcpmux-runtime",
     "crates/mcpmux-storage",
     "tests/rust",
 ]
@@ -55,6 +59,13 @@ url = "2.5"
 urlencoding = "2.1"
 dotenvy = "0.15"
 os_pipe = "1"
+process-wrap = "9"
+
+# Cross-platform file locking (flock on Unix, LockFileEx on Windows)
+fs2 = "0.4"
+
+# CLI parsing for `mcpmuxd` and `mcpmux`
+clap = { version = "4", features = ["derive", "env"] }
 
 # MCP Protocol
 # NOTE: Never use local path dependency - E:\one-mcp\rust-sdk is for source lookup only
@@ -74,14 +85,15 @@ axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 
 # Internal crates (path-only for workspace)
+mcpmux-control = { path = "crates/mcpmux-control" }
 mcpmux-core = { path = "crates/mcpmux-core" }
 mcpmux-gateway = { path = "crates/mcpmux-gateway" }
 mcpmux-mcp = { path = "crates/mcpmux-mcp" }
+mcpmux-runtime = { path = "crates/mcpmux-runtime" }
 mcpmux-storage = { path = "crates/mcpmux-storage" }
 
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
-
 

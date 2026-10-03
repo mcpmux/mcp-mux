@@ -274,7 +274,7 @@ async fn auth_enabled_full_oauth_flow_then_authenticated_mcp() {
         status,
         reqwest::StatusCode::OK,
         "authorize should render the consent page; got {status}, location={location:?}, body={}",
-        &html.chars().take(300).collect::<String>()
+        html.chars().take(300).collect::<String>()
     );
     let request_id =
         between(&html, "request_id=", &['"', '&', ' ', '\'']).expect("request_id in consent HTML");

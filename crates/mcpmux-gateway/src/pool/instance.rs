@@ -373,6 +373,17 @@ impl McpClientConnection {
             Self::Http { client } => Some(client),
         }
     }
+
+    /// Cancel the MCP service and wait for its transport to release its child process.
+    pub async fn shutdown(self) {
+        let client = match self {
+            Self::Stdio { client } | Self::Http { client } => client,
+        };
+
+        if let Err(error) = client.cancel().await {
+            warn!(%error, "Failed to shut down MCP client service");
+        }
+    }
 }
 
 impl ServerInstance {
@@ -415,6 +426,17 @@ impl ServerInstance {
 
         *self.features.write() = Some(features);
         *self.client.write() = Some(connection);
+    }
+
+    /// Explicitly close the client before this instance is released.
+    ///
+    /// A dropped `RunningService` cancels in the background. On Windows that
+    /// can race application exit, leaving a stdio server and its console alive.
+    pub async fn shutdown(&self) {
+        let connection = self.client.write().take();
+        if let Some(connection) = connection {
+            connection.shutdown().await;
+        }
     }
 
     /// Update state to failed.

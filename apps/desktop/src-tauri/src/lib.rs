@@ -3,6 +3,7 @@
 //! Centralized MCP Server Management Desktop Application
 
 use mcpmux_core::branding;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
@@ -36,6 +37,14 @@ const APP_IDENTIFIER: &str = env!("TAURI_APP_IDENTIFIER");
 /// - macOS: ~/Library/Application Support/<identifier>/
 /// - Linux: ~/.local/share/<identifier>/
 fn get_app_data_dir() -> std::path::PathBuf {
+    if std::env::var_os("MCPMUX_E2E_TEST").is_some() {
+        if let Some(path) = std::env::var_os("MCPMUX_E2E_DATA_DIR") {
+            if !path.is_empty() {
+                return path.into();
+            }
+        }
+    }
+
     dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(APP_IDENTIFIER)
@@ -48,78 +57,31 @@ fn get_logs_dir() -> std::path::PathBuf {
 
 /// Initialize tracing for the application with console and file logging
 ///
+/// Thin wrapper around [`mcpmux_runtime::init_tracing`] that picks the
+/// desktop-shaped `LogSink` (daily rotating files under the app's data
+/// directory). Kept as a local helper because the desktop's path
+/// resolution uses Tauri-specific constants (the app identifier + data
+/// directory from `app_local_data_dir`).
+///
 /// - Console: colored, compact format
 /// - File: daily rotation in ~/.local/share/mcpmux/logs/ (Linux)
 ///   or %LOCALAPPDATA%/mcpmux/logs/ (Windows)
-fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
-    use tracing_appender::rolling::{RollingFileAppender, Rotation};
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
+fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     // Load .env file if present (for development)
-    // Try multiple locations: current dir, parent dir (for tauri dev), src-tauri parent
     dotenvy::dotenv().ok();
     dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
 
     let logs_dir = get_logs_dir();
-
-    // Create logs directory if it doesn't exist
-    if let Err(e) = std::fs::create_dir_all(&logs_dir) {
-        eprintln!("Warning: Failed to create logs directory: {}", e);
-    }
-
-    // File appender with daily rotation
-    // Creates files like: mcpmux.2026-01-22.log
-    let file_appender = RollingFileAppender::builder()
-        .rotation(Rotation::DAILY)
-        .filename_prefix(branding::LOG_PREFIX)
-        .filename_suffix("log")
-        .build(&logs_dir)
-        .expect("Failed to create log file appender");
-    let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
-
-    // Environment filter for log levels
-    // RUST_LOG takes precedence, with sensible defaults for our crates
-    // Note: Rust crate names use underscores in tracing (e.g., mcpmux-core → mcpmux_core)
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        // Default filter when RUST_LOG is not set
-        EnvFilter::new("info")
-            .add_directive("mcpmux_core=debug".parse().unwrap())
-            .add_directive("mcpmux_gateway=debug".parse().unwrap())
-            .add_directive("mcpmux_storage=debug".parse().unwrap())
-            .add_directive("mcpmux_mcp=debug".parse().unwrap())
-            .add_directive("mcpmux_lib=debug".parse().unwrap())
-            .add_directive("tauri=info".parse().unwrap())
-            .add_directive("tao=warn".parse().unwrap())
-            .add_directive("wry=warn".parse().unwrap())
-    });
-
-    // Console layer: colored, compact
-    let console_layer = fmt::layer()
-        .with_ansi(true)
-        .compact()
-        .with_thread_names(false)
-        .with_line_number(false)
-        .with_file(false)
-        .with_target(true);
-
-    // File layer: no colors, include more detail
-    let file_layer = fmt::layer()
-        .with_writer(non_blocking_file)
-        .with_ansi(false)
-        .with_thread_ids(true)
-        .with_line_number(true)
-        .with_file(true)
-        .with_target(true);
-
-    // Combine layers
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(console_layer)
-        .with(file_layer)
-        .init();
-
-    // Return guard - must be kept alive for the duration of the program
-    guard
+    let sink = mcpmux_runtime::LogSink::DailyRolling {
+        dir: logs_dir,
+        prefix: branding::LOG_PREFIX.to_string(),
+    };
+    let cfg = mcpmux_runtime::TracingConfig {
+        sink,
+        filter: mcpmux_runtime::default_filter(),
+        console_ansi: std::io::stdout().is_terminal(),
+    };
+    mcpmux_runtime::init_tracing(&cfg)
 }
 
 /// Get app version (compiled into the binary)
@@ -271,14 +233,14 @@ pub fn run() {
         .setup(|app| {
             info!("Initializing application state...");
 
-            // Get data directory (Local, not Roaming - machine-specific data)
-            let data_dir = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to get app local data directory");
-            let app_data_dir = data_dir.clone();
+            // Get data directory (Local, not Roaming - machine-specific data).
+            // The runtime takes ownership of the path; nothing else needs it.
+            let data_dir = get_app_data_dir();
 
-            // Create and manage application state
+            // Create and manage application state.
+            // AppState::new delegates the environment-neutral bootstrap
+            // (lock + key + DB + repos) to mcpmux_runtime, so the desktop
+            // only retains Tauri-specific wiring on top.
             let state = AppState::new(data_dir).map_err(|e| {
                 error!("Failed to initialize application state: {}", e);
                 e.to_string()
@@ -342,15 +304,11 @@ pub fn run() {
             // Create server manager state (will be initialized when gateway starts)
             let server_manager_state = Arc::new(RwLock::new(ServerManagerState::default()));
 
-            // Get repositories for pool services (clone before moving into spawn)
-            let db_for_gateway = app_state.database();
-            let installed_server_repo = app_state.installed_server_repository.clone();
-            let credential_repo = app_state.credential_repository.clone();
-            let backend_oauth_repo = app_state.backend_oauth_repository.clone();
-            let feature_set_repo = app_state.feature_set_repository.clone();
-            let feature_repo = app_state.server_feature_repository_core.clone();
-            let server_discovery = app_state.server_discovery.clone();
-            let server_log_manager = app_state.server_log_manager.clone();
+            // The runtime owns the gateway bootstrap (repos + key + JWT).
+            // Clone the runtime out so the `'static` async block can carry
+            // it without borrowing from `app`'s lifetime. Same for the
+            // other Tauri-owned handles it needs.
+            let runtime = app_state.runtime().clone();
             let port_service = app_state.gateway_port_service.clone();
             let settings_repo = app_state.settings_repository.clone();
 
@@ -431,65 +389,29 @@ pub fn run() {
                 let local_url = format!("http://localhost:{}", final_port);
                 info!("Auto-starting gateway on {} (advertising {})", local_url, url);
 
-                // Load JWT signing secret (DPAPI on Windows, keychain elsewhere)
-                let jwt_secret = match mcpmux_storage::create_jwt_secret_provider(&app_data_dir) {
-                    Ok(provider) => match provider.get_or_create_secret() {
-                        Ok(secret) => {
-                            info!("[Gateway] JWT signing secret loaded");
-                            Some(secret)
-                        }
-                        Err(e) => {
-                            warn!("[Gateway] Failed to load JWT secret: {}. Token signing disabled.", e);
-                            None
-                        }
-                    },
-                    Err(e) => {
-                        warn!("[Gateway] Failed to create JWT secret provider: {}. Token signing disabled.", e);
-                        None
-                    }
-                };
-
-                // Build gateway dependencies using DI builder pattern
-                let mut deps_builder = mcpmux_gateway::DependenciesBuilder::new()
-                    .with_installed_server_repo(installed_server_repo)
-                    .with_credential_repo(credential_repo)
-                    .with_backend_oauth_repo(backend_oauth_repo)
-                    .with_feature_repo(feature_repo)
-                    .with_feature_set_repo(feature_set_repo)
-                    .with_server_discovery(server_discovery)
-                    .with_log_manager(server_log_manager)
-                    .with_database(db_for_gateway)
-                    .with_state_dir(app_data_dir.clone())
-                    .with_settings_repo(settings_repo);
-
-                if let Some(secret) = jwt_secret {
-                    deps_builder = deps_builder.with_jwt_secret(secret);
-                }
-
-                let dependencies = match deps_builder.build() {
-                    Ok(deps) => deps,
-                    Err(e) => {
-                        warn!("[Gateway] Failed to build dependencies: {}", e);
-                        return;
-                    }
-                };
-
-                // Create gateway config
-                let config = mcpmux_gateway::GatewayConfig {
+                // Build the gateway through the runtime. The runtime owns
+                // master key + JWT secret loading + repository wiring, so
+                // we only need the resolved config here.
+                let gw_config = mcpmux_gateway::GatewayConfig {
                     host: crate::commands::gateway::bind_host_for(network_access).to_string(),
                     port: final_port,
                     public_base_url: public_base_url.clone(),
                     enable_cors: true,
                 };
 
-                // Create self-contained gateway server with DI
-                // Gateway auto-initializes all services and auto-connects enabled servers
-                let server = mcpmux_gateway::GatewayServer::new(config, dependencies);
-                let gw_inner_state = server.state();
+                let server = match runtime.build_gateway_server(gw_config).await {
+                    Ok(server) => server,
+                    Err(e) => {
+                        warn!("[Gateway] Failed to build gateway: {}", e);
+                        return;
+                    }
+                };
 
                 if auth_disabled {
-                    gw_inner_state.write().await.set_auth_disabled(true);
+                    server.state().write().await.set_auth_disabled(true);
                 }
+
+                let gw_inner_state = server.state();
 
                 // Get services from gateway
                 let pool_service = server.pool_service();
@@ -1046,13 +968,16 @@ pub fn run() {
                 {
                     let gw_state = gw_state.inner().clone();
                     tauri::async_runtime::block_on(async move {
-                        let handle = {
+                        let (handle, pool_service) = {
                             let mut state = gw_state.write().await;
                             state.running = false;
                             state.url = None;
                             state.bound_port = None;
-                            state.handle.take()
+                            (state.handle.take(), state.pool_service.take())
                         };
+                            if let Some(pool) = pool_service {
+                                pool.shutdown().await;
+                            }
                         if let Some(h) = handle {
                             info!("[Gateway] ExitRequested — gracefully shutting down gateway");
                             crate::commands::gateway::shutdown_gateway_handle(h).await;

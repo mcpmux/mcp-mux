@@ -1,0 +1,48 @@
+[package]
+name = "mcpmuxd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "McpMux headless daemon (mcpmuxd)"
+
+[[bin]]
+name = "mcpmuxd"
+path = "src/main.rs"
+
+[dependencies]
+mcpmux-control.workspace = true
+mcpmux-core.workspace = true
+mcpmux-gateway.workspace = true
+mcpmux-runtime.workspace = true
+mcpmux-storage.workspace = true
+
+tokio = { workspace = true, features = ["full", "signal", "macros", "rt-multi-thread"] }
+async-trait.workspace = true
+futures.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+
+anyhow.workspace = true
+thiserror.workspace = true
+
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+
+uuid.workspace = true
+chrono.workspace = true
+zeroize.workspace = true
+
+clap.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls"] }
+url.workspace = true
+which = "7.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.14"
+libc = "0.2"

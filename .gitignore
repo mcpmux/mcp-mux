@@ -92,3 +92,10 @@ apps/desktop/src-tauri/target/release/bundle/
 debug/
 *.dSYM/
 
+# Local profile backups created by E2E runs and export/import tests.
+# These contain real user data (SQLite profile + spaces), never commit them.
+recovery/
+
+# SQLite sidecar files; `*.db` alone does not cover these.
+*.db-shm
+*.db-wal

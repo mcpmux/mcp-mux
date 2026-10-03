@@ -10,6 +10,7 @@
 //! - Bulk connect on startup (reconnect_all_enabled)
 //! - Providing access to server instances for routing
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -82,6 +83,10 @@ pub struct PoolService {
     /// connections — two live child processes for stdio servers. Entries are
     /// never removed: the key space is bounded by configured servers.
     connect_locks: DashMap<(Uuid, String), Arc<tokio::sync::Mutex<()>>>,
+    /// Set at the start of [`PoolService::shutdown`]. Once set, no further
+    /// connections are admitted, so the final drain cannot be raced by a
+    /// `connect_server` that inserts (and spawns) after the snapshot.
+    shutting_down: AtomicBool,
     /// Connection service
     connection_service: Arc<ConnectionService>,
     /// Feature service
@@ -99,6 +104,7 @@ impl PoolService {
         Self {
             instances: DashMap::new(),
             connect_locks: DashMap::new(),
+            shutting_down: AtomicBool::new(false),
             connection_service,
             feature_service,
             token_service,
@@ -277,6 +283,12 @@ impl PoolService {
             .clone();
         let _connect_guard = connect_lock.lock().await;
 
+        if self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return ConnectionResult::Failed {
+                error: "Pool is shutting down".to_string(),
+            };
+        }
+
         // Check for existing instance. Clone the Arc out of the DashMap so
         // no shard guard is held across the reconnect `.await` below.
         let existing = self.instances.get(&key).map(|e| e.value().clone());
@@ -295,10 +307,11 @@ impl PoolService {
             }
 
             // Existing instance but not healthy - reconnect through it
-            return self
+            let result = self
                 .connection_service
                 .connect_with_instance(ctx, &instance, &self.feature_service)
                 .await;
+            return self.reap_if_shutting_down(&key, &instance, result).await;
         }
 
         // Create new instance
@@ -337,7 +350,29 @@ impl PoolService {
             self.instances.remove(&key);
         }
 
-        result
+        self.reap_if_shutting_down(&key, &instance, result).await
+    }
+
+    /// Drop a connection that completed after [`PoolService::shutdown`] began.
+    ///
+    /// Without this, a `connect_server` that was already past the
+    /// `shutting_down` check can populate an instance the drain has already
+    /// shut down, leaving a live stdio process behind once the gateway reports
+    /// stopped.
+    async fn reap_if_shutting_down(
+        &self,
+        key: &(Uuid, String),
+        instance: &Arc<ServerInstance>,
+        result: ConnectionResult,
+    ) -> ConnectionResult {
+        if !self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return result;
+        }
+        instance.shutdown().await;
+        self.instances.remove(key);
+        ConnectionResult::Failed {
+            error: "Pool shut down while this connection was being established".to_string(),
+        }
     }
 
     /// Remove instance only (for disable - keeps tokens)
@@ -350,6 +385,42 @@ impl PoolService {
                 space_id, server_id
             );
         }
+    }
+
+    /// Close every live backend connection without changing persisted credentials.
+    ///
+    /// This is used when the gateway stops or the desktop app exits. In
+    /// particular, closing a stdio connection releases its process transport;
+    /// on Windows that terminates the whole Job Object, including descendants
+    /// created by wrappers such as `npx`.
+    pub async fn shutdown(&self) {
+        // Admit no further connections before draining, so nothing can be
+        // inserted (and spawned) behind the snapshot below.
+        self.shutting_down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        // Drain repeatedly. A `connect_server` already past the flag check can
+        // still insert and spawn while we await the first batch; sweep again
+        // until the map stays empty.
+        let mut total = 0usize;
+        loop {
+            let instances: Vec<Arc<ServerInstance>> = self
+                .instances
+                .iter()
+                .map(|entry| Arc::clone(entry.value()))
+                .collect();
+            if instances.is_empty() {
+                break;
+            }
+            total += instances.len();
+            self.instances.clear();
+            futures::future::join_all(instances.iter().map(|instance| instance.shutdown())).await;
+        }
+
+        info!(
+            "[PoolService] Released {} backend connection(s) for gateway shutdown",
+            total
+        );
     }
 
     /// Disconnect a server (logout - clears tokens but keeps DCR)

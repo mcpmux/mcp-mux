@@ -1,0 +1,31 @@
+[package]
+name = "mcpmux-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "McpMux operator CLI — talks to a running mcpmuxd over its local control socket"
+
+[[bin]]
+name = "mcpmux-cli"
+path = "src/main.rs"
+
+[lib]
+name = "mcpmux_cli"
+path = "src/lib.rs"
+
+[dependencies]
+mcpmux-control.workspace = true
+mcpmux-runtime.workspace = true
+
+clap.workspace = true
+
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time", "signal"] }
+
+serde.workspace = true
+serde_json.workspace = true
+
+anyhow.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

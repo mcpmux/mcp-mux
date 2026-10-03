@@ -11,6 +11,7 @@ mod registry_api_client;
 mod server_discovery;
 mod server_log_manager;
 mod space_service;
+mod workspace_snippet;
 
 pub use app_settings_service::{keys, AppSettingsService};
 pub use cimd_fetcher::*;
@@ -24,3 +25,6 @@ pub use registry_api_client::*;
 pub use server_discovery::*;
 pub use server_log_manager::*;
 pub use space_service::*;
+pub use workspace_snippet::{
+    build_entry, find_client, snippet, ClientSpec, CLIENTS, SERVER_NAME, WORKSPACE_HEADER,
+};

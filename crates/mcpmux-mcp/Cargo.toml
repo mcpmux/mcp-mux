@@ -22,6 +22,14 @@ hex.workspace = true
 ring.workspace = true
 shell-words = "1.1"
 
+[target.'cfg(windows)'.dependencies]
+process-wrap.workspace = true
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 

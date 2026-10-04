@@ -76,6 +76,21 @@ describe('Built-in Servers - Tool Optimization UI', () => {
 });
 
 describe('Meta tools - Approval dialog', () => {
+  // The dialog queues requests and renders only queue[0]. A request an
+  // earlier test left open would shadow the one the next test emits, as
+  // TC-MT-010's request did for TC-MT-011. Deny everything still queued. This
+  // runs before each test body, so before that test emits its own request.
+  beforeEach(async () => {
+    await browser.waitUntil(
+      async () => {
+        if (!(await (await byTestId('meta-tool-approval-dialog')).isExisting())) return true;
+        await (await byTestId('meta-tool-approval-deny')).click();
+        return false;
+      },
+      { timeout: TIMEOUT.medium, interval: 300, timeoutMsg: 'approval dialog queue did not drain' }
+    );
+  });
+
   it('TC-MT-010: Emitting `meta-tool-approval-request` surfaces the dialog', async () => {
     // Fire a synthetic approval request from the Rust side; the dialog
     // component listens on this exact Tauri event name, no gateway needed.
@@ -112,8 +127,7 @@ describe('Meta tools - Approval dialog', () => {
   });
 
   it('TC-MT-011: Clicking Deny closes the dialog and records a decision', async () => {
-    // Queue a fresh dialog (previous test may have left one mid-flight on
-    // slow CI — wait for it to close first).
+    // beforeEach drained the queue, so this request is the one rendered.
     const requestId = `test-deny-${Date.now()}`;
     await emitEvent('meta-tool-approval-request', {
       request_id: requestId,

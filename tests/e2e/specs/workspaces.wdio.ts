@@ -184,35 +184,58 @@ describe('Workspaces - Empty mapping (no Space tools)', () => {
   });
 });
 
-describe('Workspaces - Create form flow (UI)', () => {
+/** Unique id/label for an id-type mapping. Contains "mcpmux-e2e" so the
+ *  Page-shell before() cleanup sweeps any leftovers. */
+function uniqueMappingId(): string {
+  return `mcpmux-e2e-id-${Date.now()}`;
+}
+
+/** Click a control inside the setup wizard. Not safeClick: its modal wait
+ *  matches the wizard's bg-black/20 backdrop, stalls ~5s, then sends Escape,
+ *  which the wizard ignores. The wizard (z-50) sits above that backdrop. */
+async function clickInWizard(testId: string): Promise<void> {
+  const el = await byTestId(testId);
+  await el.waitForEnabled({ timeout: TIMEOUT.short });
+  await el.waitForClickable({ timeout: TIMEOUT.short });
+  await el.click();
+}
+
+describe('Workspaces - Create wizard flow (UI)', () => {
   let bindingId: string | null = null;
 
-  it('TC-WS-006: Create mapping through the form and see it listed', async () => {
+  // "New mapping" opens the 3-step WorkspaceSetupWizard (key -> connect apps
+  // -> tools). Its Folder step only offers the native folder dialog, which
+  // WebDriver can't drive, so these specs use the wizard's "ID / label" type.
+  // It's the same wizard, the same already-mapped guard, and the same create
+  // call. Folder-type creation is covered by
+  // tests/ts/components/WorkspaceSetupWizard.test.tsx, which mocks the dialog.
+  it('TC-WS-006: Create a mapping through the setup wizard and see it listed', async () => {
     const nav = await byTestId('nav-workspaces');
     await safeClick(nav);
     await browser.pause(1000);
 
     const toggle = await byTestId('workspace-binding-create-toggle');
     await safeClick(toggle);
-    await browser.pause(400);
+    await (await byTestId('workspace-setup-wizard')).waitForDisplayed({ timeout: TIMEOUT.short });
 
-    const rootInput = await byTestId('workspace-binding-root-input');
-    const root = uniqueRoot();
-    await rootInput.setValue(root);
-    // Let the debounced root validation + default FS auto-select settle.
-    await browser.pause(600);
+    // Step 1: switch the key type to ID / label and type the key.
+    await clickInWizard('wizard-type-id');
+    const idInput = await byTestId('wizard-id-input');
+    await idInput.waitForDisplayed({ timeout: TIMEOUT.short });
+    const key = uniqueMappingId();
+    await idInput.setValue(key);
 
-    // Space defaults to the default space + its starter FS is auto-selected,
-    // so the explicit Apply ("Create mapping") can be pressed without touching
-    // the pickers.
-    const submit = await byTestId('workspace-binding-submit');
-    await submit.waitForEnabled({ timeout: TIMEOUT.short });
-    await safeClick(submit);
+    // Step 2 (how clients connect) is informational. Step 3 (tools) defaults
+    // to the default Space with its Starter FS pre-selected, so Finish is
+    // enabled without touching the pickers.
+    await clickInWizard('wizard-next');
+    await (await byTestId('wizard-step-apps')).waitForDisplayed({ timeout: TIMEOUT.short });
+    await clickInWizard('wizard-next');
+    await (await byTestId('wizard-step-tools')).waitForDisplayed({ timeout: TIMEOUT.short });
+    await clickInWizard('wizard-finish');
     await browser.pause(800);
 
-    const created = (await listWorkspaceBindings()).find((b) =>
-      b.workspace_root.toLowerCase().endsWith(root.toLowerCase())
-    );
+    const created = (await listWorkspaceBindings()).find((b) => b.workspace_root === key);
     expect(created).toBeTruthy();
     if (created) {
       bindingId = created.id;
@@ -222,9 +245,14 @@ describe('Workspaces - Create form flow (UI)', () => {
     }
 
     await browser.saveScreenshot('./tests/e2e/screenshots/ws-04-created-via-form.png');
+
+    // Finish lands on the new mapping's inspector. Close it (Escape listener)
+    // so the next test starts from the bare list.
+    await browser.keys('Escape');
+    await browser.pause(300);
   });
 
-  it('TC-WS-007: Mapping an already-mapped folder shows a duplicate error and blocks Apply', async () => {
+  it('TC-WS-007: Re-entering an already-mapped key shows the duplicate error and blocks Continue', async () => {
     if (!bindingId) throw new Error('bindingId missing — TC-WS-006 must succeed first');
     const existing = (await listWorkspaceBindings()).find((b) => b.id === bindingId);
     if (!existing) throw new Error('expected the TC-WS-006 binding to still exist');
@@ -235,20 +263,26 @@ describe('Workspaces - Create form flow (UI)', () => {
 
     const toggle = await byTestId('workspace-binding-create-toggle');
     await safeClick(toggle);
-    await browser.pause(400);
+    await (await byTestId('workspace-setup-wizard')).waitForDisplayed({ timeout: TIMEOUT.short });
 
-    const rootInput = await byTestId('workspace-binding-root-input');
-    await rootInput.setValue(existing.workspace_root);
-    await browser.pause(700); // debounced validation + duplicate check
+    await clickInWizard('wizard-type-id');
+    const idInput = await byTestId('wizard-id-input');
+    await idInput.waitForDisplayed({ timeout: TIMEOUT.short });
+    await idInput.setValue(existing.workspace_root);
 
-    const dupError = await byTestId('workspace-binding-duplicate-error');
+    const dupError = await byTestId('wizard-folder-mapped-error');
     await dupError.waitForDisplayed({ timeout: TIMEOUT.short });
     expect(await dupError.isDisplayed()).toBe(true);
 
-    const submit = await byTestId('workspace-binding-submit');
-    expect(await submit.isEnabled()).toBe(false);
+    // Step 1's Continue is the wizard's only way forward, so a disabled
+    // Continue means no duplicate mapping can be created.
+    const next = await byTestId('wizard-next');
+    expect(await next.isEnabled()).toBe(false);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/ws-05-duplicate.png');
+
+    // Cancel (wizard-back on step 1) closes the wizard.
+    await clickInWizard('wizard-back');
   });
 
   after(async () => {

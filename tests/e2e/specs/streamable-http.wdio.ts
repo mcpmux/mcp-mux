@@ -571,6 +571,14 @@ describe('Streamable HTTP: OAuth MCP Client Flow', function () {
         feature_name: 'list-and-call-me',
         display_name: 'List And Call Me',
         description: 'E2E tool proving list==call',
+        // tools/list only emits features that carry raw backend tool JSON. It
+        // deserializes an rmcp `Tool` from that JSON, so `name` and
+        // `inputSchema` are required.
+        raw_json: {
+          name: 'list-and-call-me',
+          description: 'E2E tool proving list==call',
+          inputSchema: { type: 'object', properties: {} },
+        },
       },
     ]);
     expect(seeded.length).toBe(1);
@@ -642,7 +650,8 @@ describe('Streamable HTTP: OAuth MCP Client Flow', function () {
 
     // 5. tools/call the EXACT listed name. It may fail to execute (no live
     //    backend behind the seeded feature), but it must NEVER be rejected by
-    //    grants — that is the invariant the fix guarantees.
+    //    grants — that is the invariant the fix guarantees. The expected error
+    //    is "Server not connected: com.e2e-listcall-http".
     const callRes = await fetch(`http://localhost:${gatewayPort}/mcp`, {
       method: 'POST',
       headers: {

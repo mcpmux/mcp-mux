@@ -431,6 +431,26 @@ export const config: Options.Testrunner = {
     timeout: 60000,
   },
 
+  // Wait for the webview bundle (main.tsx) to expose the test API before any
+  // spec runs. Specs whose first step is an API call (e.g. comprehensive's
+  // `before`) otherwise race app boot — seen on WebView2 as
+  // "Tauri Test API not available".
+  before: async function () {
+    await browser.waitUntil(
+      () =>
+        browser
+          .execute(
+            () => !!(window as unknown as { __TAURI_TEST_API__?: unknown }).__TAURI_TEST_API__
+          )
+          .catch(() => false),
+      {
+        timeout: 30000,
+        interval: 250,
+        timeoutMsg: 'window.__TAURI_TEST_API__ was not exposed within 30s',
+      }
+    );
+  },
+
   // Take screenshot on test failure
   afterTest: async function (test, context, { error }) {
     if (error) {

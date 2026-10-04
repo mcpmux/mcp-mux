@@ -3,7 +3,7 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId } from '../helpers/selectors';
+import { byTestId, TIMEOUT } from '../helpers/selectors';
 
 describe('Gateway Status - Dashboard', () => {
   before(async () => {
@@ -88,27 +88,26 @@ describe('Gateway Status - Dashboard', () => {
   it('TC-GW-008: Dashboard statistics are displayed', async () => {
     // Check stats grid exists
     const statsGrid = await byTestId('dashboard-stats-grid');
-    const gridDisplayed = await statsGrid.isDisplayed().catch(() => false);
-    
+    await statsGrid.waitForDisplayed({ timeout: TIMEOUT.medium });
+
     await browser.saveScreenshot('./tests/e2e/screenshots/gw-08-dashboard-stats.png');
-    
-    // Verify individual stat cards
-    const pageSource = await browser.getPageSource();
-    
-    const hasServersCard = pageSource.includes('Tools');
-    const hasFeatureSetsCard = pageSource.includes('FeatureSets');
-    const hasClientsCard = pageSource.includes('Apps');
-    const hasActiveSpaceCard = pageSource.includes('Space');
-    
-    console.log('[DEBUG] Stats - Servers:', hasServersCard);
-    console.log('[DEBUG] Stats - FeatureSets:', hasFeatureSetsCard);
-    console.log('[DEBUG] Stats - Clients:', hasClientsCard);
-    console.log('[DEBUG] Stats - Active Space:', hasActiveSpaceCard);
-    
-    expect(hasServersCard).toBe(true);
-    expect(hasFeatureSetsCard).toBe(true);
-    expect(hasClientsCard).toBe(true);
-    expect(hasActiveSpaceCard).toBe(true);
+
+    // Verify individual stat tiles by testid + label. Page-source substring
+    // checks are vacuous here (the sidebar always renders Tools / FeatureSets /
+    // Clients / Spaces), and the "Apps" tile was renamed "Clients" in #203.
+    const tiles: Array<[string, string]> = [
+      ['stat-servers', 'Tools'],
+      ['stat-featuresets', 'FeatureSets'],
+      ['stat-clients', 'Clients'],
+      ['stat-active-space', 'Space'],
+    ];
+    for (const [testId, label] of tiles) {
+      const tile = await byTestId(testId);
+      expect(await tile.isDisplayed()).toBe(true);
+      const text = await tile.getText();
+      console.log(`[DEBUG] Stats - ${testId}:`, JSON.stringify(text));
+      expect(text.includes(label)).toBe(true);
+    }
   });
 });
 

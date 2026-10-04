@@ -228,6 +228,8 @@ export interface SeedFeatureInput {
   feature_name: string;
   display_name?: string;
   description?: string;
+  /** Raw backend JSON. A seeded tool needs `{ name, inputSchema }` to appear in tools/list. */
+  raw_json?: Record<string, unknown>;
 }
 
 /** Seed server features into the database for screenshot/E2E purposes. */

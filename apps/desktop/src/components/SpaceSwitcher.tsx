@@ -69,6 +69,7 @@ export function SpaceSwitcher({ className = '' }: SpaceSwitcherProps) {
       {/* Trigger Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
+        data-testid="space-switcher"
         className="group flex w-full items-center justify-between gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2.5 transition-all duration-150 hover:border-[rgb(var(--primary))/30] hover:bg-[rgb(var(--surface-hover))]"
       >
         <span className="flex min-w-0 items-center gap-2.5">

@@ -79,23 +79,29 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     expect(isConnected).toBe(true);
   });
 
-  it('TC-FS-002: Verify server-all FeatureSet is created for GitHub Server', async () => {
+  it('TC-FS-002: Verify GitHub Server features are offered to FeatureSets', async () => {
+    // Per-server "server-all" FeatureSets no longer exist (FeatureSetType is
+    // Starter | Custom since #151). An enabled server's features are instead
+    // offered as members in a FeatureSet's panel, grouped by server id.
     const featureSetsButton = await byTestId('nav-featuresets');
     await safeClick(featureSetsButton);
     await browser.pause(2000);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/fs-03-featuresets-with-server.png');
 
-    // Look for GitHub Server's FeatureSet
-    const pageSource = await browser.getPageSource();
-    const hasGithubFeatureSet =
-      pageSource.includes('GitHub Server') ||
-      pageSource.includes('GitHub');
+    // First card is the Space's Starter set (pinned to the top).
+    const starterCard = await $('[data-testid^="featureset-card-"]');
+    await starterCard.waitForClickable({ timeout: TIMEOUT.medium });
+    await starterCard.click();
 
-    console.log('[DEBUG] Has GitHub FeatureSet:', hasGithubFeatureSet);
+    const githubGroup = await byTestId('featureset-server-group-github-server');
+    await githubGroup.waitForDisplayed({ timeout: TIMEOUT.medium });
+    expect(await githubGroup.isDisplayed()).toBe(true);
 
-    // GitHub Server feature set should appear when server is enabled
-    expect(hasGithubFeatureSet).toBe(true);
+    // Close the panel (plain click — its bg-black overlay would make
+    // safeClick wait + send Escape) so TC-FS-003 can click a card.
+    await (await byTestId('featureset-panel-close')).click();
+    await browser.pause(500);
   });
 
   it('TC-FS-003: Click on GitHub Server FeatureSet to see its features', async () => {

@@ -3,7 +3,7 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId, safeClick } from '../helpers/selectors';
+import { byTestId, safeClick, TIMEOUT } from '../helpers/selectors';
 import {
   createSpace,
   deleteSpace,
@@ -88,8 +88,16 @@ describe('Comprehensive: Space Isolation', () => {
   });
 
   it('TC-COMP-SP-003: Verify UI shows correct space servers', async () => {
+    // Reload so the UI store picks up the API-created spaces (it lists spaces
+    // once at startup — useDataSync).
     await browser.refresh();
     await browser.pause(2000);
+
+    // The Tools page shows the sidebar's *viewed* Space (default: My Space),
+    // not a global active Space — switch the view to Work, where GitHub lives.
+    await safeClick(await byTestId('space-switcher'));
+    await safeClick(await byTestId(`space-switcher-item-${workSpaceId}`));
+    await browser.pause(500);
 
     const serversBtn = await byTestId('nav-my-servers');
     await safeClick(serversBtn);
@@ -97,11 +105,9 @@ describe('Comprehensive: Space Isolation', () => {
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-01-work-servers.png');
 
-    const pageSource = await browser.getPageSource();
-    const hasGithubOrServer = pageSource.includes('GitHub') || pageSource.includes('github') ||
-      pageSource.includes('Enable') || pageSource.includes('Disable') ||
-      (pageSource.includes('Tools') && pageSource.includes('installed-server'));
-    expect(hasGithubOrServer).toBe(true);
+    const githubCard = await byTestId(`installed-server-${githubServerId}`);
+    await githubCard.waitForDisplayed({ timeout: TIMEOUT.medium });
+    expect(await githubCard.isDisplayed()).toBe(true);
   });
 
   it('TC-COMP-SP-004: Switch space and verify server not visible', async () => {
@@ -131,6 +137,12 @@ describe('Comprehensive: Space Isolation', () => {
     try {
       await deleteSpace(personalSpaceId);
     } catch (e) { /* ignore */ }
+    // SP-003 left the UI viewing Work (persisted viewSpaceId). Reload so
+    // setSpaces() falls back to the default Space for the suites below.
+    try {
+      await browser.refresh();
+      await browser.pause(2000);
+    } catch (e) { /* ignore */ }
   });
 });
 
@@ -146,11 +158,16 @@ describe('Comprehensive: Connections page', () => {
 
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-03-clients.png');
 
-    const pageSource = await browser.getPageSource();
-    // Heading changed from "Connected Clients" to "Connections".
-    expect(pageSource.includes('Apps')).toBe(true);
-    // And routing is advertised as workspace-driven, not per-client.
-    expect(pageSource.includes('Workspaces')).toBe(true);
+    // Assert on testids, not page-source strings: the sidebar always renders
+    // "Clients" and "Mapping", so a substring check would pass vacuously.
+    // Heading was renamed "Apps" -> "Clients" (#203).
+    const title = await byTestId('clients-title');
+    await title.waitForDisplayed({ timeout: TIMEOUT.medium });
+    expect(await title.getText()).toBe('Clients');
+    // And routing is advertised as Mapping-driven (per folder), not per-client.
+    const mappingLink = await byTestId('clients-mapping-link');
+    expect(await mappingLink.isDisplayed()).toBe(true);
+    expect(await mappingLink.getText()).toBe('Mapping');
   });
 });
 
@@ -242,17 +259,19 @@ describe('Comprehensive: Server Lifecycle with API', () => {
     await browser.refresh();
     await browser.pause(2000);
 
+    // A reload lands on Home (activeNav isn't persisted) — the per-server
+    // enabled/disabled state lives on the Tools page.
+    const serversBtn = await byTestId('nav-my-servers');
+    await safeClick(serversBtn);
+
+    // After disable, the server card shows Enable and no Disable action.
+    const enableBtn = await byTestId(`enable-server-${serverId}`);
+    await enableBtn.waitForDisplayed({ timeout: TIMEOUT.medium });
+
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-06-server-disabled.png');
 
-    const pageSource = await browser.getPageSource();
-    // After disable, should show Enable button or not Connected
-    const hasDisabledState = 
-      pageSource.includes('Enable') ||
-      !pageSource.includes('Connected') ||
-      pageSource.includes('Server');
-    
-    console.log('[test] Server disabled state:', hasDisabledState);
-    expect(hasDisabledState).toBe(true);
+    expect(await enableBtn.isDisplayed()).toBe(true);
+    expect(await (await byTestId(`disable-server-${serverId}`)).isExisting()).toBe(false);
   });
 
   it('TC-COMP-SV-006: Uninstall server via API', async () => {
@@ -368,25 +387,25 @@ describe('Comprehensive: Multi-Space Server Management', () => {
   });
 
   it('TC-COMP-MS-003: Verify space switcher shows all spaces', async () => {
-    const spacesBtn = await byTestId('nav-spaces');
-    await safeClick(spacesBtn);
+    // Spaces created via the API in before() aren't pushed into the UI store
+    // (it lists spaces once at startup — useDataSync), so reload first.
+    await browser.refresh();
     await browser.pause(2000);
 
+    const spacesBtn = await byTestId('nav-spaces');
+    await safeClick(spacesBtn);
+
+    // Every test space gets a card on the Spaces page. (The old
+    // `includes('Workspaces')` fallback only ever matched the sidebar label,
+    // which #203 renamed to "Mapping".)
+    expect(testSpaces.length).toBe(3);
+    for (const spaceId of testSpaces) {
+      const card = await byTestId(`space-card-${spaceId}`);
+      await card.waitForDisplayed({ timeout: TIMEOUT.medium });
+      expect(await card.isDisplayed()).toBe(true);
+    }
+
     await browser.saveScreenshot('./tests/e2e/screenshots/comp-08-all-spaces.png');
-
-    const pageSource = await browser.getPageSource();
-
-    // Check how many test spaces are visible
-    const hasSpace1 = pageSource.includes('Test Space 1');
-    const hasSpace2 = pageSource.includes('Test Space 2');
-    const hasSpace3 = pageSource.includes('Test Space 3');
-    const visibleCount = [hasSpace1, hasSpace2, hasSpace3].filter(Boolean).length;
-    
-    console.log('[test] Visible test spaces:', visibleCount);
-    console.log('[test] Has Workspaces page:', pageSource.includes('Workspaces'));
-    
-    // At least the Workspaces page should load
-    expect(pageSource.includes('Workspaces') || visibleCount > 0).toBe(true);
   });
 
   after(async () => {

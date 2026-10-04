@@ -25,7 +25,7 @@ describe('Built-in Servers - Page shell', () => {
     // The Tool Optimization server card + its enable switch are present.
     const card = await byTestId('builtin-server-tool-optimization');
     expect(await card.isDisplayed()).toBe(true);
-    const toggle = await byTestId('meta-tools-enabled-switch');
+    const toggle = await byTestId('builtin-server-toggle-tool-optimization');
     expect(await toggle.isDisplayed()).toBe(true);
   });
 });

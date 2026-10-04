@@ -81,7 +81,10 @@ describe('Space Management - Create and Delete', () => {
         
         if (isSubmitDisplayed) {
           await submitButton.waitForClickable({ timeout: TIMEOUT.medium });
-          await safeClick(submitButton);
+          // Plain click, NOT safeClick(): safeClick's waitForModalClose() presses
+          // Escape on any open bg-black overlay — i.e. this very dialog, which
+          // closes on Escape (CreateSpaceModal.tsx) — so the button vanishes.
+          await submitButton.click();
           await browser.pause(2000);
           await waitForModalClose();
         }

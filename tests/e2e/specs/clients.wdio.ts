@@ -52,9 +52,12 @@ describe('Connections - Page shell', () => {
       expect(pageSource.includes('Effective Features')).toBe(false);
       expect(pageSource.includes('Advanced Permissions')).toBe(false);
     } else {
-      // Empty-state path: ConnectIDEs onboarding must render instead.
-      const pageSource = await browser.getPageSource();
-      expect(pageSource.includes("Let's hook up your first IDE")).toBe(true);
+      // Empty-state path: the "Connect your first AI app" onboarding and the
+      // ConnectIDEs grid must render instead.
+      const onboarding = await byTestId('clients-empty-onboarding');
+      expect(await onboarding.isDisplayed()).toBe(true);
+      const ideGrid = await byTestId('client-grid');
+      expect(await ideGrid.isDisplayed()).toBe(true);
     }
   });
 

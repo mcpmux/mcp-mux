@@ -447,6 +447,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                             <div 
                               className="flex items-center justify-between px-4 py-3 hover:bg-[rgb(var(--surface-hover))] cursor-pointer transition-colors"
                               onClick={() => toggleServer(group.serverId)}
+                              data-testid={`featureset-server-group-${group.serverId}`}
                             >
                               <div className="flex items-center gap-3 flex-1 min-w-0">
                                 {isExpanded ? (

@@ -104,10 +104,19 @@ describe('Registry/Discover Functionality', () => {
 
   it('should clear search and show servers', async () => {
     const searchInput = await byTestId('search-input');
+    // clearValue() empties the DOM value via script, which React's controlled
+    // input never sees (onChange doesn't fire), so the store keeps filtering on
+    // the old query. Follow it with a real keystroke + Backspace so an input
+    // event reaches onChange with an empty value.
     await searchInput.clearValue();
-    await browser.pause(1000);
-    const pageSource = await browser.getPageSource();
-    const hasContent = pageSource.includes('Server') || pageSource.includes('Install');
-    expect(hasContent).toBe(true);
+    await searchInput.addValue('x');
+    await browser.keys('Backspace');
+    expect(await searchInput.getValue()).toBe('');
+
+    // Full (unfiltered) mock catalog is back — GitHub is always in it.
+    const githubCard = await byTestId('server-card-github-server');
+    await githubCard.waitForDisplayed({ timeout: TIMEOUT.medium });
+    const count = await byTestId('server-count').getText();
+    expect(count.startsWith('0 ')).toBe(false);
   });
 });

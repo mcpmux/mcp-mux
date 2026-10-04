@@ -280,6 +280,7 @@ export default function ClientsPage() {
                 <button
                   onClick={() => navigateTo('workspaces')}
                   className="font-medium text-[rgb(var(--accent))] hover:underline"
+                  data-testid="clients-mapping-link"
                 >
                   Mapping
                 </button>{' '}

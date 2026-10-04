@@ -157,6 +157,9 @@ pub async fn seed_server_features(
             if let Some(desc) = f.description {
                 sf = sf.with_description(desc);
             }
+            if let Some(raw) = f.raw_json {
+                sf = sf.with_raw_json(raw);
+            }
             sf
         })
         .collect();
@@ -181,4 +184,7 @@ pub struct SeedFeatureInput {
     pub feature_name: String,
     pub display_name: Option<String>,
     pub description: Option<String>,
+    /// Raw backend JSON (for a tool: an MCP `Tool` with `name` + `inputSchema`).
+    /// The gateway's `tools/list` skips features without it.
+    pub raw_json: Option<serde_json::Value>,
 }

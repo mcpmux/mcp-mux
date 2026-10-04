@@ -124,12 +124,8 @@ jobs:
         shell: bash
         run: pnpm --filter @mcpmux/desktop exec tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
-      # TODO(playwright-migration): desktop E2E has stale assertions from the IA
-      # redesign and is being replaced (tauri-playwright spike). Non-blocking
-      # until then; results still surface via the report job below.
       - name: Run desktop E2E tests (Linux)
         if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true
         run: |
           # Start dbus session and unlock gnome-keyring with a dummy password for CI.
           # Two-step process: unlock creates the login keyring, start exports env vars.
@@ -203,7 +199,6 @@ jobs:
 
       - name: Run desktop E2E tests (Windows)
         if: matrix.os == 'windows-latest'
-        continue-on-error: true
         run: pnpm test:e2e
 
       # Upload test results and artifacts
@@ -262,7 +257,7 @@ jobs:
           name: '🖥️ E2E Desktop Tests (Linux)'
           path: test-results/e2e-desktop-results-ubuntu-latest/**/*.xml
           reporter: java-junit
-          fail-on-error: false
+          fail-on-error: true
 
       - name: 'Report: E2E Desktop Tests (Windows)'
         uses: dorny/test-reporter@v2
@@ -271,4 +266,4 @@ jobs:
           name: '🖥️ E2E Desktop Tests (Windows)'
           path: test-results/e2e-desktop-results-windows-latest/**/*.xml
           reporter: java-junit
-          fail-on-error: false
+          fail-on-error: true

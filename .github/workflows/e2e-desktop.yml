@@ -25,9 +25,15 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+          # WebView2 Runtime 150+ ignores --remote-debugging-port passed through
+          # env vars in elevated processes (GitHub runners run as admin), so
+          # msedgedriver never gets a session ("DevToolsActivePort file doesn't
+          # exist"). windows-2022 still ships an older WebView2 runtime.
+          # `os` stays windows-latest: it names the required check and artifact.
           - os: windows-latest
+            runner: windows-2022
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -231,12 +237,16 @@ jobs:
       # Remove malformed/empty JUnit XMLs that crash dorny/test-reporter.
       # This can happen when tauri-driver crashes mid-spec and the JUnit
       # reporter writes incomplete XML (missing testsuites or test names).
+      # A spec whose WebDriver session never starts gets an unnamed <testsuite>,
+      # which also crashes the reporter. If every file is removed, the reporter
+      # still fails on finding no reports, so a total breakage stays visible.
       - name: Sanitize JUnit XML reports
         if: always()
         run: |
           for f in test-results/e2e-desktop-results-*/reports/*.xml; do
             [ -f "$f" ] || continue
-            if ! grep -q '<testsuites' "$f" 2>/dev/null; then
+            if ! grep -q '<testsuites' "$f" 2>/dev/null \
+              || grep -E '<testsuite( |>)' "$f" | grep -qv 'name="[^"]'; then
               echo "Removing malformed JUnit XML: $f"
               rm "$f"
             fi

@@ -20,6 +20,9 @@ env:
 
 jobs:
   e2e-desktop:
+    # Explicit name keeps the required check "e2e-desktop (windows-latest)"
+    # stable now that the Windows matrix entry also sets `runner`.
+    name: e2e-desktop (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:

@@ -2,6 +2,7 @@
 //!
 //! Tests for OAuth flows, token management, DCR, and HTTP interactions.
 
+mod cimd;
 mod dcr;
 mod flow;
 mod token;

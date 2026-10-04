@@ -123,6 +123,23 @@ pub fn outbound_oauth_client_name_for_space(space_name: Option<&str>) -> String 
     }
 }
 
+/// Get the Client ID Metadata Document (CIMD) URL for outbound OAuth
+///
+/// When a remote authorization server advertises
+/// `client_id_metadata_document_supported: true`, this URL is sent as the
+/// `client_id` instead of performing Dynamic Client Registration. The server
+/// fetches the document to verify the client's name and loopback redirect URIs,
+/// so the document must stay published at exactly this URL.
+///
+/// # Example
+/// ```ignore
+/// let url = branding::outbound_oauth_client_metadata_url();
+/// // Returns: "https://mcpmux.com/oauth/client-metadata.json"
+/// ```
+pub fn outbound_oauth_client_metadata_url() -> String {
+    format!("https://{}/oauth/client-metadata.json", DOMAIN)
+}
+
 /// Default preferred port for OAuth callbacks (adjacent to gateway port)
 ///
 /// Uses a high port number to avoid conflicts:
@@ -282,6 +299,22 @@ mod tests {
         assert!(!is_oauth_callback("http://127.0.0.1:9876/callback")); // wrong path
         assert!(!is_oauth_callback("https://example.com/oauth2redirect"));
         assert!(!is_oauth_callback("mcpmux://callback/oauth")); // old scheme format
+    }
+
+    #[test]
+    fn test_outbound_oauth_client_metadata_url() {
+        // SEP-991 / CIMD: the client_id must be an https URL with a non-root path
+        // and no query or fragment
+        let url = outbound_oauth_client_metadata_url();
+        assert_eq!(
+            url,
+            format!("https://{}/oauth/client-metadata.json", DOMAIN)
+        );
+        let path = url
+            .strip_prefix(&format!("https://{}", DOMAIN))
+            .expect("https scheme on the branding domain");
+        assert!(path.len() > 1 && path.starts_with('/'));
+        assert!(!url.contains('?') && !url.contains('#'));
     }
 
     #[test]

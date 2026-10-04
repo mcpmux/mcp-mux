@@ -2,7 +2,8 @@
 //!
 //! Uses rmcp's OAuthState state machine for the complete OAuth flow:
 //! - Metadata discovery (RFC 8414 + RFC 9728)
-//! - Dynamic Client Registration (DCR)
+//! - Client ID Metadata Document (CIMD) when the authorization server advertises
+//!   `client_id_metadata_document_supported`, otherwise Dynamic Client Registration (DCR)
 //! - PKCE authorization flow
 //! - Automatic token refresh
 //!
@@ -248,6 +249,16 @@ impl OutboundOAuthManager {
                 Vec::new()
             }
         }
+    }
+
+    /// Whether the authorization server accepts a Client ID Metadata Document URL as
+    /// `client_id` (draft-ietf-oauth-client-id-metadata-document, MCP SEP-991)
+    fn supports_client_id_metadata_document(metadata: &mcpmux_core::StoredOAuthMetadata) -> bool {
+        metadata
+            .additional_fields
+            .get("client_id_metadata_document_supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     }
 
     /// Convert scope Vec to slice references for RMCP API
@@ -1090,19 +1101,6 @@ impl OutboundOAuthManager {
                 );
             }
 
-            self.log(
-                &space_id_str,
-                server_id,
-                LogLevel::Info,
-                "Starting Dynamic Client Registration (DCR)".to_string(),
-                Some(serde_json::json!({
-                    "redirect_uri": redirect_uri,
-                    "client_name": client_name,
-                    "action": "new_dcr"
-                })),
-            )
-            .await;
-
             let manager = match std::mem::replace(
                 &mut oauth_state,
                 OAuthState::Unauthorized(AuthorizationManager::new(server_url).await?),
@@ -1146,22 +1144,64 @@ impl OutboundOAuthManager {
                 .unwrap_or_default();
             let scope_refs = Self::scopes_as_refs(&scopes);
 
+            // Prefer a Client ID Metadata Document over DCR when the authorization server
+            // supports it: the server verifies our identity by fetching the HTTPS document,
+            // so exact-client servers that disable open DCR can still authorize McpMux.
+            // rmcp makes the same choice from the metadata set on the manager above.
+            let client_metadata_url = branding::outbound_oauth_client_metadata_url();
+            let uses_cimd = metadata_for_storage
+                .as_ref()
+                .is_some_and(Self::supports_client_id_metadata_document);
+
+            if uses_cimd {
+                self.log(
+                    &space_id_str,
+                    server_id,
+                    LogLevel::Info,
+                    "Using Client ID Metadata Document (CIMD) as client_id".to_string(),
+                    Some(serde_json::json!({
+                        "client_id": client_metadata_url,
+                        "redirect_uri": redirect_uri,
+                        "action": "cimd"
+                    })),
+                )
+                .await;
+            } else {
+                self.log(
+                    &space_id_str,
+                    server_id,
+                    LogLevel::Info,
+                    "Starting Dynamic Client Registration (DCR)".to_string(),
+                    Some(serde_json::json!({
+                        "redirect_uri": redirect_uri,
+                        "client_name": client_name,
+                        "action": "new_dcr"
+                    })),
+                )
+                .await;
+            }
+
             match AuthorizationSession::new(
                 manager,
                 &scope_refs,
                 &redirect_uri,
                 Some(&client_name),
-                None,
+                Some(&client_metadata_url),
             )
             .await
             {
                 Ok(session) => {
                     oauth_state = OAuthState::Session(session);
+                    let message = if uses_cimd {
+                        "Client configured with Client ID Metadata Document (CIMD)"
+                    } else {
+                        "Dynamic Client Registration (DCR) completed successfully"
+                    };
                     self.log(
                         &space_id_str,
                         server_id,
                         LogLevel::Info,
-                        "Dynamic Client Registration (DCR) completed successfully".to_string(),
+                        message.to_string(),
                         None,
                     )
                     .await;
@@ -1184,7 +1224,7 @@ impl OutboundOAuthManager {
                         &space_id_str,
                         server_id,
                         LogLevel::Error,
-                        format!("DCR registration failed: {}", msg),
+                        format!("Client registration failed: {}", msg),
                         Some(serde_json::json!({"error": msg})),
                     )
                     .await;
@@ -1502,7 +1542,7 @@ impl OutboundOAuthManager {
                                         let log = ServerLog::new(
                                             LogLevel::Error,
                                             LogSource::OAuth,
-                                            format!("Failed to save DCR registration: {}", e),
+                                            format!("Failed to save client registration: {}", e),
                                         )
                                         .with_metadata(serde_json::json!({"error": e.to_string()}));
                                         let _ = log_manager
@@ -1517,7 +1557,7 @@ impl OutboundOAuthManager {
                                             LogLevel::Info,
                                             LogSource::OAuth,
                                             format!(
-                                                "Saved DCR registration (client_id: {})",
+                                                "Saved client registration (client_id: {})",
                                                 client_id
                                             ),
                                         )

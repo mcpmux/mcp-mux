@@ -16,18 +16,21 @@ import vscodeIcon from '@/assets/client-icons/vscode.png';
 import opencodeIcon from '@/assets/client-icons/opencode.svg';
 import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
 import zedIcon from '@/assets/client-icons/zed.svg';
+import codexIcon from '@/assets/client-icons/codex.svg';
+import codexIconDark from '@/assets/client-icons/codex-dark.svg';
 import { ClientBrandIcon } from '@/components/ClientBrandIcon';
 import { getGatewayStatus } from '@/lib/api/gateway';
 import { useNavigateTo, useSetPendingSettingsSection } from '@/stores';
 
 /** Brand icon per supported client id (falls back to a generic glyph). opencode
- *  ships theme-specific marks, so it carries a dark variant. */
+ *  and Codex marks are single-colour, so they carry a dark variant. */
 const CLIENT_ICONS: Record<string, { light: string; dark?: string }> = {
   cursor: { light: cursorIcon },
   'claude-code': { light: claudeIcon },
   vscode: { light: vscodeIcon },
   opencode: { light: opencodeIcon, dark: opencodeIconDark },
   zed: { light: zedIcon },
+  codex: { light: codexIcon, dark: codexIconDark },
 };
 import {
   generateWorkspaceConfigSnippet,

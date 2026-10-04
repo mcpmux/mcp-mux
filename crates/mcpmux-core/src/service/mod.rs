@@ -26,5 +26,6 @@ pub use server_discovery::*;
 pub use server_log_manager::*;
 pub use space_service::*;
 pub use workspace_snippet::{
-    build_entry, find_client, snippet, ClientSpec, CLIENTS, SERVER_NAME, WORKSPACE_HEADER,
+    build_entry, find_client, render_config, snippet, ClientSpec, ConfigFileFormat, CLIENTS,
+    SERVER_NAME, WORKSPACE_HEADER,
 };

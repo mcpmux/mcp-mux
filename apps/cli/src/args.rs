@@ -406,7 +406,7 @@ pub enum WorkspaceCommand {
     Config {
         #[arg(long, value_name = "PATH")]
         path: String,
-        /// cursor|claude-code|vscode|opencode|zed
+        /// cursor|claude-code|vscode|opencode|zed|codex
         #[arg(long, value_name = "CLIENT")]
         client: String,
     },

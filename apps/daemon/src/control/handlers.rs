@@ -1967,9 +1967,11 @@ async fn workspace_config(
     p: WorkspaceConfigParams,
 ) -> Result<serde_json::Value, ApiError> {
     let spec = mcpmux_core::find_client(&p.client).ok_or_else(|| {
+        let supported: Vec<&str> = mcpmux_core::CLIENTS.iter().map(|c| c.id).collect();
         ApiError::invalid(format!(
-            "unknown client '{}'; supported: cursor, claude-code, vscode, opencode, zed",
-            p.client
+            "unknown client '{}'; supported: {}",
+            p.client,
+            supported.join(", ")
         ))
     })?;
     let normalized = match mcpmux_core::validate_workspace_root(&p.path) {

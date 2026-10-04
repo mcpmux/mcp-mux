@@ -56,6 +56,7 @@ const CLIENTS = [
   { id: 'vscode', label: 'VS Code / Copilot', config_path: '.vscode/mcp.json' },
   { id: 'opencode', label: 'opencode', config_path: 'opencode.json' },
   { id: 'zed', label: 'Zed', config_path: '.zed/settings.json' },
+  { id: 'codex', label: 'Codex', config_path: '.codex/config.toml' },
 ];
 
 const ROOT = process.platform === 'win32' ? 'd:\\proj\\app' : '/proj/app';

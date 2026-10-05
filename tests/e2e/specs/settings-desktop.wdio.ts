@@ -5,6 +5,17 @@
 
 import { expect, browser } from '@wdio/globals';
 import { byTestId, TIMEOUT } from '../helpers/selectors';
+import { invoke } from '../helpers/tauri-api';
+
+/** Wait until the backend has saved `closeToTray` with the expected value. */
+async function waitForCloseToTray(expected: boolean) {
+    await browser.waitUntil(
+        async () =>
+            (await invoke<{ closeToTray: boolean }>('get_startup_settings')).closeToTray ===
+            expected,
+        { timeout: TIMEOUT.medium, timeoutMsg: `closeToTray was not saved as ${expected}` }
+    );
+}
 
 describe('Settings - Desktop Features', () => {
     before(async () => {
@@ -180,7 +191,10 @@ describe('Settings - Desktop Features', () => {
             const initialState = await closeToTraySwitch.getAttribute('aria-checked');
 
             await closeToTraySwitch.click();
-            await browser.pause(500);
+            // The switch flips at once but the save is an async backend call;
+            // reloading before it lands reads the old value. Wait for the
+            // backend to report the new value instead of a fixed pause.
+            await waitForCloseToTray(initialState !== 'true');
 
             // Reload the page
             await browser.refresh();
@@ -198,7 +212,7 @@ describe('Settings - Desktop Features', () => {
 
             // Restore original state
             await switchAfterReload.click();
-            await browser.pause(500);
+            await waitForCloseToTray(initialState === 'true');
         });
 
         it('should show disabled state visually for start minimized', async () => {

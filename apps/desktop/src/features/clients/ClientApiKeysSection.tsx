@@ -1,8 +1,9 @@
 /**
  * API keys for a preregistered (API-key) client — rendered in the client side
  * panel. Lists the client's keys (prefix + metadata, never the secret), and
- * lets the user revoke a key or mint a new one (rotation). A freshly-minted key
- * is shown ONCE inline.
+ * lets the user revoke a key or mint a new one (rotation, or one per machine).
+ * A freshly-minted key is shown ONCE inline. Every key authenticates as the
+ * same client, so they all get the client's mapped tools.
  */
 
 import { useEffect, useState } from 'react';
@@ -18,14 +19,24 @@ import {
 
 interface ClientApiKeysSectionProps {
   clientId: string;
+  /** Display name of the client the keys belong to. */
+  clientName: string;
   onError: (title: string, body?: string) => void;
   onSuccess: (title: string, body?: string) => void;
 }
 
-export function ClientApiKeysSection({ clientId, onError, onSuccess }: ClientApiKeysSectionProps) {
+export function ClientApiKeysSection({
+  clientId,
+  clientName,
+  onError,
+  onSuccess,
+}: ClientApiKeysSectionProps) {
   const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  // Optional label for the next key (e.g. "laptop", "CI") so several keys of
+  // one client stay tellable apart.
+  const [labelDraft, setLabelDraft] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [newKey, setNewKey] = useState<RegisteredApiKeyClient | null>(null);
   const [copied, setCopied] = useState(false);
@@ -49,8 +60,9 @@ export function ClientApiKeysSection({ clientId, onError, onSuccess }: ClientApi
   const handleCreate = async () => {
     setIsCreating(true);
     try {
-      const issued = await createClientApiKey(clientId);
+      const issued = await createClientApiKey(clientId, labelDraft?.trim() || undefined);
       setNewKey(issued);
+      setLabelDraft(null);
       setCopied(false);
       await load();
     } catch (e) {
@@ -90,23 +102,56 @@ export function ClientApiKeysSection({ clientId, onError, onSuccess }: ClientApi
     <section>
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-          API keys
+          API keys{liveKeys.length > 0 ? ` (${liveKeys.length})` : ''}
         </h3>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={handleCreate}
-          disabled={isCreating}
-          data-testid="client-new-api-key"
-        >
-          {isCreating ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          ) : (
+        {labelDraft === null && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setLabelDraft('')}
+            disabled={isCreating}
+            data-testid="client-new-api-key"
+          >
             <Plus className="mr-1.5 h-3.5 w-3.5" />
-          )}
-          New key
-        </Button>
+            New key
+          </Button>
+        )}
       </div>
+
+      {labelDraft !== null && (
+        <div className="mb-3 flex items-center gap-2">
+          <input
+            type="text"
+            autoFocus
+            value={labelDraft}
+            onChange={(e) => setLabelDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !isCreating) void handleCreate();
+              if (e.key === 'Escape') setLabelDraft(null);
+            }}
+            placeholder="Label (optional) — e.g. laptop, CI"
+            className="focus:ring-primary-500 min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2"
+            data-testid="client-new-api-key-label"
+          />
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={handleCreate}
+            disabled={isCreating}
+            data-testid="client-new-api-key-create"
+          >
+            {isCreating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Create'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setLabelDraft(null)}
+            disabled={isCreating}
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
 
       {newKey && (
         <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-700/60 dark:bg-amber-900/20">
@@ -147,7 +192,10 @@ export function ClientApiKeysSection({ clientId, onError, onSuccess }: ClientApi
               className="flex items-center justify-between gap-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2"
             >
               <div className="min-w-0 flex-1">
-                <code className="font-mono text-xs">{k.keyPrefix}…</code>
+                <div className="flex min-w-0 items-center gap-2">
+                  {k.label && <span className="truncate text-xs font-medium">{k.label}</span>}
+                  <code className="font-mono text-xs text-[rgb(var(--muted))]">{k.keyPrefix}…</code>
+                </div>
                 <p className="mt-0.5 text-[11px] text-[rgb(var(--muted))]">
                   {k.lastUsedAt
                     ? `Last used ${new Date(k.lastUsedAt).toLocaleDateString()}`
@@ -172,8 +220,9 @@ export function ClientApiKeysSection({ clientId, onError, onSuccess }: ClientApi
       )}
 
       <p className="mt-2 text-xs text-[rgb(var(--muted))]">
-        This client authenticates with an API key as a Bearer token. Keys are stored hashed — revoke
-        a leaked one and mint a new key.
+        Each key signs in as <span className="font-medium">{clientName}</span> (sent as a Bearer
+        token), so every key gets the same tools. Issue one per machine or job; keys are stored
+        hashed — revoke a leaked one and mint a new key.
       </p>
     </section>
   );

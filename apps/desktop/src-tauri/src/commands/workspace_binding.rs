@@ -241,18 +241,21 @@ fn normalize_and_validate(raw: &str) -> Result<String, String> {
 /// `id` bindings take the raw string verbatim (any non-empty label a headless
 /// client sends in `X-Mcpmux-Workspace`, e.g. a client id or machine name).
 fn resolve_key_and_type(input: &WorkspaceBindingInput) -> Result<(String, BindingType), String> {
-    match input.binding_type.as_deref() {
+    mapping_key(&input.workspace_root, input.binding_type.as_deref())
+}
+
+/// Shared by writes and lookups so a key is always read the way it was
+/// stored: `id` verbatim (trimmed), anything else as a normalized folder.
+fn mapping_key(raw: &str, binding_type: Option<&str>) -> Result<(String, BindingType), String> {
+    match binding_type {
         Some("id") => {
-            let key = input.workspace_root.trim();
+            let key = raw.trim();
             if key.is_empty() {
                 return Err("Mapping id cannot be empty".into());
             }
             Ok((key.to_string(), BindingType::Id))
         }
-        _ => Ok((
-            normalize_and_validate(&input.workspace_root)?,
-            BindingType::Path,
-        )),
+        _ => Ok((normalize_and_validate(raw)?, BindingType::Path)),
     }
 }
 
@@ -583,18 +586,22 @@ fn enrich_feature(
 /// "what tools does this folder actually see?" question. It's safe to call
 /// even when the gateway isn't running — we degrade gracefully to
 /// `server_status = "unknown"` and lean on the cached `is_available` flag.
+///
+/// `binding_type` selects how `workspace_root` is interpreted: `path` (the
+/// default) normalizes + validates it as a folder; `id` treats it as a
+/// verbatim id-mapping key (a client id or label) — those are not filesystem
+/// paths, so path validation would reject them.
 #[tauri::command]
 pub async fn get_workspace_effective_features(
     workspace_root: String,
+    binding_type: Option<String>,
     state: State<'_, AppState>,
     sm_state: State<'_, Arc<RwLock<ServerManagerState>>>,
 ) -> Result<WorkspaceEffectiveFeaturesDto, String> {
-    // 1. Normalize the input the same way the resolver does.
-    let normalized = match validate_root(&workspace_root) {
-        WorkspaceRootValidation::Empty => return Err("workspace_root cannot be empty".into()),
-        WorkspaceRootValidation::Ok { normalized } => normalized,
-        WorkspaceRootValidation::Invalid { reason } => return Err(reason),
-    };
+    // 1. Normalize the input the same way the resolver does. Id keys are
+    //    matched verbatim, so they only need trimming.
+    let (normalized, key_type) = mapping_key(&workspace_root, binding_type.as_deref())?;
+    let is_id = key_type == BindingType::Id;
 
     // 2. Default Space — the routing fallback.
     let default_space = state
@@ -604,12 +611,19 @@ pub async fn get_workspace_effective_features(
         .map_err(|e| e.to_string())?
         .ok_or("No default Space configured")?;
 
-    // 3. Tier 1: longest-prefix workspace binding match.
-    let binding = state
-        .workspace_binding_repository
-        .find_exact_for_roots(std::slice::from_ref(&normalized))
-        .await
-        .map_err(|e| e.to_string())?;
+    // 3. Tier 1: exact binding match (path or id namespace).
+    let binding = if is_id {
+        state
+            .workspace_binding_repository
+            .find_by_id_key(&normalized)
+            .await
+    } else {
+        state
+            .workspace_binding_repository
+            .find_exact_for_roots(std::slice::from_ref(&normalized))
+            .await
+    }
+    .map_err(|e| e.to_string())?;
 
     let (source, binding_id, space_id, fs_ids) = match binding {
         Some(b) => (
@@ -803,4 +817,38 @@ pub async fn get_workspace_effective_features(
         resources,
         server_totals,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_mapping_key_is_taken_verbatim_not_validated_as_a_path() {
+        // An API-key client's auto-mapping is keyed by its client id — not a
+        // folder. Looking it up must not run path validation.
+        let (key, ty) = mapping_key("  mcp_ab12cd34 ", Some("id")).unwrap();
+        assert_eq!(key, "mcp_ab12cd34");
+        assert_eq!(ty, BindingType::Id);
+    }
+
+    #[test]
+    fn same_key_as_a_path_is_rejected() {
+        // The bug this guards: the effective-features lookup validated every
+        // key as a folder, so a client-id mapping errored as a bad path.
+        assert!(mapping_key("mcp_ab12cd34", None).is_err());
+        assert!(mapping_key("mcp_ab12cd34", Some("path")).is_err());
+    }
+
+    #[test]
+    fn empty_id_key_is_rejected() {
+        assert!(mapping_key("   ", Some("id")).is_err());
+    }
+
+    #[test]
+    fn path_key_is_normalized() {
+        let (key, ty) = mapping_key("/home/me/proj/", None).unwrap();
+        assert_eq!(key, "/home/me/proj");
+        assert_eq!(ty, BindingType::Path);
+    }
 }

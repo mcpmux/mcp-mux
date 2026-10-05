@@ -11,7 +11,18 @@
  */
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Copy, KeyRound, Loader2, Lock, ShieldCheck, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
+  Copy,
+  KeyRound,
+  Layers,
+  Loader2,
+  Lock,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@mcpmux/ui';
 import { registerApiKeyClient, type RegisteredApiKeyClient } from '@/lib/api/gateway';
 import { listSpaces, type Space } from '@/lib/api/spaces';
@@ -20,11 +31,14 @@ interface RegisterApiKeyClientModalProps {
   onClose: () => void;
   /** Called once the client + key are created, so the page can refresh. */
   onRegistered: (client: RegisteredApiKeyClient) => void;
+  /** Jump to the new client's mapping to choose its tools. */
+  onConfigureMapping?: (clientId: string) => void;
 }
 
 export function RegisterApiKeyClientModal({
   onClose,
   onRegistered,
+  onConfigureMapping,
 }: RegisterApiKeyClientModalProps) {
   const [name, setName] = useState('');
   const [lockedSpaceId, setLockedSpaceId] = useState('');
@@ -77,6 +91,17 @@ export function RegisterApiKeyClientModal({
     if (result) onRegistered(result);
     onClose();
   };
+
+  const handleConfigureMapping = () => {
+    if (!result) return;
+    onRegistered(result);
+    onClose();
+    onConfigureMapping?.(result.clientId);
+  };
+
+  // Registration auto-maps the client to its Space's Starter set.
+  const routedSpaceName =
+    lockedSpaceName ?? spaces.find((s) => s.is_default)?.name ?? 'your default Space';
 
   return (
     <div
@@ -152,7 +177,34 @@ export function RegisterApiKeyClientModal({
                 )}
               </div>
 
-              <div className="flex justify-end">
+              <div
+                className="flex items-start gap-3 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] p-3.5"
+                data-testid="register-api-key-tools"
+              >
+                <Layers className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--accent))]" />
+                <p className="text-xs text-[rgb(var(--muted))]">
+                  <span className="font-medium text-[rgb(var(--foreground))]">
+                    {result.clientName}
+                  </span>{' '}
+                  gets the <span className="font-medium">Starter</span> tools of{' '}
+                  <span className="font-medium">{routedSpaceName}</span> for now. Configure its
+                  mapping to choose other feature sets — every key you issue for it later gets the
+                  same tools.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                {onConfigureMapping && (
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={handleConfigureMapping}
+                    data-testid="register-api-key-configure-mapping"
+                  >
+                    Configure mapping
+                    <ArrowRight className="ml-1.5 h-4 w-4" />
+                  </Button>
+                )}
                 <Button variant="primary" size="md" onClick={handleDone}>
                   Done
                 </Button>
@@ -177,6 +229,10 @@ export function RegisterApiKeyClientModal({
                   placeholder="e.g. CI runner, my-laptop, prod-bot"
                   className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm transition-all focus:border-[rgb(var(--accent))] focus:outline-none focus:ring-2 focus:ring-[rgb(var(--accent))]/40"
                 />
+                <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
+                  The client is listed and mapped by this name. You can issue more keys for it later
+                  — they all get the same tools.
+                </p>
               </div>
 
               <div>
@@ -199,7 +255,7 @@ export function RegisterApiKeyClientModal({
                 </select>
                 <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
                   Locking confines this client to one Space — a leaked key can never reach the
-                  others. Leave unlocked to route it later from the Workspaces tab.
+                  others. Leave unlocked to route it to any Space from the Mapping tab.
                 </p>
               </div>
 

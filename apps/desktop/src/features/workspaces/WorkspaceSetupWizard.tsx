@@ -10,6 +10,7 @@ import {
   FolderSearch,
   Layers,
   Loader2,
+  Lock,
   Wrench,
   X,
 } from 'lucide-react';
@@ -20,7 +21,12 @@ import {
   type WorkspaceBindingInput,
 } from '@/lib/api/workspaceBindings';
 import { isStarterFeatureSet, type FeatureSet } from '@/lib/api/featureSets';
+import type { OAuthClient } from '@/lib/api/gateway';
 import type { Space } from '@/lib/api/spaces';
+import { ClientIcon } from '@/components/ClientIcon';
+import { clientDisplayName } from '@/lib/clientIcons';
+import { CreateFeatureSetLink } from '@/components/CreateFeatureSetLink';
+import { useSetPendingMapping } from '@/stores';
 import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
 
 /**
@@ -35,12 +41,18 @@ import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
  *
  * Abandoning before Finish is safe: the folder simply uses the default Starter
  * set until it's mapped, and any installed config still points at it.
+ *
+ * In "Client / ID" mode the key is a client id (picked by the client's name
+ * from the registered clients) or any label a headless client sends.
  */
 export function WorkspaceSetupWizard({
   spaces,
   featureSets,
   reportedRoots,
   existingBindings,
+  clients = [],
+  initialType = 'path',
+  initialKey = '',
   onClose,
   onCreate,
   onError,
@@ -49,6 +61,11 @@ export function WorkspaceSetupWizard({
   featureSets: FeatureSet[];
   reportedRoots: string[];
   existingBindings: WorkspaceBinding[];
+  /** Connected clients, so a client mapping can be picked by name. */
+  clients?: OAuthClient[];
+  /** Prefill — e.g. opened from a client's "Configure mapping". */
+  initialType?: 'path' | 'id';
+  initialKey?: string;
   onClose: () => void;
   onCreate: (input: WorkspaceBindingInput) => Promise<WorkspaceBinding>;
   onError: (msg: string) => void;
@@ -57,11 +74,20 @@ export function WorkspaceSetupWizard({
   // A mapping is keyed by a folder PATH (the default) or an arbitrary ID/label
   // (a client id, machine name, … — for headless/remote clients). `folder`
   // holds whichever value the user enters.
-  const [bindingType, setBindingType] = useState<'path' | 'id'>('path');
+  const [bindingType, setBindingType] = useState<'path' | 'id'>(initialType);
   const isId = bindingType === 'id';
-  const [folder, setFolder] = useState('');
+  const [folder, setFolder] = useState(initialKey);
   const [validating, setValidating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const setPendingMapping = useSetPendingMapping();
+
+  // The client this id belongs to, when it's a registered client's id — lets
+  // every step talk about the client by name instead of its raw id.
+  const matchedClient = useMemo(
+    () => (isId ? clients.find((c) => c.client_id === folder.trim()) : undefined),
+    [isId, clients, folder]
+  );
+  const lockedSpaceId = matchedClient?.locked_space_id ?? null;
 
   const defaultSpaceId = useMemo(
     () => spaces.find((s) => s.is_default)?.id ?? spaces[0]?.id ?? '',
@@ -71,6 +97,10 @@ export function WorkspaceSetupWizard({
   useEffect(() => {
     if (!spaceId && defaultSpaceId) setSpaceId(defaultSpaceId);
   }, [defaultSpaceId, spaceId]);
+  // A client locked to a Space only ever resolves inside it — pin the picker.
+  useEffect(() => {
+    if (lockedSpaceId) setSpaceId(lockedSpaceId);
+  }, [lockedSpaceId]);
 
   const spaceFeatureSets = useMemo(
     () => featureSets.filter((f) => f.space_id === spaceId),
@@ -88,20 +118,44 @@ export function WorkspaceSetupWizard({
   }, [spaceId, starterId]);
 
   // Detected folders not already mapped — quick-pick targets for step 1.
+  // Folder keys compare case-insensitively; id keys are matched verbatim.
   const boundRoots = useMemo(
-    () => new Set(existingBindings.map((b) => b.workspace_root.toLowerCase())),
+    () =>
+      new Set(
+        existingBindings
+          .filter((b) => (b.binding_type ?? 'path') === 'path')
+          .map((b) => b.workspace_root.toLowerCase())
+      ),
+    [existingBindings]
+  );
+  const boundIds = useMemo(
+    () =>
+      new Set(existingBindings.filter((b) => b.binding_type === 'id').map((b) => b.workspace_root)),
     [existingBindings]
   );
   const unmappedRoots = useMemo(
     () => reportedRoots.filter((r) => !boundRoots.has(r.toLowerCase())),
     [reportedRoots, boundRoots]
   );
-  // Block picking a folder that already has a mapping (e.g. chosen via the
-  // folder dialog) — it must be edited from the Workspaces list, not re-created.
-  const alreadyMapped = useMemo(
-    () => !!folder && boundRoots.has(folder.toLowerCase()),
-    [folder, boundRoots]
+  // API-key clients without a mapping yet — pick one by name instead of
+  // copying its id around.
+  const unmappedClients = useMemo(
+    () =>
+      clients.filter((c) => c.registration_type === 'preregistered' && !boundIds.has(c.client_id)),
+    [clients, boundIds]
   );
+  // Block picking a key that already has a mapping (e.g. chosen via the
+  // folder dialog) — it must be edited from the Mapping list, not re-created.
+  const alreadyMapped = useMemo(() => {
+    if (!folder) return false;
+    return isId ? boundIds.has(folder.trim()) : boundRoots.has(folder.toLowerCase());
+  }, [folder, isId, boundIds, boundRoots]);
+
+  // Leaving for FeatureSets drops this walkthrough; queue it to reopen with
+  // the same key when the user comes back to Mapping.
+  const rememberForReturn = () => {
+    if (folder.trim()) setPendingMapping({ key: folder.trim(), bindingType });
+  };
 
   const pickFolder = async () => {
     try {
@@ -144,8 +198,13 @@ export function WorkspaceSetupWizard({
   };
 
   const TITLES = isId
-    ? (['Choose an id', 'How clients connect', 'Choose its tools'] as const)
+    ? (['Choose a client or id', 'How it connects', 'Choose its tools'] as const)
     : (['Choose a folder', 'Connect your apps', 'Choose its tools'] as const);
+  const subject = matchedClient
+    ? clientDisplayName(matchedClient)
+    : isId
+      ? 'this id'
+      : 'this folder';
 
   return (
     <div
@@ -157,7 +216,7 @@ export function WorkspaceSetupWizard({
         <div className="flex items-start justify-between">
           <div className="min-w-0">
             <div className="text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              {isId ? 'Set up an ID mapping' : 'Set up a folder'} · Step {step} of 3
+              {isId ? 'Map a client or id' : 'Set up a folder'} · Step {step} of 3
             </div>
             <h2 className="mt-0.5 text-lg font-bold">{TITLES[step - 1]}</h2>
           </div>
@@ -200,7 +259,7 @@ export function WorkspaceSetupWizard({
                   ].join(' ')}
                   data-testid={`wizard-type-${t}`}
                 >
-                  {t === 'path' ? 'Folder' : 'ID / label'}
+                  {t === 'path' ? 'Folder' : 'Client / ID'}
                 </button>
               ))}
             </div>
@@ -208,25 +267,65 @@ export function WorkspaceSetupWizard({
             {isId ? (
               <>
                 <p className="text-sm text-[rgb(var(--muted))]">
-                  Enter an id or label — a client id, machine name, or any string. A headless or
-                  remote client that sends this exact value in the{' '}
-                  <code className="font-mono text-xs">X-Mcpmux-Workspace</code> header gets the
-                  tools you choose next.
+                  Pick a registered client to choose the tools all of its API keys get — or enter
+                  any id or label a headless client sends in the{' '}
+                  <code className="font-mono text-xs">X-Mcpmux-Workspace</code> header.
                 </p>
+                {unmappedClients.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 text-xs font-medium text-[rgb(var(--muted))]">
+                      Registered clients
+                    </div>
+                    <div
+                      className="overflow-hidden rounded-lg border border-[rgb(var(--border))]"
+                      data-testid="wizard-client-list"
+                    >
+                      {unmappedClients.map((c, i) => (
+                        <button
+                          key={c.client_id}
+                          type="button"
+                          onClick={() => setFolder(c.client_id)}
+                          className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-[rgb(var(--surface-hover))] ${
+                            i > 0 ? 'border-t border-[rgb(var(--border-subtle))]' : ''
+                          } ${folder.trim() === c.client_id ? 'bg-primary-500/5' : ''}`}
+                          data-testid={`wizard-client-${c.client_id}`}
+                        >
+                          <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center text-base">
+                            <ClientIcon logo_uri={c.logo_uri} client_name={c.client_name} />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                            {clientDisplayName(c)}
+                          </span>
+                          {folder.trim() === c.client_id && (
+                            <Check className="h-4 w-4 flex-shrink-0 text-green-600" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <input
                   type="text"
                   value={folder}
                   onChange={(e) => setFolder(e.target.value)}
-                  placeholder="e.g. a client id or machine name"
+                  placeholder="…or enter any id / label"
                   className="focus:ring-primary-500 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2"
                   data-testid="wizard-id-input"
                 />
+                {matchedClient && !alreadyMapped && (
+                  <p className="flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+                    <Check className="h-3.5 w-3.5 text-green-600" />
+                    Client{' '}
+                    <span className="font-medium text-[rgb(var(--foreground))]">{subject}</span>
+                  </p>
+                )}
                 {alreadyMapped && (
                   <p
                     className="text-xs text-amber-700 dark:text-amber-400"
                     data-testid="wizard-folder-mapped-error"
                   >
-                    That id is already mapped — edit it from the Mapping list instead.
+                    {matchedClient ? `${subject} already has` : 'That id already has'} a mapping —
+                    edit it from the Mapping list instead.
                   </p>
                 )}
               </>
@@ -268,7 +367,7 @@ export function WorkspaceSetupWizard({
                     className="text-xs text-amber-700 dark:text-amber-400"
                     data-testid="wizard-folder-mapped-error"
                   >
-                    This folder is already mapped — edit it from the Workspaces list instead.
+                    This folder is already mapped — edit it from the Mapping list instead.
                   </p>
                 )}
 
@@ -304,7 +403,13 @@ export function WorkspaceSetupWizard({
 
         {step === 2 && (
           <div className="space-y-3" data-testid="wizard-step-apps">
-            {isId ? (
+            {matchedClient ? (
+              <p className="text-sm text-[rgb(var(--muted))]" data-testid="wizard-client-connect">
+                <span className="font-medium text-[rgb(var(--foreground))]">{subject}</span>{' '}
+                authenticates with its API key, so every key it has routes here automatically —
+                there&apos;s nothing to configure in the client.
+              </p>
+            ) : isId ? (
               <div className="space-y-3">
                 <p className="text-sm text-[rgb(var(--muted))]">
                   A headless or remote client routes here by sending this id in the{' '}
@@ -338,8 +443,8 @@ export function WorkspaceSetupWizard({
         {step === 3 && (
           <div className="space-y-4" data-testid="wizard-step-tools">
             <p className="text-sm text-[rgb(var(--muted))]">
-              Pick the tools this folder gets. The default Starter set works out of the box — change
-              it only if this folder should see something different.
+              Pick the tools {subject} gets. The default Starter set works out of the box — change
+              it only if {subject} should see something different.
             </p>
 
             <div>
@@ -349,7 +454,8 @@ export function WorkspaceSetupWizard({
               <select
                 value={spaceId}
                 onChange={(e) => setSpaceId(e.target.value)}
-                className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2.5 text-sm"
+                disabled={!!lockedSpaceId}
+                className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 data-testid="wizard-space-select"
               >
                 {spaces.map((s) => (
@@ -359,16 +465,35 @@ export function WorkspaceSetupWizard({
                   </option>
                 ))}
               </select>
+              {lockedSpaceId && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-[rgb(var(--muted))]">
+                  <Lock className="h-3 w-3" />
+                  {subject} is locked to this Space, so it can only use its tools.
+                </p>
+              )}
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-                Feature sets
-              </label>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <label className="block text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+                  Feature sets
+                </label>
+                <CreateFeatureSetLink
+                  spaceId={spaceId}
+                  onNavigate={rememberForReturn}
+                  testId="wizard-create-feature-set"
+                />
+              </div>
               <div className="overflow-hidden rounded-xl border border-[rgb(var(--border))]">
                 {spaceFeatureSets.length === 0 ? (
                   <div className="px-3 py-4 text-center text-xs text-[rgb(var(--muted))]">
-                    This Space has no feature sets yet.
+                    This Space has no feature sets yet.{' '}
+                    <CreateFeatureSetLink
+                      spaceId={spaceId}
+                      onNavigate={rememberForReturn}
+                      label="Create one"
+                      testId="wizard-create-feature-set-empty"
+                    />
                   </div>
                 ) : (
                   spaceFeatureSets.map((fs, i) => (

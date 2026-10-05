@@ -33,6 +33,8 @@
     --primary: 218 119 86;              /* #DA7756 */
     --primary-hover: 184 85 58;         /* #B8553A (deep sienna) */
     --primary-foreground: 255 255 255;
+    /* Accent — inline links + tints. Deep sienna keeps small link text legible. */
+    --accent: 184 85 58;
 
     /* Semantic colors */
     --success: 34 197 94;
@@ -80,6 +82,7 @@
     --primary: 232 149 106;             /* #E8956A */
     --primary-hover: 218 119 86;        /* #DA7756 */
     --primary-foreground: 20 20 22;
+    --accent: 232 149 106;
 
     /* Semantic colors — slightly brighter */
     --success: 74 222 128;

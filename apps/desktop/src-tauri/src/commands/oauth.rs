@@ -723,10 +723,15 @@ pub async fn get_oauth_clients(
         clients.len()
     );
 
-    // Map to response format
-    let client_infos: Vec<OAuthClientInfo> = clients
-        .into_iter()
-        .map(|client| OAuthClientInfo {
+    // Map to response format. The Space lock lives in its own column, so
+    // read it per client — the UI pins the mapping's Space picker to it.
+    let mut client_infos: Vec<OAuthClientInfo> = Vec::with_capacity(clients.len());
+    for client in clients {
+        let locked_space_id = repo
+            .get_locked_space(&client.client_id)
+            .await
+            .map_err(|e| format!("Failed to read client lock: {}", e))?;
+        client_infos.push(OAuthClientInfo {
             client_id: client.client_id,
             registration_type: client.registration_type.as_str().to_string(),
             client_name: client.client_name,
@@ -745,8 +750,9 @@ pub async fn get_oauth_clients(
             created_at: client.created_at,
             reports_roots: client.reports_roots,
             roots_capability_known: client.roots_capability_known,
-        })
-        .collect();
+            locked_space_id,
+        });
+    }
 
     Ok(client_infos)
 }
@@ -829,6 +835,10 @@ pub struct OAuthClientInfo {
     /// "Reports workspace" (`reports_roots = true`) or "Rootless"
     /// (`reports_roots = false`).
     pub roots_capability_known: bool,
+
+    /// Space this client is confined to, if locked. A locked client only ever
+    /// resolves within this Space — its mapping can't route it elsewhere.
+    pub locked_space_id: Option<String>,
 }
 
 /// Request to update client settings.
@@ -874,6 +884,10 @@ pub async fn update_oauth_client(
         .await
         .map_err(|e| format!("Failed to get updated client: {}", e))?
         .ok_or("Client not found after update")?;
+    let locked_space_id = repo
+        .get_locked_space(&client_id)
+        .await
+        .map_err(|e| format!("Failed to read client lock: {}", e))?;
 
     Ok(OAuthClientInfo {
         client_id: updated_client.client_id,
@@ -894,6 +908,7 @@ pub async fn update_oauth_client(
         created_at: updated_client.created_at,
         reports_roots: updated_client.reports_roots,
         roots_capability_known: updated_client.roots_capability_known,
+        locked_space_id,
     })
 }
 

@@ -15,6 +15,13 @@ export const useSetPendingSettingsSection = () =>
 export const usePendingWorkspaceNew = () => useAppStore((state) => state.pendingWorkspaceNew);
 export const useSetPendingWorkspaceNew = () =>
   useAppStore((state) => state.setPendingWorkspaceNew);
+export const usePendingMapping = () => useAppStore((state) => state.pendingMapping);
+export const useSetPendingMapping = () => useAppStore((state) => state.setPendingMapping);
+export const usePendingFeatureSetCreate = () =>
+  useAppStore((state) => state.pendingFeatureSetCreate);
+export const useSetPendingFeatureSetCreate = () =>
+  useAppStore((state) => state.setPendingFeatureSetCreate);
+export const useSetViewSpace = () => useAppStore((state) => state.setViewSpace);
 export const useTheme = () => useAppStore((state) => state.theme);
 export const useSidebarCollapsed = () => useAppStore((state) => state.sidebarCollapsed);
 export const useAnalyticsEnabled = () => useAppStore((state) => state.analyticsEnabled);

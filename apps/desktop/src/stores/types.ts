@@ -11,6 +11,21 @@ export type NavItem =
   | 'builtin-servers'
   | 'settings';
 
+/** A mapping the Mapping tab should open on arrival (e.g. from a client's panel). */
+export interface PendingMapping {
+  /** The mapping key — a client id / label for `id`, a folder for `path`. */
+  key: string;
+  bindingType: 'path' | 'id';
+}
+
+/** Another tab sent the user to FeatureSets to create one. */
+export interface PendingFeatureSetCreate {
+  /** Tab to offer a way back to once the feature set exists. */
+  returnTo: NavItem;
+  /** Space the user was viewing before the jump — restored on the way back. */
+  restoreSpaceId?: string | null;
+}
+
 export interface AppState {
   // Spaces
   spaces: Space[];
@@ -30,6 +45,10 @@ export interface AppState {
   pendingSettingsSection: string | null;
   /** When true, the Workspaces page opens the New-mapping walkthrough on arrival. */
   pendingWorkspaceNew: boolean;
+  /** Mapping to open (or create, if missing) when the Mapping tab mounts. */
+  pendingMapping: PendingMapping | null;
+  /** Set while the user is on FeatureSets because another tab sent them to create one. */
+  pendingFeatureSetCreate: PendingFeatureSetCreate | null;
 
   // UI state
   sidebarCollapsed: boolean;
@@ -56,6 +75,8 @@ export interface AppActions {
   setPendingClientId: (id: string | null) => void;
   setPendingSettingsSection: (section: string | null) => void;
   setPendingWorkspaceNew: (v: boolean) => void;
+  setPendingMapping: (m: PendingMapping | null) => void;
+  setPendingFeatureSetCreate: (p: PendingFeatureSetCreate | null) => void;
 
   // UI
   toggleSidebar: () => void;

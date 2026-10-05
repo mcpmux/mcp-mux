@@ -45,15 +45,15 @@ describe('Workspaces - Page shell', () => {
     }
   });
 
-  it('TC-WS-001: Navigate to Workspaces page and see heading', async () => {
+  it('TC-WS-001: Navigate to Mapping page and see heading', async () => {
     const nav = await byTestId('nav-workspaces');
     await safeClick(nav);
     await browser.pause(1500);
 
     await browser.saveScreenshot('./tests/e2e/screenshots/ws-01-page.png');
 
-    const src = await browser.getPageSource();
-    expect(src.includes('Workspaces')).toBe(true);
+    const heading = await byTestId('workspaces-title');
+    expect(await heading.getText()).toBe('Mapping');
 
     const createBtn = await byTestId('workspace-binding-create-toggle');
     expect(await createBtn.isDisplayed()).toBe(true);
@@ -205,7 +205,7 @@ describe('Workspaces - Create wizard flow (UI)', () => {
 
   // "New mapping" opens the 3-step WorkspaceSetupWizard (key -> connect apps
   // -> tools). Its Folder step only offers the native folder dialog, which
-  // WebDriver can't drive, so these specs use the wizard's "ID / label" type.
+  // WebDriver can't drive, so these specs use the wizard's "Client / ID" type.
   // It's the same wizard, the same already-mapped guard, and the same create
   // call. Folder-type creation is covered by
   // tests/ts/components/WorkspaceSetupWizard.test.tsx, which mocks the dialog.
@@ -218,7 +218,7 @@ describe('Workspaces - Create wizard flow (UI)', () => {
     await safeClick(toggle);
     await (await byTestId('workspace-setup-wizard')).waitForDisplayed({ timeout: TIMEOUT.short });
 
-    // Step 1: switch the key type to ID / label and type the key.
+    // Step 1: switch the key type to Client / ID and type the key.
     await clickInWizard('wizard-type-id');
     const idInput = await byTestId('wizard-id-input');
     await idInput.waitForDisplayed({ timeout: TIMEOUT.short });

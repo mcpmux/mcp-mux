@@ -14,15 +14,13 @@ test.describe('Connections Page', () => {
     await expect(clients.heading).toHaveText('Connections');
   });
 
-  test('should describe that routing lives in Workspaces', async ({ page }) => {
+  test('should describe that routing lives in Mapping', async ({ page }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.navigate();
     await page.locator('nav button:has-text("Clients")').click();
 
-    // Routing is configured in Workspaces, not per-client.
-    await expect(
-      page.getByRole('button', { name: /^Workspaces$/ })
-    ).toBeVisible();
+    // Routing is configured in Mapping; the header links straight to it.
+    await expect(page.getByRole('button', { name: /Configure mapping/ })).toBeVisible();
   });
 
   test('should show description text', async ({ page }) => {
@@ -82,7 +80,7 @@ test.describe('Connection Details', () => {
     }
   });
 
-  test('should route routing config to Workspaces from the side panel', async ({
+  test('should route routing config to Mapping from the side panel', async ({
     page,
   }) => {
     const dashboard = new DashboardPage(page);
@@ -95,9 +93,8 @@ test.describe('Connection Details', () => {
     if (count > 0) {
       await clientCards.first().click();
 
-      // The side panel's "routing is workspace-driven" callout exposes a
-      // button that sends the user to Workspaces.
-      await expect(page.getByRole('button', { name: /Open Workspaces/ })).toBeVisible();
+      // The side panel links the client to its mapping in the Mapping tab.
+      await expect(page.getByTestId('clients-panel-configure-mapping')).toBeVisible();
 
       // Legacy per-client controls MUST NOT be present any more.
       await expect(page.locator('text=Quick Settings')).toHaveCount(0);

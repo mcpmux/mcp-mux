@@ -10,8 +10,10 @@ import {
   Folder,
   FolderOpen,
   FolderSearch,
+  Hash,
   Layers,
   Loader2,
+  Lock,
   MessageSquare,
   Package,
   Plus,
@@ -39,13 +41,25 @@ import {
   type WorkspaceEffectiveFeatures,
 } from '@/lib/api/workspaceBindings';
 import { isStarterFeatureSet, listFeatureSets, type FeatureSet } from '@/lib/api/featureSets';
+import { listOAuthClients, type OAuthClient } from '@/lib/api/gateway';
+import { ClientIcon } from '@/components/ClientIcon';
+import { clientDisplayName } from '@/lib/clientIcons';
+import { CreateFeatureSetLink } from '@/components/CreateFeatureSetLink';
+import { useGoToClient } from '@/hooks/useCrossTabNav';
 import { WorkspaceInstallPanel } from './WorkspaceInstallPanel';
 import { WorkspaceSetupWizard } from './WorkspaceSetupWizard';
-import { useSpaces, usePendingWorkspaceNew, useSetPendingWorkspaceNew } from '@/stores';
+import {
+  useNavigateTo,
+  usePendingMapping,
+  usePendingWorkspaceNew,
+  useSetPendingMapping,
+  useSetPendingWorkspaceNew,
+  useSpaces,
+} from '@/stores';
 import type { Space } from '@/lib/api/spaces';
 
 /**
- * Workspaces page.
+ * Mapping page (nav key `workspaces`).
  *
  * Mirrors the Clients page's shape for visual consistency:
  *   • Header: title + subtitle + refresh, followed by a single large search.
@@ -53,11 +67,13 @@ import type { Space } from '@/lib/api/spaces';
  *   • Inspector: fixed-right side panel with a `fixed inset-0` backdrop-
  *     blur dim + `animate-in slide-in-from-right` entrance.
  *
- * Each card is a workspace entry, unioning bindings and live reported roots
+ * Each card is a mapping entry, unioning bindings and live reported roots
  * (dedup'd by normalized path). Status is conveyed with a corner dot + pill:
  *   • LIVE + unmapped → amber
  *   • LIVE + mapped   → emerald
  *   • OFFLINE + mapped → neutral
+ *   • id mapping       → sky; shown by the client's NAME when the key is a
+ *                        client id (e.g. an API-key client's auto-mapping)
  */
 
 type EntryKind = 'unmapped-live' | 'mapped-live' | 'mapped-offline';
@@ -65,18 +81,40 @@ interface Entry {
   id: string;
   kind: EntryKind;
   root: string;
+  /** `id` mappings are keyed by a client id / label, not a folder. */
+  bindingType: 'path' | 'id';
   binding: WorkspaceBinding | null;
   isLive: boolean;
 }
 type Selected = { mode: 'new' } | { mode: 'entry'; id: string };
+type Filter = 'all' | 'live' | 'mapped' | 'unmapped' | 'clients';
+
+/** Older rows (and test fixtures) predate `binding_type`; treat missing as a folder. */
+function bindingTypeOf(b: WorkspaceBinding): 'path' | 'id' {
+  return b.binding_type === 'id' ? 'id' : 'path';
+}
+
+/** Human label for a mapping — the client's name for a client mapping, else its key. */
+function mappingLabel(b: WorkspaceBinding, clientById: Map<string, OAuthClient>): string {
+  const client = bindingTypeOf(b) === 'id' ? clientById.get(b.workspace_root) : undefined;
+  return client ? clientDisplayName(client) : b.workspace_root;
+}
 
 export function WorkspacesPage() {
   const spaces = useSpaces();
   const pendingNew = usePendingWorkspaceNew();
   const clearPendingNew = useSetPendingWorkspaceNew();
+  const pendingMapping = usePendingMapping();
+  const setPendingMapping = useSetPendingMapping();
+  const navigateTo = useNavigateTo();
   const [bindings, setBindings] = useState<WorkspaceBinding[]>([]);
   const [reportedRoots, setReportedRoots] = useState<string[]>([]);
   const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
+  const [clients, setClients] = useState<OAuthClient[]>([]);
+  // Prefill for the create walkthrough (e.g. a client with no mapping yet).
+  const [wizardInit, setWizardInit] = useState<{ type: 'path' | 'id'; key: string } | null>(null);
+  // Arrived to edit a specific mapping — open its form instead of collapsed.
+  const [expandMapping, setExpandMapping] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,19 +123,23 @@ export function WorkspacesPage() {
 
   const [selected, setSelected] = useState<Selected | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'live' | 'mapped' | 'unmapped'>('all');
+  const [filter, setFilter] = useState<Filter>('all');
 
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [b, fs, roots] = await Promise.all([
+      const [b, fs, roots, cl] = await Promise.all([
         listWorkspaceBindings(),
         listFeatureSets(),
         listReportedWorkspaceRoots().catch(() => [] as string[]),
+        // Clients only label id mappings by name — a stopped gateway must not
+        // break the page.
+        listOAuthClients().catch(() => [] as OAuthClient[]),
       ]);
       setBindings(b);
       setFeatureSets(fs);
       setReportedRoots(roots);
+      setClients(cl);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -111,10 +153,34 @@ export function WorkspacesPage() {
   // Opened from the home "Set up a folder" CTA — launch the create walkthrough.
   useEffect(() => {
     if (pendingNew) {
+      setWizardInit(null);
       setSelected({ mode: 'new' });
       clearPendingNew(false);
     }
   }, [pendingNew, clearPendingNew]);
+
+  // Opened on a specific mapping (a client's "Configure mapping", or coming
+  // back from creating a feature set). Open it if it exists, else start the
+  // create walkthrough prefilled with its key.
+  useEffect(() => {
+    if (!pendingMapping || isLoading) return;
+    const { key, bindingType } = pendingMapping;
+    const match = bindings.find((b) =>
+      bindingTypeOf(b) !== bindingType
+        ? false
+        : bindingType === 'id'
+          ? b.workspace_root === key
+          : b.workspace_root.toLowerCase() === key.toLowerCase()
+    );
+    if (match) {
+      setExpandMapping(true);
+      setSelected({ mode: 'entry', id: match.id });
+    } else {
+      setWizardInit({ type: bindingType, key });
+      setSelected({ mode: 'new' });
+    }
+    setPendingMapping(null);
+  }, [pendingMapping, isLoading, bindings, setPendingMapping]);
 
   // Refresh whenever something the table reflects changes outside the page:
   //   • `session-roots-changed` — a connected client newly reported a root.
@@ -128,9 +194,11 @@ export function WorkspacesPage() {
     };
     const unRoots = listen('session-roots-changed', reload);
     const unBinding = listen('workspace-binding-changed', reload);
+    const unClient = listen('oauth-client-changed', reload);
     return () => {
       unRoots.then((fn) => fn());
       unBinding.then((fn) => fn());
+      unClient.then((fn) => fn());
     };
   }, [loadData]);
 
@@ -143,11 +211,20 @@ export function WorkspacesPage() {
     }
   };
 
+  // Only folder mappings can match a live-reported root; id mappings live in
+  // their own namespace.
   const bindingsByRoot = useMemo(() => {
     const m = new Map<string, WorkspaceBinding>();
-    for (const b of bindings) m.set(b.workspace_root.toLowerCase(), b);
+    for (const b of bindings) {
+      if (bindingTypeOf(b) === 'path') m.set(b.workspace_root.toLowerCase(), b);
+    }
     return m;
   }, [bindings]);
+  const clientById = useMemo(() => {
+    const m = new Map<string, OAuthClient>();
+    for (const c of clients) m.set(c.client_id, c);
+    return m;
+  }, [clients]);
   const fsById = useMemo(() => {
     const m = new Map<string, FeatureSet>();
     for (const f of featureSets) m.set(f.id, f);
@@ -175,32 +252,45 @@ export function WorkspacesPage() {
         id: binding?.id ?? `live:${root}`,
         kind: binding ? 'mapped-live' : 'unmapped-live',
         root,
+        bindingType: 'path',
         binding,
         isLive: true,
       });
     }
     for (const b of bindings) {
-      const key = b.workspace_root.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const type = bindingTypeOf(b);
+      if (type === 'path') {
+        const key = b.workspace_root.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
       list.push({
         id: b.id,
         kind: 'mapped-offline',
         root: b.workspace_root,
+        bindingType: type,
         binding: b,
         isLive: false,
       });
     }
-    const rank: Record<EntryKind, number> = {
-      'unmapped-live': 0,
-      'mapped-live': 1,
-      'mapped-offline': 2,
+    // Live folders first, then client / id mappings, then offline folders.
+    const rank = (e: Entry) =>
+      e.kind === 'unmapped-live'
+        ? 0
+        : e.kind === 'mapped-live'
+          ? 1
+          : e.bindingType === 'id'
+            ? 2
+            : 3;
+    const label = (e: Entry) => {
+      const client = e.bindingType === 'id' ? clientById.get(e.root) : undefined;
+      return client ? clientDisplayName(client) : e.root;
     };
     return list.sort((a, b) => {
-      const o = rank[a.kind] - rank[b.kind];
-      return o !== 0 ? o : a.root.localeCompare(b.root);
+      const o = rank(a) - rank(b);
+      return o !== 0 ? o : label(a).localeCompare(label(b));
     });
-  }, [bindings, bindingsByRoot, reportedRoots]);
+  }, [bindings, bindingsByRoot, reportedRoots, clientById]);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -208,29 +298,35 @@ export function WorkspacesPage() {
       if (filter === 'live' && !e.isLive) return false;
       if (filter === 'mapped' && !e.binding) return false;
       if (filter === 'unmapped' && e.kind !== 'unmapped-live') return false;
+      if (filter === 'clients' && e.bindingType !== 'id') return false;
       if (!q) return true;
       const spaceName = e.binding ? (spaceById.get(e.binding.space_id)?.name ?? '') : '';
       const fsNames = e.binding
         ? e.binding.feature_set_ids.map((id) => fsById.get(id)?.name ?? '').join(' ')
         : '';
+      const client = e.bindingType === 'id' ? clientById.get(e.root) : undefined;
+      const clientNames = client ? `${client.client_name} ${client.client_alias ?? ''}` : '';
       return (
         e.root.toLowerCase().includes(q) ||
         spaceName.toLowerCase().includes(q) ||
-        fsNames.toLowerCase().includes(q)
+        fsNames.toLowerCase().includes(q) ||
+        clientNames.toLowerCase().includes(q)
       );
     });
-  }, [entries, searchQuery, filter, spaceById, fsById]);
+  }, [entries, searchQuery, filter, spaceById, fsById, clientById]);
 
   const counts = useMemo(() => {
     let live = 0;
     let mapped = 0;
     let unmapped = 0;
+    let clientsCount = 0;
     for (const e of entries) {
       if (e.isLive) live++;
       if (e.binding) mapped++;
       if (e.kind === 'unmapped-live') unmapped++;
+      if (e.bindingType === 'id') clientsCount++;
     }
-    return { all: entries.length, live, mapped, unmapped };
+    return { all: entries.length, live, mapped, unmapped, clients: clientsCount };
   }, [entries]);
 
   const selectedEntry: Entry | null =
@@ -243,7 +339,7 @@ export function WorkspacesPage() {
     setBindings((prev) =>
       [...prev, created].sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
     );
-    success('Mapping saved', created.workspace_root);
+    success('Mapping saved', mappingLabel(created, clientById));
     return created;
   };
 
@@ -254,13 +350,17 @@ export function WorkspacesPage() {
         .map((b) => (b.id === id ? updated : b))
         .sort((a, b) => a.workspace_root.localeCompare(b.workspace_root))
     );
-    success('Mapping updated', updated.workspace_root);
+    success('Mapping updated', mappingLabel(updated, clientById));
   };
 
   const handleDelete = async (binding: WorkspaceBinding) => {
+    const label = mappingLabel(binding, clientById);
     const ok = await confirm({
       title: 'Remove mapping',
-      message: `Apps opening "${binding.workspace_root}" will stop receiving these tools. You can map the folder again anytime.`,
+      message:
+        bindingTypeOf(binding) === 'id'
+          ? `"${label}" will stop receiving these tools and fall back to your default Starter set. You can map it again anytime.`
+          : `Apps opening "${binding.workspace_root}" will stop receiving these tools. You can map the folder again anytime.`,
       confirmLabel: 'Remove',
       variant: 'danger',
     });
@@ -269,7 +369,7 @@ export function WorkspacesPage() {
       await deleteWorkspaceBinding(binding.id);
       setBindings((prev) => prev.filter((b) => b.id !== binding.id));
       setSelected(null);
-      success('Mapping removed', binding.workspace_root);
+      success('Mapping removed', label);
     } catch (e) {
       showError('Failed to remove mapping', e instanceof Error ? e.message : String(e));
     }
@@ -309,13 +409,32 @@ export function WorkspacesPage() {
           <div className="mb-6 flex items-start justify-between gap-6">
             <div className="min-w-0 flex-1">
               <h1 className="text-3xl font-bold" data-testid="workspaces-title">
-                Workspaces
+                Mapping
               </h1>
               <p className="mt-2 max-w-2xl text-base text-[rgb(var(--muted))]">
-                Map a folder to the tools it should get. When you open that folder in a connected
-                app — Cursor, VS Code, Claude — McpMux serves exactly the tools you chose for it.
-                Folders you haven&apos;t mapped fall back to your default Starter set, so they work
-                out of the box — map one only when it should see something different.
+                Decide which tools each app gets. Map a <strong>folder</strong> — when you open it
+                in Cursor, VS Code, or Claude, McpMux serves exactly its tools — or a{' '}
+                <strong>client</strong> by name, so every API key it has gets the same tools.
+                Anything unmapped falls back to your default Starter set.
+              </p>
+              <p className="mt-2 text-sm text-[rgb(var(--muted))]">
+                Tools come in{' '}
+                <button
+                  onClick={() => navigateTo('featuresets')}
+                  className="font-medium text-[rgb(var(--accent))] hover:underline"
+                  data-testid="mapping-featuresets-link"
+                >
+                  FeatureSets
+                </button>
+                ; apps and their API keys live in{' '}
+                <button
+                  onClick={() => navigateTo('clients')}
+                  className="font-medium text-[rgb(var(--accent))] hover:underline"
+                  data-testid="mapping-clients-link"
+                >
+                  Clients
+                </button>
+                .
               </p>
             </div>
             <div className="flex flex-shrink-0 items-center gap-2">
@@ -332,7 +451,10 @@ export function WorkspacesPage() {
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => setSelected({ mode: 'new' })}
+                onClick={() => {
+                  setWizardInit(null);
+                  setSelected({ mode: 'new' });
+                }}
                 data-testid="workspace-binding-create-toggle"
                 className="whitespace-nowrap"
               >
@@ -347,7 +469,7 @@ export function WorkspacesPage() {
               <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[rgb(var(--muted))]" />
               <input
                 type="text"
-                placeholder="Search by path, space, or feature set…"
+                placeholder="Search by folder, client, space, or feature set…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="focus:ring-primary-500 focus:border-primary-500 w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3 pl-12 pr-4 text-base transition-all focus:outline-none focus:ring-2"
@@ -362,6 +484,9 @@ export function WorkspacesPage() {
                 { value: 'live', label: 'Live', count: counts.live },
                 { value: 'mapped', label: 'Mapped', count: counts.mapped },
                 { value: 'unmapped', label: 'Unmapped', count: counts.unmapped },
+                ...(counts.clients > 0
+                  ? [{ value: 'clients' as const, label: 'Clients', count: counts.clients }]
+                  : []),
               ]}
             />
             {counts.unmapped > 0 && (
@@ -399,7 +524,10 @@ export function WorkspacesPage() {
             <EmptyState
               hasAny={entries.length > 0}
               hasFilter={searchQuery.length > 0 || filter !== 'all'}
-              onCreate={() => setSelected({ mode: 'new' })}
+              onCreate={() => {
+                setWizardInit(null);
+                setSelected({ mode: 'new' });
+              }}
             />
           ) : (
             <div className="auto-fill-cards grid gap-5">
@@ -418,10 +546,14 @@ export function WorkspacesPage() {
                   <EntryCard
                     key={entry.id}
                     entry={entry}
+                    client={entry.bindingType === 'id' ? clientById.get(entry.root) : undefined}
                     spaceName={resolvedSpaceName}
                     fsNames={fsNames}
                     selected={isSelected}
-                    onClick={() => setSelected({ mode: 'entry', id: entry.id })}
+                    onClick={() => {
+                      setExpandMapping(false);
+                      setSelected({ mode: 'entry', id: entry.id });
+                    }}
                   />
                 );
               })}
@@ -438,10 +570,14 @@ export function WorkspacesPage() {
           />
           {selectedIsNew ? (
             <WorkspaceSetupWizard
+              key={wizardInit ? `${wizardInit.type}:${wizardInit.key}` : 'new'}
               spaces={spaces}
               featureSets={featureSets}
               reportedRoots={reportedRoots}
               existingBindings={bindings}
+              clients={clients}
+              initialType={wizardInit?.type}
+              initialKey={wizardInit?.key}
               onClose={() => setSelected(null)}
               onCreate={async (input) => {
                 const created = await handleCreate(input);
@@ -455,7 +591,11 @@ export function WorkspacesPage() {
           ) : (
             <InspectorPanel
               key={selectedEntry?.id ?? 'entry'}
+              expandMapping={expandMapping}
               entry={selectedEntry}
+              client={
+                selectedEntry?.bindingType === 'id' ? clientById.get(selectedEntry.root) : undefined
+              }
               isNew={false}
               spaces={spaces}
               featureSets={featureSets}
@@ -607,26 +747,40 @@ const CARD_TONES = {
     strip: 'bg-slate-300 dark:bg-slate-600',
     box: 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] ring-[rgb(var(--border-subtle))]',
   },
+  sky: {
+    strip: 'bg-sky-500',
+    box: 'bg-sky-50 text-sky-600 ring-sky-200/70 dark:bg-sky-900/20 dark:text-sky-400 dark:ring-sky-800/50',
+  },
 } as const;
 
 function EntryCard({
   entry,
+  client,
   spaceName,
   fsNames,
   selected,
   onClick,
 }: {
   entry: Entry;
+  /** The client an id mapping belongs to, when its key is a client id. */
+  client?: OAuthClient;
   spaceName: string | undefined;
   /** Resolved FeatureSet names for a mapped folder; empty when unmapped. */
   fsNames: string[];
   selected: boolean;
   onClick: () => void;
 }) {
-  const tone =
-    entry.kind === 'unmapped-live' ? 'amber' : entry.kind === 'mapped-live' ? 'emerald' : 'neutral';
+  const isId = entry.bindingType === 'id';
+  const tone = isId
+    ? 'sky'
+    : entry.kind === 'unmapped-live'
+      ? 'amber'
+      : entry.kind === 'mapped-live'
+        ? 'emerald'
+        : 'neutral';
   const t = CARD_TONES[tone];
-  const name = folderName(entry.root);
+  // A client mapping reads by the client's name; its raw id is secondary.
+  const name = client ? clientDisplayName(client) : isId ? entry.root : folderName(entry.root);
 
   return (
     <Card
@@ -642,9 +796,17 @@ function EntryCard({
         <div className="mb-4 flex items-start gap-4">
           <div className="relative flex-shrink-0">
             <div
-              className={`flex h-14 w-14 items-center justify-center rounded-xl ring-1 ring-inset ${t.box}`}
+              className={`flex h-14 w-14 items-center justify-center rounded-xl ring-1 ring-inset ${t.box} ${client ? 'p-2.5 text-3xl' : ''}`}
             >
-              {entry.isLive ? <FolderOpen className="h-6 w-6" /> : <Folder className="h-6 w-6" />}
+              {client ? (
+                <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
+              ) : isId ? (
+                <Hash className="h-6 w-6" />
+              ) : entry.isLive ? (
+                <FolderOpen className="h-6 w-6" />
+              ) : (
+                <Folder className="h-6 w-6" />
+              )}
             </div>
             {entry.isLive && (
               <span
@@ -655,9 +817,20 @@ function EntryCard({
           </div>
           <div className="min-w-0 flex-1">
             <div className="mb-1 flex flex-wrap items-center gap-2">
-              {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
-              {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
-              {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
+              {isId ? (
+                <>
+                  <Pill tone="sky">{client ? 'Client' : 'ID'}</Pill>
+                  {client?.registration_type === 'preregistered' && (
+                    <Pill tone="neutral">API key</Pill>
+                  )}
+                </>
+              ) : (
+                <>
+                  {entry.kind === 'unmapped-live' && <Pill tone="amber">Unmapped</Pill>}
+                  {entry.kind === 'mapped-offline' && <Pill tone="neutral">Offline</Pill>}
+                  {entry.kind === 'mapped-live' && <Pill tone="emerald">Live</Pill>}
+                </>
+              )}
             </div>
             <h3 className="truncate text-base font-semibold" title={entry.root}>
               {name}
@@ -710,14 +883,16 @@ function Pill({
   tone,
 }: {
   children: React.ReactNode;
-  tone: 'amber' | 'emerald' | 'neutral';
+  tone: 'amber' | 'emerald' | 'neutral' | 'sky';
 }) {
   const cls =
     tone === 'amber'
       ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border-amber-200/80 dark:border-amber-800/60'
       : tone === 'emerald'
         ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-emerald-200/80 dark:border-emerald-800/60'
-        : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
+        : tone === 'sky'
+          ? 'bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400 border-sky-200/80 dark:border-sky-800/60'
+          : 'bg-[rgb(var(--surface))] text-[rgb(var(--muted))] border-[rgb(var(--border-subtle))]';
   return (
     <span
       className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${cls}`}
@@ -879,6 +1054,8 @@ type SaveStatus =
 
 function InspectorPanel({
   entry,
+  client,
+  expandMapping = false,
   isNew,
   spaces,
   featureSets,
@@ -889,6 +1066,10 @@ function InspectorPanel({
   onError,
 }: {
   entry: Entry | null;
+  /** The client an id mapping belongs to, when its key is a client id. */
+  client?: OAuthClient;
+  /** Open the Mapping form even for an existing mapping (deep-linked here to edit it). */
+  expandMapping?: boolean;
   isNew: boolean;
   spaces: Space[];
   featureSets: FeatureSet[];
@@ -906,13 +1087,23 @@ function InspectorPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const goToClient = useGoToClient();
   const isMapped = !!entry?.binding;
+  const isId = entry?.bindingType === 'id';
   const mode: 'create' | 'edit' | 'create-from-live' = isNew
     ? 'create'
     : isMapped
       ? 'edit'
       : 'create-from-live';
-  const title = isNew ? 'New mapping' : isMapped ? 'Workspace mapping' : 'Map this folder';
+  const title = isNew
+    ? 'New mapping'
+    : client
+      ? clientDisplayName(client)
+      : isId
+        ? 'ID mapping'
+        : isMapped
+          ? 'Workspace mapping'
+          : 'Map this folder';
   const subtitle = isNew ? 'Choose the tools a folder should get.' : (entry?.root ?? '');
 
   // Auto-save status drives the small pill in the Mapping section header.
@@ -927,14 +1118,21 @@ function InspectorPanel({
       <div className="flex-shrink-0 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
         <div className="flex items-start justify-between">
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))]">
-              <FolderOpen className="h-5 w-5 text-[rgb(var(--muted))]" />
+            <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] text-2xl">
+              {client ? (
+                <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
+              ) : isId ? (
+                <Hash className="h-5 w-5 text-[rgb(var(--muted))]" />
+              ) : (
+                <FolderOpen className="h-5 w-5 text-[rgb(var(--muted))]" />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <div className="mb-0.5 flex flex-wrap items-center gap-2">
-                {!isNew && entry?.isLive && <Pill tone="emerald">Live</Pill>}
-                {!isNew && entry && !isMapped && <Pill tone="amber">Unmapped</Pill>}
-                {!isNew && entry && isMapped && !entry.isLive && (
+                {!isNew && isId && <Pill tone="sky">{client ? 'Client mapping' : 'ID'}</Pill>}
+                {!isNew && !isId && entry?.isLive && <Pill tone="emerald">Live</Pill>}
+                {!isNew && !isId && entry && !isMapped && <Pill tone="amber">Unmapped</Pill>}
+                {!isNew && !isId && entry && isMapped && !entry.isLive && (
                   <Pill tone="neutral">Offline</Pill>
                 )}
               </div>
@@ -958,6 +1156,22 @@ function InspectorPanel({
       </div>
 
       <div className="flex-1 space-y-5 overflow-y-auto p-6">
+        {client && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] px-4 py-3 text-xs">
+            <p className="min-w-0 text-[rgb(var(--muted))]">
+              {client.registration_type === 'preregistered'
+                ? 'Every API key of this client gets the tools below.'
+                : 'Applies when this client connects without reporting a folder.'}
+            </p>
+            <button
+              onClick={() => goToClient(client.client_id)}
+              className="flex-shrink-0 font-medium text-[rgb(var(--accent))] hover:underline"
+              data-testid="mapping-open-client"
+            >
+              {client.registration_type === 'preregistered' ? 'Manage keys →' : 'Open client →'}
+            </button>
+          </div>
+        )}
         <CollapsibleSection
           icon={<FolderOpen className="h-5 w-5" />}
           tone="primary"
@@ -977,12 +1191,14 @@ function InspectorPanel({
                     } from ${spaces.find((s) => s.id === entry.binding!.space_id)?.name ?? '—'}`
                   : 'Edit what this folder sees, then press Apply.'
           }
-          defaultOpen={isNew || !isMapped}
+          // Id mappings have no install step, so the form is the main event.
+          defaultOpen={isNew || !isMapped || isId || expandMapping}
           headerExtra={<SaveStatusPill status={saveStatus} />}
           testId="workspace-mapping-section"
         >
           <BindingForm
             mode={mode}
+            client={client}
             spaces={spaces}
             featureSets={featureSets}
             initial={entry?.binding ?? null}
@@ -995,7 +1211,8 @@ function InspectorPanel({
           />
         </CollapsibleSection>
 
-        {entry && !isNew && (
+        {/* Folder-only: there's no folder to write app config into for an id. */}
+        {entry && !isNew && !isId && (
           <CollapsibleSection
             icon={<Wrench className="h-5 w-5" />}
             tone="primary"
@@ -1013,12 +1230,16 @@ function InspectorPanel({
             icon={<Layers className="h-5 w-5" />}
             tone="purple"
             title="Effective Features"
-            subtitle="Tools, prompts, and resources this folder currently sees"
+            subtitle={`Tools, prompts, and resources ${client ? clientDisplayName(client) : isId ? 'this id' : 'this folder'} currently sees`}
             defaultOpen={true}
             badge={effectiveTotal ?? undefined}
             testId="workspace-effective-features-section"
           >
-            <EffectiveFeaturesContent root={entry.root} onTotalChange={setEffectiveTotal} />
+            <EffectiveFeaturesContent
+              root={entry.root}
+              bindingType={entry.bindingType}
+              onTotalChange={setEffectiveTotal}
+            />
           </CollapsibleSection>
         )}
       </div>
@@ -1148,9 +1369,12 @@ function buildServerGroups(data: WorkspaceEffectiveFeatures): ServerGroup[] {
  */
 function EffectiveFeaturesContent({
   root,
+  bindingType,
   onTotalChange,
 }: {
   root: string;
+  /** `id` keys aren't folders — they must not be validated as a path. */
+  bindingType: 'path' | 'id';
   onTotalChange?: (total: number | null) => void;
 }) {
   const [data, setData] = useState<WorkspaceEffectiveFeatures | null>(null);
@@ -1168,7 +1392,7 @@ function EffectiveFeaturesContent({
     setError(null);
     onTotalChange?.(null);
     /* eslint-enable react-hooks/set-state-in-effect */
-    void getWorkspaceEffectiveFeatures(root)
+    void getWorkspaceEffectiveFeatures(root, bindingType)
       .then((d) => {
         if (cancelled) return;
         setData(d);
@@ -1188,14 +1412,14 @@ function EffectiveFeaturesContent({
     return () => {
       cancelled = true;
     };
-  }, [root, onTotalChange]);
+  }, [root, bindingType, onTotalChange]);
 
   // Re-fetch on binding / server-status changes so the panel stays honest
   // without the user reopening it.
   useEffect(() => {
     let cancelled = false;
     const reload = () => {
-      void getWorkspaceEffectiveFeatures(root)
+      void getWorkspaceEffectiveFeatures(root, bindingType)
         .then((d) => {
           if (cancelled) return;
           setData(d);
@@ -1212,7 +1436,7 @@ function EffectiveFeaturesContent({
       unBinding.then((fn) => fn());
       unServer.then((fn) => fn());
     };
-  }, [root, onTotalChange]);
+  }, [root, bindingType, onTotalChange]);
 
   // All hooks must run on every render — keep them above any early
   // returns so React's hook-order invariant holds.
@@ -1573,6 +1797,7 @@ function serverStatusIssue(
 
 function BindingForm({
   mode,
+  client,
   spaces,
   featureSets,
   initial,
@@ -1584,6 +1809,8 @@ function BindingForm({
   onSaveStatusChange,
 }: {
   mode: 'create' | 'edit' | 'create-from-live';
+  /** Set when this is a client's mapping — shown by name, key not editable. */
+  client?: OAuthClient;
   spaces: Space[];
   featureSets: FeatureSet[];
   initial?: WorkspaceBinding | null;
@@ -1602,12 +1829,23 @@ function BindingForm({
   );
 
   const rootRef = useRef<HTMLInputElement | null>(null);
+  const setPendingMapping = useSetPendingMapping();
   const [root, setRoot] = useState(initial?.workspace_root ?? prefillRoot ?? '');
-  const [spaceId, setSpaceId] = useState<string>(initial?.space_id ?? defaultSpaceId);
+  // A client locked to a Space only ever resolves inside it — the resolver
+  // ignores a mapping pointing elsewhere — so pin the Space to the lock. A
+  // saved mapping already pointing elsewhere is surfaced and re-seeded below.
+  const lockedSpaceId = client?.locked_space_id ?? null;
+  const lockedSpace = lockedSpaceId ? spaces.find((s) => s.id === lockedSpaceId) : undefined;
+  const lockMismatch = !!lockedSpaceId && !!initial && initial.space_id !== lockedSpaceId;
+  const [spaceId, setSpaceId] = useState<string>(
+    lockedSpaceId ?? initial?.space_id ?? defaultSpaceId
+  );
   // Multi-FS: a binding may resolve to N FeatureSets (the resolver merges
   // their members into one allow set). Order is preserved so the operator
   // can rank a "primary" FS first; the resolver itself doesn't care.
-  const [fsIds, setFsIds] = useState<string[]>(initial?.feature_set_ids ?? []);
+  const [fsIds, setFsIds] = useState<string[]>(
+    lockMismatch ? [] : (initial?.feature_set_ids ?? [])
+  );
   // A mapping is keyed by a folder path OR an arbitrary id/label. The type is
   // chosen at create time and fixed thereafter (an id never becomes a folder).
   // Mapping type is chosen in the create wizard and fixed thereafter; here
@@ -1615,6 +1853,8 @@ function BindingForm({
   // re-validated as a filesystem path.
   const bindingType = initial?.binding_type ?? 'path';
   const isId = bindingType === 'id';
+  // Who this mapping is for, in the copy below.
+  const subject = client ? clientDisplayName(client) : isId ? 'this id' : 'this folder';
   const [fsSearch, setFsSearch] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const isEdit = mode === 'edit';
@@ -1640,7 +1880,8 @@ function BindingForm({
   >({ state: 'idle' });
   const validationSeq = useRef(0);
 
-  const rootEditable = mode !== 'create-from-live';
+  // A client mapping's key IS the client — re-keying it would detach it.
+  const rootEditable = mode !== 'create-from-live' && !client;
 
   useEffect(() => {
     if (!rootEditable) {
@@ -1711,7 +1952,7 @@ function BindingForm({
     if (filtered.length !== fsIds.length) {
       // Cross-space cleanup: drop ids that don't belong to this Space.
       setFsIds(filtered);
-    } else if (filtered.length === 0 && !initial) {
+    } else if (filtered.length === 0 && (!initial || lockMismatch)) {
       const fallback = availableFs.find(isStarterFeatureSet) ?? availableFs[0];
       setFsIds([fallback.id]);
     }
@@ -1818,6 +2059,13 @@ function BindingForm({
   // needed extra reconciliation work to stay correct. Closing the panel now
   // simply discards unsaved edits.
 
+  // Leaving for FeatureSets drops the unsaved form; queue this mapping to
+  // reopen when the user comes back to Mapping.
+  const rememberForReturn = () => {
+    const key = (initial?.workspace_root ?? root).trim();
+    if (key) setPendingMapping({ key, bindingType });
+  };
+
   const submitLabel = isEdit
     ? 'Apply changes'
     : mode === 'create-from-live'
@@ -1830,73 +2078,92 @@ function BindingForm({
           the whole flow in two sentences before the fields. */}
       <div className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))] px-3.5 py-3 text-xs leading-relaxed text-[rgb(var(--muted))]">
         <span className="font-semibold text-[rgb(var(--foreground))]">What is a mapping?</span>{' '}
-        {isId
-          ? 'Enter an id or label (a client id, machine name, or any string), then choose the tools it gets. A headless or remote client that sends this exact value in the X-Mcpmux-Workspace header receives exactly those tools.'
-          : 'Pick a folder, then choose the tools it should get. Whenever you open that folder in a connected app — Cursor, VS Code, Claude — McpMux hands it exactly the tools you choose here, and nothing else.'}
+        {client
+          ? `Choose the Space and feature sets ${subject} gets. ${client.registration_type === 'preregistered' ? 'Every API key issued to this client authenticates as it, so all of them get exactly these tools.' : 'It applies whenever this client connects without reporting a folder.'}`
+          : isId
+            ? 'Enter an id or label (a client id, machine name, or any string), then choose the tools it gets. A headless or remote client that sends this exact value in the X-Mcpmux-Workspace header receives exactly those tools.'
+            : 'Pick a folder, then choose the tools it should get. Whenever you open that folder in a connected app — Cursor, VS Code, Claude — McpMux hands it exactly the tools you choose here, and nothing else.'}
       </div>
 
-      <FormField label={isId ? 'Mapping ID / label' : 'Workspace folder'}>
-        <div className="flex gap-2">
-          <input
-            ref={rootRef}
-            type="text"
-            value={root}
-            onChange={(e) => setRoot(e.target.value)}
-            readOnly={!rootEditable}
-            placeholder={
-              isId
-                ? 'Any exact-match label — a client id, machine name, etc.'
-                : 'Browse for a folder, or paste an absolute path'
-            }
-            className={[
-              'min-w-0 flex-1 rounded-lg px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2',
-              !rootEditable
-                ? 'focus:ring-primary-500 cursor-not-allowed border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] text-[rgb(var(--muted))]'
-                : rootValidation.state === 'error'
-                  ? 'border border-red-500/60 bg-[rgb(var(--background))] focus:border-red-500 focus:ring-red-500'
-                  : 'focus:ring-primary-500 focus:border-primary-500 border border-[rgb(var(--border))] bg-[rgb(var(--background))]',
-            ].join(' ')}
-            data-testid="workspace-binding-root-input"
-          />
-          {rootEditable && !isId && (
-            <button
-              type="button"
-              onClick={async () => {
-                // Native directory picker — honors each OS's conventions
-                // (NSOpenPanel on macOS, IFileDialog on Windows, portal on
-                // Linux). The selected path is absolute already, so we
-                // just hand it off and let the live validator normalize.
-                try {
-                  const picked = await openDialog({
-                    directory: true,
-                    multiple: false,
-                    title: 'Pick a workspace folder',
-                  });
-                  if (typeof picked === 'string' && picked.length > 0) {
-                    setRoot(picked);
+      <FormField label={client ? 'Client' : isId ? 'Mapping ID / label' : 'Workspace folder'}>
+        {client ? (
+          <div
+            className="flex items-center gap-3 rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] px-3 py-2"
+            data-testid="workspace-binding-client"
+          >
+            <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center text-lg">
+              <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{subject}</p>
+              <p className="truncate font-mono text-[11px] text-[rgb(var(--muted))]">
+                {client.client_id}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <input
+              ref={rootRef}
+              type="text"
+              value={root}
+              onChange={(e) => setRoot(e.target.value)}
+              readOnly={!rootEditable}
+              placeholder={
+                isId
+                  ? 'Any exact-match label — a client id, machine name, etc.'
+                  : 'Browse for a folder, or paste an absolute path'
+              }
+              className={[
+                'min-w-0 flex-1 rounded-lg px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2',
+                !rootEditable
+                  ? 'focus:ring-primary-500 cursor-not-allowed border border-[rgb(var(--border-subtle))] bg-[rgb(var(--background))] text-[rgb(var(--muted))]'
+                  : rootValidation.state === 'error'
+                    ? 'border border-red-500/60 bg-[rgb(var(--background))] focus:border-red-500 focus:ring-red-500'
+                    : 'focus:ring-primary-500 focus:border-primary-500 border border-[rgb(var(--border))] bg-[rgb(var(--background))]',
+              ].join(' ')}
+              data-testid="workspace-binding-root-input"
+            />
+            {rootEditable && !isId && (
+              <button
+                type="button"
+                onClick={async () => {
+                  // Native directory picker — honors each OS's conventions
+                  // (NSOpenPanel on macOS, IFileDialog on Windows, portal on
+                  // Linux). The selected path is absolute already, so we
+                  // just hand it off and let the live validator normalize.
+                  try {
+                    const picked = await openDialog({
+                      directory: true,
+                      multiple: false,
+                      title: 'Pick a workspace folder',
+                    });
+                    if (typeof picked === 'string' && picked.length > 0) {
+                      setRoot(picked);
+                    }
+                  } catch (e) {
+                    onError(e instanceof Error ? e.message : String(e));
                   }
-                } catch (e) {
-                  onError(e instanceof Error ? e.message : String(e));
-                }
-              }}
-              className="focus:ring-primary-500 inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface-hover))] focus:outline-none focus:ring-2"
-              title="Pick a folder"
-              data-testid="workspace-binding-browse"
-            >
-              <FolderSearch className="h-4 w-4" />
-              <span className="hidden sm:inline">Browse</span>
-            </button>
-          )}
-        </div>
-        {duplicate ? (
+                }}
+                className="focus:ring-primary-500 inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface-hover))] focus:outline-none focus:ring-2"
+                title="Pick a folder"
+                data-testid="workspace-binding-browse"
+              >
+                <FolderSearch className="h-4 w-4" />
+                <span className="hidden sm:inline">Browse</span>
+              </button>
+            )}
+          </div>
+        )}
+        {client ? null : duplicate ? (
           <p
             className="mt-1.5 flex items-start gap-1.5 text-[11px] text-red-600 dark:text-red-400"
             data-testid="workspace-binding-duplicate-error"
           >
             <AlertCircle className="mt-px h-3 w-3 flex-shrink-0" />
             <span>
-              This folder is already mapped. Open its existing mapping to change what it sees
-              instead of adding a second one.
+              {isId ? 'This id' : 'This folder'} is already mapped. Open its existing mapping to
+              change what it sees instead of adding a second one.
             </span>
           </p>
         ) : isId ? (
@@ -1911,12 +2178,17 @@ function BindingForm({
 
       <FormField
         label="Space"
-        hint="A Space is a profile that groups MCP servers. Choose which one this folder draws its tools from."
+        hint={
+          lockedSpaceId
+            ? undefined
+            : `A Space is a profile that groups MCP servers. Choose which one ${subject} draws its tools from.`
+        }
       >
         <Picker
           value={spaceId}
           onChange={setSpaceId}
           placeholder="Pick a Space"
+          disabled={!!lockedSpaceId}
           options={spaces.map((s) => ({
             value: s.id,
             label: s.is_default ? `${s.name} · default` : s.name,
@@ -1924,17 +2196,53 @@ function BindingForm({
           }))}
           testId="workspace-binding-space"
         />
+        {lockedSpaceId && (
+          <p
+            className="mt-1.5 flex items-start gap-1.5 text-[11px] text-[rgb(var(--muted))]"
+            data-testid="workspace-binding-space-locked"
+          >
+            <Lock className="mt-px h-3 w-3 flex-shrink-0" />
+            <span>
+              {subject} is locked to {lockedSpace?.name ?? 'this Space'}, so it can only use tools
+              from it.
+            </span>
+          </p>
+        )}
+        {lockMismatch && (
+          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            <AlertCircle className="mt-px h-3 w-3 flex-shrink-0" />
+            <span>
+              This mapping pointed at another Space, which a locked client ignores — it has been
+              getting {lockedSpace?.name ?? 'its Space'}&apos;s Starter tools. Apply to fix it.
+            </span>
+          </p>
+        )}
       </FormField>
 
       <FormField
         label={fsIds.length > 1 ? `Feature set (${fsIds.length} selected)` : 'Feature set'}
-        hint="A feature set is a curated list of tools, prompts, and resources from that Space — exactly what this folder is allowed to use. Pick one, or combine several into a single set."
+        hint={`A feature set is a curated list of tools, prompts, and resources from that Space — exactly what ${subject} is allowed to use. Pick one, or combine several.`}
+        action={
+          spaceId ? (
+            <CreateFeatureSetLink
+              spaceId={spaceId}
+              onNavigate={rememberForReturn}
+              testId="workspace-binding-create-fs"
+            />
+          ) : undefined
+        }
       >
         {!spaceId ? (
           <p className="px-3 py-2 text-xs italic text-[rgb(var(--muted))]">Pick a Space first.</p>
         ) : availableFs.length === 0 ? (
           <p className="px-3 py-2 text-xs italic text-[rgb(var(--muted))]">
-            No feature sets in that Space yet.
+            No feature sets in that Space yet.{' '}
+            <CreateFeatureSetLink
+              spaceId={spaceId}
+              onNavigate={rememberForReturn}
+              label="Create one"
+              testId="workspace-binding-create-fs-empty"
+            />
           </p>
         ) : (
           <div
@@ -2037,7 +2345,7 @@ function BindingForm({
         {spaceId && fsIds.length === 0 && (
           // Empty is allowed — explain what it means rather than blocking.
           <p className="text-[11px] text-[rgb(var(--muted))]">
-            No feature sets selected — this folder gets <strong>no tools</strong> from this Space.
+            No feature sets selected — {subject} gets <strong>no tools</strong> from this Space.
             Built-in servers still apply per Space (see Built-in Servers).
           </p>
         )}
@@ -2137,17 +2445,23 @@ function RootValidationHint({
 function FormField({
   label,
   hint,
+  action,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Small control shown at the right of the label (e.g. a "New …" link). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-        {label}
-      </label>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <label className="block text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
+          {label}
+        </label>
+        {action}
+      </div>
       {children}
       {hint && <p className="mt-1.5 text-[11px] text-[rgb(var(--muted))]">{hint}</p>}
     </div>
@@ -2209,7 +2523,7 @@ function EmptyState({
       <Card className="mx-auto max-w-2xl">
         <CardContent className="flex flex-col items-center justify-center py-16">
           <Search className="mb-4 h-16 w-16 text-[rgb(var(--muted))]" />
-          <h3 className="mb-2 text-lg font-medium">No workspaces match</h3>
+          <h3 className="mb-2 text-lg font-medium">No mappings match</h3>
           <p className="max-w-md text-center text-sm text-[rgb(var(--muted))]">
             Try adjusting the search or filter.
           </p>
@@ -2223,10 +2537,10 @@ function EmptyState({
         <div className="bg-primary-50 dark:bg-primary-900/20 mb-4 flex h-16 w-16 items-center justify-center rounded-full">
           <Radio className="text-primary-500 h-8 w-8" />
         </div>
-        <h3 className="mb-2 text-lg font-medium">No folders mapped yet</h3>
+        <h3 className="mb-2 text-lg font-medium">Nothing mapped yet</h3>
         <p className="mb-6 max-w-md text-center text-sm text-[rgb(var(--muted))]">
           When you open a folder in a connected app, it shows up here so you can choose its tools.
-          You can also map a folder ahead of time — add one now to get started.
+          You can also map a folder — or a registered client — ahead of time.
         </p>
         <Button variant="primary" onClick={onCreate}>
           <Plus className="mr-2 h-4 w-4" />

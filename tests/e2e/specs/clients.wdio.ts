@@ -41,10 +41,9 @@ describe('Connections - Page shell', () => {
 
       const pageSource = await browser.getPageSource();
 
-      // Positive: the new panel exposes the Workspaces entry point.
-      const hasWorkspacesLink =
-        pageSource.includes('Open Workspaces') || pageSource.includes('workspace-driven');
-      expect(hasWorkspacesLink).toBe(true);
+      // Positive: every client panel links to its mapping in the Mapping tab.
+      const configureMapping = await byTestId('clients-panel-configure-mapping');
+      expect(await configureMapping.isDisplayed()).toBe(true);
 
       // Negative: all removed per-client routing sections must be gone.
       expect(pageSource.includes('Quick Settings')).toBe(false);

@@ -54,3 +54,11 @@ export function resolveKnownClientKey(clientName: string): string | null {
 
   return null;
 }
+
+/** The name a client is shown by everywhere: the user's alias, else its registered name. */
+export function clientDisplayName(client: {
+  client_alias?: string | null;
+  client_name: string;
+}): string {
+  return client.client_alias || client.client_name;
+}

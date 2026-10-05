@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Zap,
   Sparkles,
+  ArrowLeft,
 } from 'lucide-react';
 import {
   Card,
@@ -31,7 +32,15 @@ import {
   getFeatureSetWithMembers,
   isStarterFeatureSet,
 } from '@/lib/api/featureSets';
-import { useViewSpace } from '@/stores';
+import {
+  useNavigateTo,
+  usePendingFeatureSetCreate,
+  useSetPendingFeatureSetCreate,
+  useSetViewSpace,
+  useViewSpace,
+  type PendingFeatureSetCreate,
+} from '@/stores';
+import { NAV_ZONES } from '@/lib/navigation';
 import { FeatureSetPanel } from './FeatureSetPanel';
 
 // Get icon for feature set type
@@ -80,6 +89,15 @@ export function FeatureSetsPage() {
   // Panel state
   const [selectedFeatureSet, setSelectedFeatureSet] = useState<FeatureSet | null>(null);
 
+  // Set when another tab (e.g. Mapping) sent the user here to create a set —
+  // drives the "Back to …" banner so they can return and assign it.
+  const pendingCreate = usePendingFeatureSetCreate();
+  const clearPendingCreate = useSetPendingFeatureSetCreate();
+  const navigateTo = useNavigateTo();
+  const setViewSpace = useSetViewSpace();
+  const [returnTrip, setReturnTrip] = useState<PendingFeatureSetCreate | null>(null);
+  const returnTo = returnTrip?.returnTo ?? null;
+
   const loadData = useCallback(async (spaceId?: string) => {
     setIsLoading(true);
     setError(null);
@@ -102,6 +120,19 @@ export function FeatureSetsPage() {
     setShowCreateModal(false);
     loadData(viewSpace?.id);
   }, [viewSpace?.id, loadData]);
+
+  // Consume a cross-tab "create a feature set" intent. Declared after the
+  // Space-reset effect above so the modal it opens isn't immediately closed.
+  useEffect(() => {
+    if (!pendingCreate) return;
+    setReturnTrip(pendingCreate);
+    setShowCreateModal(true);
+    clearPendingCreate(null);
+  }, [pendingCreate, clearPendingCreate]);
+
+  const returnLabel = returnTo
+    ? (NAV_ZONES.flatMap((z) => z.entries).find((e) => e.key === returnTo)?.label ?? 'previous tab')
+    : null;
 
   // Refresh when a feature set changes outside this page — most importantly
   // the `mcpmux_manage_feature_set` meta-tool (create/update/delete) invoked by
@@ -234,8 +265,16 @@ export function FeatureSetsPage() {
                   )}
                 </div>
                 <p className="max-w-2xl text-base text-[rgb(var(--muted))]">
-                  Curated bundles of tools, prompts, and resources — grant them to apps or map them
-                  to folders in Workspaces
+                  Curated bundles of tools, prompts, and resources. Assign them to folders and
+                  clients in{' '}
+                  <button
+                    onClick={() => navigateTo('workspaces')}
+                    className="font-medium text-[rgb(var(--accent))] hover:underline"
+                    data-testid="featuresets-mapping-link"
+                  >
+                    Mapping
+                  </button>
+                  .
                 </p>
               </div>
               <div className="flex flex-shrink-0 gap-3">
@@ -268,6 +307,42 @@ export function FeatureSetsPage() {
             </div>
           </div>
         </div>
+
+        {returnTo && returnLabel && (
+          <div className="flex-shrink-0 px-8 pt-6">
+            <div
+              className="mx-auto flex max-w-[2000px] items-center gap-3 rounded-xl border border-[rgb(var(--accent))]/30 bg-[rgb(var(--accent))]/5 p-4"
+              data-testid="featuresets-return-banner"
+            >
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-medium">Creating a feature set for {returnLabel}</p>
+                <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
+                  Create it and add its tools, then head back to assign it.
+                </p>
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  // Put the Space switcher back where the user had it.
+                  if (returnTrip?.restoreSpaceId) setViewSpace(returnTrip.restoreSpaceId);
+                  navigateTo(returnTo);
+                }}
+                data-testid="featuresets-return-btn"
+              >
+                <ArrowLeft className="mr-1.5 h-4 w-4" />
+                Back to {returnLabel}
+              </Button>
+              <button
+                onClick={() => setReturnTrip(null)}
+                className="rounded-lg p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))]"
+                aria-label="Dismiss"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* @mux self-optimization hint — let the assistant curate the toolset from chat */}
         <div className="flex-shrink-0 px-8 pt-6">
@@ -303,13 +378,19 @@ export function FeatureSetsPage() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-[rgb(var(--foreground))]">
-                FeatureSets are bound to{' '}
-                <span className="text-emerald-600 dark:text-emerald-400">workspace roots</span>
+                FeatureSets are assigned to{' '}
+                <span className="text-emerald-600 dark:text-emerald-400">folders and clients</span>
               </p>
               <p className="mt-0.5 text-xs leading-relaxed text-[rgb(var(--muted))]">
-                Each Space gets one auto-created Default set. Routing is decided per reported folder
-                via <span className="font-medium">Workspaces</span> — sessions whose root isn&apos;t
-                bound fall back to the default Space&apos;s Default set.
+                Each Space gets one auto-created Starter set. Which set an app gets is decided in{' '}
+                <button
+                  onClick={() => navigateTo('workspaces')}
+                  className="font-medium text-[rgb(var(--accent))] hover:underline"
+                >
+                  Mapping
+                </button>{' '}
+                — per folder, or per client for API-key clients. Anything unmapped falls back to the
+                default Space&apos;s Starter set.
               </p>
             </div>
           </div>

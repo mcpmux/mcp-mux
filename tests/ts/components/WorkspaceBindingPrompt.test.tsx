@@ -13,7 +13,10 @@ import userEvent from '@testing-library/user-event';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-vi.mock('@/lib/api/workspaceBindings', () => ({
+vi.mock('@/lib/api/workspaceBindings', async (importOriginal) => ({
+  // Keep the real `looksLikeFolderPath` — the sheet uses it to tell a folder
+  // from a header-sent id.
+  ...(await importOriginal<typeof import('@/lib/api/workspaceBindings')>()),
   createWorkspaceBinding: vi.fn(),
 }));
 
@@ -31,6 +34,7 @@ vi.mock('@/lib/api/featureSets', () => ({
 }));
 
 import { WorkspaceBindingSheet } from '@/features/workspaces/WorkspaceBindingSheet';
+import { createWorkspaceBinding } from '@/lib/api/workspaceBindings';
 
 const TITLE = /This folder is using your Starter set/i;
 
@@ -111,5 +115,50 @@ describe('WorkspaceBindingSheet – mapping prompt toggle', () => {
 
     const picker = screen.getByTestId('workspace-binding-space-picker') as HTMLSelectElement;
     expect(picker.disabled).toBe(false);
+  });
+});
+
+describe('WorkspaceBindingSheet – id sent in the workspace header', () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(createWorkspaceBinding).mockReset();
+    mockPromptEnabled(true);
+  });
+
+  it('labels a non-path key as an id and saves it as an id mapping', async () => {
+    // A headless client pinned by `X-Mcpmux-Workspace: mcp_ab12cd34` — not a
+    // folder. Saving it as a path would fail path validation.
+    const user = userEvent.setup();
+    render(<WorkspaceBindingSheet />);
+    await fireNeedsBinding({ workspace_root: 'mcp_ab12cd34' });
+
+    expect(await screen.findByText(/This id is using your Starter set/i)).toBeTruthy();
+    expect(screen.queryByTestId('binding-sheet-install-hint')).toBeNull();
+
+    await user.click(await screen.findByRole('button', { name: /Modify/ }));
+    await waitFor(() =>
+      expect(createWorkspaceBinding).toHaveBeenCalledWith({
+        workspace_root: 'mcp_ab12cd34',
+        space_id: 's1',
+        feature_set_ids: ['fs1'],
+        binding_type: 'id',
+      })
+    );
+  });
+
+  it('still saves a folder as a path mapping', async () => {
+    const user = userEvent.setup();
+    render(<WorkspaceBindingSheet />);
+    await fireNeedsBinding({ workspace_root: '/home/u/proj' });
+
+    expect(await screen.findByText(TITLE)).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: /Modify/ }));
+    await waitFor(() =>
+      expect(createWorkspaceBinding).toHaveBeenCalledWith({
+        workspace_root: '/home/u/proj',
+        space_id: 's1',
+        feature_set_ids: ['fs1'],
+      })
+    );
   });
 });

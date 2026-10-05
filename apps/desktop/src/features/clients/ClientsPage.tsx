@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import cursorIcon from '@/assets/client-icons/cursor.svg';
-import vscodeIcon from '@/assets/client-icons/vscode.png';
-import claudeIcon from '@/assets/client-icons/claude.svg';
-import windsurfIcon from '@/assets/client-icons/windsurf.svg';
-import jetbrainsIcon from '@/assets/client-icons/jetbrains.svg';
-import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
-import opencodeIcon from '@/assets/client-icons/opencode.svg';
-import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
-import { ClientBrandIcon } from '@/components/ClientBrandIcon';
-import { resolveKnownClientKey } from '@/lib/clientIcons';
+import { ClientIcon } from '@/components/ClientIcon';
+import { clientDisplayName } from '@/lib/clientIcons';
 import {
+  ArrowRight,
   Laptop,
+  Layers,
+  Lock,
   Loader2,
   RefreshCw,
   Search,
@@ -38,9 +33,12 @@ import {
 } from '@/lib/api/gateway';
 import {
   isStarterFeatureSet,
+  listFeatureSets,
   listFeatureSetsBySpace,
   type FeatureSet,
 } from '@/lib/api/featureSets';
+import { listWorkspaceBindings, type WorkspaceBinding } from '@/lib/api/workspaceBindings';
+import { useGoConfigureClientMapping } from '@/hooks/useCrossTabNav';
 import {
   Card,
   CardContent,
@@ -55,49 +53,23 @@ import {
   useNavigateTo,
   usePendingClientId,
   useSetPendingClientId,
+  useSpaces,
 } from '@/stores';
 import { RegisterApiKeyClientModal } from './RegisterApiKeyClientModal';
 import { ClientApiKeysSection } from './ClientApiKeysSection';
 
-// Bundled icons for well-known AI clients.
-const CLIENT_ICON_ASSETS: Record<string, string> = {
-  cursor: cursorIcon,
-  vscode: vscodeIcon,
-  claude: claudeIcon,
-  windsurf: windsurfIcon,
-  jetbrains: jetbrainsIcon,
-  'android-studio': androidStudioIcon,
-};
+/**
+ * What a client's own (clientId-keyed) mapping gives it, resolved to names for
+ * display: the chain "API keys → client → feature sets in a Space".
+ */
+interface ClientMappingSummary {
+  fsNames: string[];
+  spaceName: string;
+}
 
-function ClientIcon({ logo_uri, client_name }: { logo_uri?: string | null; client_name: string }) {
-  const knownKey = resolveKnownClientKey(client_name);
-  // opencode ships theme-specific marks; render our bundled official logo
-  // (overriding any outdated self-reported logo_uri).
-  if (knownKey === 'opencode') {
-    return (
-      <ClientBrandIcon
-        light={opencodeIcon}
-        dark={opencodeIconDark}
-        alt={client_name}
-        className="h-full w-full rounded object-contain"
-      />
-    );
-  }
-  const iconUrl = (knownKey && CLIENT_ICON_ASSETS[knownKey]) || logo_uri;
-  if (iconUrl) {
-    return (
-      <img
-        src={iconUrl}
-        alt={client_name}
-        className="h-full w-full rounded object-contain"
-        onError={(e) => {
-          e.currentTarget.style.display = 'none';
-          e.currentTarget.parentElement!.append(document.createTextNode('🤖'));
-        }}
-      />
-    );
-  }
-  return <span>🤖</span>;
+/** Short label for how a client authenticates — shown instead of its raw id. */
+function registrationLabel(type: OAuthClient['registration_type']): string {
+  return type === 'preregistered' ? 'API-key client' : 'OAuth client';
 }
 
 function formatLastSeen(iso: string | null): string {
@@ -113,12 +85,12 @@ function formatLastSeen(iso: string | null): string {
 }
 
 /**
- * Connections page — list approved AI clients and revoke their access.
+ * Clients page — the apps connected through the gateway, listed by name.
  *
- * In the v2 world, routing decisions (which Space, which FeatureSet) live
- * in Workspaces (per-root bindings), not per-client. This page is pure
- * observability + lifecycle: which clients have been approved, when each
- * was last seen, and "remove this key" when trust is withdrawn.
+ * Routing (which Space, which FeatureSet) lives in the Mapping tab: per folder
+ * for editors, per client for API-key clients (a mapping keyed by the client's
+ * id). This page manages the client itself — its name, its API keys, revoking
+ * it — and summarises/links to the mapping that decides its tools.
  */
 export default function ClientsPage() {
   const [clients, setClients] = useState<OAuthClient[]>([]);
@@ -142,7 +114,44 @@ export default function ClientsPage() {
   const pendingClientId = usePendingClientId();
   const setPendingClientId = useSetPendingClientId();
   const navigateTo = useNavigateTo();
+  const goConfigureMapping = useGoConfigureClientMapping();
   const defaultSpace = useDefaultSpace();
+  const spaces = useSpaces();
+
+  // Client mappings (id bindings keyed by client id) + FS names, so each
+  // client can show the tools it actually gets.
+  const [bindings, setBindings] = useState<WorkspaceBinding[]>([]);
+  const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
+  const loadMappings = useCallback(async () => {
+    const [b, fs] = await Promise.all([
+      listWorkspaceBindings().catch(() => [] as WorkspaceBinding[]),
+      listFeatureSets().catch(() => [] as FeatureSet[]),
+    ]);
+    setBindings(b);
+    setFeatureSets(fs);
+  }, []);
+  useEffect(() => {
+    void loadMappings();
+    const un = listen('workspace-binding-changed', () => void loadMappings());
+    return () => {
+      un.then((fn) => fn());
+    };
+  }, [loadMappings]);
+
+  const mappingByClientId = useMemo(() => {
+    const fsName = new Map(featureSets.map((f) => [f.id, f.name]));
+    const spaceName = new Map(spaces.map((sp) => [sp.id, sp.name]));
+    const m = new Map<string, ClientMappingSummary>();
+    for (const b of bindings) {
+      if (b.binding_type !== 'id') continue;
+      m.set(b.workspace_root, {
+        fsNames: b.feature_set_ids.map((id) => fsName.get(id) ?? id),
+        spaceName: spaceName.get(b.space_id) ?? '—',
+      });
+    }
+    return m;
+  }, [bindings, featureSets, spaces]);
+  const spaceNameById = useMemo(() => new Map(spaces.map((sp) => [sp.id, sp.name])), [spaces]);
 
   const loadClients = async () => {
     setIsLoading(true);
@@ -230,7 +239,7 @@ export default function ClientsPage() {
   };
 
   const handleRevoke = async (client: OAuthClient) => {
-    const name = client.client_alias || client.client_name;
+    const name = clientDisplayName(client);
     if (
       !(await confirm({
         title: 'Revoke connection',
@@ -275,8 +284,8 @@ export default function ClientsPage() {
             titleTestId="clients-title"
             subtitle={
               <>
-                The AI clients connected through your gateway. Which tools each one gets (which
-                Space, which FeatureSet) is configured in{' '}
+                The AI clients connected through your gateway, by name. Which tools each one gets is
+                set in{' '}
                 <button
                   onClick={() => navigateTo('workspaces')}
                   className="font-medium text-[rgb(var(--accent))] hover:underline"
@@ -284,7 +293,8 @@ export default function ClientsPage() {
                 >
                   Mapping
                 </button>{' '}
-                per folder, not per app.
+                — by folder for editors like Cursor or VS Code, or by client for API-key clients
+                (every key a client has gets the same tools).
               </>
             }
             actions={
@@ -292,6 +302,15 @@ export default function ClientsPage() {
                 <Button variant="ghost" size="md" onClick={refreshClients} disabled={isRefreshing}>
                   <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                   Refresh
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="md"
+                  onClick={() => navigateTo('workspaces')}
+                  data-testid="clients-configure-mapping-btn"
+                >
+                  <Layers className="mr-2 h-4 w-4" />
+                  Configure mapping
                 </Button>
                 <Button
                   variant="primary"
@@ -354,7 +373,8 @@ export default function ClientsPage() {
             <div className="auto-fill-cards grid gap-5">
               {filtered.map((client) => {
                 const isSelected = selected?.client_id === client.client_id;
-                const displayName = client.client_alias || client.client_name;
+                const displayName = clientDisplayName(client);
+                const mapping = mappingByClientId.get(client.client_id);
                 return (
                   <Card
                     key={client.client_id}
@@ -371,13 +391,37 @@ export default function ClientsPage() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <h3 className="mb-1 truncate text-lg font-semibold">{displayName}</h3>
-                          {client.client_alias && (
-                            <p className="truncate text-xs text-[rgb(var(--muted))]">
-                              {client.client_name}
-                            </p>
-                          )}
+                          <p className="flex items-center gap-1 truncate text-xs text-[rgb(var(--muted))]">
+                            {client.registration_type === 'preregistered' && (
+                              <KeyRound className="h-3 w-3 flex-shrink-0" />
+                            )}
+                            {client.client_alias
+                              ? client.client_name
+                              : registrationLabel(client.registration_type)}
+                          </p>
                         </div>
                       </div>
+
+                      {mapping ? (
+                        <div
+                          className="mb-3 flex min-w-0 items-center gap-1.5 text-xs"
+                          title={`${mapping.fsNames.join(', ') || 'No tools'} in ${mapping.spaceName}`}
+                          data-testid={`client-card-mapping-${client.client_id}`}
+                        >
+                          <Layers className="text-primary-500 h-3.5 w-3.5 flex-shrink-0" />
+                          <span className="truncate font-medium">
+                            {mapping.fsNames.join(' + ') || 'No tools'}
+                          </span>
+                          <span className="flex-shrink-0 text-[rgb(var(--muted))]">
+                            in {mapping.spaceName}
+                          </span>
+                        </div>
+                      ) : client.registration_type === 'preregistered' ? (
+                        <div className="mb-3 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+                          <Layers className="h-3.5 w-3.5 flex-shrink-0" />
+                          Not mapped — default Starter tools
+                        </div>
+                      ) : null}
 
                       <div className="flex items-center justify-between text-xs text-[rgb(var(--muted))]">
                         <span className="inline-flex items-center gap-1.5">
@@ -412,10 +456,21 @@ export default function ClientsPage() {
             setEditAlias={setEditAlias}
             isSaving={isSaving}
             defaultSpaceId={defaultSpace?.id ?? null}
+            mapping={mappingByClientId.get(selected.client_id) ?? null}
+            lockedSpaceName={
+              selected.locked_space_id
+                ? (spaceNameById.get(selected.locked_space_id) ?? 'a Space')
+                : null
+            }
             onClose={() => setSelected(null)}
             onSaveAlias={handleSaveAlias}
             onRevoke={() => handleRevoke(selected)}
-            onOpenWorkspaces={() => {
+            onConfigureMapping={() => {
+              const id = selected.client_id;
+              setSelected(null);
+              goConfigureMapping(id);
+            }}
+            onOpenMapping={() => {
               setSelected(null);
               navigateTo('workspaces');
             }}
@@ -432,6 +487,7 @@ export default function ClientsPage() {
             success(`Registered "${client.clientName}" with an API key.`);
             void refreshClients();
           }}
+          onConfigureMapping={(clientId) => goConfigureMapping(clientId)}
         />
       )}
 
@@ -510,10 +566,16 @@ interface SidePanelProps {
   setEditAlias: (v: string) => void;
   isSaving: boolean;
   defaultSpaceId: string | null;
+  /** The client's own mapping, if it has one. */
+  mapping: ClientMappingSummary | null;
+  lockedSpaceName: string | null;
   onClose: () => void;
   onSaveAlias: () => void;
   onRevoke: () => void;
-  onOpenWorkspaces: () => void;
+  /** Open (or create) this client's mapping in the Mapping tab. */
+  onConfigureMapping: () => void;
+  /** Open the Mapping tab (folder mappings). */
+  onOpenMapping: () => void;
   onToastError: (title: string, body?: string) => void;
   onToastSuccess: (title: string, body?: string) => void;
 }
@@ -524,14 +586,18 @@ function SidePanel({
   setEditAlias,
   isSaving,
   defaultSpaceId,
+  mapping,
+  lockedSpaceName,
   onClose,
   onSaveAlias,
   onRevoke,
-  onOpenWorkspaces,
+  onConfigureMapping,
+  onOpenMapping,
   onToastError,
   onToastSuccess,
 }: SidePanelProps) {
   const aliasDirty = (client.client_alias || '') !== editAlias;
+  const isApiKeyClient = client.registration_type === 'preregistered';
 
   return (
     <div className="animate-in slide-in-from-right fixed bottom-0 right-0 top-0 z-50 flex w-full min-w-[420px] max-w-[480px] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl duration-300">
@@ -542,12 +608,12 @@ function SidePanel({
               <ClientIcon logo_uri={client.logo_uri} client_name={client.client_name} />
             </div>
             <div className="min-w-0 flex-1">
-              <h2 className="truncate text-lg font-bold">
-                {client.client_alias || client.client_name}
-              </h2>
+              <h2 className="truncate text-lg font-bold">{clientDisplayName(client)}</h2>
               <div className="mt-0.5 flex items-center gap-2">
                 <p className="min-w-0 flex-1 truncate text-xs text-[rgb(var(--muted))]">
-                  {client.client_alias ? client.client_name : client.client_id}
+                  {client.client_alias
+                    ? client.client_name
+                    : registrationLabel(client.registration_type)}
                 </p>
                 <CapabilityBadge
                   reportsRoots={client.reports_roots}
@@ -593,43 +659,58 @@ function SidePanel({
             </Button>
           </div>
           <p className="mt-1.5 text-xs text-[rgb(var(--muted))]">
-            An alias shown in logs and this list. Doesn't affect routing.
+            The name this client is shown by everywhere — here, in Mapping, and in logs.
+            Doesn&apos;t affect routing.
           </p>
         </section>
 
-        {client.registration_type === 'preregistered' && (
+        {isApiKeyClient && (
           <ClientApiKeysSection
             clientId={client.client_id}
+            clientName={clientDisplayName(client)}
             onError={onToastError}
             onSuccess={onToastSuccess}
           />
         )}
 
-        <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--accent))]/10">
-              <FolderOpen className="h-5 w-5 text-[rgb(var(--accent))]" />
+        {isApiKeyClient || mapping ? (
+          <ClientToolsSection
+            client={client}
+            mapping={mapping}
+            lockedSpaceName={lockedSpaceName}
+            onConfigureMapping={onConfigureMapping}
+          />
+        ) : (
+          <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--accent))]/10">
+                <FolderOpen className="h-5 w-5 text-[rgb(var(--accent))]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">Tools are chosen per folder</p>
+                <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                  When this client opens a folder, McpMux serves that folder&apos;s mapping (its
+                  Space and feature sets). If the client doesn&apos;t report the folder reliably
+                  (e.g. Cursor), open the folder in Mapping and use{' '}
+                  <span className="font-medium text-[rgb(var(--foreground))]">
+                    Connect apps to this folder
+                  </span>{' '}
+                  to write its config with a workspace header.
+                </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onOpenMapping}
+                  className="mt-3"
+                  data-testid="clients-panel-configure-mapping"
+                >
+                  Configure mapping
+                  <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Routing is workspace-driven</p>
-              <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                When this client reports a folder as an MCP root, mcpmux uses the matching Workspace
-                binding to pick the Space and FeatureSet. If it doesn&apos;t report the folder
-                reliably (e.g. Cursor), open the folder in Workspaces and{' '}
-                <span className="font-medium text-[rgb(var(--foreground))]">
-                  Connect apps to this folder
-                </span>{' '}
-                to auto-write its config with a workspace header.
-              </p>
-              <button
-                onClick={onOpenWorkspaces}
-                className="mt-2 text-xs font-medium text-[rgb(var(--accent))] hover:underline"
-              >
-                Open Workspaces →
-              </button>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Per-client grants only matter for clients that explicitly do
             NOT declare the MCP `roots` capability — Claude.ai web,
@@ -640,7 +721,9 @@ function SidePanel({
             we haven't observed yet, the capability is unknown and the
             section would have no audience either way — defer it until
             the first `initialize` reveals the answer. */}
-        {client.roots_capability_known && !client.reports_roots && (
+        {/* A client mapping takes precedence over these grants in the
+            resolver, so only offer them when there's no mapping. */}
+        {client.roots_capability_known && !client.reports_roots && !mapping && (
           <RootlessGrantsSection
             clientId={client.client_id}
             defaultSpaceId={defaultSpaceId}
@@ -681,6 +764,81 @@ function SidePanel({
         </Button>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tools — what this client's own mapping gives it
+//
+// API-key clients route by a mapping keyed on their client id (auto-created
+// at registration). Every key of the client authenticates as the client, so
+// the chain reads: API keys → this client → feature sets in a Space.
+// ---------------------------------------------------------------------------
+
+function ClientToolsSection({
+  client,
+  mapping,
+  lockedSpaceName,
+  onConfigureMapping,
+}: {
+  client: OAuthClient;
+  mapping: ClientMappingSummary | null;
+  lockedSpaceName: string | null;
+  onConfigureMapping: () => void;
+}) {
+  const name = clientDisplayName(client);
+  return (
+    <section data-testid="client-tools-section">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
+        Tools
+      </h3>
+      <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4">
+        <p className="text-xs text-[rgb(var(--muted))]">
+          {client.registration_type === 'preregistered'
+            ? `Every API key of ${name} gets:`
+            : `When ${name} connects without a folder, it gets:`}
+        </p>
+        {mapping ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm">
+            {mapping.fsNames.length === 0 ? (
+              <span className="font-medium">No Space tools</span>
+            ) : (
+              mapping.fsNames.map((n) => (
+                <span
+                  key={n}
+                  className="bg-primary-500/10 text-primary-700 dark:text-primary-300 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium"
+                >
+                  <Layers className="h-3 w-3" />
+                  {n}
+                </span>
+              ))
+            )}
+            <span className="text-xs text-[rgb(var(--muted))]">in {mapping.spaceName}</span>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm font-medium">
+            Your default Starter tools{' '}
+            <span className="text-xs font-normal text-[rgb(var(--muted))]">(not mapped yet)</span>
+          </p>
+        )}
+        {lockedSpaceName && (
+          <p className="mt-2 flex items-center gap-1.5 text-[11px] text-[rgb(var(--muted))]">
+            <Lock className="h-3 w-3" />
+            Locked to {lockedSpaceName} — it can only ever use tools from that Space.
+          </p>
+        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={onConfigureMapping}
+          className="mt-3"
+          data-testid="clients-panel-configure-mapping"
+        >
+          {mapping ? 'Configure mapping' : 'Create mapping'}
+          <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </section>
   );
 }
 

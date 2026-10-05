@@ -21,15 +21,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Check, ChevronDown, FolderOpen, Loader2, Sparkles, X } from 'lucide-react';
+import { Check, ChevronDown, FolderOpen, Hash, Loader2, Sparkles, X } from 'lucide-react';
 import { Button } from '@mcpmux/ui';
-import { createWorkspaceBinding } from '@/lib/api/workspaceBindings';
+import { createWorkspaceBinding, looksLikeFolderPath } from '@/lib/api/workspaceBindings';
 import {
   isStarterFeatureSet,
   listFeatureSetsBySpace,
   type FeatureSet,
 } from '@/lib/api/featureSets';
 import { listSpaces, type Space } from '@/lib/api/spaces';
+import { CreateFeatureSetLink } from '@/components/CreateFeatureSetLink';
+import { useSetPendingMapping } from '@/stores';
 
 interface WorkspaceNeedsBindingPayload {
   client_id: string;
@@ -63,6 +65,7 @@ export function WorkspaceBindingSheet() {
   const [selectedFsId, setSelectedFsId] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const setPendingMapping = useSetPendingMapping();
 
   // Only dedupe the currently-open sheet against itself — if one is already
   // showing, swallow a second emit for the same session. We deliberately
@@ -173,6 +176,7 @@ export function WorkspaceBindingSheet() {
         // Sheet flow only writes one FS — the multi-FS picker lives in the
         // full Workspaces editor.
         feature_set_ids: [selectedFsId],
+        ...(looksLikeFolderPath(payload.workspace_root) ? {} : { binding_type: 'id' as const }),
       });
       markSeenAndClose(payload);
     } catch (e) {
@@ -202,6 +206,17 @@ export function WorkspaceBindingSheet() {
 
   if (!payload) return null;
 
+  // A session pinned by an `X-Mcpmux-Workspace` header can carry a plain label
+  // (e.g. a headless client's id) rather than a folder. Map that as an id —
+  // saving it as a folder would fail path validation.
+  const isId = !looksLikeFolderPath(payload.workspace_root);
+  // Leaving for FeatureSets closes this sheet; queue the key so the Mapping
+  // tab reopens it, ready to map, on the way back.
+  const rememberForReturn = () => {
+    setPendingMapping({ key: payload.workspace_root, bindingType: isId ? 'id' : 'path' });
+    markSeenAndClose(payload);
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/40 backdrop-blur-sm animate-fade-in"
@@ -222,38 +237,46 @@ export function WorkspaceBindingSheet() {
         <div className="px-8 pt-10 pb-6">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1 text-xs font-medium text-[rgb(var(--muted))]">
             <Sparkles className="h-3 w-3 text-[rgb(var(--accent))]" />
-            New workspace detected
+            {isId ? 'New workspace id detected' : 'New workspace detected'}
           </div>
           <h2 className="text-[22px] font-semibold leading-tight tracking-tight text-[rgb(var(--foreground))]">
-            This folder is using your Starter set
+            {isId ? 'This id is using your Starter set' : 'This folder is using your Starter set'}
           </h2>
           <p className="mt-2 text-sm text-[rgb(var(--muted))]">
-            You just opened this folder in a connected app. It&apos;s already
-            configured with your default Starter tools. Pick a different Space
+            {isId
+              ? 'A connected client sent this id in its X-Mcpmux-Workspace header. '
+              : 'You just opened this folder in a connected app. '}
+            It&apos;s already configured with your default Starter tools. Pick a different Space
             or feature set below to change what it gets, or close to keep the
             Starter.
           </p>
 
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-4 py-3">
-            <FolderOpen className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(var(--accent))]" />
+            {isId ? (
+              <Hash className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(var(--accent))]" />
+            ) : (
+              <FolderOpen className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(var(--accent))]" />
+            )}
             <div className="min-w-0 flex-1">
               <div
                 className="truncate font-mono text-sm text-[rgb(var(--foreground))]"
                 title={payload.workspace_root}
               >
-                {shortenPath(payload.workspace_root)}
+                {isId ? payload.workspace_root : shortenPath(payload.workspace_root)}
               </div>
             </div>
           </div>
 
           {/* Self-intro: point at the per-workspace installer so apps that
-              don't report this folder (e.g. Cursor) still route here. */}
-          <p className="mt-3 text-xs text-[rgb(var(--muted))]" data-testid="binding-sheet-install-hint">
-            Tip: app not routing here? In the Workspaces tab, open this folder and{' '}
-            <span className="font-medium text-[rgb(var(--foreground))]">Connect apps to this folder</span>{' '}
-            to write its config with a workspace header — it works even when the app doesn&apos;t
-            report the folder.
-          </p>
+              don't report this folder (e.g. Cursor) still route here. Folder-only. */}
+          {!isId && (
+            <p className="mt-3 text-xs text-[rgb(var(--muted))]" data-testid="binding-sheet-install-hint">
+              Tip: app not routing here? In the Mapping tab, open this folder and{' '}
+              <span className="font-medium text-[rgb(var(--foreground))]">Connect apps to this folder</span>{' '}
+              to write its config with a workspace header — it works even when the app doesn&apos;t
+              report the folder.
+            </p>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-8 pb-6 space-y-6">
@@ -287,8 +310,15 @@ export function WorkspaceBindingSheet() {
           </div>
 
           <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
-              Feature set
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <div className="text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
+                Feature set
+              </div>
+              <CreateFeatureSetLink
+                spaceId={selectedSpaceId}
+                onNavigate={rememberForReturn}
+                testId="workspace-binding-sheet-create-fs"
+              />
             </div>
             <p className="mb-3 text-xs text-[rgb(var(--muted))]">
               The exact tools, prompts, and resources this folder is allowed to
@@ -300,7 +330,13 @@ export function WorkspaceBindingSheet() {
               </div>
             ) : featureSets.length === 0 ? (
               <div className="rounded-xl border border-dashed border-[rgb(var(--border))] px-4 py-6 text-center text-xs text-[rgb(var(--muted))]">
-                No feature sets in this space yet.
+                No feature sets in this space yet.{' '}
+                <CreateFeatureSetLink
+                  spaceId={selectedSpaceId}
+                  label="Create one"
+                  onNavigate={rememberForReturn}
+                  testId="workspace-binding-sheet-create-fs-empty"
+                />
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -353,7 +389,7 @@ export function WorkspaceBindingSheet() {
             </Button>
           </div>
           <p className="mt-3 text-center text-[11px] text-[rgb(var(--muted))]">
-            You can change this anytime in Workspaces.
+            You can change this anytime in Mapping.
           </p>
           <div className="mt-1.5 text-center">
             <button

@@ -39,10 +39,18 @@ vi.mock('@/lib/api/featureSets', () => ({
   isStarterFeatureSet: vi.fn(() => false),
 }));
 
+vi.mock('@/lib/api/gateway', () => ({
+  listOAuthClients: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock('@/stores', () => ({
   useSpaces: () => [{ id: 's1', name: 'Space One' }],
   usePendingWorkspaceNew: () => false,
   useSetPendingWorkspaceNew: () => () => {},
+  usePendingMapping: () => null,
+  useSetPendingMapping: () => () => {},
+  useNavigateTo: () => () => {},
+  useSetPendingClientId: () => () => {},
 }));
 
 import { WorkspacesPage } from '@/features/workspaces/WorkspacesPage';

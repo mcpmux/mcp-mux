@@ -37,7 +37,7 @@ The tools an app sees are decided by the **folder it reports** (its MCP workspac
 - Two different apps (say Cursor and VS Code) opening the **same folder** get the **same tools** — routing follows the folder, not the app's identity.
 - A session with **no reported folder** falls through to the **active Space's** FeatureSet.
 
-To control an app's tools, map its folder in the **Workspaces** tab (or let the AI do it with [Tool Optimization](/docs/tool-optimization/)) rather than configuring the app itself.
+To control an app's tools, map its folder in the **Mapping** tab (or let the AI do it with [Tool Optimization](/docs/tool-optimization/)) rather than configuring the app itself.
 
 ![A connected app — its toolset is decided by the Workspace binding for the folder it reports](https://mcpmux.com/screenshots/client-detail.png)
 
@@ -54,15 +54,23 @@ Each client authenticates with McpMux using an **access key**. Access keys are:
 - Unique per client
 - Revocable at any time
 
+## API-key clients
+
+Headless, remote, and CI clients can't complete a browser approval. Click **Register client** on the **Clients** page, give the client a name, and McpMux issues an API key (shown once; only its hash is stored). The client sends it as a `Bearer` token.
+
+- **One client, many keys** — issue a labelled key per machine or job from the client's panel; revoke a leaked one without touching the others.
+- **Routing by client** — every key signs in as the client, so they all get the client's mapping: **API keys → client → FeatureSets**. New clients start on their Space's Starter set; click **Configure mapping** to choose other FeatureSets.
+- **Lock to a Space** (optional) — a locked client can only ever reach that Space, even with a leaked key.
+
 ## Managing connected apps
 
-The **Apps** page shows every app connected to your gateway in real time:
+The **Clients** page lists every app connected to your gateway by name:
 
-- Each app's name, type, and live status
-- How it's routed (which folder → which Space + FeatureSet)
-- Last-seen timestamp
+- Each app's name, type, and last-seen status
+- For API-key clients, the FeatureSets their mapping gives them
+- A **Configure mapping** shortcut to the Mapping tab
 
-From there you can **rename** an app, inspect its routing, or **revoke** it — revoking removes its access key so it can no longer make requests through the gateway.
+From there you can **rename** an app, manage its API keys, or **revoke** it — revoking removes its access so it can no longer make requests through the gateway.
 
 ## Next steps
 

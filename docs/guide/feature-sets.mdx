@@ -100,7 +100,7 @@ FeatureSets can **contain other FeatureSets**. This lets you build hierarchical 
 
 ### Putting a FeatureSet to work
 
-A FeatureSet becomes a session's toolset when a folder routes to it — map the folder in the [Workspaces](/docs/workspaces/) tab (or let the AI pin it with [Tool Optimization](/docs/tool-optimization/)). Sessions whose folder isn't mapped fall back to the active Space's FeatureSet.
+A FeatureSet becomes a session's toolset when a folder routes to it — map the folder (or an API-key client) in the [Mapping](/docs/workspaces/) tab (or let the AI pin it with [Tool Optimization](/docs/tool-optimization/)). Sessions whose folder isn't mapped fall back to the active Space's FeatureSet.
 
 The effective toolset is the combination of the resolved FeatureSet(s), with exclude rules taking priority. McpMux shows exactly what resolves:
 

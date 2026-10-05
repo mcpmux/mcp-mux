@@ -32,21 +32,31 @@ Because routing is driven by the reported folder, it is decided **per session, n
 
 ## Creating a mapping
 
-Open the **Workspaces** tab and click **Add mapping**:
+Open the **Mapping** tab and click **New mapping**:
 
 - **Workspace folder** — browse for a folder or paste an absolute path. Accepts `/unix`, `C:\windows`, and `file://` forms.
 - **Space** — the profile whose servers and credentials this folder draws from.
 - **FeatureSet** — the curated bundle of tools this folder is allowed to use. Pick one, or combine several into a single effective set.
 
-Unmapped folders receive no tools until you map them — an explicit, fail-closed default so a new project never silently inherits another's access.
+Folders you haven't mapped fall back to the default Space's **Starter** FeatureSet, so they work out of the box — map one only when it should see something different. When an app opens an unmapped folder, McpMux offers to map it on the spot.
+
+Missing the FeatureSet you need? Click **New feature set** next to the picker — it opens FeatureSets on that Space with the create dialog up, and **Back to Mapping** returns you to the mapping you were editing.
 
 The FeatureSet you pick is the exact toolset the folder resolves to — choose which tools, prompts, and resources from each server it's allowed to use:
 
 ![The FeatureSet a folder resolves to — pick exactly which tools each server contributes](https://mcpmux.com/screenshots/featureset-detail.png)
 
+## Mapping a client instead of a folder
+
+Headless, remote, and CI clients don't open a folder. Register them under **Clients → Register client** with a name — McpMux issues an API key and maps the client to its Space's Starter set. Issue as many keys as you need (one per machine or job); every key signs in as that client, so they all get the same tools:
+
+**API keys → client → FeatureSets**
+
+To change what a client gets, open it in **Clients** and click **Configure mapping**, or pick it by name under **New mapping → Client / ID**. A client locked to a Space can only be mapped within that Space.
+
 ## Let the AI map it for you
 
-You don't have to open the Workspaces tab at all. With [Tool Optimization](/docs/tool-optimization/), an assistant can compose a FeatureSet and pin the current folder to it from chat:
+You don't have to open the Mapping tab at all. With [Tool Optimization](/docs/tool-optimization/), an assistant can compose a FeatureSet and pin the current folder to it from chat:
 
 > *"@mux build a minimal toolset for this Next.js repo and pin it to this folder."*
 

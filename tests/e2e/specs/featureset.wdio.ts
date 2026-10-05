@@ -9,27 +9,19 @@ describe('FeatureSet - Builtin Sets', () => {
   it('TC-FS-001: Navigate to FeatureSets page and verify builtin sets exist', async () => {
     const featureSetsButton = await byTestId('nav-featuresets');
     await safeClick(featureSetsButton);
-    await browser.pause(2000);
-    
-    await browser.saveScreenshot('./tests/e2e/screenshots/fs-01-page.png');
-    
+
     // Verify page loaded
-    const pageSource = await browser.getPageSource();
-    const hasFeatureSetsPage = 
-      pageSource.includes('Feature Sets') || 
-      pageSource.includes('FeatureSets');
-    
-    expect(hasFeatureSetsPage).toBe(true);
-    
-    // Check for builtin sets: "All Features" and "Default"
-    const hasAllFeatures = pageSource.includes('All Features') || pageSource.includes('All');
-    const hasDefault = pageSource.includes('Default');
-    
-    console.log('[DEBUG] Has All Features:', hasAllFeatures);
-    console.log('[DEBUG] Has Default:', hasDefault);
-    
-    // At least one builtin set should exist
-    expect(hasAllFeatures || hasDefault).toBe(true);
+    const page = await byTestId('featuresets-page');
+    await page.waitForDisplayed({ timeout: TIMEOUT.medium });
+
+    // Every Space auto-seeds a builtin Starter set (named "Default" before
+    // migration 013). Assert on its badge test id rather than page copy, which
+    // made this spec pass or fail on unrelated wording.
+    const starterBadge = await $('[data-testid^="featureset-starter-badge-"]');
+    await starterBadge.waitForDisplayed({ timeout: TIMEOUT.medium });
+    expect(await starterBadge.isDisplayed()).toBe(true);
+
+    await browser.saveScreenshot('./tests/e2e/screenshots/fs-01-page.png');
   });
 });
 

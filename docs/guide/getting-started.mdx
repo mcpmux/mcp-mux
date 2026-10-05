@@ -18,6 +18,8 @@ Download McpMux for your platform from the [download page](/download/).
 - **macOS**: open the `.dmg` and drag McpMux to Applications
 - **Linux**: install via `.deb`, `.rpm`, or `.AppImage`
 
+> **Linux: window crashes or stays blank on startup?** Some GPUs (often ones newer than the installed Mesa) can't start the graphics driver WebKitGTK needs. McpMux checks this once per driver update and, if the GPU fails, switches to Mesa's software renderer automatically — look for a `[Graphics]` line in the log. To force that mode, launch with `MCPMUX_SAFE_GRAPHICS=1`; to skip the check, `MCPMUX_SAFE_GRAPHICS=0`. If the log says no EGL driver works at all, install Mesa (`mesa` on Arch, `libegl-mesa0` on Debian/Ubuntu).
+
 McpMux runs in the system tray — look for its icon after launch. A default **Space** (an isolated environment for servers + credentials) is created for you; you can add more later for work/personal/per-client separation. See [Spaces](/docs/spaces/).
 
 ## Step 2: Install a server from the registry

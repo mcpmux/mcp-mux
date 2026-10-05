@@ -2750,6 +2750,7 @@ dependencies = [
  "dotenvy",
  "image",
  "keyring",
+ "libc",
  "mcpmux-core",
  "mcpmux-gateway",
  "mcpmux-runtime",

@@ -10,6 +10,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 mod commands;
+#[cfg(target_os = "linux")]
+mod linux_graphics;
 mod services;
 mod state;
 mod tray;
@@ -173,6 +175,12 @@ async fn open_logs_folder() -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything spawns a thread (tracing's file writer, Tauri): this
+    // forks an EGL probe and may switch WebKit to Mesa's software renderer so
+    // an unsupported GPU can't crash it at startup (#237).
+    #[cfg(target_os = "linux")]
+    let graphics = linux_graphics::configure(&get_app_data_dir().join("graphics-probe"));
+
     // Keep the guard alive for the entire program - dropping it stops file logging
     let _log_guard = init_tracing();
 
@@ -183,6 +191,8 @@ pub fn run() {
         env!("CARGO_PKG_VERSION")
     );
     info!("Logs directory: {}", logs_dir.display());
+    #[cfg(target_os = "linux")]
+    linux_graphics::log(&graphics);
 
     tauri::Builder::default()
         // single_instance MUST be registered BEFORE deep_link so its `deep-link`

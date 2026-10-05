@@ -52,3 +52,6 @@ mcpmux-core.workspace = true
 mcpmux-gateway.workspace = true
 mcpmux-runtime.workspace = true
 mcpmux-storage.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

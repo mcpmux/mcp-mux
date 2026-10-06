@@ -78,33 +78,30 @@ export function WorkspaceBindingSheet() {
   currentSessionRef.current = payload?.session_id ?? null;
 
   useEffect(() => {
-    const un = listen<WorkspaceNeedsBindingPayload>(
-      'workspace-needs-binding',
-      async (event) => {
-        // Swallow only while a sheet is already showing — the user is
-        // mid-decision, a second emit would stack a new sheet on top. Once
-        // the current sheet closes (Modify or Close), the next emit from
-        // any fresh session on an unbound root opens the sheet again.
-        if (currentSessionRef.current !== null) return;
-        // Respect the "ask to map new folders" setting (on by default). Read
-        // it fresh each time so toggling it — from Settings or the in-sheet
-        // "stop asking" link — takes effect immediately, with no re-subscribe.
-        try {
-          const enabled = await invoke<boolean>('get_workspace_mapping_prompt_enabled');
-          if (!enabled) return;
-        } catch {
-          // If the setting can't be read, fall back to showing (default on).
-        }
-        // Re-check after the await: another emit may have opened a sheet while
-        // we were reading the setting.
-        if (currentSessionRef.current !== null) return;
-        const p = event.payload;
-        setPayload(p);
-        setSelectedSpaceId(p.space_id);
-        setSelectedFsId('');
-        setError(null);
+    const un = listen<WorkspaceNeedsBindingPayload>('workspace-needs-binding', async (event) => {
+      // Swallow only while a sheet is already showing — the user is
+      // mid-decision, a second emit would stack a new sheet on top. Once
+      // the current sheet closes (Modify or Close), the next emit from
+      // any fresh session on an unbound root opens the sheet again.
+      if (currentSessionRef.current !== null) return;
+      // Respect the "ask to map new folders" setting (on by default). Read
+      // it fresh each time so toggling it — from Settings or the in-sheet
+      // "stop asking" link — takes effect immediately, with no re-subscribe.
+      try {
+        const enabled = await invoke<boolean>('get_workspace_mapping_prompt_enabled');
+        if (!enabled) return;
+      } catch {
+        // If the setting can't be read, fall back to showing (default on).
       }
-    );
+      // Re-check after the await: another emit may have opened a sheet while
+      // we were reading the setting.
+      if (currentSessionRef.current !== null) return;
+      const p = event.payload;
+      setPayload(p);
+      setSelectedSpaceId(p.space_id);
+      setSelectedFsId('');
+      setError(null);
+    });
     return () => {
       un.then((fn) => fn());
     };
@@ -219,11 +216,11 @@ export function WorkspaceBindingSheet() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/40 backdrop-blur-sm animate-fade-in"
+      className="animate-fade-in fixed inset-0 z-50 flex items-stretch justify-end bg-black/40 backdrop-blur-sm"
       onClick={handleDismiss}
     >
       <div
-        className="relative flex h-full w-full max-w-md flex-col bg-[rgb(var(--background))] shadow-2xl animate-slide-in"
+        className="animate-slide-in relative flex h-full w-full max-w-md flex-col bg-[rgb(var(--background))] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -234,7 +231,7 @@ export function WorkspaceBindingSheet() {
           <X className="h-4 w-4" />
         </button>
 
-        <div className="px-8 pt-10 pb-6">
+        <div className="px-8 pb-6 pt-10">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-1 text-xs font-medium text-[rgb(var(--muted))]">
             <Sparkles className="h-3 w-3 text-[rgb(var(--accent))]" />
             {isId ? 'New workspace id detected' : 'New workspace detected'}
@@ -246,9 +243,8 @@ export function WorkspaceBindingSheet() {
             {isId
               ? 'A connected client sent this id in its X-Mcpmux-Workspace header. '
               : 'You just opened this folder in a connected app. '}
-            It&apos;s already configured with your default Starter tools. Pick a different Space
-            or feature set below to change what it gets, or close to keep the
-            Starter.
+            It&apos;s already configured with your default Starter tools. Pick a different Space or
+            feature set below to change what it gets, or close to keep the Starter.
           </p>
 
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-4 py-3">
@@ -270,16 +266,21 @@ export function WorkspaceBindingSheet() {
           {/* Self-intro: point at the per-workspace installer so apps that
               don't report this folder (e.g. Cursor) still route here. Folder-only. */}
           {!isId && (
-            <p className="mt-3 text-xs text-[rgb(var(--muted))]" data-testid="binding-sheet-install-hint">
+            <p
+              className="mt-3 text-xs text-[rgb(var(--muted))]"
+              data-testid="binding-sheet-install-hint"
+            >
               Tip: app not routing here? In the Mapping tab, open this folder and{' '}
-              <span className="font-medium text-[rgb(var(--foreground))]">Connect apps to this folder</span>{' '}
+              <span className="font-medium text-[rgb(var(--foreground))]">
+                Connect apps to this folder
+              </span>{' '}
               to write its config with a workspace header — it works even when the app doesn&apos;t
               report the folder.
             </p>
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-8 pb-6 space-y-6">
+        <div className="flex-1 space-y-6 overflow-y-auto px-8 pb-6">
           <div>
             <div className="mb-1 text-xs font-medium uppercase tracking-wider text-[rgb(var(--muted))]">
               Space
@@ -305,7 +306,7 @@ export function WorkspaceBindingSheet() {
                   </option>
                 ))}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))]" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
             </div>
           </div>
 
@@ -321,8 +322,7 @@ export function WorkspaceBindingSheet() {
               />
             </div>
             <p className="mb-3 text-xs text-[rgb(var(--muted))]">
-              The exact tools, prompts, and resources this folder is allowed to
-              use.
+              The exact tools, prompts, and resources this folder is allowed to use.
             </p>
             {loadingFs ? (
               <div className="flex items-center justify-center py-8 text-[rgb(var(--muted))]">
@@ -357,21 +357,14 @@ export function WorkspaceBindingSheet() {
 
         <div className="border-t border-[rgb(var(--border))] px-8 py-4">
           {error && (
-            <div className="mb-3 rounded-lg bg-red-500/10 p-2.5 text-xs text-red-500">
-              {error}
-            </div>
+            <div className="mb-3 rounded-lg bg-red-500/10 p-2.5 text-xs text-red-500">{error}</div>
           )}
           {/* "Close" keeps the default Starter set (nothing written); the
               primary "Modify" applies the picked Space + feature set as an
               explicit mapping. Labels deliberately avoid "Not now", which read
               as "this folder is unmapped / has no tools" — it isn't. */}
           <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              className="px-5"
-              onClick={handleDismiss}
-              disabled={saving}
-            >
+            <Button variant="secondary" className="px-5" onClick={handleDismiss} disabled={saving}>
               Close
             </Button>
             <Button
@@ -430,7 +423,7 @@ function ChoiceRow({
       className={[
         'group flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-all',
         selected
-          ? 'border-primary-500 bg-primary-50 shadow-sm dark:bg-primary-900/20 dark:border-primary-400'
+          ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 dark:border-primary-400 shadow-sm'
           : 'border-[rgb(var(--border))] bg-[rgb(var(--background))] hover:border-[rgb(var(--border-strong,var(--border)))] hover:bg-[rgb(var(--surface-hover,var(--surface)))]',
       ].join(' ')}
     >
@@ -449,29 +442,27 @@ function ChoiceRow({
           <div
             className={[
               'text-sm font-medium',
-              selected
-                ? 'text-primary-900 dark:text-primary-100'
-                : 'text-[rgb(var(--foreground))]',
+              selected ? 'text-primary-900 dark:text-primary-100' : 'text-[rgb(var(--foreground))]',
             ].join(' ')}
           >
             {title}
           </div>
           {badge && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-[rgb(var(--surface-hover,var(--surface)))] text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
+            <span className="inline-flex items-center rounded-md bg-[rgb(var(--surface-hover,var(--surface)))] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[rgb(var(--muted))]">
               {badge}
             </span>
           )}
         </div>
-        {subtitle && (
-          <div className="mt-0.5 text-xs text-[rgb(var(--muted))]">{subtitle}</div>
-        )}
+        {subtitle && <div className="mt-0.5 text-xs text-[rgb(var(--muted))]">{subtitle}</div>}
       </div>
     </button>
   );
 }
 
 function describeFs(fs: FeatureSet): string {
+  if (fs.auto_include) return "Every server's tools, automatically";
   switch (fs.feature_set_type) {
+    case 'starter':
     case 'default':
       return 'The auto-seeded fallback set for this space';
     case 'custom':

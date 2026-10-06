@@ -11,6 +11,7 @@ import opencodeIcon from '@/assets/client-icons/opencode.svg';
 import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
 import { addToVscode, addToCursor } from '@/lib/api/clientInstall';
 import { ClientBrandIcon } from './ClientBrandIcon';
+import { connectFinishNote, useGatewayAuthRequired } from '@/hooks/useGatewayAuthRequired';
 
 type GridAction = 'deep_link' | 'copy_command' | 'copy_config';
 
@@ -46,6 +47,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
   const [activeId, setActiveId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const authRequired = useGatewayAuthRequired();
 
   const mcpUrl = `${gatewayUrl}/mcp`;
 
@@ -60,8 +62,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       nextStep:
         'Opens VS Code and drops mcpmux into mcp.json. VS Code starts the server ' +
         'automatically — if it doesn’t, open the Command Palette and run ' +
-        '"MCP: Show Installed Servers", then click Start on mcpmux. The approval ' +
-        'prompt lands on this page.',
+        '"MCP: Show Installed Servers", then click Start on mcpmux.',
     },
     {
       id: 'cursor',
@@ -73,7 +74,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       nextStep:
         'Opens Cursor and adds mcpmux to its config. Cursor does not auto-start ' +
         'new MCP servers — go to Settings → Features → MCP (or the MCP ' +
-        'Tools panel) and toggle mcpmux on. The approval prompt lands on this page.',
+        'Tools panel) and toggle mcpmux on.',
     },
     {
       id: 'windsurf',
@@ -84,8 +85,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       handler: `"mcpmux": {\n  "serverUrl": "${mcpUrl}"\n}`,
       nextStep:
         'Copies a JSON snippet. In Windsurf, open Cascade → MCP settings, ' +
-        'paste mcpmux under mcpServers, and hit "Refresh" (or reload Windsurf). ' +
-        'Approve on this page when Windsurf reaches the gateway.',
+        'paste mcpmux under mcpServers, and hit "Refresh" (or reload Windsurf).',
     },
     {
       id: 'claude-code',
@@ -97,7 +97,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       nextStep:
         'Copies a `claude mcp add` command. Run it in your shell — Claude Code ' +
         'loads mcpmux on the next `claude` invocation (existing sessions need ' +
-        '/restart). Approve on this page when it connects.',
+        '/restart).',
     },
     {
       id: 'opencode',
@@ -110,7 +110,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       nextStep:
         'Copies a JSON snippet. In opencode, paste it under "mcp" in opencode.json ' +
         '(project) or ~/.config/opencode/opencode.json (global), then restart ' +
-        'opencode. Approve on this page when it connects.',
+        'opencode.',
     },
     {
       id: 'jetbrains',
@@ -121,8 +121,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       handler: `"mcpmux": {\n  "url": "${mcpUrl}"\n}`,
       nextStep:
         'Copies a JSON snippet. Paste into the AI Assistant MCP config, then ' +
-        'restart the IDE — JetBrains only reads MCP config on startup. Approve ' +
-        'on this page.',
+        'restart the IDE — JetBrains only reads MCP config on startup.',
     },
     {
       id: 'android-studio',
@@ -133,7 +132,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       handler: `"mcpmux": {\n  "httpUrl": "${mcpUrl}"\n}`,
       nextStep:
         'Copies a JSON snippet. Paste into Android Studio’s AI Assistant MCP ' +
-        'config, then restart the IDE. Approve on this page.',
+        'config, then restart the IDE.',
     },
     {
       id: 'copy-config',
@@ -143,7 +142,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       handler: `"mcpmux": {\n  "type": "http",\n  "url": "${mcpUrl}"\n}`,
       nextStep:
         'Copies a generic MCP JSON snippet. Paste into any MCP-compatible client ' +
-        'and follow its reload instructions. Approve on this page when it connects.',
+        'and follow its reload instructions.',
     },
   ];
 
@@ -191,12 +190,11 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
           >
             <button
               type="button"
-              className={`flex items-center justify-center h-10 w-10 rounded-lg border transition-all
-                ${
-                  isActive
-                    ? 'border-primary-500 bg-primary-500/10 ring-1 ring-primary-500/30'
-                    : 'border-[rgb(var(--border))] bg-[var(--surface)] hover:border-primary-400 hover:bg-primary-500/5'
-                }`}
+              className={`flex h-10 w-10 items-center justify-center rounded-lg border transition-all ${
+                isActive
+                  ? 'border-primary-500 bg-primary-500/10 ring-primary-500/30 ring-1'
+                  : 'hover:border-primary-400 hover:bg-primary-500/5 border-[rgb(var(--border))] bg-[var(--surface)]'
+              }`}
               title={entry.name}
               onClick={() => setActiveId(isActive ? null : entry.id)}
               data-testid={`client-icon-${entry.id}`}
@@ -212,9 +210,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
                 <Braces className="h-4 w-4 text-[rgb(var(--muted))]" />
               )}
             </button>
-            <span className="text-[10px] text-[rgb(var(--muted))] leading-none">
-              {entry.label}
-            </span>
+            <span className="text-[10px] leading-none text-[rgb(var(--muted))]">{entry.label}</span>
 
             {/* Popover — opens UPWARD. The grid usually sits at the
                 bottom of a Card (Dashboard + Clients empty state), so
@@ -223,31 +219,31 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
                 it. Anchor to the bottom of the trigger button instead. */}
             {isActive && (
               <div
-                className="absolute bottom-full left-0 mb-2 z-10 w-64 rounded-lg border border-[rgb(var(--border))] bg-white dark:bg-zinc-900 shadow-lg p-3"
+                className="absolute bottom-full left-0 z-10 mb-2 w-64 rounded-lg border border-[rgb(var(--border))] bg-white p-3 shadow-lg dark:bg-zinc-900"
                 data-testid="client-popover"
               >
-                <p className="text-xs font-semibold mb-1 relative">{entry.name}</p>
+                <p className="relative mb-1 text-xs font-semibold">{entry.name}</p>
 
                 {/* Per-IDE instructions. Not a switch on action type —
                     each IDE's post-install step is meaningfully different
                     (VS Code auto-starts, Cursor needs explicit toggle,
                     JetBrains needs a full restart, etc.). */}
-                <p className="text-[11px] leading-snug text-[rgb(var(--muted))] mb-2.5">
-                  {entry.nextStep}
+                <p className="mb-2.5 text-[11px] leading-snug text-[rgb(var(--muted))]">
+                  {entry.nextStep} {connectFinishNote(authRequired)}
                 </p>
 
                 {entry.action === 'deep_link' ? (
                   <Button
                     variant="primary"
                     size="sm"
-                    className="w-full h-7 text-xs relative"
+                    className="relative h-7 w-full text-xs"
                     disabled={!gatewayRunning}
                     onClick={() => handleDeepLink(entry)}
                   >
                     Add to {entry.name}
                   </Button>
                 ) : isCopied ? (
-                  <div className="flex items-center justify-center gap-1 text-xs text-green-600 h-7 relative">
+                  <div className="relative flex h-7 items-center justify-center gap-1 text-xs text-green-600">
                     <Check className="h-3 w-3" />
                     Copied — paste &amp; follow above
                   </div>
@@ -255,7 +251,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
                   <Button
                     variant="secondary"
                     size="sm"
-                    className="w-full h-7 text-xs gap-1 relative"
+                    className="relative h-7 w-full gap-1 text-xs"
                     onClick={() => handleCopy(entry)}
                     data-testid={entry.id === 'copy-config' ? 'copy-config-btn' : undefined}
                   >
@@ -266,7 +262,7 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
 
                 {/* Arrow — points down from the popover to the trigger
                     icon below. */}
-                <div className="absolute -bottom-1.5 left-4 h-3 w-3 rotate-45 border-r border-b border-[rgb(var(--border))] bg-white dark:bg-zinc-900" />
+                <div className="absolute -bottom-1.5 left-4 h-3 w-3 rotate-45 border-b border-r border-[rgb(var(--border))] bg-white dark:bg-zinc-900" />
               </div>
             )}
           </div>
@@ -287,6 +283,7 @@ interface ConnectIDEsProps {
  * canonical ConnectionCard instead.
  */
 export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
+  const authRequired = useGatewayAuthRequired();
   return (
     <Card>
       <CardHeader>
@@ -295,8 +292,10 @@ export function ConnectIDEs({ gatewayUrl, gatewayRunning }: ConnectIDEsProps) {
             <CardTitle>Connect Your IDEs</CardTitle>
             <CardDescription>
               <span className="font-medium">VS Code &amp; Cursor</span> are one-click; the rest copy
-              a config you paste into their MCP settings. Either path ends with an approval
-              prompt in this app.
+              a config you paste into their MCP settings.{' '}
+              {authRequired === false
+                ? 'Either way the app connects right away — no access key needed.'
+                : 'Either path ends with an approval prompt in this app.'}
             </CardDescription>
           </div>
           <div className="flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">

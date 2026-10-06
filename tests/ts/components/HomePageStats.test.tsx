@@ -30,6 +30,7 @@ vi.mock('@/lib/api/clients', () => ({ listClients: mockListClients }));
 vi.mock('@/lib/api/featureSets', () => ({
   listFeatureSetsBySpace: mockListFS,
   listFeatureSets: mockListFS,
+  getStarterToolSummary: vi.fn().mockResolvedValue(null),
 }));
 vi.mock('@/lib/api/gateway', () => ({ getGatewayStatus: mockGatewayStatus }));
 vi.mock('@/lib/api/registry', () => ({ listInstalledServers: mockListInstalled }));

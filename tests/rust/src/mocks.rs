@@ -387,10 +387,13 @@ impl FeatureSetRepository for MockFeatureSetRepository {
     }
 
     async fn update(&self, feature_set: &FeatureSet) -> RepoResult<()> {
+        // Mirror the SQLite rule: explicit members turn auto mode off.
+        let mut stored = feature_set.clone();
+        stored.auto_include = feature_set.auto_include && feature_set.members.is_empty();
         self.sets
             .write()
             .unwrap()
-            .insert(feature_set.id.clone(), feature_set.clone());
+            .insert(feature_set.id.clone(), stored);
         Ok(())
     }
 
@@ -426,6 +429,9 @@ impl FeatureSetRepository for MockFeatureSetRepository {
         feature_id: &str,
         mode: MemberMode,
     ) -> RepoResult<()> {
+        // The mock has no feature table to materialize from; an edit just
+        // switches an auto set to manual.
+        self.clear_auto(feature_set_id);
         let member = FeatureSetMember {
             id: Uuid::new_v4().to_string(),
             feature_set_id: feature_set_id.to_string(),
@@ -447,6 +453,7 @@ impl FeatureSetRepository for MockFeatureSetRepository {
         feature_set_id: &str,
         feature_id: &str,
     ) -> RepoResult<()> {
+        self.clear_auto(feature_set_id);
         if let Some(members) = self.members.write().unwrap().get_mut(feature_set_id) {
             members
                 .retain(|m| !(m.member_type == MemberType::Feature && m.member_id == feature_id));
@@ -462,6 +469,26 @@ impl FeatureSetRepository for MockFeatureSetRepository {
             .get(feature_set_id)
             .cloned()
             .unwrap_or_default())
+    }
+
+    async fn set_auto_include(&self, feature_set_id: &str, enabled: bool) -> RepoResult<()> {
+        let mut sets = self.sets.write().unwrap();
+        let Some(set) = sets.get_mut(feature_set_id) else {
+            anyhow::bail!("FeatureSet not found: {}", feature_set_id);
+        };
+        set.auto_include = enabled;
+        if enabled {
+            self.members.write().unwrap().remove(feature_set_id);
+        }
+        Ok(())
+    }
+}
+
+impl MockFeatureSetRepository {
+    fn clear_auto(&self, feature_set_id: &str) {
+        if let Some(set) = self.sets.write().unwrap().get_mut(feature_set_id) {
+            set.auto_include = false;
+        }
     }
 }
 

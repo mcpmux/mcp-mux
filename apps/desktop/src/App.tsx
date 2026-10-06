@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Sun, Moon, Download, X } from 'lucide-react';
+import { Sun, Moon, Download, X, AlertTriangle, Layers } from 'lucide-react';
 import { AppShell, Sidebar, SidebarItem, SidebarSection } from '@mcpmux/ui';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { OAuthConsentModal } from '@/components/OAuthConsentModal';
 import { ServerInstallModal } from '@/components/ServerInstallModal';
 import { SpaceSwitcher } from '@/components/SpaceSwitcher';
+import { MuxStatusChip } from '@/components/MuxPrompt';
 import { useDataSync } from '@/hooks/useDataSync';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { startMetaToolActivityListener } from '@/stores/metaToolActivityStore';
@@ -34,6 +35,7 @@ import { AutoStartConflictResolver } from '@/features/gateway/AutoStartConflictR
 import { WorkspaceBindingSheet } from '@/features/workspaces';
 import { MetaToolApprovalDialog } from '@/features/metaTools';
 import { useGatewayEvents } from '@/hooks/useDomainEvents';
+import { useStarterToolSummary } from '@/hooks/useStarterToolSummary';
 
 /** McpMux title-bar icon — miniature cat icon */
 function McpMuxGlyph({ className }: { className?: string }) {
@@ -195,6 +197,9 @@ function AppContent() {
     capture('page_viewed', { page: activeNav });
   }, [activeNav]);
 
+  // Starter tool count for the status bar (warns past the size threshold).
+  const { summary: starterSummary } = useStarterToolSummary(viewSpace?.id);
+
   // Gateway status for sidebar footer
   const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);
   const loadGatewayUrl = useCallback(async () => {
@@ -293,6 +298,31 @@ function AppContent() {
           />
           Space: {viewSpace?.name || 'None'}
         </span>
+        {starterSummary && (
+          <button
+            type="button"
+            onClick={() => navigateTo('featuresets')}
+            className={`flex items-center gap-1 transition-colors hover:text-[rgb(var(--foreground))] ${
+              starterSummary.over_threshold ? 'text-amber-600 dark:text-amber-400' : ''
+            }`}
+            title={
+              starterSummary.over_threshold
+                ? `Apps without a mapped FeatureSet get ${starterSummary.tool_count} tools — more than the ${starterSummary.threshold} AI apps handle well. Click to slim it down.`
+                : `Apps without a mapped FeatureSet get these tools from your Starter set${
+                    starterSummary.auto_include ? ' (every server, automatically)' : ''
+                  }.`
+            }
+            data-testid="statusbar-starter-tools"
+          >
+            {starterSummary.over_threshold ? (
+              <AlertTriangle className="h-3 w-3" />
+            ) : (
+              <Layers className="h-3 w-3" />
+            )}
+            {starterSummary.tool_count} tool{starterSummary.tool_count === 1 ? '' : 's'}
+          </button>
+        )}
+        <MuxStatusChip />
       </div>
       {appVersion && (
         <span className="opacity-70" data-testid="statusbar-version">

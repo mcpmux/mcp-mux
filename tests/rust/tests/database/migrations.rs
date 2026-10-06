@@ -194,6 +194,10 @@ fn test_new_schema_objects_exist_after_migration() {
         column_exists(&db, "inbound_clients", "locked_space_id"),
         "migration 022 must add inbound_clients.locked_space_id"
     );
+    assert!(
+        column_exists(&db, "feature_sets", "auto_include"),
+        "migration 023 must add feature_sets.auto_include"
+    );
 }
 
 #[test]
@@ -212,7 +216,8 @@ fn test_pending_migrations_apply_to_an_existing_older_database() {
                 "DELETE FROM schema_migrations WHERE version >= 20;
                  DROP TABLE IF EXISTS inbound_client_api_keys;
                  ALTER TABLE workspace_bindings DROP COLUMN binding_type;
-                 ALTER TABLE inbound_clients DROP COLUMN locked_space_id;",
+                 ALTER TABLE inbound_clients DROP COLUMN locked_space_id;
+                 ALTER TABLE feature_sets DROP COLUMN auto_include;",
             )
             .expect("roll schema back to pre-020");
         assert!(
@@ -229,4 +234,99 @@ fn test_pending_migrations_apply_to_an_existing_older_database() {
     );
     assert!(column_exists(&db, "workspace_bindings", "binding_type"));
     assert!(column_exists(&db, "inbound_clients", "locked_space_id"));
+    assert!(column_exists(&db, "feature_sets", "auto_include"));
+}
+
+fn starter_auto_include(db: &Database) -> bool {
+    db.connection()
+        .query_row(
+            "SELECT auto_include FROM feature_sets WHERE feature_set_type = 'starter' LIMIT 1",
+            [],
+            |r| r.get::<_, i32>(0),
+        )
+        .expect("default Space has a Starter")
+        == 1
+}
+
+fn auth_disabled_setting(db: &Database) -> Option<String> {
+    // No row → None (the only expected error here is "no rows").
+    db.connection()
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'gateway.auth_disabled'",
+            [],
+            |r| r.get(0),
+        )
+        .ok()
+}
+
+/// Reopen `path` with migration 023 un-applied, after `seed` ran against the
+/// pre-023 schema — i.e. what an upgrade from the previous release sees.
+fn reapply_023(path: &std::path::Path, seed: &str) -> Database {
+    {
+        let db = Database::open(path).expect("open");
+        db.connection()
+            .execute_batch(&format!(
+                "DELETE FROM schema_migrations WHERE version >= 23;
+                 ALTER TABLE feature_sets DROP COLUMN auto_include;
+                 DELETE FROM app_settings WHERE key = 'gateway.auth_disabled';
+                 {seed}"
+            ))
+            .expect("roll back to pre-023 and seed");
+    }
+    Database::open(path).expect("reopen")
+}
+
+/// A brand-new install starts in "install, connect, use" mode: the Starter
+/// includes every server's tools, and no auth choice is stored (the desktop
+/// app reads a missing value as "off while loopback-only").
+#[test]
+fn test_023_fresh_install_gets_onboarding_defaults() {
+    let db = Database::open_in_memory().expect("open");
+    assert!(starter_auto_include(&db));
+    assert_eq!(auth_disabled_setting(&db), None);
+}
+
+/// Upgrading an install that's in use keeps today's behavior: its Starter
+/// selection is left alone (an empty Starter may be a deliberate "grant
+/// nothing") and inbound auth is pinned on, so the upgrade can't silently
+/// drop auth.
+#[test]
+fn test_023_upgrade_keeps_an_existing_installs_starter_and_auth() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("mcpmux.db");
+    let db = reapply_023(
+        &path,
+        "INSERT INTO installed_servers (id, space_id, server_id, created_at, updated_at)
+         SELECT 'inst-1', id, 'community.memory', datetime('now'), datetime('now')
+           FROM spaces WHERE is_default = 1;",
+    );
+    assert!(!starter_auto_include(&db));
+    assert_eq!(auth_disabled_setting(&db).as_deref(), Some("false"));
+}
+
+/// An auth choice the user already made survives the upgrade either way.
+#[test]
+fn test_023_upgrade_preserves_an_explicit_auth_choice() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("mcpmux.db");
+    let db = reapply_023(
+        &path,
+        "INSERT INTO installed_servers (id, space_id, server_id, created_at, updated_at)
+         SELECT 'inst-1', id, 'community.memory', datetime('now'), datetime('now')
+           FROM spaces WHERE is_default = 1;
+         INSERT INTO app_settings (key, value, updated_at)
+         VALUES ('gateway.auth_disabled', 'true', datetime('now'));",
+    );
+    assert_eq!(auth_disabled_setting(&db).as_deref(), Some("true"));
+}
+
+/// An install that was never used (no servers, no clients) upgrades like a
+/// fresh one.
+#[test]
+fn test_023_upgrade_of_an_unused_install_gets_onboarding_defaults() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("mcpmux.db");
+    let db = reapply_023(&path, "");
+    assert!(starter_auto_include(&db));
+    assert_eq!(auth_disabled_setting(&db), None);
 }

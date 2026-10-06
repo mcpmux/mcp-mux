@@ -116,9 +116,9 @@ impl FeatureResolutionService {
                 continue;
             }
 
-            // Both Default and Custom sets use explicit members; the
-            // resolution is identical — walk the members and build up
-            // allow/exclude sets.
+            // Both Starter and Custom sets use explicit members, unless the
+            // set is in auto mode (then it grants every feature in the
+            // Space) — walk the members and build up allow/exclude sets.
             self.resolve_members(
                 &feature_set,
                 &all_features,
@@ -182,6 +182,13 @@ impl FeatureResolutionService {
         excluded: &mut HashSet<String>,
         visited: &mut HashSet<String>,
     ) -> Result<()> {
+        // Auto mode: every feature the Space has (availability is checked by
+        // the caller), so a newly installed server shows up with no setup.
+        // An auto set has no explicit members, so there's nothing else to walk.
+        if feature_set.auto_include {
+            allowed.extend(all_features.iter().map(|f| f.id.to_string()));
+            return Ok(());
+        }
         for member in &feature_set.members {
             match member.member_type {
                 MemberType::Feature => {

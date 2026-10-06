@@ -11,10 +11,30 @@
 //!   implicit fallback; that role is back after a stint where it was a no-op
 //!   seed.)
 //! - **Custom**: any other operator-defined FeatureSet.
+//!
+//! Any FeatureSet can be in **auto** mode ([`FeatureSet::auto_include`]): it
+//! has no explicit members and grants every feature from every server in its
+//! Space. New Spaces seed their Starter in auto mode so a new user can install
+//! a server, connect an app, and use it with no FeatureSet setup. The first
+//! explicit membership edit switches the set to manual (the repository
+//! enforces this for every caller).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Tool count above which McpMux warns that a FeatureSet is getting large.
+///
+/// A warning, not a cap: an auto Starter keeps serving every tool. Past this
+/// point AI apps get slower and less accurate at picking tools (and some
+/// clients have hard limits), so the UI suggests building a focused set with
+/// `@mux` or by hand.
+pub const TOOL_COUNT_WARNING_THRESHOLD: usize = 80;
+
+/// App-settings key for "new Starters include every tool automatically".
+/// Stored as `"true"`/`"false"`; missing means on. Turning it off in Settings
+/// also switches every existing Starter to manual.
+pub const STARTER_AUTO_INCLUDE_SETTING_KEY: &str = "featuresets.starter_auto_include";
 
 /// The type of a FeatureSet.
 ///
@@ -198,6 +218,12 @@ pub struct FeatureSet {
     #[serde(default)]
     pub is_deleted: bool,
 
+    /// Auto mode: grant every feature from every server in the Space instead
+    /// of `members`. An auto set has no explicit members; writing members
+    /// turns it off.
+    #[serde(default)]
+    pub auto_include: bool,
+
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
 
@@ -223,6 +249,7 @@ impl FeatureSet {
             server_id: None,
             is_builtin: false,
             is_deleted: false,
+            auto_include: false,
             created_at: now,
             updated_at: now,
             members: vec![],
@@ -255,6 +282,8 @@ impl FeatureSet {
             server_id: None,
             is_builtin: true,
             is_deleted: false,
+            // Starts in auto mode: every server's tools, no setup needed.
+            auto_include: true,
             created_at: now,
             updated_at: now,
             members: vec![],

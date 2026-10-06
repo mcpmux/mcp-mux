@@ -841,6 +841,10 @@ pub fn run() {
             commands::add_feature_set_member,
             commands::remove_feature_set_member,
             commands::set_feature_set_members,
+            commands::set_feature_set_auto_include,
+            commands::get_starter_tool_summary,
+            commands::get_starter_auto_include_default,
+            commands::set_starter_auto_include_default,
             // Individual feature member commands
             commands::add_feature_to_set,
             commands::remove_feature_from_set,

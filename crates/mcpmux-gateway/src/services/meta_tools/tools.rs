@@ -356,9 +356,11 @@ impl MetaTool for ListFeatureSetsTool {
     fn description(&self) -> &'static str {
         "List every FeatureSet defined in a Space (default: the caller's resolved \
          Space; pass `space_id` to target another) — built-ins and custom. Each \
-         entry carries `id`, `name`, `description`, `type`, and `is_builtin`. Use \
-         before composing a new FeatureSet so you don't recreate one that already \
-         fits."
+         entry carries `id`, `name`, `description`, `type`, `is_builtin`, and \
+         `auto_include` (true = the set grants every tool from every server in \
+         the Space, with no explicit members; editing it switches it to an \
+         explicit list). Use before composing a new FeatureSet so you don't \
+         recreate one that already fits."
     }
 
     fn input_schema(&self) -> Value {
@@ -391,6 +393,7 @@ impl MetaTool for ListFeatureSetsTool {
                     "description": fs.description,
                     "type": fs.feature_set_type,
                     "is_builtin": fs.is_builtin,
+                    "auto_include": fs.auto_include,
                 })
             })
             .collect();

@@ -3,7 +3,10 @@
 //! IPC commands for managing feature sets (permission bundles).
 
 use chrono::Utc;
-use mcpmux_core::{FeatureSet, FeatureSetMember, MemberMode, MemberType};
+use mcpmux_core::{
+    FeatureSet, FeatureSetMember, MemberMode, MemberType, STARTER_AUTO_INCLUDE_SETTING_KEY,
+    TOOL_COUNT_WARNING_THRESHOLD,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::State;
@@ -48,6 +51,8 @@ pub struct FeatureSetResponse {
     pub server_id: Option<String>,
     pub is_builtin: bool,
     pub is_deleted: bool,
+    /// Auto mode: grants every server's features instead of `members`.
+    pub auto_include: bool,
     pub members: Vec<FeatureSetMemberResponse>,
 }
 
@@ -64,6 +69,7 @@ impl From<FeatureSet> for FeatureSetResponse {
             server_id: fs.server_id,
             is_builtin: fs.is_builtin,
             is_deleted: fs.is_deleted,
+            auto_include: fs.auto_include,
             members,
         }
     }
@@ -520,6 +526,10 @@ pub async fn set_feature_set_members(
         .collect();
 
     feature_set.members = new_members;
+    // Saving an explicit list is a manual selection — even an empty one
+    // ("grant nothing"), which the repository alone couldn't tell apart from
+    // an untouched auto set.
+    feature_set.auto_include = false;
     feature_set.updated_at = Utc::now();
 
     state
@@ -579,4 +589,160 @@ fn reaches_feature_set<'a>(
         }
         false
     })
+}
+
+/// Tell connected MCP clients a FeatureSet changed (no-op when the gateway
+/// isn't running).
+async fn notify_modified(
+    gateway_state: &Arc<RwLock<GatewayAppState>>,
+    space_id: &str,
+    feature_set_id: &str,
+) {
+    let gw_state = gateway_state.read().await;
+    if let Some(ref grant_service) = gw_state.grant_service {
+        if let Err(e) = grant_service
+            .notify_feature_set_modified(space_id, feature_set_id)
+            .await
+        {
+            warn!("[FeatureSet] Failed to emit notifications: {}", e);
+        }
+    }
+}
+
+/// Switch a FeatureSet into or out of auto mode (every server's tools).
+/// Turning it off keeps what the set granted as an explicit list to edit.
+#[tauri::command]
+pub async fn set_feature_set_auto_include(
+    feature_set_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<FeatureSetResponse, String> {
+    state
+        .feature_set_repository
+        .set_auto_include(&feature_set_id, enabled)
+        .await
+        .map_err(|e| e.to_string())?;
+    let feature_set = state
+        .feature_set_repository
+        .get_with_members(&feature_set_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Feature set not found")?;
+
+    let space_id = feature_set.space_id.as_deref().unwrap_or("default");
+    notify_modified(&gateway_state, space_id, &feature_set_id).await;
+    Ok(feature_set.into())
+}
+
+/// What a Space's Starter gives connected apps right now.
+#[derive(Debug, Serialize)]
+pub struct StarterToolSummary {
+    pub feature_set_id: String,
+    pub auto_include: bool,
+    /// Tools the Starter serves (available ones only — what a client sees).
+    pub tool_count: usize,
+    /// Servers those tools come from.
+    pub server_count: usize,
+    /// Size past which McpMux suggests a focused FeatureSet. A warning only.
+    pub threshold: usize,
+    pub over_threshold: bool,
+}
+
+/// Summarize the Space's Starter for the onboarding/tool-count UI. Counts
+/// tools with the gateway's own resolver, so the number matches what an
+/// unmapped client actually gets.
+#[tauri::command]
+pub async fn get_starter_tool_summary(
+    space_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<StarterToolSummary>, String> {
+    let Some(starter) = state
+        .feature_set_repository
+        .get_starter_for_space(&space_id)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+
+    let features = mcpmux_gateway::FeatureService::new(
+        state.server_feature_repository_core.clone(),
+        state.feature_set_repository.clone(),
+        Arc::new(mcpmux_gateway::PrefixCacheService::new()),
+    );
+    let tools = features
+        .get_tools_for_grants(&space_id, std::slice::from_ref(&starter.id))
+        .await
+        .map_err(|e| e.to_string())?;
+    let server_count = tools
+        .iter()
+        .map(|t| t.server_id.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    Ok(Some(StarterToolSummary {
+        feature_set_id: starter.id,
+        auto_include: starter.auto_include,
+        tool_count: tools.len(),
+        server_count,
+        threshold: TOOL_COUNT_WARNING_THRESHOLD,
+        over_threshold: tools.len() > TOOL_COUNT_WARNING_THRESHOLD,
+    }))
+}
+
+/// Settings switch: do Starters include every server's tools automatically?
+/// Missing means on.
+#[tauri::command]
+pub async fn get_starter_auto_include_default(state: State<'_, AppState>) -> Result<bool, String> {
+    let stored = state
+        .settings_repository
+        .get(STARTER_AUTO_INCLUDE_SETTING_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(stored.as_deref() != Some("false"))
+}
+
+/// Flip the Settings switch. Applies to every Space's Starter right away —
+/// off keeps each Starter's current tools as a manual list to edit, on
+/// returns each to "every server's tools" — and to Starters of Spaces
+/// created later.
+#[tauri::command]
+pub async fn set_starter_auto_include_default(
+    enabled: bool,
+    state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<(), String> {
+    state
+        .settings_repository
+        .set(STARTER_AUTO_INCLUDE_SETTING_KEY, &enabled.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let spaces = state
+        .space_service
+        .list()
+        .await
+        .map_err(|e| e.to_string())?;
+    for space in spaces {
+        let space_id = space.id.to_string();
+        let Some(starter) = state
+            .feature_set_repository
+            .get_starter_for_space(&space_id)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
+        if starter.auto_include == enabled {
+            continue;
+        }
+        state
+            .feature_set_repository
+            .set_auto_include(&starter.id, enabled)
+            .await
+            .map_err(|e| e.to_string())?;
+        notify_modified(&gateway_state, &space_id, &starter.id).await;
+    }
+    Ok(())
 }

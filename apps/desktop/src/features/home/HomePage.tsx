@@ -23,6 +23,8 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ConnectionCard } from '@/components/ConnectionCard';
+import { StarterToolsCard } from '@/components/StarterToolsNotice';
+import { useStarterToolSummary } from '@/hooks/useStarterToolSummary';
 import { useGatewayEvents, useServerStatusEvents, useDomainEvents } from '@/hooks/useDomainEvents';
 import { useViewSpace, useNavigateTo, useSetPendingWorkspaceNew } from '@/stores';
 import type { NavItem } from '@/stores/types';
@@ -120,7 +122,7 @@ function GetStartedStrip() {
       n: 3,
       icon: Monitor,
       title: 'Connect an AI app',
-      desc: 'Point Cursor, Claude, or VS Code at your gateway below.',
+      desc: 'Point Cursor, Claude, or VS Code at your gateway below — it gets every tool right away.',
       cta: 'See Clients',
       nav: 'clients' as NavItem,
     },
@@ -204,6 +206,7 @@ export function HomePage() {
   });
   const [statsLoaded, setStatsLoaded] = useState(false);
   const viewSpace = useViewSpace();
+  const { summary: starterSummary } = useStarterToolSummary(viewSpace?.id);
 
   const loadStats = useCallback(async () => {
     try {
@@ -275,6 +278,12 @@ export function HomePage() {
       {/* Canonical connection surface — owns URL, Start/Stop, IDE grid,
           pending-approval nudge. */}
       <ConnectionCard />
+
+      {/* What connected apps get from the Starter — or, past the size
+          warning, how to slim it down with @mux or a FeatureSet. */}
+      {starterSummary && viewSpace?.id && (
+        <StarterToolsCard summary={starterSummary} spaceId={viewSpace.id} />
+      )}
 
       {/* Per-folder setup — opens the Mapping walkthrough (folder mode). */}
       <SetUpFolderCard />

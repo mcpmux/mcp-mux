@@ -10,6 +10,7 @@ import {
   Switch,
   useToast,
   ToastContainer,
+  useConfirm,
 } from '@mcpmux/ui';
 import {
   Sun,
@@ -33,6 +34,7 @@ import {
   RotateCcw,
   AlertCircle,
   ShieldOff,
+  Zap,
 } from 'lucide-react';
 import {
   useAppStore,
@@ -44,6 +46,7 @@ import {
 import { UpdateChecker } from './UpdateChecker';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
+import { getStarterAutoIncludeDefault, setStarterAutoIncludeDefault } from '@/lib/api/featureSets';
 
 interface StartupSettings {
   autoLaunch: boolean;
@@ -125,6 +128,12 @@ export function SettingsPage() {
   // opens an unmapped folder. On by default.
   const [mappingPromptEnabled, setMappingPromptEnabled] = useState(true);
   const [savingMappingPrompt, setSavingMappingPrompt] = useState(false);
+
+  // Starter auto-include — every Space's Starter grants every server's tools
+  // (on by default). Pro users turn it off to pick the Starter's tools.
+  const [starterAutoInclude, setStarterAutoInclude] = useState(true);
+  const [savingStarterAuto, setSavingStarterAuto] = useState(false);
+  const { confirm, ConfirmDialogElement: starterConfirmElement } = useConfirm();
 
   // System-wide inbound auth toggle. When disabled, local apps connect to the
   // gateway with no access key — used by the one-click per-workspace install.
@@ -392,6 +401,45 @@ export function SettingsPage() {
     }
   };
 
+  // Load the Starter auto-include switch on mount.
+  useEffect(() => {
+    getStarterAutoIncludeDefault()
+      .then(setStarterAutoInclude)
+      .catch((err) => console.error('Failed to load Starter auto-include setting:', err));
+  }, []);
+
+  const updateStarterAutoInclude = async (enabled: boolean) => {
+    if (
+      enabled &&
+      !(await confirm({
+        title: "Give Starters every server's tools?",
+        message:
+          "Every Space's Starter set will include every tool from every server, including servers you add later. Tools you picked for a Starter by hand are replaced.",
+        confirmLabel: 'Include everything',
+      }))
+    ) {
+      return;
+    }
+    const prev = starterAutoInclude;
+    setStarterAutoInclude(enabled);
+    setSavingStarterAuto(true);
+    try {
+      await setStarterAutoIncludeDefault(enabled);
+      success(
+        'Settings saved',
+        enabled
+          ? 'Starter sets now include every server’s tools automatically.'
+          : 'You pick the Starter’s tools now — each keeps its current tools until you change them on the FeatureSets page.'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      error('Failed to save setting', msg);
+      setStarterAutoInclude(prev);
+    } finally {
+      setSavingStarterAuto(false);
+    }
+  };
+
   // Load the system-wide inbound-auth toggle on mount.
   useEffect(() => {
     invoke<boolean>('get_gateway_auth_disabled')
@@ -516,6 +564,7 @@ export function SettingsPage() {
         onClose={(id) => toasts.find((t) => t.id === id)?.onClose(id)}
       />
       {gatewayControl.ConfirmDialogElement}
+      {starterConfirmElement}
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
@@ -1005,6 +1054,29 @@ export function SettingsPage() {
                   data-testid="workspace-mapping-prompt-switch"
                 />
               </div>
+
+              <div className="mt-5 flex items-center justify-between gap-4">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <Zap className="mt-0.5 h-5 w-5 flex-shrink-0 text-[rgb(var(--muted))]" />
+                  <div>
+                    <label className="text-sm font-medium">
+                      Starter includes every server&apos;s tools
+                    </label>
+                    <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                      The Starter set is what apps get for folders you haven&apos;t mapped. On, it
+                      includes every tool from every server and new servers join it on their own —
+                      install, connect, use. Turn off to choose its tools yourself; it keeps its
+                      current tools until you change them.
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={starterAutoInclude}
+                  onCheckedChange={updateStarterAutoInclude}
+                  disabled={savingStarterAuto}
+                  data-testid="starter-auto-include-switch"
+                />
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -1032,9 +1104,10 @@ export function SettingsPage() {
                   <div>
                     <label className="text-sm font-medium">Disable authentication</label>
                     <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                      Let local apps connect with no access key — just the URL and a workspace
-                      header. Quickest setup, but any app on this machine can then reach the
-                      gateway.
+                      Let apps on this computer connect with no access key — just the URL. This is
+                      the default while the gateway is only reachable from this computer. Websites
+                      in your browser are blocked either way. Opening the gateway to your network or
+                      a public URL turns authentication back on, unless you switch it off here.
                     </p>
                   </div>
                 </div>

@@ -12,7 +12,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Zap,
-  Sparkles,
   ArrowLeft,
 } from 'lucide-react';
 import {
@@ -41,6 +40,9 @@ import {
   type PendingFeatureSetCreate,
 } from '@/stores';
 import { NAV_ZONES } from '@/lib/navigation';
+import { MuxPromptBanner } from '@/components/MuxPrompt';
+import { StarterOverThresholdWarning } from '@/components/StarterToolsNotice';
+import { useStarterToolSummary } from '@/hooks/useStarterToolSummary';
 import { FeatureSetPanel } from './FeatureSetPanel';
 
 // Get icon for feature set type
@@ -74,6 +76,7 @@ const getFeatureSetTypeName = (type: string) => {
 export function FeatureSetsPage() {
   const [featureSets, setFeatureSets] = useState<FeatureSet[]>([]);
   const viewSpace = useViewSpace();
+  const { summary: starterSummary } = useStarterToolSummary(viewSpace?.id);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -346,27 +349,20 @@ export function FeatureSetsPage() {
 
         {/* @mux self-optimization hint — let the assistant curate the toolset from chat */}
         <div className="flex-shrink-0 px-8 pt-6">
-          <div
-            className="mx-auto flex max-w-[2000px] items-start gap-3 rounded-xl border border-violet-200/70 bg-gradient-to-r from-violet-50/60 to-transparent p-4 dark:border-violet-800/40 dark:from-violet-900/15"
-            data-testid="featuresets-mux-hint"
-          >
-            <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-[0_4px_10px_-2px_rgb(139_92_246/0.45)]">
-              <Sparkles className="h-4 w-4 fill-current" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-[rgb(var(--foreground))]">
-                Let your AI build these for you
-              </p>
-              <p className="mt-0.5 text-xs leading-relaxed text-[rgb(var(--muted))]">
-                In any connected client, just say{' '}
-                <code className="rounded bg-[rgb(var(--surface))] px-1.5 py-0.5 font-mono text-[11px] text-violet-600 dark:text-violet-300">
-                  @mux optimize
-                </code>{' '}
-                — your assistant can discover the available tools, compose a FeatureSet, and pin it
-                to the current folder. Every change is gated behind a one-click approval, so you
-                stay in control.
-              </p>
-            </div>
+          <div className="mx-auto max-w-[2000px] space-y-3">
+            {starterSummary?.over_threshold && viewSpace && (
+              <StarterOverThresholdWarning
+                summary={starterSummary}
+                spaceId={viewSpace.id}
+                returnTo="featuresets"
+                testId="featuresets-starter-warning"
+              />
+            )}
+            <MuxPromptBanner title="Let your AI build these for you" testId="featuresets-mux-hint">
+              In any connected app, start a message with <strong>@mux</strong> — your assistant
+              finds the tools the project needs, composes a FeatureSet, and maps it to the current
+              folder. Every change asks for your one-click approval first.
+            </MuxPromptBanner>
           </div>
         </div>
 
@@ -488,7 +484,20 @@ export function FeatureSetsPage() {
                         </p>
 
                         <div className="flex items-center justify-between gap-3 border-t border-[rgb(var(--border-subtle))] pt-4 text-xs text-[rgb(var(--muted))]">
-                          <span>{fs.members?.length || 0} members</span>
+                          {fs.auto_include ? (
+                            <span
+                              className="inline-flex items-center gap-1 font-medium text-emerald-700 dark:text-emerald-400"
+                              title="Grants every tool from every server in this Space — new servers show up on their own. Edit it to pick tools yourself."
+                              data-testid={`featureset-auto-${fs.id}`}
+                            >
+                              <Zap className="h-3 w-3" />
+                              {isStarter && starterSummary
+                                ? `All ${starterSummary.tool_count} tools · automatic`
+                                : 'All tools · automatic'}
+                            </span>
+                          ) : (
+                            <span>{fs.members?.length || 0} members</span>
+                          )}
                           <span className="hover:text-primary-500 hidden flex-shrink-0 items-center gap-1 transition-colors md:flex">
                             Configure <Settings className="h-3 w-3" />
                           </span>

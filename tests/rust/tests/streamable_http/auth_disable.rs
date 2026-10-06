@@ -261,3 +261,63 @@ async fn auth_required_gateway_advertises_oauth_discovery() {
         );
     }
 }
+
+/// POST `tools/list` to the harness, optionally from a browser `Origin`.
+async fn post_tools_list(h: &Harness, origin: Option<&str>) -> reqwest::StatusCode {
+    let mut req = reqwest::Client::new()
+        .post(&h.url)
+        .header("content-type", "application/json")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
+    if let Some(origin) = origin {
+        req = req.header("origin", origin);
+    }
+    req.send().await.expect("request").status()
+}
+
+#[tokio::test]
+async fn authless_gateway_blocks_web_pages() {
+    // Running without an access key is only safe if a website open in the
+    // user's browser can't drive the gateway: browsers stamp cross-site
+    // requests with `Origin`, native MCP clients don't.
+    let h = Harness::start(true).await;
+    for origin in ["https://evil.example", "null", "http://192.168.1.20:45818"] {
+        assert_eq!(
+            post_tools_list(&h, Some(origin)).await,
+            reqwest::StatusCode::FORBIDDEN,
+            "a request from {origin} must be blocked"
+        );
+    }
+}
+
+#[tokio::test]
+async fn authless_gateway_still_serves_local_apps() {
+    // Native clients (no Origin) and pages served from this machine (e.g. the
+    // MCP Inspector on localhost) keep working.
+    let h = Harness::start(true).await;
+    for origin in [
+        None,
+        Some("http://localhost:6274"),
+        Some("http://127.0.0.1:5173"),
+    ] {
+        assert_eq!(
+            post_tools_list(&h, origin).await,
+            reqwest::StatusCode::OK,
+            "a request from {origin:?} must be accepted"
+        );
+    }
+}
+
+#[tokio::test]
+async fn origin_guard_applies_when_auth_is_required_too() {
+    // The guard runs before auth, so a web page gets 403 (not a 401 inviting
+    // it to start OAuth) whether or not access keys are required.
+    let h = Harness::start(false).await;
+    assert_eq!(
+        post_tools_list(&h, Some("https://evil.example")).await,
+        reqwest::StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        post_tools_list(&h, None).await,
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+}

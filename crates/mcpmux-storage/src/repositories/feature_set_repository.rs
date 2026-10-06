@@ -54,8 +54,70 @@ impl SqliteFeatureSetRepository {
             is_deleted: row.get::<_, i32>(8)? == 1,
             created_at: Self::parse_datetime(&row.get::<_, String>(9)?),
             updated_at: Self::parse_datetime(&row.get::<_, String>(10)?),
+            auto_include: row.get::<_, i32>(11)? == 1,
             members: vec![], // Members loaded separately
         })
+    }
+
+    /// If `feature_set_id` is in auto mode, turn it into a manual set whose
+    /// explicit members are every feature currently in its Space, so a
+    /// single-member edit lands on top of what the set already granted
+    /// instead of replacing it. `skip_feature_id` is left out of the written
+    /// members (the caller is about to add or remove it). Returns whether the
+    /// set was in auto mode. Runs on the caller's connection/transaction.
+    fn materialize_auto_sync(
+        conn: &rusqlite::Connection,
+        feature_set_id: &str,
+        skip_feature_id: Option<&str>,
+    ) -> Result<bool> {
+        let row: Option<(i32, Option<String>)> = conn
+            .query_row(
+                "SELECT auto_include, space_id FROM feature_sets WHERE id = ? AND is_deleted = 0",
+                params![feature_set_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((1, space_id)) = row else {
+            return Ok(false);
+        };
+
+        // Every feature the Space knows about, available or not: a server
+        // that happens to be disconnected right now keeps its tools in the
+        // set (resolution filters by availability anyway).
+        let feature_ids: Vec<String> = match space_id {
+            Some(space_id) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id FROM server_features WHERE space_id = ?
+                     ORDER BY server_id, feature_type, feature_name",
+                )?;
+                let ids = stmt
+                    .query_map(params![space_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                ids
+            }
+            None => Vec::new(),
+        };
+
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "DELETE FROM feature_set_members WHERE feature_set_id = ?",
+            params![feature_set_id],
+        )?;
+        for feature_id in feature_ids
+            .iter()
+            .filter(|id| Some(id.as_str()) != skip_feature_id)
+        {
+            conn.execute(
+                "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, created_at)
+                 VALUES (?1, ?2, 'feature', ?3, 'include', ?4)",
+                params![uuid::Uuid::new_v4().to_string(), feature_set_id, feature_id, now],
+            )?;
+        }
+        conn.execute(
+            "UPDATE feature_sets SET auto_include = 0, updated_at = ?2 WHERE id = ?1",
+            params![feature_set_id, now],
+        )?;
+        Ok(true)
     }
 
     /// Parse a row into a FeatureSetMember.
@@ -117,7 +179,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
 
         let mut stmt = conn.prepare(
             "SELECT id, name, description, icon, space_id, feature_set_type, 
-                    server_id, is_builtin, is_deleted, created_at, updated_at 
+                    server_id, is_builtin, is_deleted, created_at, updated_at, auto_include 
              FROM feature_sets 
              WHERE is_deleted = 0
              ORDER BY is_builtin DESC, name ASC",
@@ -136,7 +198,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
 
         let mut stmt = conn.prepare(
             "SELECT id, name, description, icon, space_id, feature_set_type, 
-                    server_id, is_builtin, is_deleted, created_at, updated_at 
+                    server_id, is_builtin, is_deleted, created_at, updated_at, auto_include 
              FROM feature_sets 
              WHERE space_id = ? AND is_deleted = 0
              ORDER BY is_builtin DESC, feature_set_type, name ASC",
@@ -161,7 +223,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         let result = conn
             .query_row(
                 "SELECT id, name, description, icon, space_id, feature_set_type, 
-                        server_id, is_builtin, is_deleted, created_at, updated_at 
+                        server_id, is_builtin, is_deleted, created_at, updated_at, auto_include 
                  FROM feature_sets 
                  WHERE id = ? AND is_deleted = 0",
                 params![id],
@@ -189,8 +251,8 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         conn.execute(
             "INSERT INTO feature_sets 
                 (id, name, description, icon, space_id, feature_set_type, 
-                 server_id, is_builtin, is_deleted, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 server_id, is_builtin, is_deleted, created_at, updated_at, auto_include)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 feature_set.id,
                 feature_set.name,
@@ -203,6 +265,12 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
                 if feature_set.is_deleted { 1 } else { 0 },
                 feature_set.created_at.to_rfc3339(),
                 feature_set.updated_at.to_rfc3339(),
+                // An auto set never carries explicit members.
+                if feature_set.auto_include && feature_set.members.is_empty() {
+                    1
+                } else {
+                    0
+                },
             ],
         )?;
 
@@ -238,12 +306,18 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         // struct), so the lock holds for every caller, including the
         // member-set command that routes through update(). Custom sets update
         // normally.
+        //
+        // `auto_include` follows the incoming struct, except that writing any
+        // explicit member turns auto mode off: an auto set has no members, so
+        // a caller that loaded an auto set and replaced its members is making
+        // a manual selection.
         let rows_affected = conn.execute(
             "UPDATE feature_sets
              SET name = CASE WHEN is_builtin = 1 THEN name ELSE ?2 END,
                  description = CASE WHEN is_builtin = 1 THEN description ELSE ?3 END,
                  icon = CASE WHEN is_builtin = 1 THEN icon ELSE ?4 END,
-                 updated_at = ?5
+                 updated_at = ?5,
+                 auto_include = ?6
              WHERE id = ?1 AND is_deleted = 0",
             params![
                 feature_set.id,
@@ -251,6 +325,11 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
                 feature_set.description,
                 feature_set.icon,
                 feature_set.updated_at.to_rfc3339(),
+                if feature_set.auto_include && feature_set.members.is_empty() {
+                    1
+                } else {
+                    0
+                },
             ],
         )?;
 
@@ -335,7 +414,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         let result = conn
             .query_row(
                 "SELECT id, name, description, icon, space_id, feature_set_type,
-                        server_id, is_builtin, is_deleted, created_at, updated_at
+                        server_id, is_builtin, is_deleted, created_at, updated_at, auto_include
                  FROM feature_sets
                  WHERE space_id = ?
                    AND feature_set_type IN ('starter', 'default')
@@ -350,7 +429,20 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
 
     async fn ensure_builtin_for_space(&self, space_id: &str) -> Result<()> {
         if self.get_starter_for_space(space_id).await?.is_none() {
-            let starter = FeatureSet::new_starter(space_id);
+            let mut starter = FeatureSet::new_starter(space_id);
+            // Same default as Space creation: auto unless turned off in Settings.
+            starter.auto_include = {
+                let db = self.db.lock().await;
+                let value: Option<String> = db
+                    .connection()
+                    .query_row(
+                        "SELECT value FROM app_settings WHERE key = ?",
+                        params![mcpmux_core::STARTER_AUTO_INCLUDE_SETTING_KEY],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                value.as_deref() != Some("false")
+            };
             self.create(&starter).await?;
         }
         Ok(())
@@ -365,6 +457,11 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
     ) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
+        let tx = conn.unchecked_transaction()?;
+
+        // An edit on an auto set switches it to manual, keeping what it
+        // already granted.
+        Self::materialize_auto_sync(&tx, feature_set_id, Some(feature_id))?;
 
         let member = FeatureSetMember {
             id: uuid::Uuid::new_v4().to_string(),
@@ -374,9 +471,13 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
             mode,
         };
 
-        conn.execute(
+        // Idempotent: adding a feature that's already a member (e.g. one the
+        // auto-mode materialization above just wrote, or a repeated add from a
+        // bulk caller) updates its mode instead of tripping the UNIQUE index.
+        tx.execute(
             "INSERT INTO feature_set_members (id, feature_set_id, member_type, member_id, mode, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(feature_set_id, member_type, member_id) DO UPDATE SET mode = excluded.mode",
             params![
                 member.id,
                 member.feature_set_id,
@@ -386,6 +487,7 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
                 chrono::Utc::now().to_rfc3339(),
             ],
         )?;
+        tx.commit()?;
 
         Ok(())
     }
@@ -394,12 +496,16 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
     async fn remove_feature_member(&self, feature_set_id: &str, feature_id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
+        let tx = conn.unchecked_transaction()?;
 
-        conn.execute(
+        // On an auto set, materializing without `feature_id` is the removal.
+        Self::materialize_auto_sync(&tx, feature_set_id, Some(feature_id))?;
+        tx.execute(
             "DELETE FROM feature_set_members 
              WHERE feature_set_id = ?1 AND member_id = ?2 AND member_type = 'feature'",
             params![feature_set_id, feature_id],
         )?;
+        tx.commit()?;
 
         Ok(())
     }
@@ -421,6 +527,40 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(members)
+    }
+
+    async fn set_auto_include(&self, feature_set_id: &str, enabled: bool) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let tx = conn.unchecked_transaction()?;
+
+        let exists: Option<i32> = tx
+            .query_row(
+                "SELECT auto_include FROM feature_sets WHERE id = ? AND is_deleted = 0",
+                params![feature_set_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if exists.is_none() {
+            anyhow::bail!("FeatureSet not found: {}", feature_set_id);
+        }
+
+        if enabled {
+            tx.execute(
+                "DELETE FROM feature_set_members WHERE feature_set_id = ?",
+                params![feature_set_id],
+            )?;
+            tx.execute(
+                "UPDATE feature_sets SET auto_include = 1, updated_at = ?2 WHERE id = ?1",
+                params![feature_set_id, chrono::Utc::now().to_rfc3339()],
+            )?;
+        } else {
+            // No-op on a set that's already manual.
+            Self::materialize_auto_sync(&tx, feature_set_id, None)?;
+        }
+        tx.commit()?;
+
+        Ok(())
     }
 }
 
@@ -495,5 +635,150 @@ mod tests {
             .filter(|f| matches!(f.feature_set_type, FeatureSetType::Starter))
             .count();
         assert_eq!(starters, 1);
+    }
+
+    /// Seed two features in the default Space and return their ids.
+    async fn seed_features(db: &Arc<Mutex<Database>>) -> (String, String) {
+        let db = db.lock().await;
+        for (id, name) in [("feat-a", "alpha"), ("feat-b", "beta")] {
+            db.connection()
+                .execute(
+                    "INSERT INTO server_features
+                        (id, space_id, server_id, feature_type, feature_name, discovered_at, last_seen_at)
+                     VALUES (?1, ?2, 'srv', 'tool', ?3, datetime('now'), datetime('now'))",
+                    params![id, DEFAULT_SPACE_ID, name],
+                )
+                .unwrap();
+        }
+        ("feat-a".to_string(), "feat-b".to_string())
+    }
+
+    fn member_ids(fs: &FeatureSet) -> Vec<String> {
+        let mut ids: Vec<String> = fs.members.iter().map(|m| m.member_id.clone()).collect();
+        ids.sort();
+        ids
+    }
+
+    async fn starter(repo: &SqliteFeatureSetRepository) -> FeatureSet {
+        let id = repo
+            .get_starter_for_space(DEFAULT_SPACE_ID)
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        repo.get_with_members(&id).await.unwrap().unwrap()
+    }
+
+    #[tokio::test]
+    async fn fresh_starter_is_auto_with_no_members() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let repo = SqliteFeatureSetRepository::new(db);
+        let fs = starter(&repo).await;
+        assert!(fs.auto_include);
+        assert!(fs.members.is_empty());
+    }
+
+    #[tokio::test]
+    async fn writing_members_turns_auto_off() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let (a, _) = seed_features(&db).await;
+        let repo = SqliteFeatureSetRepository::new(db);
+
+        // A caller that loaded the auto Starter and replaced its members is
+        // making a manual selection, even though its struct still says auto.
+        let mut fs = starter(&repo).await;
+        fs.members = vec![FeatureSetMember::include_feature(&fs.id, &a)];
+        repo.update(&fs).await.unwrap();
+
+        let fs = starter(&repo).await;
+        assert!(!fs.auto_include);
+        assert_eq!(member_ids(&fs), vec![a]);
+    }
+
+    #[tokio::test]
+    async fn update_without_members_keeps_auto() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let repo = SqliteFeatureSetRepository::new(db);
+        let fs = starter(&repo).await;
+        repo.update(&fs).await.unwrap();
+        assert!(starter(&repo).await.auto_include);
+    }
+
+    #[tokio::test]
+    async fn single_member_edits_on_an_auto_set_keep_what_it_granted() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let (a, b) = seed_features(&db).await;
+        let repo = SqliteFeatureSetRepository::new(db);
+        let id = starter(&repo).await.id;
+
+        // Adding a feature that's already granted, twice (bulk callers do
+        // this), must neither fail on the UNIQUE index nor drop the others.
+        repo.add_feature_member(&id, &a, MemberMode::Include)
+            .await
+            .unwrap();
+        repo.add_feature_member(&id, &b, MemberMode::Include)
+            .await
+            .unwrap();
+        let fs = starter(&repo).await;
+        assert!(!fs.auto_include);
+        assert_eq!(member_ids(&fs), vec![a.clone(), b.clone()]);
+
+        // Back to auto, then remove one: everything else stays.
+        repo.set_auto_include(&id, true).await.unwrap();
+        repo.remove_feature_member(&id, &a).await.unwrap();
+        let fs = starter(&repo).await;
+        assert!(!fs.auto_include);
+        assert_eq!(member_ids(&fs), vec![b]);
+    }
+
+    #[tokio::test]
+    async fn set_auto_include_round_trip() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        let (a, b) = seed_features(&db).await;
+        let repo = SqliteFeatureSetRepository::new(db);
+        let id = starter(&repo).await.id;
+
+        // Off: the user starts editing from what the set granted.
+        repo.set_auto_include(&id, false).await.unwrap();
+        let fs = starter(&repo).await;
+        assert!(!fs.auto_include);
+        assert_eq!(member_ids(&fs), vec![a, b]);
+
+        // Off again is a no-op on a manual set.
+        repo.remove_feature_member(&id, "feat-a").await.unwrap();
+        repo.set_auto_include(&id, false).await.unwrap();
+        assert_eq!(
+            member_ids(&starter(&repo).await),
+            vec!["feat-b".to_string()]
+        );
+
+        // On: explicit members are dropped.
+        repo.set_auto_include(&id, true).await.unwrap();
+        let fs = starter(&repo).await;
+        assert!(fs.auto_include);
+        assert!(fs.members.is_empty());
+
+        assert!(repo.set_auto_include("missing", true).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn ensure_builtin_honors_the_settings_default() {
+        let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
+        {
+            let db = db.lock().await;
+            db.connection()
+                .execute_batch(&format!(
+                    "DELETE FROM feature_sets WHERE feature_set_type = 'starter';
+                     INSERT INTO app_settings (key, value, updated_at)
+                     VALUES ('{}', 'false', datetime('now'));",
+                    mcpmux_core::STARTER_AUTO_INCLUDE_SETTING_KEY
+                ))
+                .unwrap();
+        }
+        let repo = SqliteFeatureSetRepository::new(db);
+        repo.ensure_builtin_for_space(DEFAULT_SPACE_ID)
+            .await
+            .unwrap();
+        assert!(!starter(&repo).await.auto_include);
     }
 }

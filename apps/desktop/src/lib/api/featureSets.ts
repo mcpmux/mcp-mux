@@ -62,6 +62,13 @@ export interface FeatureSet {
   server_id: string | null;
   is_builtin: boolean;
   is_deleted: boolean;
+  /**
+   * Auto mode: the set grants every tool, prompt, and resource from every
+   * server in its Space, so newly installed servers show up with no setup.
+   * An auto set has no explicit `members`; saving a member list switches it
+   * to a manual selection.
+   */
+  auto_include: boolean;
   members: FeatureSetMember[];
 }
 
@@ -138,7 +145,10 @@ export async function getFeatureSetWithMembers(id: string): Promise<FeatureSet |
 /**
  * Update a feature set.
  */
-export async function updateFeatureSet(id: string, input: UpdateFeatureSetInput): Promise<FeatureSet> {
+export async function updateFeatureSet(
+  id: string,
+  input: UpdateFeatureSetInput
+): Promise<FeatureSet> {
   return invoke('update_feature_set', { id, input });
 }
 
@@ -170,4 +180,46 @@ export async function setFeatureSetMembers(
   members: AddMemberInput[]
 ): Promise<FeatureSet> {
   return invoke('set_feature_set_members', { featureSetId, members });
+}
+
+/**
+ * Switch a FeatureSet into or out of auto mode (every server's tools).
+ * Turning it off keeps what the set granted as an explicit list to edit.
+ */
+export async function setFeatureSetAutoInclude(
+  featureSetId: string,
+  enabled: boolean
+): Promise<FeatureSet> {
+  return invoke('set_feature_set_auto_include', { featureSetId, enabled });
+}
+
+/**
+ * What the Space's Starter gives connected apps: how many tools, from how
+ * many servers, and whether that's past the size where McpMux suggests a
+ * focused FeatureSet (`threshold`, a warning — nothing is ever cut off).
+ */
+export interface StarterToolSummary {
+  feature_set_id: string;
+  auto_include: boolean;
+  tool_count: number;
+  server_count: number;
+  threshold: number;
+  over_threshold: boolean;
+}
+
+export async function getStarterToolSummary(spaceId: string): Promise<StarterToolSummary | null> {
+  return invoke('get_starter_tool_summary', { spaceId });
+}
+
+/**
+ * Settings switch: do Starters include every server's tools automatically?
+ * On by default. Turning it off switches every Space's Starter to a manual
+ * selection (keeping its current tools) and makes new Spaces start manual.
+ */
+export async function getStarterAutoIncludeDefault(): Promise<boolean> {
+  return invoke('get_starter_auto_include_default');
+}
+
+export async function setStarterAutoIncludeDefault(enabled: boolean): Promise<void> {
+  return invoke('set_starter_auto_include_default', { enabled });
 }

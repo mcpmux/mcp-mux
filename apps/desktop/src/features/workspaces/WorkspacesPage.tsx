@@ -57,6 +57,7 @@ import {
   useSpaces,
 } from '@/stores';
 import type { Space } from '@/lib/api/spaces';
+import { MuxPromptBanner } from '@/components/MuxPrompt';
 
 /**
  * Mapping page (nav key `workspaces`).
@@ -462,6 +463,15 @@ export function WorkspacesPage() {
                 New mapping
               </Button>
             </div>
+          </div>
+
+          {/* @mux: the fastest way to map a folder — from inside the app */}
+          <div className="mb-6 max-w-3xl">
+            <MuxPromptBanner title="Or let your AI map this folder" testId="mapping-mux-hint">
+              Open the project in your AI app and start a message with <strong>@mux</strong>. It
+              looks at the project, picks just the tools it needs into a FeatureSet, and maps it to
+              the folder — you approve each change with one click.
+            </MuxPromptBanner>
           </div>
 
           <div className="flex max-w-3xl flex-wrap items-center gap-3">

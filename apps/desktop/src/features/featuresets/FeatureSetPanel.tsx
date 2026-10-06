@@ -18,10 +18,18 @@ import {
   Star,
   Shield,
   Save,
+  Zap,
+  AlertTriangle,
 } from 'lucide-react';
-import { Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
+import { Button, Switch, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
-import { isStarterFeatureSet, setFeatureSetMembers } from '@/lib/api/featureSets';
+import {
+  isStarterFeatureSet,
+  setFeatureSetAutoInclude,
+  setFeatureSetMembers,
+} from '@/lib/api/featureSets';
+import { useStarterToolSummary } from '@/hooks/useStarterToolSummary';
+import { MuxPromptCode } from '@/components/MuxPrompt';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeatures } from '@/lib/api/serverFeatures';
 
@@ -39,7 +47,13 @@ interface ServerGroup {
   isExpanded: boolean;
 }
 
-export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpdate }: FeatureSetPanelProps) {
+export function FeatureSetPanel({
+  featureSet,
+  spaceId,
+  onClose,
+  onDelete,
+  onUpdate,
+}: FeatureSetPanelProps) {
   const [allFeatures, setAllFeatures] = useState<ServerFeature[]>([]);
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,6 +61,12 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
+  // Auto mode (every server's tools). Editing the selection while it's on
+  // and saving switches the set to a manual selection.
+  const [autoInclude, setAutoInclude] = useState(featureSet.auto_include);
+  const [isTogglingAuto, setIsTogglingAuto] = useState(false);
+  const [selectionEdited, setSelectionEdited] = useState(false);
+  const { summary: starterSummary } = useStarterToolSummary(spaceId);
   const { toasts, success, error: showError, dismiss } = useToast();
   const { confirm, ConfirmDialogElement } = useConfirm();
 
@@ -77,17 +97,24 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
       try {
         const features = await listServerFeatures(spaceId);
         setAllFeatures(features);
-        
-        // Seed from the set's include-mode feature members.
+
+        // Seed from the set's include-mode feature members — or, in auto
+        // mode, everything (that's what the set grants).
         const currentIds = new Set<string>();
-        featureSet.members?.forEach((m) => {
-          if (m.member_type === 'feature' && m.mode === 'include') {
-            currentIds.add(m.member_id);
-          }
-        });
+        if (featureSet.auto_include) {
+          features.forEach((f) => currentIds.add(f.id));
+        } else {
+          featureSet.members?.forEach((m) => {
+            if (m.member_type === 'feature' && m.mode === 'include') {
+              currentIds.add(m.member_id);
+            }
+          });
+        }
 
         setSelectedFeatureIds(currentIds);
-        
+        setAutoInclude(featureSet.auto_include);
+        setSelectionEdited(false);
+
         // Start with all servers collapsed
         setExpandedServers(new Set());
       } catch (e) {
@@ -96,7 +123,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         setIsLoading(false);
       }
     };
-    
+
     loadFeatures();
   }, [spaceId, featureSet]);
 
@@ -106,10 +133,10 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
     if (group) {
       group.features.push(feature);
     } else {
-      acc.push({ 
-        serverId: feature.server_id, 
+      acc.push({
+        serverId: feature.server_id,
         features: [feature],
-        isExpanded: expandedServers.has(feature.server_id)
+        isExpanded: expandedServers.has(feature.server_id),
       });
     }
     return acc;
@@ -119,16 +146,18 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const filteredGroups = serverGroups
     .map((group) => ({
       ...group,
-      features: group.features.filter((f) =>
-        f.feature_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.description?.toLowerCase().includes(searchQuery.toLowerCase())
+      features: group.features.filter(
+        (f) =>
+          f.feature_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          f.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          f.description?.toLowerCase().includes(searchQuery.toLowerCase())
       ),
     }))
     .filter((group) => group.features.length > 0);
 
   const toggleFeature = (featureId: string) => {
     if (!isConfigurable) return;
+    setSelectionEdited(true);
     setSelectedFeatureIds((prev) => {
       const next = new Set(prev);
       if (next.has(featureId)) {
@@ -156,7 +185,8 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
     if (!isConfigurable) return;
     const serverFeatures = allFeatures.filter((f) => f.server_id === serverId);
     const allSelected = serverFeatures.every((f) => selectedFeatureIds.has(f.id));
-    
+    setSelectionEdited(true);
+
     setSelectedFeatureIds((prev) => {
       const next = new Set(prev);
       serverFeatures.forEach((f) => {
@@ -170,6 +200,48 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
     });
   };
 
+  const handleAutoToggle = async (enabled: boolean) => {
+    if (
+      enabled &&
+      !(await confirm({
+        title: "Include every server's tools?",
+        message: `"${featureSet.name}" will grant every tool, prompt, and resource from every server in this Space — including servers you add later. Your current selection is replaced.`,
+        confirmLabel: 'Include everything',
+      }))
+    ) {
+      return;
+    }
+    setIsTogglingAuto(true);
+    setError(null);
+    try {
+      await setFeatureSetAutoInclude(featureSet.id, enabled);
+      setAutoInclude(enabled);
+      setSelectionEdited(false);
+      if (enabled) setSelectedFeatureIds(new Set(allFeatures.map((f) => f.id)));
+      success(
+        enabled ? 'Every tool, automatically' : 'You pick the tools now',
+        enabled
+          ? `"${featureSet.name}" now includes every server's tools.`
+          : `"${featureSet.name}" keeps its current tools — change the selection below.`
+      );
+      onUpdate?.();
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setError(errorMsg);
+      showError('Failed to update', errorMsg);
+    } finally {
+      setIsTogglingAuto(false);
+    }
+  };
+
+  // Tools (not prompts/resources) the current selection would serve — the
+  // number AI apps feel, compared against the size warning.
+  const selectedToolCount = allFeatures.filter(
+    (f) => f.feature_type === 'tool' && f.is_available && selectedFeatureIds.has(f.id)
+  ).length;
+  const toolThreshold = starterSummary?.threshold;
+  const overToolThreshold = toolThreshold !== undefined && selectedToolCount > toolThreshold;
+
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
@@ -180,10 +252,15 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
         member_id: id,
         mode: 'include' as const,
       }));
-      
-      await setFeatureSetMembers(featureSet.id, members);
 
-      success('Changes saved', `"${featureSet.name}" has been updated with ${members.length} feature${members.length !== 1 ? 's' : ''}`);
+      await setFeatureSetMembers(featureSet.id, members);
+      setAutoInclude(false);
+      setSelectionEdited(false);
+
+      success(
+        'Changes saved',
+        `"${featureSet.name}" has been updated with ${members.length} feature${members.length !== 1 ? 's' : ''}`
+      );
       onUpdate?.();
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);
@@ -223,7 +300,8 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   const getFeatureSetIcon = () => {
     if (featureSet.icon) return <span className="text-xl">{featureSet.icon}</span>;
     switch (featureSet.feature_set_type) {
-      case 'default': return <Star className="h-6 w-6 text-yellow-500" />;
+      case 'default':
+        return <Star className="h-6 w-6 text-yellow-500" />;
       case 'custom':
       default:
         return <Package className="h-6 w-6 text-purple-500" />;
@@ -231,7 +309,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   };
 
   const toggleSection = (section: keyof typeof expandedSections) => {
-    setExpandedSections(prev => {
+    setExpandedSections((prev) => {
       // Accordion behavior - close others when opening a section
       if (!prev[section]) {
         return { settings: false, features: false, [section]: true };
@@ -242,38 +320,38 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
   };
 
   return (
-    <div className="fixed right-0 top-0 bottom-0 w-full max-w-[45%] min-w-[600px] bg-[rgb(var(--surface))] border-l border-[rgb(var(--border))] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 z-50">
+    <div className="animate-in slide-in-from-right fixed bottom-0 right-0 top-0 z-50 flex w-full min-w-[600px] max-w-[45%] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl duration-300">
       <ToastContainer toasts={toasts} onClose={dismiss} />
       {ConfirmDialogElement}
       {/* Panel Header */}
-      <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-10 h-10 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg flex-shrink-0 border border-[rgb(var(--border))]">
+      <div className="flex-shrink-0 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
+        <div className="mb-3 flex items-start justify-between">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))]">
               {getFeatureSetIcon()}
             </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold truncate flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <h2 className="flex items-center gap-2 truncate text-lg font-bold">
                 {featureSet.name}
               </h2>
-              <div className="flex items-center gap-2 mt-0.5">
+              <div className="mt-0.5 flex items-center gap-2">
                 <span
                   title={
                     isStarter
                       ? "Auto-created with this Space. The default set for folders you haven't mapped — edit which tools it includes; its name is fixed and it can't be deleted."
                       : undefined
                   }
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${
+                  className={`rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
                     isStarter
-                      ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800'
+                      ? 'border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
                       : isCustom
-                        ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
-                        : 'bg-gray-50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400 border-gray-200 dark:border-gray-800'
+                        ? 'border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
+                        : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
                   }`}
                 >
                   {isStarter ? 'STARTER' : featureSet.feature_set_type.toUpperCase()}
                 </span>
-                <span className="text-xs text-[rgb(var(--muted))] truncate">
+                <span className="truncate text-xs text-[rgb(var(--muted))]">
                   ID: {featureSet.id}
                 </span>
               </div>
@@ -282,7 +360,7 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
           <button
             data-testid="featureset-panel-close"
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
+            className="flex-shrink-0 rounded-lg p-1.5 transition-colors hover:bg-[rgb(var(--surface-hover))]"
           >
             <X className="h-5 w-5" />
           </button>
@@ -291,33 +369,35 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
 
       {/* Scrollable Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="p-6 space-y-5">
+        <div className="space-y-5 p-6">
           {/* Error */}
           {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400">
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
               {error}
             </div>
           )}
 
           {/* Info Section (Read-only for non-custom/default) */}
-          <div className="bg-[rgb(var(--background))] rounded-xl border-2 border-[rgb(var(--border))] overflow-hidden">
+          <div className="overflow-hidden rounded-xl border-2 border-[rgb(var(--border))] bg-[rgb(var(--background))]">
             <button
               onClick={() => toggleSection('settings')}
-              className={`w-full flex items-center justify-between p-4 transition-all ${
-                expandedSections.settings 
-                  ? 'bg-gradient-to-r from-primary-50 to-primary-100/50 dark:from-primary-900/10 dark:to-primary-800/10' 
+              className={`flex w-full items-center justify-between p-4 transition-all ${
+                expandedSections.settings
+                  ? 'from-primary-50 to-primary-100/50 dark:from-primary-900/10 dark:to-primary-800/10 bg-gradient-to-r'
                   : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]'
               }`}
             >
               <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${
-                  expandedSections.settings
-                    ? 'bg-gray-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400'
-                }`}>
+                <div
+                  className={`rounded-lg p-2 ${
+                    expandedSections.settings
+                      ? 'bg-gray-500 text-white'
+                      : 'bg-gray-100 text-gray-600 dark:bg-gray-900/30 dark:text-gray-400'
+                  }`}
+                >
                   <Settings className="h-5 w-5" />
                 </div>
-                <span className="font-semibold text-base">General Information</span>
+                <span className="text-base font-semibold">General Information</span>
               </div>
               {expandedSections.settings ? (
                 <ChevronDown className="h-5 w-5 text-[rgb(var(--muted))]" />
@@ -325,24 +405,27 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                 <ChevronRight className="h-5 w-5 text-[rgb(var(--muted))]" />
               )}
             </button>
-            
+
             {expandedSections.settings && (
-              <div className="p-4 space-y-4 border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))]">
+              <div className="space-y-4 border-t-2 border-[rgb(var(--border))] bg-white p-4 dark:bg-[rgb(var(--background))]">
                 <div>
-                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
+                  <label className="mb-1.5 block text-xs font-medium text-[rgb(var(--muted))]">
                     Description
                   </label>
-                  <p className="text-sm">
-                    {featureSet.description || 'No description provided.'}
-                  </p>
+                  <p className="text-sm">{featureSet.description || 'No description provided.'}</p>
                 </div>
-                
+
                 {isStarter && (
-                  <div className="p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                  <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 dark:border-yellow-800 dark:bg-yellow-900/10">
                     <div className="flex gap-2">
-                      <Star className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+                      <Star className="mt-0.5 h-4 w-4 flex-shrink-0 text-yellow-500" />
                       <div className="text-xs text-yellow-800 dark:text-yellow-200">
-                        <strong>Starter FeatureSet:</strong> auto-created with this Space and used as the <em>default</em> for folders you haven&apos;t explicitly mapped (and rootless sessions). Edit which tools it includes (or empty it) to change what they get. Its name is fixed and it <strong>can&apos;t be deleted</strong>, since the fallback always needs a stable target.
+                        <strong>Starter FeatureSet:</strong> auto-created with this Space and used
+                        as the <em>default</em> for folders you haven&apos;t explicitly mapped (and
+                        rootless sessions). Edit which tools it includes (or empty it) to change
+                        what they get. Its name is fixed and it{' '}
+                        <strong>can&apos;t be deleted</strong>, since the fallback always needs a
+                        stable target.
                       </div>
                     </div>
                   </div>
@@ -351,48 +434,110 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
             )}
           </div>
 
+          {/* Auto mode: every server's tools, including servers added later */}
+          <div
+            className={`rounded-xl border-2 p-4 ${
+              autoInclude
+                ? 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-700/60 dark:bg-emerald-900/15'
+                : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
+            }`}
+            data-testid="featureset-auto-card"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <Zap
+                  className={`mt-0.5 h-5 w-5 flex-shrink-0 ${
+                    autoInclude
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-[rgb(var(--muted))]'
+                  }`}
+                />
+                <div>
+                  <p className="text-sm font-semibold">Include every server&apos;s tools</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-[rgb(var(--muted))]">
+                    {autoInclude
+                      ? 'On — servers you add later show up here on their own. Change the selection below and save to pick tools yourself.'
+                      : 'Off — this set grants only the tools selected below. Turn on to include every server, now and later.'}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={autoInclude}
+                onCheckedChange={handleAutoToggle}
+                disabled={isTogglingAuto || isSaving}
+                data-testid="featureset-auto-switch"
+              />
+            </div>
+          </div>
+
+          {overToolThreshold && (
+            <div
+              className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-700/60 dark:bg-amber-900/20"
+              data-testid="featureset-panel-tools-warning"
+            >
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="min-w-0 flex-1 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+                  {selectedToolCount} tools selected — more than the {toolThreshold} AI apps handle
+                  well
+                </p>
+                <p className="mt-0.5">
+                  Everything still works, but apps get slower and less accurate. Untick what this
+                  set doesn&apos;t need, or ask your AI app to build a focused set:
+                </p>
+                <div className="mt-2">
+                  <MuxPromptCode testId="featureset-panel-tools-warning-copy" />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Feature Selection Section */}
-          <div className="bg-[rgb(var(--background))] rounded-xl border-2 border-[rgb(var(--border))] overflow-hidden">
+          <div className="overflow-hidden rounded-xl border-2 border-[rgb(var(--border))] bg-[rgb(var(--background))]">
             <button
               onClick={() => toggleSection('features')}
-              className={`w-full flex items-center justify-between p-4 transition-all ${
+              className={`flex w-full items-center justify-between p-4 transition-all ${
                 expandedSections.features
-                  ? 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20' 
+                  ? 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20'
                   : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]'
               }`}
             >
-              <div className="flex items-center gap-3 flex-1">
-                <div className={`p-2 rounded-lg ${
-                  expandedSections.features
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                }`}>
+              <div className="flex flex-1 items-center gap-3">
+                <div
+                  className={`rounded-lg p-2 ${
+                    expandedSections.features
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                  }`}
+                >
                   <Shield className="h-5 w-5" />
                 </div>
                 <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-base">Included Features</span>
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="text-base font-semibold">Included Features</span>
                     {/* Show count badge only for configurable feature sets */}
                     {isConfigurable && (
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
-                        getActualMemberCount() > 0
-                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700'
-                          : 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400 border border-gray-300 dark:border-gray-700'
-                      }`}>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                          getActualMemberCount() > 0
+                            ? 'border border-green-300 bg-green-100 text-green-700 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
+                            : 'border border-gray-300 bg-gray-100 text-gray-600 dark:border-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
+                        }`}
+                      >
                         {getActualMemberCount()} / {allFeatures.length} selected
                       </span>
                     )}
                   </div>
                   {/* Progress Bar */}
-                  <div className="h-1.5 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-                    <div 
+                  <div className="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                    <div
                       className={`h-full transition-all duration-300 ${
-                        getActualMemberCount() === 0 
-                          ? 'bg-gray-400 dark:bg-gray-600' 
+                        getActualMemberCount() === 0
+                          ? 'bg-gray-400 dark:bg-gray-600'
                           : 'bg-gradient-to-r from-green-500 to-blue-500'
                       }`}
-                      style={{ 
-                        width: `${allFeatures.length > 0 ? (getActualMemberCount() / allFeatures.length * 100) : 0}%` 
+                      style={{
+                        width: `${allFeatures.length > 0 ? (getActualMemberCount() / allFeatures.length) * 100 : 0}%`,
                       }}
                     />
                   </div>
@@ -406,29 +551,29 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
             </button>
 
             {expandedSections.features && (
-              <div className="border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))] flex flex-col h-[500px]">
+              <div className="flex h-[500px] flex-col border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))]">
                 {/* Search Bar inside panel */}
-                <div className="p-3 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
+                <div className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3">
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))]" />
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
                     <input
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search features..."
-                      className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      className="focus:ring-primary-500 w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2"
                     />
                   </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto">
                   {isLoading ? (
-                    <div className="flex items-center justify-center h-full">
-                      <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
+                    <div className="flex h-full items-center justify-center">
+                      <Loader2 className="text-primary-500 h-8 w-8 animate-spin" />
                     </div>
                   ) : filteredGroups.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-[rgb(var(--muted))] p-4 text-center">
-                      <Package className="h-8 w-8 mb-2 opacity-50" />
+                    <div className="flex h-full flex-col items-center justify-center p-4 text-center text-[rgb(var(--muted))]">
+                      <Package className="mb-2 h-8 w-8 opacity-50" />
                       <p className="text-sm">No features found matching your search</p>
                     </div>
                   ) : (
@@ -439,68 +584,73 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                           isFeatureSelected(f.id, f)
                         ).length;
                         const allSelected = selectedCount === group.features.length;
-                        const someSelected = selectedCount > 0 && selectedCount < group.features.length;
+                        const someSelected =
+                          selectedCount > 0 && selectedCount < group.features.length;
                         const isExpanded = group.isExpanded;
-                        
+
                         return (
                           <div key={group.serverId} className="bg-[rgb(var(--surface))]">
-                            <div 
-                              className="flex items-center justify-between px-4 py-3 hover:bg-[rgb(var(--surface-hover))] cursor-pointer transition-colors"
+                            <div
+                              className="flex cursor-pointer items-center justify-between px-4 py-3 transition-colors hover:bg-[rgb(var(--surface-hover))]"
                               onClick={() => toggleServer(group.serverId)}
                               data-testid={`featureset-server-group-${group.serverId}`}
                             >
-                              <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <div className="flex min-w-0 flex-1 items-center gap-3">
                                 {isExpanded ? (
-                                  <ChevronDown className="h-4 w-4 text-[rgb(var(--muted))] flex-shrink-0" />
+                                  <ChevronDown className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
                                 ) : (
-                                  <ChevronRight className="h-4 w-4 text-[rgb(var(--muted))] flex-shrink-0" />
+                                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
                                 )}
-                                <Server className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="font-medium text-sm truncate">{group.serverId}</span>
+                                <Server className="h-4 w-4 flex-shrink-0 text-blue-500" />
+                                <div className="min-w-0 flex-1">
+                                  <div className="mb-1 flex items-center gap-2">
+                                    <span className="truncate text-sm font-medium">
+                                      {group.serverId}
+                                    </span>
                                     {/* Show count badge only for configurable feature sets */}
                                     {isConfigurable && (
-                                      <span className={`text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
-                                        selectedCount === 0
-                                          ? 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400'
-                                          : allSelected
-                                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700'
-                                            : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
-                                      }`}>
+                                      <span
+                                        className={`flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${
+                                          selectedCount === 0
+                                            ? 'bg-gray-100 text-gray-600 dark:bg-gray-900/30 dark:text-gray-400'
+                                            : allSelected
+                                              ? 'border border-green-300 bg-green-100 text-green-700 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
+                                              : 'border border-amber-300 bg-amber-100 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                        }`}
+                                      >
                                         {selectedCount}/{group.features.length}
                                       </span>
                                     )}
                                   </div>
                                   {/* Progress Bar for Server */}
-                                  <div className="h-1 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-                                    <div 
+                                  <div className="h-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                                    <div
                                       className={`h-full transition-all duration-300 ${
-                                        selectedCount === 0 
-                                          ? 'bg-gray-400 dark:bg-gray-600' 
+                                        selectedCount === 0
+                                          ? 'bg-gray-400 dark:bg-gray-600'
                                           : allSelected
                                             ? 'bg-green-500'
                                             : 'bg-gradient-to-r from-amber-500 to-green-500'
                                       }`}
-                                      style={{ 
-                                        width: `${(selectedCount / group.features.length * 100)}%` 
+                                      style={{
+                                        width: `${(selectedCount / group.features.length) * 100}%`,
                                       }}
                                     />
                                   </div>
                                 </div>
                               </div>
-                              
+
                               {isConfigurable && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     toggleAllInServer(group.serverId);
                                   }}
-                                  className={`p-1.5 rounded-md transition-colors hover:bg-[rgb(var(--background))] flex-shrink-0`}
-                                  title={allSelected ? "Disable All" : "Enable All"}
+                                  className={`flex-shrink-0 rounded-md p-1.5 transition-colors hover:bg-[rgb(var(--background))]`}
+                                  title={allSelected ? 'Disable All' : 'Enable All'}
                                 >
                                   {allSelected ? (
-                                    <ToggleRight className="h-5 w-5 text-primary-500" />
+                                    <ToggleRight className="text-primary-500 h-5 w-5" />
                                   ) : someSelected ? (
                                     <ToggleLeft className="h-5 w-5 text-amber-500" />
                                   ) : (
@@ -509,42 +659,44 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
                                 </button>
                               )}
                             </div>
-                            
+
                             {isExpanded && (
-                              <div className="bg-[rgb(var(--background))] border-t border-[rgb(var(--border))]">
+                              <div className="border-t border-[rgb(var(--border))] bg-[rgb(var(--background))]">
                                 {group.features.map((feature) => {
                                   const isSelected = isFeatureSelected(feature.id, feature);
-                                  
+
                                   return (
                                     <button
                                       key={feature.id}
                                       onClick={() => toggleFeature(feature.id)}
                                       disabled={!isConfigurable}
-                                      className={`w-full flex items-center gap-3 px-4 py-2.5 pl-12 text-left border-b border-[rgb(var(--border))] last:border-b-0 transition-colors
-                                        ${isConfigurable ? 'hover:bg-[rgb(var(--surface-hover))]' : 'cursor-default'}
-                                        ${isSelected ? 'bg-primary-50 dark:bg-primary-900/10' : ''}`}
+                                      className={`flex w-full items-center gap-3 border-b border-[rgb(var(--border))] px-4 py-2.5 pl-12 text-left transition-colors last:border-b-0 ${isConfigurable ? 'hover:bg-[rgb(var(--surface-hover))]' : 'cursor-default'} ${isSelected ? 'bg-primary-50 dark:bg-primary-900/10' : ''}`}
                                     >
-                                      <div className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                        isSelected 
-                                          ? 'bg-primary-500 border-primary-500' 
-                                          : 'border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--surface))]'
-                                      }`}>
+                                      <div
+                                        className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors ${
+                                          isSelected
+                                            ? 'bg-primary-500 border-primary-500'
+                                            : 'border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--surface))]'
+                                        }`}
+                                      >
                                         {isSelected && <Check className="h-3 w-3 text-white" />}
                                       </div>
-                                      
+
                                       {getFeatureIcon(feature.feature_type)}
-                                      
-                                      <div className="flex-1 min-w-0">
+
+                                      <div className="min-w-0 flex-1">
                                         <div className="flex items-center gap-2">
-                                          <span className="font-medium text-sm truncate">
+                                          <span className="truncate text-sm font-medium">
                                             {feature.display_name || feature.feature_name}
                                           </span>
-                                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${getTypeColor(feature.feature_type)}`}>
+                                          <span
+                                            className={`rounded px-1.5 py-0.5 text-[10px] ${getTypeColor(feature.feature_type)}`}
+                                          >
                                             {feature.feature_type}
                                           </span>
                                         </div>
                                         {feature.description && (
-                                          <p className="text-xs text-[rgb(var(--muted))] mt-0.5 line-clamp-1">
+                                          <p className="mt-0.5 line-clamp-1 text-xs text-[rgb(var(--muted))]">
                                             {feature.description}
                                           </p>
                                         )}
@@ -567,38 +719,53 @@ export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpda
       </div>
 
       {/* Footer Actions */}
-      <div className="flex-shrink-0 p-4 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] flex items-center gap-3">
+      <div className="flex flex-shrink-0 items-center gap-3 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] p-4">
         {isCustom && onDelete && (
           <Button
             variant="ghost"
             size="sm"
             onClick={async () => {
-              if (await confirm({
-                title: 'Delete feature set',
-                message: `Delete "${featureSet.name}"? This cannot be undone.`,
-                confirmLabel: 'Delete',
-                variant: 'danger',
-              })) {
+              if (
+                await confirm({
+                  title: 'Delete feature set',
+                  message: `Delete "${featureSet.name}"? This cannot be undone.`,
+                  confirmLabel: 'Delete',
+                  variant: 'danger',
+                })
+              ) {
                 onDelete(featureSet.id);
               }
             }}
-            className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 mr-auto"
+            className="mr-auto text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
           >
-            <Trash2 className="h-4 w-4 mr-2" />
+            <Trash2 className="mr-2 h-4 w-4" />
             Delete
           </Button>
         )}
-        
+
+        {autoInclude && selectionEdited && (
+          <span
+            className="text-xs text-[rgb(var(--muted))]"
+            data-testid="featureset-save-leaves-auto"
+          >
+            Saving switches this set to your own selection.
+          </span>
+        )}
         {isConfigurable && (
           <Button
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isSaving || (autoInclude && !selectionEdited)}
             className="w-full flex-1"
+            data-testid="featureset-save"
           >
             {isSaving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</>
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+              </>
             ) : (
-              <><Save className="h-4 w-4 mr-2" /> Save Changes</>
+              <>
+                <Save className="mr-2 h-4 w-4" /> Save Changes
+              </>
             )}
           </Button>
         )}

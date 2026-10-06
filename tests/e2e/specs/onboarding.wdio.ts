@@ -220,6 +220,10 @@ describe('Onboarding: install, connect, use', function () {
       expect(summary.tool_count).toBe(EXTRA_TOOL_COUNT);
       expect(summary.over_threshold).toBe(true);
 
+      // The UI lists Spaces once at startup (useDataSync); reload so the
+      // switcher offers the one we just created over IPC.
+      await browser.refresh();
+      await browser.pause(2000);
       await safeClick(await byTestId('space-switcher'));
       await safeClick(await byTestId(`space-switcher-item-${bulk.id}`));
 
@@ -240,6 +244,9 @@ describe('Onboarding: install, connect, use', function () {
       await safeClick(await byTestId('space-switcher')).catch(() => {});
       await safeClick(await byTestId(`space-switcher-item-${spaceId}`)).catch(() => {});
       await deleteSpace(bulk.id);
+      // Drop the deleted Space from the UI store before the next test.
+      await browser.refresh();
+      await browser.pause(2000);
     }
   });
 

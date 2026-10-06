@@ -230,12 +230,16 @@ describe('Onboarding: install, connect, use', function () {
       await safeClick(await byTestId('nav-dashboard'));
       const warning = await byTestId('starter-tools-warning');
       await warning.waitForDisplayed({ timeout: TIMEOUT.medium });
+      await browser.saveScreenshot('./tests/e2e/screenshots/onboarding-02-warning.png');
       expect(await warning.getText()).toContain(`${EXTRA_TOOL_COUNT} tools`);
-      expect(await warning.getText()).toContain('@mux');
+      // The copyable @mux prompt. Read textContent: WebKitWebDriver's
+      // getText() leaves out the truncating <code> chip even though it renders.
+      const prompt = await $('[data-testid="starter-tools-warning"] code');
+      expect(await prompt.getProperty('textContent')).toContain('@mux');
+      expect(await (await byTestId('starter-tools-warning-copy')).isDisplayed()).toBe(true);
       expect(await (await byTestId('statusbar-starter-tools')).getText()).toContain(
         String(EXTRA_TOOL_COUNT)
       );
-      await browser.saveScreenshot('./tests/e2e/screenshots/onboarding-02-warning.png');
 
       await safeClick(await byTestId('nav-featuresets'));
       const fsWarning = await byTestId('featuresets-starter-warning');

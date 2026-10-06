@@ -902,8 +902,9 @@ async fn servers_add_configure_enable_and_feature_set_membership() {
         return;
     }
 
-    // The Starter FeatureSet starts empty; including the server's features is
-    // what makes them visible to clients.
+    // The Starter FeatureSet starts in auto mode (every server's features).
+    // Adding members explicitly still works and switches it to a manual
+    // selection that keeps what it already granted.
     let starter = "fs_default_00000000-0000-0000-0000-000000000001";
 
     // Enable connects the server and discovers its features.

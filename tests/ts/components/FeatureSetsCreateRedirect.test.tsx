@@ -23,6 +23,7 @@ vi.mock('@/lib/api/featureSets', () => ({
   deleteFeatureSet: vi.fn(),
   getFeatureSetWithMembers: vi.fn(),
   isStarterFeatureSet: () => false,
+  getStarterToolSummary: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/features/featuresets/FeatureSetPanel', () => ({ FeatureSetPanel: () => null }));

@@ -434,41 +434,45 @@ export function FeatureSetPanel({
             )}
           </div>
 
-          {/* Auto mode: every server's tools, including servers added later */}
-          <div
-            className={`rounded-xl border-2 p-4 ${
-              autoInclude
-                ? 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-700/60 dark:bg-emerald-900/15'
-                : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
-            }`}
-            data-testid="featureset-auto-card"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex min-w-0 items-start gap-3">
-                <Zap
-                  className={`mt-0.5 h-5 w-5 flex-shrink-0 ${
-                    autoInclude
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-[rgb(var(--muted))]'
-                  }`}
-                />
-                <div>
-                  <p className="text-sm font-semibold">Include every server&apos;s tools</p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-[rgb(var(--muted))]">
-                    {autoInclude
-                      ? 'On — servers you add later show up here on their own. Change the selection below and save to pick tools yourself.'
-                      : 'Off — this set grants only the tools selected below. Turn on to include every server, now and later.'}
-                  </p>
+          {/* Auto mode: every server's tools, including servers added later.
+              Offered on the Starter (the onboarding default); a custom set
+              only shows it while it's already in auto mode. */}
+          {(isStarter || autoInclude) && (
+            <div
+              className={`rounded-xl border-2 p-4 ${
+                autoInclude
+                  ? 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-700/60 dark:bg-emerald-900/15'
+                  : 'border-[rgb(var(--border))] bg-[rgb(var(--background))]'
+              }`}
+              data-testid="featureset-auto-card"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <Zap
+                    className={`mt-0.5 h-5 w-5 flex-shrink-0 ${
+                      autoInclude
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-[rgb(var(--muted))]'
+                    }`}
+                  />
+                  <div>
+                    <p className="text-sm font-semibold">Include every server&apos;s tools</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-[rgb(var(--muted))]">
+                      {autoInclude
+                        ? 'On — servers you add later show up here on their own. Change the selection below and save to pick tools yourself.'
+                        : 'Off — this set grants only the tools selected below. Turn on to include every server, now and later.'}
+                    </p>
+                  </div>
                 </div>
+                <Switch
+                  checked={autoInclude}
+                  onCheckedChange={handleAutoToggle}
+                  disabled={isTogglingAuto || isSaving}
+                  data-testid="featureset-auto-switch"
+                />
               </div>
-              <Switch
-                checked={autoInclude}
-                onCheckedChange={handleAutoToggle}
-                disabled={isTogglingAuto || isSaving}
-                data-testid="featureset-auto-switch"
-              />
             </div>
-          </div>
+          )}
 
           {overToolThreshold && (
             <div

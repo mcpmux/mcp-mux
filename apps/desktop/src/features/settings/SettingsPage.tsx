@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { Fragment, useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Card,
@@ -564,7 +564,8 @@ export function SettingsPage() {
         onClose={(id) => toasts.find((t) => t.id === id)?.onClose(id)}
       />
       {gatewayControl.ConfirmDialogElement}
-      {starterConfirmElement}
+      {/* Keyed: every useConfirm element starts at key 0, and siblings must differ. */}
+      <Fragment key="starter-confirm">{starterConfirmElement}</Fragment>
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Settings</h1>

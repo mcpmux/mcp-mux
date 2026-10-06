@@ -142,4 +142,32 @@ describe('FeatureSetPanel — auto mode', () => {
     await waitFor(() => expect(mockSetAuto).toHaveBeenCalledWith('fs_default_s1', true));
     await waitFor(() => expect(screen.getByText('2 / 2 selected')).toBeInTheDocument());
   });
+
+  it('does not offer auto mode on a manual custom set', async () => {
+    await renderPanel({
+      ...starter,
+      id: 'fs_web',
+      name: 'Web dev',
+      feature_set_type: 'custom',
+      is_builtin: false,
+      auto_include: false,
+      members: [
+        {
+          id: 'm1',
+          feature_set_id: 'fs_web',
+          member_type: 'feature',
+          member_id: 'f1',
+          mode: 'include',
+        },
+        {
+          id: 'm2',
+          feature_set_id: 'fs_web',
+          member_type: 'feature',
+          member_id: 'f2',
+          mode: 'include',
+        },
+      ],
+    });
+    expect(screen.queryByTestId('featureset-auto-card')).not.toBeInTheDocument();
+  });
 });

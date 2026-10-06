@@ -358,11 +358,17 @@ export function FeatureSetsPage() {
                 testId="featuresets-starter-warning"
               />
             )}
-            <MuxPromptBanner title="Let your AI build these for you" testId="featuresets-mux-hint">
-              In any connected app, start a message with <strong>@mux</strong> — your assistant
-              finds the tools the project needs, composes a FeatureSet, and maps it to the current
-              folder. Every change asks for your one-click approval first.
-            </MuxPromptBanner>
+            {/* The warning above already carries the @mux prompt. */}
+            {!starterSummary?.over_threshold && (
+              <MuxPromptBanner
+                title="Let your AI build these for you"
+                testId="featuresets-mux-hint"
+              >
+                In any connected app, start a message with <strong>@mux</strong> — your assistant
+                finds the tools the project needs, composes a FeatureSet, and maps it to the current
+                folder. Every change asks for your one-click approval first.
+              </MuxPromptBanner>
+            )}
           </div>
         </div>
 

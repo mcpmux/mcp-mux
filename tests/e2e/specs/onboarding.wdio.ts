@@ -23,13 +23,12 @@ import {
   invoke,
   listFeatureSetsBySpace,
   refreshRegistry,
+  seedServerFeatures,
 } from '../helpers/tauri-api';
-import { addDynamicTool, removeDynamicTool } from '../helpers/stub-server-control';
 import { byTestId, safeClick, TIMEOUT } from '../helpers/selectors';
 
 const CLOUDFLARE_SERVER_ID = 'cloudflare-server';
 const EXTRA_TOOL_COUNT = 85;
-const extraToolName = (i: number) => `onboarding_extra_${i}`;
 
 interface StarterToolSummary {
   feature_set_id: string;
@@ -201,33 +200,46 @@ describe('Onboarding: install, connect, use', function () {
   });
 
   it('TC-ONB-005: past 80 tools everything still works, with a warning', async () => {
-    for (let i = 0; i < EXTRA_TOOL_COUNT; i++) {
-      await addDynamicTool(extraToolName(i), `Extra tool ${i}`);
-    }
+    // A throwaway Space with 85 tools seeded straight into it (deleting the
+    // Space removes them, so later specs don't inherit a bloated Starter).
+    const bulk = await createSpace('Onboarding bulk');
     try {
-      await browser.waitUntil(async () => (await starterSummary(spaceId)).over_threshold, {
-        timeout: TIMEOUT.long,
-        timeoutMsg: 'Starter never went over the tool-count threshold',
-      });
+      await seedServerFeatures(
+        Array.from({ length: EXTRA_TOOL_COUNT }, (_, i) => ({
+          space_id: bulk.id,
+          server_id: 'onboarding-bulk',
+          feature_type: 'tool' as const,
+          feature_name: `bulk_tool_${i}`,
+          raw_json: { name: `bulk_tool_${i}`, inputSchema: { type: 'object' } },
+        }))
+      );
 
-      // Not a cap: the app still gets every tool.
-      const summary = await starterSummary(spaceId);
-      const tools = await listToolsWithoutToken(gatewayPort);
-      expect(tools.length).toBeGreaterThanOrEqual(summary.tool_count);
+      // Not a cap: the auto Starter serves every one of them, and flags it.
+      const summary = await starterSummary(bulk.id);
+      expect(summary.auto_include).toBe(true);
+      expect(summary.tool_count).toBe(EXTRA_TOOL_COUNT);
+      expect(summary.over_threshold).toBe(true);
+
+      await safeClick(await byTestId('space-switcher'));
+      await safeClick(await byTestId(`space-switcher-item-${bulk.id}`));
 
       await safeClick(await byTestId('nav-dashboard'));
       const warning = await byTestId('starter-tools-warning');
       await warning.waitForDisplayed({ timeout: TIMEOUT.medium });
+      expect(await warning.getText()).toContain(`${EXTRA_TOOL_COUNT} tools`);
       expect(await warning.getText()).toContain('@mux');
+      expect(await (await byTestId('statusbar-starter-tools')).getText()).toContain(
+        String(EXTRA_TOOL_COUNT)
+      );
       await browser.saveScreenshot('./tests/e2e/screenshots/onboarding-02-warning.png');
 
       await safeClick(await byTestId('nav-featuresets'));
       const fsWarning = await byTestId('featuresets-starter-warning');
       await fsWarning.waitForDisplayed({ timeout: TIMEOUT.medium });
     } finally {
-      for (let i = 0; i < EXTRA_TOOL_COUNT; i++) {
-        await removeDynamicTool(extraToolName(i)).catch(() => {});
-      }
+      await safeClick(await byTestId('space-switcher')).catch(() => {});
+      await safeClick(await byTestId(`space-switcher-item-${spaceId}`)).catch(() => {});
+      await deleteSpace(bulk.id);
     }
   });
 

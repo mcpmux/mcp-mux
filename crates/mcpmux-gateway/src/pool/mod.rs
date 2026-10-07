@@ -16,6 +16,7 @@ mod credential_store;
 mod features;
 mod instance;
 mod oauth;
+mod oauth_registration;
 mod oauth_utils;
 mod routing;
 mod server_manager;

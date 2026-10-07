@@ -198,6 +198,10 @@ fn test_new_schema_objects_exist_after_migration() {
         column_exists(&db, "feature_sets", "auto_include"),
         "migration 023 must add feature_sets.auto_include"
     );
+    assert!(
+        column_exists(&db, "outbound_oauth_clients", "client_secret_encrypted"),
+        "migration 024 must add outbound_oauth_clients.client_secret_encrypted"
+    );
 }
 
 #[test]
@@ -217,7 +221,8 @@ fn test_pending_migrations_apply_to_an_existing_older_database() {
                  DROP TABLE IF EXISTS inbound_client_api_keys;
                  ALTER TABLE workspace_bindings DROP COLUMN binding_type;
                  ALTER TABLE inbound_clients DROP COLUMN locked_space_id;
-                 ALTER TABLE feature_sets DROP COLUMN auto_include;",
+                 ALTER TABLE feature_sets DROP COLUMN auto_include;
+                 ALTER TABLE outbound_oauth_clients DROP COLUMN client_secret_encrypted;",
             )
             .expect("roll schema back to pre-020");
         assert!(
@@ -235,6 +240,50 @@ fn test_pending_migrations_apply_to_an_existing_older_database() {
     assert!(column_exists(&db, "workspace_bindings", "binding_type"));
     assert!(column_exists(&db, "inbound_clients", "locked_space_id"));
     assert!(column_exists(&db, "feature_sets", "auto_include"));
+    assert!(column_exists(
+        &db,
+        "outbound_oauth_clients",
+        "client_secret_encrypted"
+    ));
+}
+
+/// An outbound OAuth registration saved by a release without migration 024 keeps
+/// its client_id after the upgrade, and reads back as a public client (no secret).
+#[test]
+fn test_024_keeps_existing_outbound_oauth_registrations() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("mcpmux.db");
+
+    {
+        let db = Database::open(&path).expect("open");
+        db.connection()
+            .execute_batch(
+                "DELETE FROM schema_migrations WHERE version >= 24;
+                 ALTER TABLE outbound_oauth_clients DROP COLUMN client_secret_encrypted;
+                 INSERT INTO spaces (id, name, created_at, updated_at)
+                     VALUES ('space-1', 'Old', datetime('now'), datetime('now'));
+                 INSERT INTO outbound_oauth_clients
+                     (id, space_id, server_id, server_url, client_id, redirect_uri,
+                      created_at, updated_at)
+                     VALUES ('reg-1', 'space-1', 'miro', 'https://mcp.miro.com/', 'old-client',
+                             'http://127.0.0.1:45819/oauth2redirect',
+                             datetime('now'), datetime('now'));",
+            )
+            .expect("roll back to pre-024 and seed a registration");
+    }
+
+    let db = Database::open(&path).expect("reopen older DB");
+    let (client_id, secret): (String, Option<String>) = db
+        .connection()
+        .query_row(
+            "SELECT client_id, client_secret_encrypted FROM outbound_oauth_clients
+             WHERE server_id = 'miro'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("registration survives the upgrade");
+    assert_eq!(client_id, "old-client");
+    assert_eq!(secret, None);
 }
 
 fn starter_auto_include(db: &Database) -> bool {
@@ -268,6 +317,7 @@ fn reapply_023(path: &std::path::Path, seed: &str) -> Database {
             .execute_batch(&format!(
                 "DELETE FROM schema_migrations WHERE version >= 23;
                  ALTER TABLE feature_sets DROP COLUMN auto_include;
+                 ALTER TABLE outbound_oauth_clients DROP COLUMN client_secret_encrypted;
                  DELETE FROM app_settings WHERE key = 'gateway.auth_disabled';
                  {seed}"
             ))

@@ -39,7 +39,7 @@ fn create_test_registration(space_id: Uuid, server_id: &str) -> OutboundOAuthReg
 async fn test_save_and_get_registration() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -63,7 +63,7 @@ async fn test_save_and_get_registration() {
 async fn test_registration_not_found() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let oauth_repo = SqliteOutboundOAuthRepository::new(db);
+    let oauth_repo = SqliteOutboundOAuthRepository::new(db, test_encryptor());
 
     let loaded = OutboundOAuthRepository::get(&oauth_repo, &Uuid::new_v4(), "nonexistent")
         .await
@@ -75,7 +75,7 @@ async fn test_registration_not_found() {
 async fn test_update_registration() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -106,7 +106,7 @@ async fn test_update_registration() {
 async fn test_delete_registration() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -131,7 +131,7 @@ async fn test_delete_registration() {
 async fn test_list_registrations_for_space() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space = fixtures::test_space("Test Space");
@@ -154,7 +154,7 @@ async fn test_list_registrations_for_space() {
 async fn test_registrations_isolated_by_space() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
-    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
     let space_repo = SqliteSpaceRepository::new(db);
 
     let space_a = fixtures::test_space("Space A");
@@ -179,6 +179,130 @@ async fn test_registrations_isolated_by_space() {
     let list_b = oauth_repo.list_for_space(&space_b.id).await.unwrap();
     assert_eq!(list_a.len(), 1);
     assert_eq!(list_b.len(), 1);
+}
+
+#[tokio::test]
+async fn test_client_secret_round_trips_and_is_encrypted_at_rest() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let reg = create_test_registration(space.id, "confidential")
+        .with_client_secret(Some("dcr-secret-value".to_string()));
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .unwrap();
+
+    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "confidential")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.client_secret.as_deref(), Some("dcr-secret-value"));
+
+    let listed = oauth_repo.list_for_space(&space.id).await.unwrap();
+    assert_eq!(listed[0].client_secret.as_deref(), Some("dcr-secret-value"));
+
+    let raw: Option<String> = db
+        .lock()
+        .await
+        .connection()
+        .query_row(
+            "SELECT client_secret_encrypted FROM outbound_oauth_clients WHERE server_id = ?1",
+            ["confidential"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let raw = raw.expect("secret column is set");
+    assert!(
+        !raw.contains("dcr-secret-value"),
+        "client secret stored in plaintext: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn test_public_client_has_no_secret() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let reg = create_test_registration(space.id, "public");
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .unwrap();
+
+    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "public")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.client_secret, None);
+}
+
+/// During the token exchange the credential store saves a bare registration (no
+/// secret, no metadata) before the OAuth flow saves the full one. The upsert must
+/// then write the secret, or it never lands.
+#[tokio::test]
+async fn test_upsert_adds_secret_to_bare_registration() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let bare = create_test_registration(space.id, "confidential");
+    OutboundOAuthRepository::save(&oauth_repo, &bare)
+        .await
+        .unwrap();
+
+    let full = bare
+        .clone()
+        .with_client_secret(Some("dcr-secret-value".to_string()));
+    OutboundOAuthRepository::save(&oauth_repo, &full)
+        .await
+        .unwrap();
+
+    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "confidential")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.client_id, bare.client_id);
+    assert_eq!(loaded.client_secret.as_deref(), Some("dcr-secret-value"));
+}
+
+/// A secret encrypted under a different master key can't be decrypted. The lookup
+/// still succeeds without it, so the server re-registers instead of erroring forever.
+#[tokio::test]
+async fn test_undecryptable_secret_is_dropped() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let old_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
+    let reg = create_test_registration(space.id, "confidential")
+        .with_client_secret(Some("dcr-secret-value".to_string()));
+    OutboundOAuthRepository::save(&old_repo, &reg)
+        .await
+        .unwrap();
+
+    let new_repo = SqliteOutboundOAuthRepository::new(db, test_encryptor());
+    let loaded = OutboundOAuthRepository::get(&new_repo, &space.id, "confidential")
+        .await
+        .unwrap()
+        .expect("registration still loads");
+    assert_eq!(loaded.client_id, reg.client_id);
+    assert_eq!(loaded.client_secret, None);
 }
 
 // =============================================================================

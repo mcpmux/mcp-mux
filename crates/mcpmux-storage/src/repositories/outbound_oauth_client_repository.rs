@@ -14,16 +14,47 @@ use tokio::sync::Mutex;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::crypto::FieldEncryptor;
 use crate::Database;
 
 /// SQLite-backed outbound OAuth client repository.
+///
+/// The DCR `client_secret` is encrypted with AES-256-GCM; everything else is plaintext.
 pub struct SqliteOutboundOAuthRepository {
     db: Arc<Mutex<Database>>,
+    encryptor: Arc<FieldEncryptor>,
 }
 
 impl SqliteOutboundOAuthRepository {
-    pub fn new(db: Arc<Mutex<Database>>) -> Self {
-        Self { db }
+    pub fn new(db: Arc<Mutex<Database>>, encryptor: Arc<FieldEncryptor>) -> Self {
+        Self { db, encryptor }
+    }
+
+    fn encrypt_secret(&self, secret: Option<&str>) -> Result<Option<String>> {
+        secret
+            .map(|s| {
+                self.encryptor
+                    .encrypt(s)
+                    .map_err(|e| anyhow::anyhow!("Failed to encrypt client secret: {}", e))
+            })
+            .transpose()
+    }
+
+    /// A secret that fails to decrypt (e.g. after a master key reset) is dropped with a
+    /// warning rather than failing the lookup: the next token request then fails and
+    /// McpMux registers a fresh client.
+    fn decrypt_secret(&self, encrypted: Option<String>, server_id: &str) -> Option<String> {
+        let encrypted = encrypted?;
+        match self.encryptor.decrypt(&encrypted) {
+            Ok(secret) => Some(secret),
+            Err(e) => {
+                warn!(
+                    "Failed to decrypt OAuth client secret for {}: {}",
+                    server_id, e
+                );
+                None
+            }
+        }
     }
 
     fn parse_datetime(s: &str) -> DateTime<Utc> {
@@ -48,7 +79,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
         let conn = db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at
+            "SELECT id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at, client_secret_encrypted
              FROM outbound_oauth_clients
              WHERE space_id = ? AND server_id = ?",
         )?;
@@ -65,6 +96,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                     row.get::<_, Option<String>>(6)?,
                     row.get::<_, String>(7)?,
                     row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             })
             .optional()?;
@@ -80,6 +112,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                 metadata_json,
                 created_at,
                 updated_at,
+                client_secret_encrypted,
             )) => {
                 // Parse metadata from JSON if present
                 let metadata: Option<StoredOAuthMetadata> = metadata_json.and_then(|json| {
@@ -91,12 +124,15 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                         .ok()
                 });
 
+                let client_secret = self.decrypt_secret(client_secret_encrypted, &server_id);
+
                 Ok(Some(OutboundOAuthRegistration {
                     id: id.parse().unwrap_or_else(|_| Uuid::new_v4()),
                     space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
                     server_id,
                     server_url,
                     client_id,
+                    client_secret,
                     redirect_uri,
                     metadata,
                     created_at: Self::parse_datetime(&created_at),
@@ -116,17 +152,20 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
             .metadata
             .as_ref()
             .and_then(|m| serde_json::to_string(m).ok());
+        let client_secret_encrypted = self.encrypt_secret(reg.client_secret.as_deref())?;
 
         conn.execute(
             "INSERT INTO outbound_oauth_clients (
-                id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at,
+                client_secret_encrypted
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(space_id, server_id) DO UPDATE SET
                 server_url = excluded.server_url,
                 client_id = excluded.client_id,
                 redirect_uri = excluded.redirect_uri,
                 metadata_json = excluded.metadata_json,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                client_secret_encrypted = excluded.client_secret_encrypted",
             params![
                 reg.id.to_string(),
                 reg.space_id.to_string(),
@@ -137,6 +176,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                 metadata_json,
                 reg.created_at.to_rfc3339(),
                 reg.updated_at.to_rfc3339(),
+                client_secret_encrypted,
             ],
         )?;
 
@@ -160,7 +200,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
         let conn = db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at
+            "SELECT id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at, client_secret_encrypted
              FROM outbound_oauth_clients
              WHERE space_id = ?
              ORDER BY server_id",
@@ -177,6 +217,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })?;
 
@@ -192,11 +233,14 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                 metadata_json,
                 created_at,
                 updated_at,
+                client_secret_encrypted,
             ) = row?;
 
             // Parse metadata from JSON if present
             let metadata: Option<StoredOAuthMetadata> =
                 metadata_json.and_then(|json| serde_json::from_str(&json).ok());
+
+            let client_secret = self.decrypt_secret(client_secret_encrypted, &server_id);
 
             registrations.push(OutboundOAuthRegistration {
                 id: id.parse().unwrap_or_else(|_| Uuid::new_v4()),
@@ -204,6 +248,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                 server_id,
                 server_url,
                 client_id,
+                client_secret,
                 redirect_uri,
                 metadata,
                 created_at: Self::parse_datetime(&created_at),
@@ -230,7 +275,9 @@ mod tests {
     #[tokio::test]
     async fn test_backend_oauth_crud() {
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-        let repo = SqliteOutboundOAuthRepository::new(db.clone());
+        let key = crate::crypto::generate_master_key().unwrap();
+        let encryptor = Arc::new(FieldEncryptor::new(&key).unwrap());
+        let repo = SqliteOutboundOAuthRepository::new(db.clone(), encryptor);
 
         let space_id = Uuid::new_v4();
         create_test_space(&db, &space_id).await;

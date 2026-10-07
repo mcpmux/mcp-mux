@@ -308,8 +308,9 @@ impl Repositories {
             db.clone(),
             encryptor.clone(),
         ));
-        let backend_oauth: Arc<dyn OutboundOAuthRepository> =
-            Arc::new(SqliteOutboundOAuthRepository::new(db.clone()));
+        let backend_oauth: Arc<dyn OutboundOAuthRepository> = Arc::new(
+            SqliteOutboundOAuthRepository::new(db.clone(), encryptor.clone()),
+        );
         let feature_set: Arc<dyn FeatureSetRepository> =
             Arc::new(SqliteFeatureSetRepository::new(db.clone()));
         let client: Arc<dyn InboundMcpClientRepository> =

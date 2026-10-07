@@ -148,6 +148,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "onboarding_defaults",
         sql: include_str!("migrations/023_onboarding_defaults.sql"),
     },
+    Migration {
+        version: 24,
+        name: "outbound_oauth_client_secret",
+        sql: include_str!("migrations/024_outbound_oauth_client_secret.sql"),
+    },
 ];
 
 /// SQLite database wrapper.

@@ -5,8 +5,10 @@
 //! (e.g., `https://mcp.atlassian.com/v1/sse`). This module provides utilities
 //! to handle both cases.
 
-use mcpmux_core::StoredOAuthMetadata;
-use rmcp::transport::auth::{AuthError, AuthorizationManager, AuthorizationMetadata};
+use mcpmux_core::{OutboundOAuthRegistration, StoredOAuthMetadata};
+use rmcp::transport::auth::{
+    AuthError, AuthorizationManager, AuthorizationMetadata, OAuthClientConfig,
+};
 use tracing::info;
 use url::Url;
 
@@ -111,6 +113,32 @@ pub fn convert_from_stored_metadata(stored: &StoredOAuthMetadata) -> Authorizati
     metadata.response_types_supported = stored.response_types_supported.clone();
     metadata.additional_fields = stored.additional_fields.clone();
     metadata
+}
+
+/// Give `manager` back the DCR client secret after `initialize_from_store`.
+///
+/// rmcp restores only the client_id from the credential store, so a confidential
+/// client would send its token refresh without the secret and get `invalid_client`.
+/// Does nothing for a public client (no stored secret).
+pub fn apply_stored_client_secret(
+    manager: &mut AuthorizationManager,
+    registration: &OutboundOAuthRegistration,
+) -> Result<(), AuthError> {
+    let Some(secret) = registration.client_secret.as_deref() else {
+        return Ok(());
+    };
+    // The redirect URI only matters for the authorization request, not refresh.
+    // Fall back to the server URL (what rmcp's configure_client_id uses) when the
+    // stored one is missing.
+    let redirect_uri = registration
+        .redirect_uri
+        .clone()
+        .filter(|uri| !uri.is_empty())
+        .unwrap_or_else(|| registration.server_url.clone());
+    manager.configure_client(
+        OAuthClientConfig::new(registration.client_id.clone(), redirect_uri)
+            .with_client_secret(secret),
+    )
 }
 
 #[cfg(test)]

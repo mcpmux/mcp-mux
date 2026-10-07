@@ -157,21 +157,24 @@ impl HttpTransport {
         // Set our database-backed credential store
         auth_manager.set_credential_store(credential_store);
 
-        // Load stored metadata from initial OAuth flow
-        // This bypasses RMCP's metadata discovery which can fail on non-spec-compliant servers
-        let has_stored_metadata = if let Ok(Some(registration)) = self
+        let registration = self
             .backend_oauth_repo
             .get(&self.space_id, &self.server_id)
             .await
-        {
-            if let Some(stored_metadata) = registration.metadata {
+            .ok()
+            .flatten();
+
+        // Load stored metadata from initial OAuth flow
+        // This bypasses RMCP's metadata discovery which can fail on non-spec-compliant servers
+        let has_stored_metadata = if let Some(registration) = &registration {
+            if let Some(stored_metadata) = &registration.metadata {
                 debug!(
                     server_id = %self.server_id,
                     space_id = %self.space_id,
                     "Using stored OAuth metadata (bypassing RMCP discovery)"
                 );
                 let rmcp_metadata =
-                    crate::pool::oauth_utils::convert_from_stored_metadata(&stored_metadata);
+                    crate::pool::oauth_utils::convert_from_stored_metadata(stored_metadata);
                 auth_manager.set_metadata(rmcp_metadata);
                 true
             } else {
@@ -197,6 +200,20 @@ impl HttpTransport {
                     space_id = %self.space_id,
                     "Initialized from stored credentials (has_metadata={})", has_stored_metadata
                 );
+                // rmcp restored only the client_id; a confidential client also needs
+                // its secret, or the token refresh fails with invalid_client
+                if let Some(registration) = &registration {
+                    if let Err(e) = crate::pool::oauth_utils::apply_stored_client_secret(
+                        &mut auth_manager,
+                        registration,
+                    ) {
+                        let err = format!("Failed to restore OAuth client secret: {}", e);
+                        error!(server_id = %self.server_id, "{}", err);
+                        self.log(LogLevel::Error, LogSource::OAuth, err.clone())
+                            .await;
+                        return TransportConnectResult::Failed(err);
+                    }
+                }
             }
             Ok(false) => {
                 debug!(

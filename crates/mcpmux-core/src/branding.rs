@@ -140,6 +140,35 @@ pub fn outbound_oauth_client_metadata_url() -> String {
     format!("https://{}/oauth/client-metadata.json", DOMAIN)
 }
 
+/// Get the homepage URL McpMux reports as `client_uri` for outbound OAuth
+///
+/// Sent in Dynamic Client Registration (RFC 7591) so a consent page can link to
+/// McpMux. Must match `client_uri` in the published Client ID Metadata Document.
+///
+/// # Example
+/// ```ignore
+/// let url = branding::outbound_oauth_client_uri();
+/// // Returns: "https://mcpmux.com"
+/// ```
+pub fn outbound_oauth_client_uri() -> String {
+    format!("https://{}", DOMAIN)
+}
+
+/// Get the logo URL McpMux reports as `logo_uri` for outbound OAuth
+///
+/// Sent in Dynamic Client Registration (RFC 7591) so the authorization server's
+/// consent page shows McpMux's logo. Must match `logo_uri` in the published
+/// Client ID Metadata Document.
+///
+/// # Example
+/// ```ignore
+/// let url = branding::outbound_oauth_logo_uri();
+/// // Returns: "https://mcpmux.com/logo.svg"
+/// ```
+pub fn outbound_oauth_logo_uri() -> String {
+    format!("https://{}/logo.svg", DOMAIN)
+}
+
 /// Default preferred port for OAuth callbacks (adjacent to gateway port)
 ///
 /// Uses a high port number to avoid conflicts:
@@ -315,6 +344,16 @@ mod tests {
             .expect("https scheme on the branding domain");
         assert!(path.len() > 1 && path.starts_with('/'));
         assert!(!url.contains('?') && !url.contains('#'));
+    }
+
+    #[test]
+    fn test_outbound_oauth_client_identity_urls() {
+        // Same values as client_uri / logo_uri in the published CIMD document
+        assert_eq!(outbound_oauth_client_uri(), format!("https://{}", DOMAIN));
+        assert_eq!(
+            outbound_oauth_logo_uri(),
+            format!("https://{}/logo.svg", DOMAIN)
+        );
     }
 
     #[test]

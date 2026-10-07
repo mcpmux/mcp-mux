@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # `labeled` so adding the full-ci label starts a full run.
+    types: [opened, synchronize, reopened, labeled]
   # Merge queue: each queued group is tested on top of main before it lands.
   merge_group:
 
@@ -37,7 +39,10 @@ jobs:
   # What this run has to cover. `ci-ok` uses the same outputs to
   # tell an intended skip from a missing result.
   #   code: false for a PR that only touches docs/ or Markdown
-  #   full: desktop E2E and the macOS bundle run too
+  #   full: desktop E2E and the macOS bundle run too. Always on
+  #         main and in the merge queue; on a PR only with the
+  #         full-ci label, so PR feedback takes minutes, not half
+  #         an hour.
   # ─────────────────────────────────────────────────────────────
   changes:
     runs-on: ubuntu-latest
@@ -54,6 +59,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          FULL_CI_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: bash .github/scripts/ci-scope.sh
 
   # ─────────────────────────────────────────────────────────────
@@ -228,6 +234,7 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # Build Verification (macOS only - Linux/Windows covered by e2e-desktop)
+  # Runs on main and in the merge queue, and on a PR with the full-ci label
   # ─────────────────────────────────────────────────────────────
   build:
     needs: changes
@@ -415,11 +422,9 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # E2E Tests (Web-only Playwright for UI smoke tests)
-  # Skip with [skip e2e] in commit message for faster PR iteration
   # ─────────────────────────────────────────────────────────────
   e2e-web:
     needs: [ts-check]
-    if: "!contains(github.event.head_commit.message, '[skip e2e]')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -470,11 +475,11 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # E2E Tests (Desktop app with WebDriver - Linux/Windows)
-  # Runs on all commits; skip with [skip e2e] in commit message
+  # Runs on main and in the merge queue, and on a PR with the full-ci label
   # ─────────────────────────────────────────────────────────────
   e2e-desktop:
     needs: changes
-    if: needs.changes.outputs.full == 'true' && !contains(github.event.head_commit.message, '[skip e2e]')
+    if: needs.changes.outputs.full == 'true'
     uses: ./.github/workflows/e2e-desktop.yml
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}

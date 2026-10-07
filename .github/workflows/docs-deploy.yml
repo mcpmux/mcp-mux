@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'docs/guide/**'
+  # Manual re-run, e.g. after (re)creating the deploy hook.
+  workflow_dispatch:
 
 # Restrict permissions to minimum needed
 permissions: {}
@@ -15,8 +17,16 @@ jobs:
     # Only run for pushes by repo collaborators, not automated merges from unknown sources
     if: github.repository == 'mcpmux/mcp-mux'
     steps:
+      # mcpmux.com is the Cloudflare Pages project `mcpmux-discover-ui`
+      # (mcpmux/mcpmux.discover.ui), which pulls docs/guide/ from this repo at
+      # build time. The hook URL comes from that project's
+      # Settings > Builds > Deploy hooks (branch: main).
       - name: Trigger mcpmux.com rebuild
         run: |
-          curl -s -X POST "$CF_PAGES_DEPLOY_HOOK"
+          if [ -z "$CF_PAGES_DEPLOY_HOOK" ]; then
+            echo "::error::CF_PAGES_DEPLOY_HOOK secret is not set. Create a deploy hook on the mcpmux-discover-ui Pages project and store its URL in this repo's Actions secrets."
+            exit 1
+          fi
+          curl -fsS -X POST "$CF_PAGES_DEPLOY_HOOK"
         env:
           CF_PAGES_DEPLOY_HOOK: ${{ secrets.CF_PAGES_DEPLOY_HOOK }}

@@ -1,5 +1,5 @@
 # Reusable workflow: Desktop E2E tests (Linux + Windows)
-# Call with workflow_call from ci.yml or e2e-desktop-comment.yml
+# Called from ci.yml
 name: E2E Desktop
 
 on:
@@ -17,6 +17,11 @@ on:
 
 env:
   PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+  # E2E needs a runnable app, not a release-grade binary. Skip the release
+  # profile's fat LTO and single codegen unit, the slowest part of the build;
+  # the release workflows don't set these and keep both.
+  CARGO_PROFILE_RELEASE_LTO: 'off'
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
 
 jobs:
   e2e-desktop:
@@ -57,6 +62,9 @@ jobs:
           key: ${{ matrix.os }}-e2e-desktop
           shared-key: rust-${{ matrix.os == 'ubuntu-latest' && 'x86_64-unknown-linux-gnu' || 'x86_64-pc-windows-msvc' }}
           cache-on-failure: true
+          # Only main saves: the repo's caches are at the 10 GB limit, and PR
+          # and merge-queue saves were evicting main's.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
         env:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 

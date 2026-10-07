@@ -76,6 +76,10 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves: the repo's caches are at the 10 GB limit, and PR
+          # and merge-queue saves were evicting main's.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
         env:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
@@ -153,7 +157,10 @@ jobs:
   # Rust Tests (cross-platform matrix)
   # ─────────────────────────────────────────────────────────────
   rust-test:
-    needs: rust-check
+    # Doesn't wait for rust-check: fmt/clippy failures still fail ci-ok, and
+    # starting together saves ~3.5 minutes.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -177,12 +184,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Share cache between rust-test and build jobs for faster compilation
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
           shared-key: rust-${{ matrix.target }}
           cache-on-failure: true
+          # Only main saves: the repo's caches are at the 10 GB limit, and PR
+          # and merge-queue saves were evicting main's.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Install cargo-nextest
       - name: Install nextest
@@ -221,11 +230,16 @@ jobs:
   # Build Verification (macOS only - Linux/Windows covered by e2e-desktop)
   # ─────────────────────────────────────────────────────────────
   build:
-    needs: [changes, rust-check, ts-check]
+    needs: changes
     if: needs.changes.outputs.full == 'true'
     runs-on: macos-latest
     env:
       MACOSX_DEPLOYMENT_TARGET: '10.13'
+      # This build only proves the app bundles. Skip the release profile's fat
+      # LTO and single codegen unit, the slowest part of the build; the
+      # release workflows don't set these and keep both.
+      CARGO_PROFILE_RELEASE_LTO: 'off'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
     steps:
       - uses: actions/checkout@v4
 
@@ -233,11 +247,16 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      # Own key: a release-profile bundle shares no artifacts with
+      # rust-test's debug build on the same target.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: aarch64-apple-darwin
+          key: aarch64-apple-darwin-bundle
           shared-key: rust-aarch64-apple-darwin
           cache-on-failure: true
+          # Only main saves: the repo's caches are at the 10 GB limit, and PR
+          # and merge-queue saves were evicting main's.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -454,7 +473,7 @@ jobs:
   # Runs on all commits; skip with [skip e2e] in commit message
   # ─────────────────────────────────────────────────────────────
   e2e-desktop:
-    needs: [changes, rust-check, ts-check]
+    needs: changes
     if: needs.changes.outputs.full == 'true' && !contains(github.event.head_commit.message, '[skip e2e]')
     uses: ./.github/workflows/e2e-desktop.yml
     with:

@@ -106,6 +106,47 @@ pub async fn create_space(
     Ok(space)
 }
 
+/// Rename a space. A name is presentation metadata only: it never changes
+/// workspace bindings, gateway routing, or the servers contained in the Space.
+#[tauri::command]
+pub async fn rename_space(
+    id: String,
+    name: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
+) -> Result<Space, String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Space name cannot be empty".to_string());
+    }
+
+    let space = state
+        .space_service
+        .rename(&uuid, name.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let gw_state = gateway_state.read().await;
+    if let Some(ref gw) = gw_state.gateway_state {
+        let gw = gw.read().await;
+        gw.emit_domain_event(mcpmux_core::DomainEvent::SpaceUpdated {
+            space_id: space.id,
+            name: space.name.clone(),
+        });
+    }
+
+    // The tray exposes Space names, so keep it in sync with the persisted update.
+    if let Err(e) = tray::update_tray_spaces(&app, &state).await {
+        warn!(error = %e, "Failed to update tray menu after renaming Space");
+    }
+
+    info!(space_id = %space.id, name = %space.name, "[rename_space] Space renamed");
+
+    Ok(space)
+}
+
 /// Delete a space.
 #[tauri::command]
 pub async fn delete_space(

@@ -806,6 +806,7 @@ pub fn run() {
             commands::list_spaces,
             commands::get_space,
             commands::create_space,
+            commands::rename_space,
             commands::delete_space,
             commands::list_space_base_dirs,
             commands::add_space_base_dir,

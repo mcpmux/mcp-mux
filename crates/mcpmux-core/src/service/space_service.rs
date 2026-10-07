@@ -1,5 +1,6 @@
 //! Space service - business logic for managing spaces
 
+use anyhow::anyhow;
 use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
@@ -76,6 +77,26 @@ impl SpaceService {
                 );
             }
         }
+
+        Ok(space)
+    }
+
+    /// Rename a Space while preserving its routing and server configuration.
+    ///
+    /// The desktop wires this service (see `Runtime::space_service`), so the
+    /// rename lands here rather than in [`crate::application::SpaceAppService`],
+    /// whose `update` covers the application-layer path the desktop does not
+    /// build.
+    pub async fn rename(&self, id: &Uuid, name: String) -> anyhow::Result<Space> {
+        let mut space = self
+            .repository
+            .get(id)
+            .await?
+            .ok_or_else(|| anyhow!("Space not found"))?;
+
+        space.name = name;
+        space.updated_at = chrono::Utc::now();
+        self.repository.update(&space).await?;
 
         Ok(space)
     }

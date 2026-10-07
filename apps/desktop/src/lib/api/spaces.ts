@@ -30,6 +30,11 @@ export async function createSpace(name: string, icon?: string): Promise<Space> {
   return invoke('create_space', { name, icon });
 }
 
+/** Rename a Space without changing its routing or its configured servers. */
+export async function renameSpace(id: string, name: string): Promise<Space> {
+  return invoke('rename_space', { id, name });
+}
+
 export async function deleteSpace(id: string): Promise<void> {
   return invoke('delete_space', { id });
 }

@@ -1,10 +1,20 @@
 import { useState } from 'react';
-import { Plus, Trash2, Loader2, Search, Layout, AlertCircle, FolderTree } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  Loader2,
+  Search,
+  Layout,
+  AlertCircle,
+  FolderTree,
+  Pencil,
+} from 'lucide-react';
 import { Card, CardContent, Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
 import { useAppStore, useSpaces, useIsLoading } from '@/stores';
-import { deleteSpace, type Space } from '@/lib/api/spaces';
+import { deleteSpace, renameSpace, type Space } from '@/lib/api/spaces';
 import { CreateSpaceModal } from './CreateSpaceModal';
 import { SpaceBaseDirsModal } from './SpaceBaseDirsModal';
+import { RenameSpaceModal } from './RenameSpaceModal';
 
 export function SpacesPage() {
   const spaces = useSpaces();
@@ -12,6 +22,7 @@ export function SpacesPage() {
 
   // Store actions
   const removeSpace = useAppStore((state) => state.removeSpace);
+  const updateSpace = useAppStore((state) => state.updateSpace);
 
   // Local state
   const [searchQuery, setSearchQuery] = useState('');
@@ -24,6 +35,19 @@ export function SpacesPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   // The space whose base directories are being managed (null = closed).
   const [baseDirsSpace, setBaseDirsSpace] = useState<Space | null>(null);
+  const [renameSpaceTarget, setRenameSpaceTarget] = useState<Space | null>(null);
+
+  const handleRename = async (space: Space, name: string) => {
+    try {
+      const updated = await renameSpace(space.id, name);
+      updateSpace(updated.id, updated);
+      success('Space renamed', `"${space.name}" is now "${updated.name}"`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      showError('Failed to rename space', message);
+      throw e;
+    }
+  };
 
   const handleDelete = async (id: string) => {
     const spaceName = spaces.find((s) => s.id === id)?.name || 'this space';
@@ -180,6 +204,16 @@ export function SpacesPage() {
                                 Default
                               </span>
                             )}
+                            <button
+                              type="button"
+                              onClick={() => setRenameSpaceTarget(space)}
+                              className="rounded-lg p-1.5 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--surface-hover))] hover:text-[rgb(var(--foreground))]"
+                              title="Rename Space"
+                              aria-label={`Rename ${space.name}`}
+                              data-testid={`rename-space-${space.id}`}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
                             {!space.is_default && (
                               <button
                                 onClick={() => handleDelete(space.id)}
@@ -213,6 +247,11 @@ export function SpacesPage() {
         </div>
 
         <CreateSpaceModal open={showCreateModal} onClose={() => setShowCreateModal(false)} />
+        <RenameSpaceModal
+          space={renameSpaceTarget}
+          onClose={() => setRenameSpaceTarget(null)}
+          onRename={handleRename}
+        />
         <SpaceBaseDirsModal space={baseDirsSpace} onClose={() => setBaseDirsSpace(null)} />
       </div>
     </>

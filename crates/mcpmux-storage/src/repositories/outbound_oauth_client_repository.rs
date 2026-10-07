@@ -17,6 +17,46 @@ use uuid::Uuid;
 use crate::crypto::FieldEncryptor;
 use crate::Database;
 
+/// Columns `get` and `list_for_space` read, in `RegistrationRow::from_row` order
+const SELECT_COLUMNS: &str = "id, space_id, server_id, server_url, client_id, redirect_uri, \
+     metadata_json, created_at, updated_at, client_secret_encrypted, \
+     client_secret_expires_at, token_endpoint_auth_method";
+
+/// A registration row as stored, before the client secret is decrypted
+struct RegistrationRow {
+    id: String,
+    space_id: String,
+    server_id: String,
+    server_url: String,
+    client_id: String,
+    redirect_uri: Option<String>,
+    metadata_json: Option<String>,
+    created_at: String,
+    updated_at: String,
+    client_secret_encrypted: Option<String>,
+    client_secret_expires_at: Option<String>,
+    token_endpoint_auth_method: Option<String>,
+}
+
+impl RegistrationRow {
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            space_id: row.get(1)?,
+            server_id: row.get(2)?,
+            server_url: row.get(3)?,
+            client_id: row.get(4)?,
+            redirect_uri: row.get(5)?,
+            metadata_json: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+            client_secret_encrypted: row.get(9)?,
+            client_secret_expires_at: row.get(10)?,
+            token_endpoint_auth_method: row.get(11)?,
+        })
+    }
+}
+
 /// SQLite-backed outbound OAuth client repository.
 ///
 /// The DCR `client_secret` is encrypted with AES-256-GCM; everything else is plaintext.
@@ -40,21 +80,51 @@ impl SqliteOutboundOAuthRepository {
             .transpose()
     }
 
-    /// A secret that fails to decrypt (e.g. after a master key reset) is dropped with a
-    /// warning rather than failing the lookup: the next token request then fails and
-    /// McpMux registers a fresh client.
-    fn decrypt_secret(&self, encrypted: Option<String>, server_id: &str) -> Option<String> {
-        let encrypted = encrypted?;
-        match self.encryptor.decrypt(&encrypted) {
-            Ok(secret) => Some(secret),
-            Err(e) => {
-                warn!(
-                    "Failed to decrypt OAuth client secret for {}: {}",
-                    server_id, e
-                );
-                None
-            }
-        }
+    /// A secret that can't be decrypted (e.g. after a master key reset) fails the
+    /// lookup, like a credential that can't be decrypted. Returning the client without
+    /// its secret would make the next sign-in reuse it and fail. The sign-in flow
+    /// instead treats a failed lookup as no registration, so it registers a fresh
+    /// client, whose save overwrites this row.
+    fn decrypt_secret(&self, encrypted: Option<String>, server_id: &str) -> Result<Option<String>> {
+        encrypted
+            .map(|encrypted| {
+                self.encryptor.decrypt(&encrypted).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to decrypt OAuth client secret for {}: {}",
+                        server_id,
+                        e
+                    )
+                })
+            })
+            .transpose()
+    }
+
+    fn to_registration(&self, row: RegistrationRow) -> Result<OutboundOAuthRegistration> {
+        let client_secret = self.decrypt_secret(row.client_secret_encrypted, &row.server_id)?;
+
+        let metadata: Option<StoredOAuthMetadata> = row.metadata_json.and_then(|json| {
+            serde_json::from_str(&json)
+                .map_err(|e| warn!("Failed to parse stored OAuth metadata: {}", e))
+                .ok()
+        });
+
+        Ok(OutboundOAuthRegistration {
+            id: row.id.parse().unwrap_or_else(|_| Uuid::new_v4()),
+            space_id: row.space_id.parse().unwrap_or_else(|_| Uuid::new_v4()),
+            server_id: row.server_id,
+            server_url: row.server_url,
+            client_id: row.client_id,
+            client_secret,
+            client_secret_expires_at: row
+                .client_secret_expires_at
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc)),
+            token_endpoint_auth_method: row.token_endpoint_auth_method,
+            redirect_uri: row.redirect_uri,
+            metadata,
+            created_at: Self::parse_datetime(&row.created_at),
+            updated_at: Self::parse_datetime(&row.updated_at),
+        })
     }
 
     fn parse_datetime(s: &str) -> DateTime<Utc> {
@@ -75,72 +145,37 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
         space_id: &Uuid,
         server_id: &str,
     ) -> Result<Option<OutboundOAuthRegistration>> {
+        let row = {
+            let db = self.db.lock().await;
+            db.connection()
+                .query_row(
+                    &format!(
+                        "SELECT {SELECT_COLUMNS} FROM outbound_oauth_clients
+                         WHERE space_id = ? AND server_id = ?"
+                    ),
+                    params![space_id.to_string(), server_id],
+                    RegistrationRow::from_row,
+                )
+                .optional()?
+        };
+
+        row.map(|row| self.to_registration(row)).transpose()
+    }
+
+    /// Reads only the client_id column, so the per-request credential load never
+    /// decrypts the client secret
+    async fn get_client_id(&self, space_id: &Uuid, server_id: &str) -> Result<Option<String>> {
         let db = self.db.lock().await;
-        let conn = db.connection();
-
-        let mut stmt = conn.prepare(
-            "SELECT id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at, client_secret_encrypted
-             FROM outbound_oauth_clients
-             WHERE space_id = ? AND server_id = ?",
-        )?;
-
-        let row = stmt
-            .query_row(params![space_id.to_string(), server_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                    row.get::<_, String>(7)?,
-                    row.get::<_, String>(8)?,
-                    row.get::<_, Option<String>>(9)?,
-                ))
-            })
+        let client_id = db
+            .connection()
+            .query_row(
+                "SELECT client_id FROM outbound_oauth_clients
+                 WHERE space_id = ? AND server_id = ?",
+                params![space_id.to_string(), server_id],
+                |row| row.get(0),
+            )
             .optional()?;
-
-        match row {
-            Some((
-                id,
-                space_id_str,
-                server_id,
-                server_url,
-                client_id,
-                redirect_uri,
-                metadata_json,
-                created_at,
-                updated_at,
-                client_secret_encrypted,
-            )) => {
-                // Parse metadata from JSON if present
-                let metadata: Option<StoredOAuthMetadata> = metadata_json.and_then(|json| {
-                    serde_json::from_str(&json)
-                        .map_err(|e| {
-                            warn!("Failed to parse stored OAuth metadata: {}", e);
-                            e
-                        })
-                        .ok()
-                });
-
-                let client_secret = self.decrypt_secret(client_secret_encrypted, &server_id);
-
-                Ok(Some(OutboundOAuthRegistration {
-                    id: id.parse().unwrap_or_else(|_| Uuid::new_v4()),
-                    space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
-                    server_id,
-                    server_url,
-                    client_id,
-                    client_secret,
-                    redirect_uri,
-                    metadata,
-                    created_at: Self::parse_datetime(&created_at),
-                    updated_at: Self::parse_datetime(&updated_at),
-                }))
-            }
-            None => Ok(None),
-        }
+        Ok(client_id)
     }
 
     async fn save(&self, reg: &OutboundOAuthRegistration) -> Result<()> {
@@ -156,16 +191,19 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
 
         conn.execute(
             "INSERT INTO outbound_oauth_clients (
-                id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at,
-                client_secret_encrypted
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json,
+                created_at, updated_at, client_secret_encrypted, client_secret_expires_at,
+                token_endpoint_auth_method
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(space_id, server_id) DO UPDATE SET
                 server_url = excluded.server_url,
                 client_id = excluded.client_id,
                 redirect_uri = excluded.redirect_uri,
                 metadata_json = excluded.metadata_json,
                 updated_at = excluded.updated_at,
-                client_secret_encrypted = excluded.client_secret_encrypted",
+                client_secret_encrypted = excluded.client_secret_encrypted,
+                client_secret_expires_at = excluded.client_secret_expires_at,
+                token_endpoint_auth_method = excluded.token_endpoint_auth_method",
             params![
                 reg.id.to_string(),
                 reg.space_id.to_string(),
@@ -177,6 +215,8 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
                 reg.created_at.to_rfc3339(),
                 reg.updated_at.to_rfc3339(),
                 client_secret_encrypted,
+                reg.client_secret_expires_at.map(|dt| dt.to_rfc3339()),
+                reg.token_endpoint_auth_method,
             ],
         )?;
 
@@ -196,67 +236,23 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
     }
 
     async fn list_for_space(&self, space_id: &Uuid) -> Result<Vec<OutboundOAuthRegistration>> {
-        let db = self.db.lock().await;
-        let conn = db.connection();
+        let rows = {
+            let db = self.db.lock().await;
+            let conn = db.connection();
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {SELECT_COLUMNS} FROM outbound_oauth_clients
+                 WHERE space_id = ?
+                 ORDER BY server_id"
+            ))?;
+            let rows = stmt
+                .query_map(params![space_id.to_string()], RegistrationRow::from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
 
-        let mut stmt = conn.prepare(
-            "SELECT id, space_id, server_id, server_url, client_id, redirect_uri, metadata_json, created_at, updated_at, client_secret_encrypted
-             FROM outbound_oauth_clients
-             WHERE space_id = ?
-             ORDER BY server_id",
-        )?;
-
-        let rows = stmt.query_map(params![space_id.to_string()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
-                row.get::<_, Option<String>>(9)?,
-            ))
-        })?;
-
-        let mut registrations = Vec::new();
-        for row in rows {
-            let (
-                id,
-                space_id_str,
-                server_id,
-                server_url,
-                client_id,
-                redirect_uri,
-                metadata_json,
-                created_at,
-                updated_at,
-                client_secret_encrypted,
-            ) = row?;
-
-            // Parse metadata from JSON if present
-            let metadata: Option<StoredOAuthMetadata> =
-                metadata_json.and_then(|json| serde_json::from_str(&json).ok());
-
-            let client_secret = self.decrypt_secret(client_secret_encrypted, &server_id);
-
-            registrations.push(OutboundOAuthRegistration {
-                id: id.parse().unwrap_or_else(|_| Uuid::new_v4()),
-                space_id: space_id_str.parse().unwrap_or_else(|_| Uuid::new_v4()),
-                server_id,
-                server_url,
-                client_id,
-                client_secret,
-                redirect_uri,
-                metadata,
-                created_at: Self::parse_datetime(&created_at),
-                updated_at: Self::parse_datetime(&updated_at),
-            });
-        }
-
-        Ok(registrations)
+        rows.into_iter()
+            .map(|row| self.to_registration(row))
+            .collect()
     }
 }
 

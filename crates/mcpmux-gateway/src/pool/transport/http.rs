@@ -15,7 +15,7 @@ use rmcp::transport::auth::{AuthClient, AuthorizationManager};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::TransportType;
@@ -161,8 +161,13 @@ impl HttpTransport {
             .backend_oauth_repo
             .get(&self.space_id, &self.server_id)
             .await
-            .ok()
-            .flatten();
+            .unwrap_or_else(|e| {
+                warn!(
+                    server_id = %self.server_id,
+                    "Failed to load OAuth client registration: {}", e
+                );
+                None
+            });
 
         // Load stored metadata from initial OAuth flow
         // This bypasses RMCP's metadata discovery which can fail on non-spec-compliant servers
@@ -190,8 +195,13 @@ impl HttpTransport {
             false
         };
 
-        // Initialize from stored credentials
-        let init_result = auth_manager.initialize_from_store().await;
+        // Initialize from stored credentials, including the client secret rmcp doesn't
+        // restore. A stored client that can't be configured comes back as Ok(false).
+        let init_result = crate::pool::oauth_utils::initialize_from_store(
+            &mut auth_manager,
+            registration.as_ref(),
+        )
+        .await;
 
         match init_result {
             Ok(true) => {
@@ -200,31 +210,17 @@ impl HttpTransport {
                     space_id = %self.space_id,
                     "Initialized from stored credentials (has_metadata={})", has_stored_metadata
                 );
-                // rmcp restored only the client_id; a confidential client also needs
-                // its secret, or the token refresh fails with invalid_client
-                if let Some(registration) = &registration {
-                    if let Err(e) = crate::pool::oauth_utils::apply_stored_client_secret(
-                        &mut auth_manager,
-                        registration,
-                    ) {
-                        let err = format!("Failed to restore OAuth client secret: {}", e);
-                        error!(server_id = %self.server_id, "{}", err);
-                        self.log(LogLevel::Error, LogSource::OAuth, err.clone())
-                            .await;
-                        return TransportConnectResult::Failed(err);
-                    }
-                }
             }
             Ok(false) => {
                 debug!(
                     server_id = %self.server_id,
-                    "No stored credentials found"
+                    "No usable stored credentials found"
                 );
-                // No stored credentials - OAuth required
+                // No stored credentials, or a stored client that can't be configured
                 self.log(
                     LogLevel::Info,
                     LogSource::OAuth,
-                    "No stored credentials, OAuth required".to_string(),
+                    "No usable stored credentials, OAuth required".to_string(),
                 )
                 .await;
                 return TransportConnectResult::OAuthRequired {

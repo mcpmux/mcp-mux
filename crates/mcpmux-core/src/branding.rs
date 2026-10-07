@@ -347,12 +347,20 @@ mod tests {
     }
 
     #[test]
-    fn test_outbound_oauth_client_identity_urls() {
-        // Same values as client_uri / logo_uri in the published CIMD document
-        assert_eq!(outbound_oauth_client_uri(), format!("https://{}", DOMAIN));
+    fn test_outbound_oauth_client_identity_matches_published_metadata() {
+        // DCR sends these as client_uri / logo_uri, and CIMD servers read them from
+        // the published document (mcpmux.discover.ui/public/oauth/client-metadata.json),
+        // so a consent page shows the same identity either way. The document lives in
+        // another repo, so its values are copied here: change both together.
+        // A rebranded build publishes its own document.
+        if DOMAIN != "mcpmux.com" {
+            return;
+        }
+        assert_eq!(outbound_oauth_client_uri(), "https://mcpmux.com");
+        assert_eq!(outbound_oauth_logo_uri(), "https://mcpmux.com/logo.svg");
         assert_eq!(
-            outbound_oauth_logo_uri(),
-            format!("https://{}/logo.svg", DOMAIN)
+            outbound_oauth_client_metadata_url(),
+            "https://mcpmux.com/oauth/client-metadata.json"
         );
     }
 

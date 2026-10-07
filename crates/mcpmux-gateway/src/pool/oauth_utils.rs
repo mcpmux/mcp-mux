@@ -9,8 +9,10 @@ use mcpmux_core::{OutboundOAuthRegistration, StoredOAuthMetadata};
 use rmcp::transport::auth::{
     AuthError, AuthorizationManager, AuthorizationMetadata, OAuthClientConfig,
 };
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
+
+use super::oauth_registration::RegisteredClient;
 
 /// Extract the origin (scheme + host + port) from a URL.
 ///
@@ -115,30 +117,98 @@ pub fn convert_from_stored_metadata(stored: &StoredOAuthMetadata) -> Authorizati
     metadata
 }
 
-/// Give `manager` back the DCR client secret after `initialize_from_store`.
+/// The token endpoint auth methods rmcp can send a client secret with
+const SECRET_AUTH_METHODS: [&str; 2] = ["client_secret_basic", "client_secret_post"];
+
+/// Configure `manager` with a client McpMux registered, including its secret.
 ///
-/// rmcp restores only the client_id from the credential store, so a confidential
-/// client would send its token refresh without the secret and get `invalid_client`.
-/// Does nothing for a public client (no stored secret).
-pub fn apply_stored_client_secret(
+/// rmcp picks how to send the secret from the server's advertised
+/// `token_endpoint_auth_methods_supported`, not from the method the server
+/// registered the client with: HTTP Basic unless only `client_secret_post` is
+/// listed. A server that advertises both but enforces the registered method would
+/// reject a `client_secret_post` client with `invalid_client`. So when the client
+/// has a secret and the server named its method, rmcp is configured with
+/// `metadata` advertising only that method. The narrowed list stays in memory;
+/// what's stored is the server's own metadata.
+pub fn configure_registered_client(
     manager: &mut AuthorizationManager,
-    registration: &OutboundOAuthRegistration,
+    metadata: Option<&StoredOAuthMetadata>,
+    client: &RegisteredClient,
+    redirect_uri: &str,
+    scopes: &[String],
 ) -> Result<(), AuthError> {
-    let Some(secret) = registration.client_secret.as_deref() else {
-        return Ok(());
+    let mut config =
+        OAuthClientConfig::new(&client.client_id, redirect_uri).with_scopes(scopes.to_vec());
+
+    if let Some(secret) = client.client_secret.as_deref() {
+        config = config.with_client_secret(secret);
+
+        let registered_method = client
+            .token_endpoint_auth_method
+            .as_deref()
+            .filter(|method| SECRET_AUTH_METHODS.contains(method));
+        if let (Some(method), Some(metadata)) = (registered_method, metadata) {
+            let mut metadata = convert_from_stored_metadata(metadata);
+            metadata.additional_fields.insert(
+                "token_endpoint_auth_methods_supported".to_string(),
+                serde_json::json!([method]),
+            );
+            manager.set_metadata(metadata);
+        }
+    }
+
+    manager.configure_client(config)
+}
+
+/// Initialize `manager` from its credential store, including what rmcp's
+/// `AuthorizationManager::initialize_from_store` leaves out. Call this instead of
+/// that method.
+///
+/// rmcp restores only the client_id, so a confidential client would send its token
+/// refresh without its secret, or with the wrong auth method, and get
+/// `invalid_client`. This configures the client again from `registration`, the
+/// stored registration for the same server.
+///
+/// Returns `Ok(false)` when there are no stored tokens, and also when the stored
+/// client can't be configured (logged), so the caller asks the user to sign in.
+pub async fn initialize_from_store(
+    manager: &mut AuthorizationManager,
+    registration: Option<&OutboundOAuthRegistration>,
+) -> Result<bool, AuthError> {
+    if !manager.initialize_from_store().await? {
+        return Ok(false);
+    }
+    let Some(registration) = registration else {
+        return Ok(true);
     };
+    if registration.client_secret.is_none() {
+        // A public client: the client_id rmcp restored is all it needs
+        return Ok(true);
+    }
+
     // The redirect URI only matters for the authorization request, not refresh.
     // Fall back to the server URL (what rmcp's configure_client_id uses) when the
-    // stored one is missing.
+    // stored one is missing or isn't a URL.
     let redirect_uri = registration
         .redirect_uri
-        .clone()
-        .filter(|uri| !uri.is_empty())
-        .unwrap_or_else(|| registration.server_url.clone());
-    manager.configure_client(
-        OAuthClientConfig::new(registration.client_id.clone(), redirect_uri)
-            .with_client_secret(secret),
-    )
+        .as_deref()
+        .filter(|uri| Url::parse(uri).is_ok())
+        .unwrap_or(&registration.server_url);
+    let client = RegisteredClient::from(registration);
+    if let Err(e) = configure_registered_client(
+        manager,
+        registration.metadata.as_ref(),
+        &client,
+        redirect_uri,
+        &[],
+    ) {
+        warn!(
+            server_id = %registration.server_id,
+            "[OAuth] Can't configure the stored OAuth client, sign-in required: {}", e
+        );
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -172,5 +242,120 @@ mod tests {
     #[test]
     fn test_extract_origin_invalid_url() {
         assert_eq!(extract_origin("not a url"), None);
+    }
+
+    const SERVER_URL: &str = "https://mcp.example.com/mcp";
+
+    fn stored_metadata(token_endpoint: &str) -> StoredOAuthMetadata {
+        StoredOAuthMetadata {
+            authorization_endpoint: "https://auth.example.com/authorize".to_string(),
+            token_endpoint: token_endpoint.to_string(),
+            registration_endpoint: None,
+            issuer: None,
+            jwks_uri: None,
+            scopes_supported: None,
+            response_types_supported: None,
+            additional_fields: Default::default(),
+        }
+    }
+
+    /// A manager with metadata set (so no discovery) and, if `with_tokens`, stored
+    /// tokens for "client-123"
+    async fn manager(with_tokens: bool) -> AuthorizationManager {
+        use oauth2::{basic::BasicTokenType, AccessToken, StandardTokenResponse};
+        use rmcp::transport::auth::{
+            CredentialStore, InMemoryCredentialStore, StoredCredentials, VendorExtraTokenFields,
+        };
+
+        let mut manager = AuthorizationManager::new(SERVER_URL).await.unwrap();
+        manager.set_metadata(convert_from_stored_metadata(&stored_metadata(
+            "https://auth.example.com/token",
+        )));
+        let store = InMemoryCredentialStore::new();
+        if with_tokens {
+            let tokens = StandardTokenResponse::new(
+                AccessToken::new("access".to_string()),
+                BasicTokenType::Bearer,
+                VendorExtraTokenFields::default(),
+            );
+            store
+                .save(StoredCredentials::new(
+                    "client-123".to_string(),
+                    Some(tokens),
+                    Vec::new(),
+                    None,
+                ))
+                .await
+                .unwrap();
+        }
+        manager.set_credential_store(store);
+        manager
+    }
+
+    fn confidential_registration() -> OutboundOAuthRegistration {
+        OutboundOAuthRegistration::with_metadata(
+            uuid::Uuid::new_v4(),
+            "server",
+            SERVER_URL,
+            "client-123",
+            "http://127.0.0.1:45819/oauth2redirect",
+            stored_metadata("https://auth.example.com/token"),
+        )
+        .with_client_secret(Some("s3cr3t".to_string()))
+        .with_token_endpoint_auth_method(Some("client_secret_post".to_string()))
+    }
+
+    #[tokio::test]
+    async fn initialize_without_stored_tokens_needs_sign_in() {
+        let mut manager = manager(false).await;
+        let registration = confidential_registration();
+        assert!(!initialize_from_store(&mut manager, Some(&registration))
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn initialize_restores_a_confidential_client() {
+        let mut manager = manager(true).await;
+        let registration = confidential_registration();
+        assert!(initialize_from_store(&mut manager, Some(&registration))
+            .await
+            .unwrap());
+        let (client_id, _) = manager.get_credentials().await.unwrap();
+        assert_eq!(client_id, "client-123");
+    }
+
+    #[tokio::test]
+    async fn initialize_falls_back_to_server_url_for_a_bad_redirect_uri() {
+        let mut manager = manager(true).await;
+        let mut registration = confidential_registration();
+        registration.redirect_uri = Some("not a url".to_string());
+        assert!(initialize_from_store(&mut manager, Some(&registration))
+            .await
+            .unwrap());
+    }
+
+    /// A stored client that can't be configured means signing in again, not a hard
+    /// connection failure
+    #[tokio::test]
+    async fn initialize_with_an_unusable_stored_client_needs_sign_in() {
+        let mut manager = manager(true).await;
+        let mut registration = confidential_registration();
+        registration.metadata = Some(stored_metadata("not a url"));
+        assert!(!initialize_from_store(&mut manager, Some(&registration))
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn initialize_public_client_keeps_rmcp_configuration() {
+        let mut manager = manager(true).await;
+        let mut registration = confidential_registration();
+        registration.client_secret = None;
+        // Metadata that would fail if it were applied: a public client doesn't touch it
+        registration.metadata = Some(stored_metadata("not a url"));
+        assert!(initialize_from_store(&mut manager, Some(&registration))
+            .await
+            .unwrap());
     }
 }

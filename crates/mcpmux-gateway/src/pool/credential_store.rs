@@ -181,10 +181,11 @@ impl CredentialStore for DatabaseCredentialStore {
             self.space_id, self.server_id
         );
 
-        // Load from database — no caching, expires_in recalculated each time
-        let registration = self
+        // Load from database — no caching, expires_in recalculated each time.
+        // rmcp only takes the client_id from here, so don't read the client secret.
+        let client_id = self
             .backend_oauth_repo
-            .get(&self.space_id, &self.server_id)
+            .get_client_id(&self.space_id, &self.server_id)
             .await
             .map_err(|e| AuthError::InternalError(format!("Failed to load registration: {}", e)))?;
 
@@ -211,27 +212,27 @@ impl CredentialStore for DatabaseCredentialStore {
                 AuthError::InternalError(format!("Failed to load refresh token: {}", e))
             })?;
 
-        let stored = match (registration, access_cred.as_ref()) {
-            (Some(reg), Some(access)) => {
+        let stored = match (client_id, access_cred.as_ref()) {
+            (Some(client_id), Some(access)) => {
                 debug!(
                     "[CredentialStore] Loaded registration + token for {}/{}, client_id={}",
-                    self.space_id, self.server_id, reg.client_id
+                    self.space_id, self.server_id, client_id
                 );
                 let token_response = Self::build_token_response(access, refresh_cred.as_ref());
                 Some(StoredCredentials::new(
-                    reg.client_id,
+                    client_id,
                     Some(token_response),
                     Vec::new(),
                     Some(now_epoch_secs()),
                 ))
             }
-            (Some(reg), None) => {
+            (Some(client_id), None) => {
                 debug!(
                     "[CredentialStore] Loaded registration (no token) for {}/{}, client_id={} - will reuse for DCR",
-                    self.space_id, self.server_id, reg.client_id
+                    self.space_id, self.server_id, client_id
                 );
                 Some(StoredCredentials::new(
-                    reg.client_id,
+                    client_id,
                     None,
                     Vec::new(),
                     Some(now_epoch_secs()),
@@ -469,6 +470,73 @@ mod tests {
             response.refresh_token().map(|t| t.secret().as_str()),
             Some("refresh456")
         );
+    }
+
+    /// A registration whose full read fails, e.g. because its client secret no
+    /// longer decrypts. Only `get_client_id` works.
+    struct UnreadableSecretRepo;
+
+    #[async_trait]
+    impl OutboundOAuthRepository for UnreadableSecretRepo {
+        async fn get(
+            &self,
+            _space_id: &Uuid,
+            _server_id: &str,
+        ) -> anyhow::Result<Option<OutboundOAuthRegistration>> {
+            anyhow::bail!("Failed to decrypt OAuth client secret")
+        }
+
+        async fn get_client_id(
+            &self,
+            _space_id: &Uuid,
+            _server_id: &str,
+        ) -> anyhow::Result<Option<String>> {
+            Ok(Some("test-client-id".to_string()))
+        }
+
+        async fn save(&self, _registration: &OutboundOAuthRegistration) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _space_id: &Uuid, _server_id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn list_for_space(
+            &self,
+            _space_id: &Uuid,
+        ) -> anyhow::Result<Vec<OutboundOAuthRegistration>> {
+            Ok(vec![])
+        }
+    }
+
+    /// rmcp loads credentials before every request but takes only the client_id,
+    /// so the load mustn't read (and decrypt) the client secret
+    #[tokio::test]
+    async fn test_load_reads_only_the_client_id() {
+        let space_id = Uuid::new_v4();
+        let server_id = "test-server";
+
+        let cred_repo = Arc::new(MockCredentialRepo::new());
+        let access_cred = Credential::access_token(
+            space_id,
+            server_id,
+            "token123",
+            Some(Utc::now() + Duration::hours(1)),
+        );
+        cred_repo.save(&access_cred).await.unwrap();
+
+        let store = DatabaseCredentialStore::new(
+            space_id,
+            server_id,
+            "https://test.example.com",
+            cred_repo,
+            Arc::new(UnreadableSecretRepo),
+        );
+
+        let stored = store.load().await.unwrap().expect("credentials load");
+        assert_eq!(stored.client_id, "test-client-id");
+        assert!(stored.token_response.is_some());
     }
 
     #[tokio::test]

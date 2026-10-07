@@ -74,9 +74,21 @@ pub struct OutboundOAuthRegistration {
 
     /// Client secret from Dynamic Client Registration, when the authorization
     /// server issued one (a confidential client). It must be sent on every token
-    /// request, including refreshes after an app restart. Stored encrypted.
-    #[serde(default)]
+    /// request, including refreshes after an app restart. Stored encrypted, and
+    /// never serialized.
+    #[serde(default, skip_serializing)]
     pub client_secret: Option<String>,
+
+    /// When `client_secret` expires (RFC 7591 `client_secret_expires_at`); `None`
+    /// when it never expires or the server didn't say
+    #[serde(default)]
+    pub client_secret_expires_at: Option<DateTime<Utc>>,
+
+    /// How the server registered the client to authenticate at the token endpoint
+    /// (RFC 7591 `token_endpoint_auth_method`, e.g. `client_secret_post`); `None`
+    /// when the server didn't say
+    #[serde(default)]
+    pub token_endpoint_auth_method: Option<String>,
 
     /// Redirect URI used during DCR (e.g., "http://127.0.0.1:9876/callback")
     /// Must match when reusing client_id, otherwise re-DCR is needed.
@@ -112,6 +124,8 @@ impl OutboundOAuthRegistration {
             server_url: server_url.into(),
             client_id: client_id.into(),
             client_secret: None,
+            client_secret_expires_at: None,
+            token_endpoint_auth_method: None,
             redirect_uri: Some(redirect_uri.into()),
             metadata: None,
             created_at: now,
@@ -136,6 +150,8 @@ impl OutboundOAuthRegistration {
             server_url: server_url.into(),
             client_id: client_id.into(),
             client_secret: None,
+            client_secret_expires_at: None,
+            token_endpoint_auth_method: None,
             redirect_uri: Some(redirect_uri.into()),
             metadata: Some(metadata),
             created_at: now,
@@ -147,6 +163,27 @@ impl OutboundOAuthRegistration {
     pub fn with_client_secret(mut self, client_secret: Option<String>) -> Self {
         self.client_secret = client_secret;
         self
+    }
+
+    /// Set when the client secret expires
+    pub fn with_client_secret_expires_at(mut self, expires_at: Option<DateTime<Utc>>) -> Self {
+        self.client_secret_expires_at = expires_at;
+        self
+    }
+
+    /// Set the token endpoint auth method the server registered the client with
+    pub fn with_token_endpoint_auth_method(mut self, method: Option<String>) -> Self {
+        self.token_endpoint_auth_method = method;
+        self
+    }
+
+    /// Whether the client secret has expired by `at`. A client without a secret
+    /// or without an expiry never expires.
+    pub fn client_secret_expired_by(&self, at: DateTime<Utc>) -> bool {
+        self.client_secret.is_some()
+            && self
+                .client_secret_expires_at
+                .is_some_and(|expires_at| expires_at <= at)
     }
 
     /// Check if this registration can be reused with the given redirect_uri
@@ -170,6 +207,11 @@ impl std::fmt::Debug for OutboundOAuthRegistration {
             .field(
                 "client_secret",
                 &self.client_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .field("client_secret_expires_at", &self.client_secret_expires_at)
+            .field(
+                "token_endpoint_auth_method",
+                &self.token_endpoint_auth_method,
             )
             .field("redirect_uri", &self.redirect_uri)
             .field("metadata", &self.metadata)
@@ -211,5 +253,50 @@ mod tests {
         );
 
         assert!(format!("{:?}", reg).contains("client_secret: None"));
+    }
+
+    fn registration() -> OutboundOAuthRegistration {
+        OutboundOAuthRegistration::new(
+            Uuid::new_v4(),
+            "server",
+            "https://mcp.example.com/mcp",
+            "client-123",
+            "http://127.0.0.1:45819/oauth2redirect",
+        )
+    }
+
+    #[test]
+    fn serialization_omits_client_secret() {
+        let reg = registration().with_client_secret(Some("s3cr3t-value".to_string()));
+
+        let json = serde_json::to_string(&reg).unwrap();
+        assert!(!json.contains("s3cr3t-value"), "secret serialized: {json}");
+        assert!(!json.contains("\"client_secret\""));
+        assert!(json.contains("client-123"));
+    }
+
+    #[test]
+    fn client_secret_expiry() {
+        let now = Utc::now();
+        let hour = chrono::Duration::hours(1);
+        let secret = Some("s3cr3t-value".to_string());
+
+        // No secret, or a secret without an expiry, never expires
+        assert!(!registration().client_secret_expired_by(now + hour));
+        assert!(!registration()
+            .with_client_secret(secret.clone())
+            .client_secret_expired_by(now + hour));
+
+        let expiring = registration()
+            .with_client_secret(secret)
+            .with_client_secret_expires_at(Some(now));
+        assert!(!expiring.client_secret_expired_by(now - hour));
+        assert!(expiring.client_secret_expired_by(now));
+        assert!(expiring.client_secret_expired_by(now + hour));
+
+        // An expiry without a secret (e.g. a stale field) doesn't count
+        assert!(!registration()
+            .with_client_secret_expires_at(Some(now - hour))
+            .client_secret_expired_by(now));
     }
 }

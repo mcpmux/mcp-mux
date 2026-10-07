@@ -279,9 +279,12 @@ async fn test_upsert_adds_secret_to_bare_registration() {
 }
 
 /// A secret encrypted under a different master key can't be decrypted. The lookup
-/// still succeeds without it, so the server re-registers instead of erroring forever.
+/// fails, like a credential that can't be decrypted, rather than returning the
+/// client without its secret: the sign-in flow then registers a fresh client on
+/// its first attempt instead of reusing one that can only fail. The client_id
+/// alone (all the per-request credential load needs) still reads.
 #[tokio::test]
-async fn test_undecryptable_secret_is_dropped() {
+async fn test_undecryptable_secret_fails_the_lookup() {
     let test_db = TestDatabase::new();
     let db = Arc::new(Mutex::new(test_db.db));
     let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
@@ -297,12 +300,105 @@ async fn test_undecryptable_secret_is_dropped() {
         .unwrap();
 
     let new_repo = SqliteOutboundOAuthRepository::new(db, test_encryptor());
+    let err = OutboundOAuthRepository::get(&new_repo, &space.id, "confidential")
+        .await
+        .expect_err("a secret that can't be decrypted fails the lookup");
+    assert!(
+        err.to_string().contains("decrypt"),
+        "unexpected error: {err}"
+    );
+    assert!(new_repo.list_for_space(&space.id).await.is_err());
+
+    let client_id = new_repo
+        .get_client_id(&space.id, "confidential")
+        .await
+        .unwrap();
+    assert_eq!(client_id.as_deref(), Some(reg.client_id.as_str()));
+
+    // Saving a fresh registration replaces the unreadable row
+    let fresh = create_test_registration(space.id, "confidential")
+        .with_client_secret(Some("new-secret".to_string()));
+    OutboundOAuthRepository::save(&new_repo, &fresh)
+        .await
+        .unwrap();
     let loaded = OutboundOAuthRepository::get(&new_repo, &space.id, "confidential")
         .await
         .unwrap()
-        .expect("registration still loads");
-    assert_eq!(loaded.client_id, reg.client_id);
-    assert_eq!(loaded.client_secret, None);
+        .unwrap();
+    assert_eq!(loaded.client_id, fresh.client_id);
+    assert_eq!(loaded.client_secret.as_deref(), Some("new-secret"));
+}
+
+#[tokio::test]
+async fn test_client_auth_method_and_secret_expiry_round_trip() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    // Second precision, as RFC 7591 sends it
+    let expires_at = chrono::DateTime::from_timestamp(Utc::now().timestamp() + 3600, 0).unwrap();
+    let reg = create_test_registration(space.id, "confidential")
+        .with_client_secret(Some("dcr-secret-value".to_string()))
+        .with_client_secret_expires_at(Some(expires_at))
+        .with_token_endpoint_auth_method(Some("client_secret_post".to_string()));
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .unwrap();
+
+    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "confidential")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.client_secret_expires_at, Some(expires_at));
+    assert_eq!(
+        loaded.token_endpoint_auth_method.as_deref(),
+        Some("client_secret_post")
+    );
+
+    let listed = oauth_repo.list_for_space(&space.id).await.unwrap();
+    assert_eq!(listed[0].client_secret_expires_at, Some(expires_at));
+
+    // A registration saved without them (e.g. the credential store's bare one)
+    // reads back as None
+    let bare = create_test_registration(space.id, "public");
+    OutboundOAuthRepository::save(&oauth_repo, &bare)
+        .await
+        .unwrap();
+    let loaded = OutboundOAuthRepository::get(&oauth_repo, &space.id, "public")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.client_secret_expires_at, None);
+    assert_eq!(loaded.token_endpoint_auth_method, None);
+}
+
+#[tokio::test]
+async fn test_get_client_id() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let oauth_repo = SqliteOutboundOAuthRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    assert_eq!(
+        oauth_repo.get_client_id(&space.id, "server").await.unwrap(),
+        None
+    );
+
+    let reg = create_test_registration(space.id, "server");
+    OutboundOAuthRepository::save(&oauth_repo, &reg)
+        .await
+        .unwrap();
+    assert_eq!(
+        oauth_repo.get_client_id(&space.id, "server").await.unwrap(),
+        Some(reg.client_id)
+    );
 }
 
 // =============================================================================

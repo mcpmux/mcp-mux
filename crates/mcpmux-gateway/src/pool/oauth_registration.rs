@@ -7,13 +7,16 @@
 //! there the server reads the same fields from the published metadata document.
 //!
 //! The registration response's `client_secret`, if the server issued one, is
-//! returned so the caller can store it. rmcp only keeps it in memory, so without
-//! that a confidential client loses its secret on restart and token refresh
-//! fails with `invalid_client`.
+//! returned so the caller can store it, with when it expires and the
+//! `token_endpoint_auth_method` the server registered the client with. rmcp only
+//! keeps the secret in memory, so without that a confidential client loses it on
+//! restart and token refresh fails with `invalid_client`.
 
 use std::time::Duration;
 
-use mcpmux_core::branding;
+use chrono::{DateTime, Utc};
+use mcpmux_core::{branding, OutboundOAuthRegistration};
+use reqwest::StatusCode;
 use rmcp::transport::auth::AuthError;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -26,6 +29,22 @@ pub struct RegisteredClient {
     pub client_id: String,
     /// `None` for a public client
     pub client_secret: Option<String>,
+    /// When `client_secret` expires; `None` if it never does
+    pub client_secret_expires_at: Option<DateTime<Utc>>,
+    /// How the server registered the client to authenticate at the token endpoint
+    /// (e.g. `client_secret_post`); `None` if the server didn't say
+    pub token_endpoint_auth_method: Option<String>,
+}
+
+impl From<&OutboundOAuthRegistration> for RegisteredClient {
+    fn from(registration: &OutboundOAuthRegistration) -> Self {
+        Self {
+            client_id: registration.client_id.clone(),
+            client_secret: registration.client_secret.clone(),
+            client_secret_expires_at: registration.client_secret_expires_at,
+            token_endpoint_auth_method: registration.token_endpoint_auth_method.clone(),
+        }
+    }
 }
 
 impl std::fmt::Debug for RegisteredClient {
@@ -35,6 +54,11 @@ impl std::fmt::Debug for RegisteredClient {
             .field(
                 "client_secret",
                 &self.client_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .field("client_secret_expires_at", &self.client_secret_expires_at)
+            .field(
+                "token_endpoint_auth_method",
+                &self.token_endpoint_auth_method,
             )
             .finish()
     }
@@ -90,19 +114,66 @@ impl<'a> RegistrationRequest<'a> {
     }
 }
 
+/// The fields McpMux uses from an RFC 7591 registration response. The optional
+/// ones are read as raw JSON so a malformed value can't fail the registration.
 #[derive(Deserialize)]
 struct RegistrationResponse {
     client_id: String,
     #[serde(default)]
     client_secret: Option<String>,
+    #[serde(default)]
+    client_secret_expires_at: Option<serde_json::Value>,
+    #[serde(default)]
+    token_endpoint_auth_method: Option<serde_json::Value>,
+}
+
+impl RegistrationResponse {
+    fn into_client(self) -> RegisteredClient {
+        // Some servers send `"client_secret": ""` for a public client. Sending an
+        // empty secret would make the token request fail, so treat it as none.
+        let client_secret = self.client_secret.filter(|s| !s.is_empty());
+        // RFC 7591 §3.2.1: seconds since the epoch, or 0 if the secret never expires
+        let client_secret_expires_at = client_secret
+            .as_ref()
+            .and(self.client_secret_expires_at.as_ref())
+            .and_then(|v| v.as_i64().or_else(|| v.as_str()?.trim().parse().ok()))
+            .filter(|&secs| secs > 0)
+            .and_then(|secs| DateTime::from_timestamp(secs, 0));
+        let token_endpoint_auth_method = self
+            .token_endpoint_auth_method
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .filter(|method| !method.is_empty())
+            .map(str::to_owned);
+
+        RegisteredClient {
+            client_id: self.client_id,
+            client_secret,
+            client_secret_expires_at,
+            token_endpoint_auth_method,
+        }
+    }
+}
+
+/// Whether a rejected registration may succeed without the optional client metadata.
+///
+/// RFC 7591 §3.2.2 answers a request it won't accept, such as one with
+/// `invalid_client_metadata`, with HTTP 400; some servers use 422 for validation
+/// errors. Other statuses (401/403 for a protected registration endpoint, 429,
+/// 5xx) won't change with fewer fields, so they aren't retried.
+fn rejects_client_metadata(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+    )
 }
 
 /// Register McpMux as an OAuth client at `registration_endpoint`.
 ///
 /// Sends `client_name`, `client_uri` and `logo_uri` so the consent page can show
-/// who is asking. If the server rejects that request with a 4xx, it retries once
-/// with only the fields McpMux sent before, so a strict server that doesn't know
-/// the extra metadata still works.
+/// who is asking. If the server rejects that request as invalid (HTTP 400 or 422),
+/// it retries once with only the fields McpMux sent before, so a strict server
+/// that doesn't know the extra metadata still works.
 pub async fn register_client(
     registration_endpoint: &str,
     client_name: &str,
@@ -116,36 +187,39 @@ pub async fn register_client(
 
     let branded = RegistrationRequest::branded(client_name, redirect_uri, scopes);
     match post_registration(&http, registration_endpoint, &branded).await {
-        Err(RegistrationError::Rejected { status, body }) if status.is_client_error() => {
+        Err(rejection @ RegistrationError::Rejected { status, .. })
+            if rejects_client_metadata(status) =>
+        {
             warn!(
-                "[OAuth] Registration with client metadata rejected (HTTP {}: {}); \
+                "[OAuth] Registration with client metadata rejected ({}); \
                  retrying without client_uri/logo_uri/application_type",
-                status, body
+                rejection
             );
             let minimal = RegistrationRequest::minimal(client_name, redirect_uri, scopes);
             post_registration(&http, registration_endpoint, &minimal)
                 .await
-                .map_err(RegistrationError::into_auth_error)
+                .map_err(|retry_error| {
+                    // Keep both reasons: the first one may be the one that matters
+                    AuthError::RegistrationFailed(format!(
+                        "{}; retried without client_uri/logo_uri/application_type: {}",
+                        rejection, retry_error
+                    ))
+                })
         }
-        result => result.map_err(RegistrationError::into_auth_error),
+        result => result.map_err(|e| AuthError::RegistrationFailed(e.to_string())),
     }
 }
 
 enum RegistrationError {
-    Rejected {
-        status: reqwest::StatusCode,
-        body: String,
-    },
+    Rejected { status: StatusCode, body: String },
     Other(String),
 }
 
-impl RegistrationError {
-    fn into_auth_error(self) -> AuthError {
+impl std::fmt::Display for RegistrationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RegistrationError::Rejected { status, body } => {
-                AuthError::RegistrationFailed(format!("HTTP {}: {}", status, body))
-            }
-            RegistrationError::Other(msg) => AuthError::RegistrationFailed(msg),
+            RegistrationError::Rejected { status, body } => write!(f, "HTTP {}: {}", status, body),
+            RegistrationError::Other(msg) => f.write_str(msg),
         }
     }
 }
@@ -176,12 +250,7 @@ async fn post_registration(
         .await
         .map_err(|e| RegistrationError::Other(format!("analyze response error: {}", e)))?;
 
-    Ok(RegisteredClient {
-        client_id: parsed.client_id,
-        // Some servers send `"client_secret": ""` for a public client. Sending an
-        // empty secret would make the token request fail, so treat it as none.
-        client_secret: parsed.client_secret.filter(|s| !s.is_empty()),
-    })
+    Ok(parsed.into_client())
 }
 
 #[cfg(test)]
@@ -245,11 +314,104 @@ mod tests {
         );
     }
 
+    fn parse_response(json: serde_json::Value) -> RegisteredClient {
+        serde_json::from_value::<RegistrationResponse>(json)
+            .unwrap()
+            .into_client()
+    }
+
+    #[test]
+    fn response_with_secret_expiry_and_auth_method() {
+        let client = parse_response(serde_json::json!({
+            "client_id": "client-123",
+            "client_secret": "s3cr3t-value",
+            "client_secret_expires_at": 1_900_000_000,
+            "token_endpoint_auth_method": "client_secret_post",
+        }));
+
+        assert_eq!(client.client_id, "client-123");
+        assert_eq!(client.client_secret.as_deref(), Some("s3cr3t-value"));
+        assert_eq!(
+            client.client_secret_expires_at,
+            DateTime::from_timestamp(1_900_000_000, 0)
+        );
+        assert_eq!(
+            client.token_endpoint_auth_method.as_deref(),
+            Some("client_secret_post")
+        );
+    }
+
+    #[test]
+    fn secret_expiry_of_zero_means_never() {
+        let client = parse_response(serde_json::json!({
+            "client_id": "client-123",
+            "client_secret": "s3cr3t-value",
+            "client_secret_expires_at": 0,
+        }));
+        assert_eq!(client.client_secret_expires_at, None);
+    }
+
+    #[test]
+    fn secret_expiry_sent_as_a_string_is_read() {
+        let client = parse_response(serde_json::json!({
+            "client_id": "client-123",
+            "client_secret": "s3cr3t-value",
+            "client_secret_expires_at": "1900000000",
+        }));
+        assert_eq!(
+            client.client_secret_expires_at,
+            DateTime::from_timestamp(1_900_000_000, 0)
+        );
+    }
+
+    #[test]
+    fn malformed_optional_fields_do_not_fail_the_registration() {
+        let client = parse_response(serde_json::json!({
+            "client_id": "client-123",
+            "client_secret": "s3cr3t-value",
+            "client_secret_expires_at": {"unexpected": true},
+            "token_endpoint_auth_method": 42,
+        }));
+        assert_eq!(client.client_id, "client-123");
+        assert_eq!(client.client_secret_expires_at, None);
+        assert_eq!(client.token_endpoint_auth_method, None);
+    }
+
+    #[test]
+    fn public_client_has_no_secret_or_expiry() {
+        let client = parse_response(serde_json::json!({
+            "client_id": "client-123",
+            "client_secret": "",
+            "client_secret_expires_at": 1_900_000_000,
+            "token_endpoint_auth_method": "none",
+        }));
+        assert_eq!(client.client_secret, None);
+        assert_eq!(client.client_secret_expires_at, None);
+        assert_eq!(client.token_endpoint_auth_method.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn only_invalid_request_statuses_are_retried() {
+        assert!(rejects_client_metadata(StatusCode::BAD_REQUEST));
+        assert!(rejects_client_metadata(StatusCode::UNPROCESSABLE_ENTITY));
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            assert!(!rejects_client_metadata(status), "{status} retried");
+        }
+    }
+
     #[test]
     fn registered_client_debug_redacts_secret() {
         let client = RegisteredClient {
             client_id: "client-123".to_string(),
             client_secret: Some("s3cr3t-value".to_string()),
+            client_secret_expires_at: None,
+            token_endpoint_auth_method: None,
         };
         let debug = format!("{:?}", client);
         assert!(!debug.contains("s3cr3t-value"));

@@ -343,6 +343,17 @@ pub trait OutboundOAuthRepository: Send + Sync {
         server_id: &str,
     ) -> RepoResult<Option<OutboundOAuthRegistration>>;
 
+    /// Get only the client_id of the registration for a (space, server) combination.
+    ///
+    /// The credential store calls this before every outbound request, so storage
+    /// can override it to skip decrypting the client secret.
+    async fn get_client_id(&self, space_id: &Uuid, server_id: &str) -> RepoResult<Option<String>> {
+        Ok(self
+            .get(space_id, server_id)
+            .await?
+            .map(|registration| registration.client_id))
+    }
+
     /// Save or update registration
     async fn save(&self, registration: &OutboundOAuthRegistration) -> RepoResult<()>;
 

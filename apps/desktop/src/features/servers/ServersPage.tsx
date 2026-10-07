@@ -7,7 +7,7 @@
  * - Auth progress display during OAuth
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   ChevronDown,
@@ -21,9 +21,11 @@ import {
   FolderOpen,
   Compass,
   ArrowRight,
+  ArrowDownAZ,
 } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ServerActionMenu } from './ServerActionMenu';
+import { readStoredToolsSort, sortServers, storeToolsSort, type ToolsSort } from './sortServers';
 import type {
   ServerViewModel,
   ServerDefinition,
@@ -166,6 +168,7 @@ interface ConfigModalState {
 
 export function ServersPage() {
   const [installedServers, setInstalledServers] = useState<ServerViewModel[]>([]);
+  const [toolsSort, setToolsSort] = useState<ToolsSort>(readStoredToolsSort);
   const [gatewayRunning, setGatewayRunning] = useState(false);
   const [gatewayUrl, setGatewayUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -203,6 +206,16 @@ export function ServersPage() {
 
   const viewSpace = useViewSpace();
   const navigateTo = useNavigateTo();
+
+  const sortedServers = useMemo(
+    () => sortServers(installedServers, toolsSort),
+    [installedServers, toolsSort]
+  );
+
+  const handleToolsSortChange = (sort: ToolsSort) => {
+    setToolsSort(sort);
+    storeToolsSort(sort);
+  };
 
   // Event-driven server status management
   const {
@@ -380,13 +393,6 @@ export function ServersPage() {
           server.last_error = runtime.message || null;
         }
       }
-
-      // Sort by installation time (newest first)
-      mergedServers.sort((a, b) => {
-        const dateA = new Date(a.created_at || 0).getTime();
-        const dateB = new Date(b.created_at || 0).getTime();
-        return dateB - dateA;
-      });
 
       setInstalledServers(mergedServers);
       setGatewayRunning(gateway.running);
@@ -978,7 +984,28 @@ export function ServersPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {installedServers.map((server) => {
+          <div className="flex items-center justify-end gap-2">
+            <label
+              htmlFor="tools-sort"
+              className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]"
+            >
+              <ArrowDownAZ className="h-4 w-4" />
+              Sort
+            </label>
+            <select
+              id="tools-sort"
+              value={toolsSort}
+              onChange={(event) => handleToolsSortChange(event.target.value as ToolsSort)}
+              className="rounded-lg border border-[rgb(var(--border-subtle))] bg-[rgb(var(--surface-hover))] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[rgb(var(--primary))]/50"
+              data-testid="tools-sort"
+            >
+              <option value="recent">Recently added</option>
+              <option value="name">Name (A–Z)</option>
+              <option value="active-first">Active first</option>
+              <option value="inactive-first">Inactive first</option>
+            </select>
+          </div>
+          {sortedServers.map((server) => {
             const serverAction = getServerAction(server);
             const displayStatus = getDisplayStatus(server);
             const enableLoading = actionLoading === `enable-${server.id}`;

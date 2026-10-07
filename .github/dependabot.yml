@@ -1,0 +1,33 @@
+# Dependabot: security updates only, batched into one PR per ecosystem.
+#
+# Security updates are enabled in the repo settings. Without this file each
+# advisory opens its own PR, and every one of them waits for a full CI run.
+# open-pull-requests-limit: 0 keeps scheduled version updates off; security
+# updates are not subject to that limit.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ['*']
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns: ['*']

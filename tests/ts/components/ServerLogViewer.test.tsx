@@ -10,6 +10,10 @@ import userEvent from '@testing-library/user-event';
 import { invoke } from '@tauri-apps/api/core';
 import { ServerLogViewer } from '@/components/ServerLogViewer';
 
+// The viewer scrolls to the newest entry shortly after each load; jsdom
+// has no scrolling, so without this the timer throws after the assertions.
+Element.prototype.scrollTo = vi.fn();
+
 const SERVER_ID = 'com.meta-business';
 const WORK_SPACE = '02233890-a6ee-4b1e-aea3-fca8e3b4c09d';
 const OTHER_SPACE = '7d1c2f4e-5b6a-4c3d-8e9f-0a1b2c3d4e5f';

@@ -251,18 +251,20 @@ export interface ServerLogEntry {
 
 export async function getServerLogs(
   serverId: string,
+  spaceId: string,
   limit?: number,
   levelFilter?: string
 ): Promise<ServerLogEntry[]> {
   return invoke<ServerLogEntry[]>('get_server_logs', {
     serverId,
+    spaceId,
     limit,
     levelFilter,
   });
 }
 
-export async function clearServerLogs(serverId: string): Promise<void> {
-  return invoke<void>('clear_server_logs', { serverId });
+export async function clearServerLogs(serverId: string, spaceId: string): Promise<void> {
+  return invoke<void>('clear_server_logs', { serverId, spaceId });
 }
 
 // ============================================================================

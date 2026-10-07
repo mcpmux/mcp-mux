@@ -39,7 +39,7 @@ describe('Server Process Logs - Stdio stderr capture', () => {
 
     // Clear any existing logs
     try {
-      await clearServerLogs(STDIO_SERVER_ID);
+      await clearServerLogs(STDIO_SERVER_ID, spaceId);
       console.log('[setup] Cleared existing logs');
     } catch {
       console.log('[setup] No logs to clear');
@@ -62,7 +62,7 @@ describe('Server Process Logs - Stdio stderr capture', () => {
     // Query server logs via Tauri API
     let logs: ServerLogEntry[] = [];
     try {
-      logs = await getServerLogs(STDIO_SERVER_ID, 200);
+      logs = await getServerLogs(STDIO_SERVER_ID, spaceId, 200);
     } catch (e) {
       console.log('[TC-PL-001] Failed to get logs:', e);
     }
@@ -86,7 +86,7 @@ describe('Server Process Logs - Stdio stderr capture', () => {
   it('TC-PL-002: Process stderr logs should have stderr source', async () => {
     let logs: ServerLogEntry[] = [];
     try {
-      logs = await getServerLogs(STDIO_SERVER_ID, 200);
+      logs = await getServerLogs(STDIO_SERVER_ID, spaceId, 200);
     } catch (e) {
       console.log('[TC-PL-002] Failed to get logs:', e);
       return;
@@ -126,7 +126,7 @@ describe('Server Process Logs - Stdio stderr capture', () => {
   it('TC-PL-003: Process logs should not contain sensitive data', async () => {
     let logs: ServerLogEntry[] = [];
     try {
-      logs = await getServerLogs(STDIO_SERVER_ID, 200);
+      logs = await getServerLogs(STDIO_SERVER_ID, spaceId, 200);
     } catch {
       return;
     }

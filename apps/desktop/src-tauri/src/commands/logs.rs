@@ -5,16 +5,15 @@ use mcpmux_core::{AppSettingsService, LogLevel, ServerLog};
 use serde::Serialize;
 use tauri::State;
 use tracing::{info, warn};
+use uuid::Uuid;
 
-/// Helper to get the system default space ID.
-async fn get_default_space_id(state: &AppState) -> Result<String, String> {
-    let space = state
-        .space_service
-        .get_default()
-        .await
-        .map_err(|e: anyhow::Error| e.to_string())?
-        .ok_or("No default space found")?;
-    Ok(space.id.to_string())
+/// Logs are written per Space (the gateway tags each entry with the Space the
+/// server resolved in), so every read has to name that Space. The id arrives
+/// over IPC and lands in a filesystem path, hence the UUID guard.
+fn parse_space_id(space_id: &str) -> Result<String, String> {
+    Uuid::parse_str(space_id)
+        .map_err(|_| "Invalid Space id".to_string())
+        .map(|uuid| uuid.to_string())
 }
 
 /// Server log entry for frontend
@@ -45,16 +44,17 @@ impl From<ServerLog> for ServerLogEntry {
 #[tauri::command]
 pub async fn get_server_logs(
     server_id: String,
+    space_id: String,
     limit: Option<usize>,
     level_filter: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ServerLogEntry>, String> {
     info!(
-        "[Logs] Getting logs for server {} (limit: {:?}, filter: {:?})",
-        server_id, limit, level_filter
+        "[Logs] Getting logs for server {} in space {} (limit: {:?}, filter: {:?})",
+        server_id, space_id, limit, level_filter
     );
 
-    let space_id = get_default_space_id(&state).await?;
+    let space_id = parse_space_id(&space_id)?;
 
     // Parse level filter
     let level = level_filter.and_then(|s| LogLevel::parse(&s));
@@ -76,11 +76,12 @@ pub async fn get_server_logs(
 #[tauri::command]
 pub async fn clear_server_logs(
     server_id: String,
+    space_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!("[Logs] Clearing logs for server {}", server_id);
 
-    let space_id = get_default_space_id(&state).await?;
+    let space_id = parse_space_id(&space_id)?;
 
     state
         .server_log_manager
@@ -99,9 +100,10 @@ pub async fn clear_server_logs(
 #[tauri::command]
 pub async fn get_server_log_file(
     server_id: String,
+    space_id: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let space_id = get_default_space_id(&state).await?;
+    let space_id = parse_space_id(&space_id)?;
 
     let path = state.server_log_manager.get_log_file(&space_id, &server_id);
 
@@ -136,4 +138,41 @@ pub async fn set_log_retention_days(days: u32, state: State<'_, AppState>) -> Re
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_space_id_is_accepted_and_normalized() {
+        assert_eq!(
+            parse_space_id("02233890-a6ee-4b1e-aea3-fca8e3b4c09d").unwrap(),
+            "02233890-a6ee-4b1e-aea3-fca8e3b4c09d"
+        );
+        // Braced / uppercase forms normalize to the canonical hyphenated form
+        // so the value used as a path segment is stable.
+        assert_eq!(
+            parse_space_id("{02233890-A6EE-4B1E-AEA3-FCA8E3B4C09D}").unwrap(),
+            "02233890-a6ee-4b1e-aea3-fca8e3b4c09d"
+        );
+    }
+
+    #[test]
+    fn a_space_id_that_is_not_a_uuid_is_rejected() {
+        // The id becomes a directory name under the logs dir, so anything that
+        // could climb out of it must never reach the log manager.
+        for candidate in [
+            "..",
+            "../../../Windows",
+            "00000000-0000-0000-0000-000000000001/../..",
+            "not-a-uuid",
+            "",
+        ] {
+            assert!(
+                parse_space_id(candidate).is_err(),
+                "expected {candidate:?} to be rejected"
+            );
+        }
+    }
 }

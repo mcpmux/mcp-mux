@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/mcpmux/mcp-mux/compare/v0.6.0...v0.7.0) (2026-10-07)
+
+
+### Features
+
+* **servers:** let users sort the installed-servers list ([#246](https://github.com/mcpmux/mcp-mux/issues/246)) ([e763af5](https://github.com/mcpmux/mcp-mux/commit/e763af5bcce5a23712b9449d4c122a4820fbed00))
+* **spaces:** rename a Space from the desktop UI ([#245](https://github.com/mcpmux/mcp-mux/issues/245)) ([8a4b9c2](https://github.com/mcpmux/mcp-mux/commit/8a4b9c2169af42db39b0774f00b894fc4e79b470))
+
+
+### Bug Fixes
+
+* add Basic auth variant to AuthConfig for bundle deserialization ([#248](https://github.com/mcpmux/mcp-mux/issues/248)) ([c725645](https://github.com/mcpmux/mcp-mux/commit/c7256457acbd385be3428ff490ad209470e76b84))
+* **release:** keep Cargo.lock in step with release versions ([#247](https://github.com/mcpmux/mcp-mux/issues/247)) ([3fc01f4](https://github.com/mcpmux/mcp-mux/commit/3fc01f4d921c19daab949b77ad6bb97ad10d7d33))
+
 ## [0.6.0](https://github.com/mcpmux/mcp-mux/compare/v0.5.0...v0.6.0) (2026-10-06)
 
 

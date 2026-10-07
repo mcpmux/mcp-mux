@@ -16,6 +16,19 @@ fn parse_space_id(space_id: &str) -> Result<String, String> {
         .map(|uuid| uuid.to_string())
 }
 
+/// The server id is the other half of that path, and clearing logs deletes the
+/// directory it names, so it has to be a single plain path segment.
+fn check_server_id(server_id: &str) -> Result<(), String> {
+    if server_id.is_empty()
+        || server_id == "."
+        || server_id == ".."
+        || server_id.contains(['/', '\\'])
+    {
+        return Err("Invalid server id".to_string());
+    }
+    Ok(())
+}
+
 /// Server log entry for frontend
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +68,7 @@ pub async fn get_server_logs(
     );
 
     let space_id = parse_space_id(&space_id)?;
+    check_server_id(&server_id)?;
 
     // Parse level filter
     let level = level_filter.and_then(|s| LogLevel::parse(&s));
@@ -79,9 +93,13 @@ pub async fn clear_server_logs(
     space_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    info!("[Logs] Clearing logs for server {}", server_id);
+    info!(
+        "[Logs] Clearing logs for server {} in space {}",
+        server_id, space_id
+    );
 
     let space_id = parse_space_id(&space_id)?;
+    check_server_id(&server_id)?;
 
     state
         .server_log_manager
@@ -92,7 +110,10 @@ pub async fn clear_server_logs(
             format!("Failed to clear logs: {}", e)
         })?;
 
-    info!("[Logs] Cleared logs for server {}", server_id);
+    info!(
+        "[Logs] Cleared logs for server {} in space {}",
+        server_id, space_id
+    );
     Ok(())
 }
 
@@ -104,6 +125,7 @@ pub async fn get_server_log_file(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let space_id = parse_space_id(&space_id)?;
+    check_server_id(&server_id)?;
 
     let path = state.server_log_manager.get_log_file(&space_id, &server_id);
 
@@ -171,6 +193,43 @@ mod tests {
         ] {
             assert!(
                 parse_space_id(candidate).is_err(),
+                "expected {candidate:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn registry_and_custom_server_ids_are_accepted() {
+        for id in [
+            "com.cloudflare-docs",
+            "com.cloudflare:docs",
+            "github-server",
+        ] {
+            assert!(
+                check_server_id(id).is_ok(),
+                "expected {id:?} to be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_server_id_that_is_not_one_path_segment_is_rejected() {
+        // Clearing logs removes <logs>/<space>/<server> recursively, so a
+        // server id that names a parent or another directory must never get
+        // that far.
+        for candidate in [
+            "",
+            ".",
+            "..",
+            "../02233890-a6ee-4b1e-aea3-fca8e3b4c09d",
+            "../../..",
+            "a/b",
+            "/etc",
+            "..\\..\\Windows",
+            "a\\b",
+        ] {
+            assert!(
+                check_server_id(candidate).is_err(),
                 "expected {candidate:?} to be rejected"
             );
         }

@@ -2828,6 +2828,7 @@ dependencies = [
  "tokio",
  "toml_edit 0.23.10+spec-1.0.0",
  "tracing",
+ "url",
  "urlencoding",
  "uuid",
 ]
@@ -2905,6 +2906,7 @@ dependencies = [
  "dirs 5.0.1",
  "fs2",
  "futures",
+ "libc",
  "mcpmux-core",
  "mcpmux-gateway",
  "mcpmux-storage",

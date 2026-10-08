@@ -164,7 +164,7 @@ impl ConnectionService {
                 if registration.server_url != config_url {
                     info!(
                         "[ConnectionService] Overriding config URL with DCR URL: {}",
-                        registration.server_url
+                        mcpmux_core::log_redact::url_for_log(&registration.server_url)
                     );
                     if let ResolvedTransport::Http { url, .. } = &mut final_config {
                         *url = registration.server_url;
@@ -485,7 +485,7 @@ impl ConnectionService {
 
         info!(
             "[ConnectionService] Reconnecting to {} with OAuth token",
-            server_url
+            mcpmux_core::log_redact::url_for_log(&server_url)
         );
 
         instance.mark_connecting();
@@ -637,7 +637,7 @@ impl ConnectionService {
                     mcpmux_core::LogLevel::Info,
                     "OAuth flow initiated - opening browser with authorization URL",
                     Some(serde_json::json!({
-                        "auth_url": &auth_url,
+                        "auth_url": mcpmux_core::log_redact::url_for_log(&auth_url),
                     })),
                 )
                 .await;

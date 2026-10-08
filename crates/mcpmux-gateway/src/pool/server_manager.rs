@@ -1250,13 +1250,14 @@ impl ServerManager {
 
     /// Open browser with auth URL (without terminal flash on Windows)
     pub fn open_browser(&self, url: &str) {
-        info!(url = %url, "[ServerManager] Opening browser for OAuth");
+        let logged_url = mcpmux_core::log_redact::url_for_log(url);
+        info!(url = %logged_url, "[ServerManager] Opening browser for OAuth");
 
         // Log browser opening (if we have server context)
         // Note: This is called from various places, so we log at the call site instead
 
         if let Err(e) = open_url_no_flash(url) {
-            error!(url = %url, error = %e, "[ServerManager] Failed to open browser");
+            error!(url = %logged_url, error = %e, "[ServerManager] Failed to open browser");
         }
     }
 

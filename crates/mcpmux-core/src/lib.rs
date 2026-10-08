@@ -16,6 +16,7 @@ pub mod application;
 pub mod branding;
 pub mod domain;
 pub mod event_bus;
+pub mod log_redact;
 pub mod registry;
 pub mod repository;
 pub mod service;

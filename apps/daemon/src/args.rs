@@ -47,14 +47,11 @@ pub struct Args {
     #[arg(long, value_name = "PATH", global = true)]
     pub log_dir: Option<PathBuf>,
 
-    /// `RUST_LOG`-style tracing filter. The default mirrors the desktop's
-    /// per-crate debug directives.
-    #[arg(
-        long,
-        env = "RUST_LOG",
-        default_value = "info,mcpmux_core=debug,mcpmux_gateway=debug,mcpmux_storage=debug,mcpmux_runtime=debug",
-        global = true
-    )]
+    /// `RUST_LOG`-style tracing filter, e.g.
+    /// `info,mcpmux_gateway=debug` while troubleshooting. Defaults to `info`:
+    /// debug output includes request details that don't belong in a
+    /// long-lived log.
+    #[arg(long, env = "RUST_LOG", default_value = "info", global = true)]
     pub log_filter: String,
 
     /// Public base URL advertised in OAuth / MCP metadata (e.g.

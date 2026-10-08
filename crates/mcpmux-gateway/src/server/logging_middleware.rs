@@ -52,6 +52,10 @@ fn redact_headers_compact(headers: &axum::http::HeaderMap) -> String {
             let name_lower = name.as_str().to_lowercase();
             if SENSITIVE_HEADERS.contains(&name_lower.as_str()) {
                 format!("{}=[REDACTED]", name)
+            } else if name_lower == "mcp-session-id" {
+                // The session id is the only thing tying a request to a session.
+                let id = value.to_str().unwrap_or_default();
+                format!("{}={}", name, mcpmux_core::log_redact::id_for_log(id))
             } else {
                 format!("{}={:?}", name, value)
             }
@@ -323,6 +327,17 @@ pub async fn http_logging_middleware(request: Request, next: Next) -> Result<Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn header_log_shortens_the_session_id() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("mcp-session-id", "0123456789abcdef0123".parse().unwrap());
+        headers.insert("authorization", "Bearer secret".parse().unwrap());
+        let logged = redact_headers_compact(&headers);
+        assert!(logged.contains("mcp-session-id=01234567…"), "{logged}");
+        assert!(!logged.contains("0123456789abcdef"));
+        assert!(!logged.contains("secret"));
+    }
 
     #[test]
     fn test_is_sensitive_path() {

@@ -1556,7 +1556,7 @@ impl OutboundOAuthManager {
         info!(
             "[OAuth] Auth URL ready, state={}: {}",
             &state[..8.min(state.len())],
-            auth_url
+            mcpmux_core::log_redact::url_for_log(&auth_url)
         );
 
         self.log(
@@ -1568,7 +1568,7 @@ impl OutboundOAuthManager {
                 redirect_uri
             ),
             Some(serde_json::json!({
-                "auth_url": auth_url,
+                "auth_url": mcpmux_core::log_redact::url_for_log(&auth_url),
                 "redirect_uri": redirect_uri,
                 "callback_port": callback_port,
                 "state": &state[..8.min(state.len())]

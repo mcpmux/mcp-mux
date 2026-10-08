@@ -190,6 +190,15 @@ impl RuntimeBuilder {
         let database = Database::open(&db_path)
             .map_err(|e| RuntimeError::KeyProvider(format!("database open: {}", e)))?;
         let database = Arc::new(Mutex::new(database));
+        // Installs from before the data directory was made owner-only may
+        // have a world-readable database; tighten it and its WAL files.
+        for suffix in ["", "-wal", "-shm"] {
+            let mut path = db_path.clone().into_os_string();
+            path.push(suffix);
+            if let Err(e) = crate::private_dir::restrict_file(std::path::Path::new(&path)) {
+                tracing::warn!(error = %e, "[runtime] could not restrict database file permissions");
+            }
+        }
 
         let repositories = Repositories::new(database.clone(), encryptor.clone());
 
@@ -214,9 +223,13 @@ impl RuntimeBuilder {
             Some(d) => d.clone(),
             None => data_dir.join("logs"),
         };
-        std::fs::create_dir_all(&logs_dir).map_err(|source| RuntimeError::DataDirCreate {
-            path: logs_dir.clone(),
-            source,
+        // May live outside the data directory (`--log-dir`), so it gets the
+        // same owner-only treatment itself.
+        crate::private_dir::ensure_private_dir(&logs_dir).map_err(|source| {
+            RuntimeError::DataDirCreate {
+                path: logs_dir.clone(),
+                source,
+            }
         })?;
 
         let log_config = CoreLogConfig {

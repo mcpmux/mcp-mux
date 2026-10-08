@@ -50,11 +50,19 @@ impl Default for TracingConfig {
     }
 }
 
-/// Build the desktop's per-crate debug-level filter as the default. Matches
-/// the behavior the desktop shipped with before the runtime extraction.
+/// The default tracing filter: per-crate debug in development builds, `info`
+/// in release builds (debug output includes request details that don't
+/// belong in a log file kept on disk). `RUST_LOG` overrides either.
 pub fn default_filter() -> String {
-    "info,mcpmux_core=debug,mcpmux_gateway=debug,mcpmux_storage=debug,mcpmux_mcp=debug,mcpmux_lib=debug,mcpmux_runtime=debug,tauri=info,tao=warn,wry=warn".to_string()
+    if cfg!(debug_assertions) {
+        "info,mcpmux_core=debug,mcpmux_gateway=debug,mcpmux_storage=debug,mcpmux_mcp=debug,mcpmux_lib=debug,mcpmux_runtime=debug,tauri=info,tao=warn,wry=warn".to_string()
+    } else {
+        "info,tauri=info,tao=warn,wry=warn".to_string()
+    }
 }
+
+/// Daily log files kept before the oldest is deleted.
+pub const MAX_LOG_FILES: usize = 14;
 
 /// Initialize the global tracing subscriber.
 ///
@@ -86,7 +94,7 @@ pub fn init_tracing(config: &TracingConfig) -> Option<WorkerGuard> {
             None
         }
         LogSink::DailyRolling { dir, prefix } => {
-            if let Err(e) = std::fs::create_dir_all(dir) {
+            if let Err(e) = crate::private_dir::ensure_private_dir(dir) {
                 eprintln!(
                     "{}: failed to create logs directory {}: {}",
                     branding::DISPLAY_NAME,
@@ -99,6 +107,7 @@ pub fn init_tracing(config: &TracingConfig) -> Option<WorkerGuard> {
                 .rotation(tracing_appender::rolling::Rotation::DAILY)
                 .filename_prefix(prefix)
                 .filename_suffix("log")
+                .max_log_files(MAX_LOG_FILES)
                 .build(dir)
                 .expect("failed to create rolling file appender");
 

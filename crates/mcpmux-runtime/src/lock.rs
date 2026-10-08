@@ -58,9 +58,13 @@ impl DataDirLock {
     ///   was missing / corrupt; the operator must investigate by hand.
     /// - [`RuntimeError::Io`] — any other filesystem failure.
     pub fn acquire(data_dir: &Path) -> Result<Self, RuntimeError> {
-        std::fs::create_dir_all(data_dir).map_err(|source| RuntimeError::DataDirCreate {
-            path: data_dir.to_path_buf(),
-            source,
+        // Owner-only: the data directory holds the database, Space configs,
+        // logs and (with the file key provider) the keys.
+        crate::private_dir::ensure_private_dir(data_dir).map_err(|source| {
+            RuntimeError::DataDirCreate {
+                path: data_dir.to_path_buf(),
+                source,
+            }
         })?;
 
         let path = data_dir.join(LOCK_FILENAME);
@@ -214,6 +218,25 @@ fn owner_contents() -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    #[test]
+    fn acquire_makes_the_data_directory_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir(&data_dir).unwrap();
+        std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let _lock = DataDirLock::acquire(&data_dir).expect("acquire");
+        let mode = std::fs::metadata(&data_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+
+        let fresh = tmp.path().join("fresh");
+        let _lock = DataDirLock::acquire(&fresh).expect("acquire");
+        let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
 
     #[test]
     fn acquire_succeeds_and_releases_on_drop() {

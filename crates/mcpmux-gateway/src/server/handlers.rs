@@ -468,7 +468,10 @@ pub async fn oauth_authorize(
         urlencoding::encode(&request_id),
     );
 
-    info!("[OAuth] Deep link URL: {}", deep_link_url);
+    info!(
+        "[OAuth] Deep link URL: {}",
+        mcpmux_core::log_redact::url_for_log(&deep_link_url)
+    );
 
     let app_name = branding::DISPLAY_NAME;
 

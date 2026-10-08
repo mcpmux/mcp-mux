@@ -127,7 +127,7 @@ impl HttpTransport {
             LogSource::HttpRequest,
             format!(
                 "Connecting to {} with OAuth (auto-refresh enabled, {} custom header(s))",
-                self.url,
+                mcpmux_core::log_redact::url_for_log(&self.url),
                 header_map.len()
             ),
         )
@@ -367,7 +367,10 @@ impl HttpTransport {
         self.log(
             LogLevel::Info,
             LogSource::HttpRequest,
-            format!("Connecting to {} with manual token injection", self.url),
+            format!(
+                "Connecting to {} with manual token injection",
+                mcpmux_core::log_redact::url_for_log(&self.url)
+            ),
         )
         .await;
 
@@ -503,7 +506,7 @@ impl HttpTransport {
             LogSource::HttpRequest,
             format!(
                 "Connecting to {} without auth ({} custom header(s))",
-                self.url,
+                mcpmux_core::log_redact::url_for_log(&self.url),
                 header_map.len()
             ),
         )
@@ -578,14 +581,17 @@ impl Transport for HttpTransport {
     async fn connect(&self) -> TransportConnectResult {
         info!(
             server_id = %self.server_id,
-            url = %self.url,
+            url = %mcpmux_core::log_redact::url_for_log(&self.url),
             "Connecting to HTTP server"
         );
 
         self.log(
             LogLevel::Info,
             LogSource::Connection,
-            format!("Connecting to HTTP server: {}", self.url),
+            format!(
+                "Connecting to HTTP server: {}",
+                mcpmux_core::log_redact::url_for_log(&self.url)
+            ),
         )
         .await;
 

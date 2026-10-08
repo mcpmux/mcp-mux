@@ -68,6 +68,12 @@ preserves supplied options such as --data-dir, --port, --registry-url,
 Use --key-provider file on a headless Linux host. It keeps master and JWT keys
 under the selected data directory with owner-only file permissions.
 
+The daemon makes the data directory and the log directory owner-only (0700) on
+every start, and refuses a data directory owned by another user. Logs default
+to the info level and keep 14 daily files. While troubleshooting, raise the
+level for one crate, for example --log-filter info,mcpmux_gateway=debug; debug
+output includes request details, so turn it back down afterwards.
+
 ## Verify and operate
 
 Check the HTTP health endpoint:

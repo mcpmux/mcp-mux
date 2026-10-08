@@ -44,7 +44,10 @@ pub async fn discover_metadata_with_fallback(
     // First try the direct URL
     match manager.discover_metadata().await {
         Ok(metadata) => {
-            info!("[OAuth] Metadata discovered at endpoint: {}", server_url);
+            info!(
+                "[OAuth] Metadata discovered at endpoint: {}",
+                mcpmux_core::log_redact::url_for_log(server_url)
+            );
             Ok(metadata)
         }
         Err(AuthError::NoAuthorizationSupport) => {

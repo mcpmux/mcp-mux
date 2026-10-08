@@ -2848,6 +2848,7 @@ dependencies = [
  "hmac",
  "http",
  "http-body-util",
+ "libc",
  "mcpmux-core",
  "mcpmux-storage",
  "oauth2",

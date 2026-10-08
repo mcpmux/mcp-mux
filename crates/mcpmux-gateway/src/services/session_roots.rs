@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use mcpmux_core::normalize_workspace_root;
-use tracing::debug;
+use tracing::{debug, warn};
+
+/// Most sessions that can have a pinned `X-Mcpmux-Workspace` root at once.
+const MAX_PINNED_SESSIONS: usize = 4096;
 
 /// Thread-safe registry mapping `mcp-session-id` to the caller's reported
 /// workspace roots, plus the most recently resolved feature-set id so the
@@ -200,6 +203,17 @@ impl SessionRootsRegistry {
             .get(session_id)
             .is_some_and(|v| *v == normalized)
         {
+            return;
+        }
+        // The header arrives before rmcp has checked the session id, so a
+        // client can present any id. Cap the map instead of letting made-up
+        // ids grow it without bound; live sessions are removed on
+        // disconnect.
+        if self.pinned.len() >= MAX_PINNED_SESSIONS && !self.pinned.contains_key(session_id) {
+            warn!(
+                limit = MAX_PINNED_SESSIONS,
+                "[SessionRoots] too many pinned sessions; ignoring X-Mcpmux-Workspace"
+            );
             return;
         }
         debug!(
@@ -489,5 +503,27 @@ mod tests {
         // After remove, recording the same value should be considered a
         // change (no prior entry).
         assert!(reg.record_resolution("sess-1", Some("fs-a")));
+    }
+
+    #[test]
+    fn pinned_sessions_are_capped() {
+        let reg = SessionRootsRegistry::new();
+        let root = if cfg!(windows) { "C:\\p" } else { "/p" };
+        for i in 0..MAX_PINNED_SESSIONS {
+            reg.set_pinned(&format!("s{i}"), root);
+        }
+        reg.set_pinned("one-too-many", root);
+        assert!(reg.get_pinned("one-too-many").is_none());
+        // Sessions already pinned can still change their root.
+        let other = if cfg!(windows) { "C:\\q" } else { "/q" };
+        reg.set_pinned("s0", other);
+        assert_eq!(
+            reg.get_pinned("s0").as_deref(),
+            Some(normalize_workspace_root(other).as_str())
+        );
+        // Disconnecting frees a slot.
+        reg.remove("s1");
+        reg.set_pinned("one-too-many", root);
+        assert!(reg.get_pinned("one-too-many").is_some());
     }
 }

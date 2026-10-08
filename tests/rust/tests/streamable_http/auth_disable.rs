@@ -321,3 +321,20 @@ async fn origin_guard_applies_when_auth_is_required_too() {
         reqwest::StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn oversized_mcp_bodies_are_refused() {
+    let h = Harness::start(true).await;
+    let body = vec![b' '; mcpmux_gateway::mcp::MAX_MCP_REQUEST_BODY + 1];
+    let status = reqwest::Client::new()
+        .post(&h.url)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("request")
+        .status();
+    assert_eq!(status, reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    // Ordinary requests are unaffected.
+    assert_eq!(post_tools_list(&h, None).await, reqwest::StatusCode::OK);
+}

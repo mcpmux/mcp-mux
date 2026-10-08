@@ -1008,3 +1008,39 @@ async fn servers_add_configure_enable_and_feature_set_membership() {
     }
     let _ = child.wait();
 }
+
+/// `doctor` reports a data directory other users can read.
+#[cfg(unix)]
+#[tokio::test]
+async fn doctor_flags_data_readable_by_other_users() {
+    use std::os::unix::fs::PermissionsExt;
+    let data_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let (mut child, _port) = spawn_daemon(data_dir.path(), runtime_dir.path()).await;
+    let socket = socket_path(runtime_dir.path(), data_dir.path());
+
+    let status_of = |report: &serde_json::Value| {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "file_permissions")
+            .map(|c| (c["status"].as_str().unwrap().to_string(), c.clone()))
+            .expect("doctor has a file_permissions check")
+    };
+
+    std::fs::set_permissions(data_dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let report = call(&socket, &request("d1", "doctor")).await.data.unwrap();
+    let (status, check) = status_of(&report);
+    assert_eq!(status, "warn", "{check}");
+    assert!(check["hint"].as_str().unwrap().contains("chmod 700"));
+
+    std::fs::set_permissions(data_dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let report = call(&socket, &request("d2", "doctor")).await.data.unwrap();
+    assert_eq!(status_of(&report).0, "ok");
+
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let _ = child.wait();
+}

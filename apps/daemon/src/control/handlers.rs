@@ -361,6 +361,13 @@ async fn doctor(state: &ControlState) -> Result<serde_json::Value, ApiError> {
     // Key material: file provider only — check permissions where applicable.
     checks.push(check_key_files(&state.runtime.keys_dir));
 
+    // Who can read the data and logs.
+    checks.push(check_private_paths(
+        &state.runtime.data_dir,
+        &state.runtime.logs_dir,
+        &state.runtime.db_path,
+    ));
+
     // Database.
     checks.push(if state.runtime.db_path.is_file() {
         DoctorCheck {
@@ -446,6 +453,87 @@ async fn doctor(state: &ControlState) -> Result<serde_json::Value, ApiError> {
 
 /// Inspect the key directory and any key files present. A `file` provider that
 /// has not created keys yet is `Skip`, not a failure.
+/// The data directory holds the database (encrypted secrets plus everything
+/// else), Space configs and possibly keys; the logs directory holds server
+/// output. Both should be owned by the daemon's user and closed to others,
+/// which also protects every file inside whatever its own mode.
+fn check_private_paths(
+    data_dir: &std::path::Path,
+    logs_dir: &std::path::Path,
+    db_path: &std::path::Path,
+) -> mcpmux_control::DoctorCheck {
+    use mcpmux_control::{CheckStatus, DoctorCheck};
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        let mut foreign = Vec::new();
+        let mut open = Vec::new();
+        let mut dirs = vec![data_dir];
+        if !logs_dir.starts_with(data_dir) {
+            dirs.push(logs_dir);
+        }
+        for dir in dirs {
+            let Ok(meta) = std::fs::metadata(dir) else {
+                continue;
+            };
+            let mode = meta.permissions().mode() & 0o777;
+            if meta.uid() != euid {
+                foreign.push(format!("{} (uid {})", dir.display(), meta.uid()));
+            } else if mode & 0o077 != 0 {
+                open.push(format!("{} is {mode:o}", dir.display()));
+            }
+        }
+        let db_mode = std::fs::metadata(db_path)
+            .map(|m| format!("{:o}", m.permissions().mode() & 0o777))
+            .unwrap_or_else(|_| "missing".into());
+        if !foreign.is_empty() {
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Fail,
+                message: format!("owned by another user: {}", foreign.join(", ")),
+                hint: Some("run the daemon as the owner, or give it its own --data-dir".into()),
+            }
+        } else if !open.is_empty() {
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Warn,
+                message: format!(
+                    "readable by other users: {} (database {db_mode})",
+                    open.join(", ")
+                ),
+                hint: Some(format!(
+                    "run: chmod 700 {}",
+                    open.iter()
+                        .map(|o| o.rsplit_once(" is ").map_or(o.as_str(), |(p, _)| p))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )),
+            }
+        } else {
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Ok,
+                message: format!("data and log directories are owner-only (database {db_mode})"),
+                hint: None,
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (data_dir, logs_dir, db_path);
+        DoctorCheck {
+            id: "file_permissions".into(),
+            status: CheckStatus::Skip,
+            message: "permission audit is Unix-only (Windows uses the profile ACLs)".into(),
+            hint: None,
+        }
+    }
+}
+
 fn check_key_files(keys_dir: &std::path::Path) -> mcpmux_control::DoctorCheck {
     use mcpmux_control::{CheckStatus, DoctorCheck};
 

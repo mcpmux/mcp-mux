@@ -169,7 +169,10 @@ fn deep_link_is_duplicate(url: &str) -> bool {
 ///
 /// Routes based on the URL path:
 /// - `mcpmux://authorize` - OAuth authorization request (inbound - client approval)
-/// - `mcpmux://callback/oauth` - OAuth callback (outbound - server connection)
+/// - `mcpmux://install` - install a server from the registry
+///
+/// Outbound OAuth callbacks never come through here: they go to the
+/// loopback callback server.
 pub fn handle_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &str) {
     info!("[DeepLink] Received: {}", url);
 
@@ -187,19 +190,6 @@ pub fn handle_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &str)
     // `get_pending_consent` fire twice per approval.
     if deep_link_is_duplicate(url) {
         info!("[DeepLink] Ignoring duplicate within {DEEP_LINK_DEDUP_WINDOW:?}: {url}");
-        return;
-    }
-
-    // Check for OAuth callback first (mcpmux://callback/oauth?...)
-    if branding::is_oauth_callback(url) {
-        let parsed = match Url::parse(url) {
-            Ok(u) => u,
-            Err(e) => {
-                error!("[DeepLink] Failed to parse OAuth callback URL: {}", e);
-                return;
-            }
-        };
-        handle_oauth_callback_deep_link(app, &parsed);
         return;
     }
 
@@ -300,63 +290,6 @@ fn handle_install_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
-}
-
-/// Handle OAuth callback deep link (legacy - for outbound OAuth server connections)
-///
-/// NOTE: The primary OAuth callback mechanism is now the loopback HTTP server
-/// (per RFC 8252 Section 7.3) which handles callbacks directly. This deep link
-/// handler is kept for backwards compatibility but is not the main path.
-///
-/// The loopback server provides universal compatibility with enterprise security
-/// systems that may block custom URL schemes.
-///
-/// URL format: mcpmux://callback/oauth?code=XXX&state=YYY
-/// Or on error: mcpmux://callback/oauth?error=XXX&error_description=YYY&state=ZZZ
-fn handle_oauth_callback_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &Url) {
-    let params: HashMap<_, _> = url.query_pairs().collect();
-
-    // State is required for routing to the correct OAuth flow
-    let state = match params.get("state") {
-        Some(s) if !s.is_empty() => s.to_string(),
-        _ => {
-            error!("[DeepLink] OAuth callback missing required 'state' parameter");
-            return;
-        }
-    };
-
-    let state_short = if state.len() > 8 { &state[..8] } else { &state };
-    info!("[DeepLink] OAuth callback received: state={}", state_short);
-
-    // Build callback struct
-    let callback = mcpmux_gateway::OAuthCallback {
-        code: params.get("code").map(|s| s.to_string()),
-        state,
-        error: params.get("error").map(|s| s.to_string()),
-        error_description: params.get("error_description").map(|s| s.to_string()),
-    };
-
-    // Get the pool service and route the callback
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        // Get GatewayAppState
-        let gateway_state: tauri::State<'_, Arc<RwLock<GatewayAppState>>> = app_handle.state();
-        let app_state = gateway_state.read().await;
-
-        if let Some(ref pool_service) = app_state.pool_service {
-            // Route callback to OAuth manager
-            match pool_service.oauth_manager().handle_callback(callback) {
-                Ok(_) => {
-                    info!("[DeepLink] OAuth callback successfully routed to handler");
-                }
-                Err(e) => {
-                    error!("[DeepLink] Failed to route OAuth callback: {}", e);
-                }
-            }
-        } else {
-            error!("[DeepLink] Pool service not available to handle OAuth callback");
-        }
-    });
 }
 
 // ============================================================================

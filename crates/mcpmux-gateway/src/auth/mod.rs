@@ -3,19 +3,12 @@
 //! by the inbound client repository (see `mcp::oauth_middleware`).
 
 use axum::{
-    body::Body,
     extract::FromRequestParts,
-    http::{header, request::Parts, Request, StatusCode},
-    middleware::Next,
-    response::{IntoResponse, Response},
+    http::{request::Parts, StatusCode},
 };
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
-
-use super::server::GatewayState;
+use tracing::debug;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -184,115 +177,6 @@ fn base64_url_encode(data: &[u8]) -> String {
 fn base64_url_decode(s: &str) -> Option<Vec<u8>> {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     URL_SAFE_NO_PAD.decode(s).ok()
-}
-
-/// Authentication middleware for MCP endpoints.
-///
-/// OAuth authentication middleware
-///
-/// Responsibility: Validate JWT tokens and inject claims into request context
-/// Follows SRP: Only handles authentication, not authorization
-pub async fn oauth_auth_middleware(
-    axum::extract::State(state): axum::extract::State<Arc<RwLock<GatewayState>>>,
-    mut request: Request<Body>,
-    next: Next,
-) -> Response {
-    // Skip auth for OPTIONS (CORS preflight)
-    if request.method() == axum::http::Method::OPTIONS {
-        return next.run(request).await;
-    }
-
-    let gateway_state = state.read().await;
-
-    // Get base URL and JWT secret
-    let base_url = gateway_state.base_url.clone();
-    let Some(secret) = gateway_state.get_jwt_secret() else {
-        warn!("[Auth] No JWT secret configured - rejecting all requests");
-        return unauthorized_response_with_url(
-            &base_url,
-            "server_error",
-            "Server not configured for authentication",
-        );
-    };
-
-    // Extract Authorization header
-    let auth_header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-
-    match auth_header {
-        Some(auth) if auth.starts_with("Bearer ") => {
-            let token = &auth[7..];
-
-            // Validate token
-            match validate_access_token(token, secret) {
-                Some(claims) => {
-                    debug!("[Auth] Valid token for client: {}", claims.client_id);
-
-                    // Inject claims into request extensions (DIP: provide abstraction for handlers)
-                    request.extensions_mut().insert(claims);
-
-                    // Token valid - proceed with request
-                    drop(gateway_state);
-                    next.run(request).await
-                }
-                None => {
-                    warn!("[Auth] Invalid or expired token");
-                    unauthorized_response_with_url(
-                        &base_url,
-                        "invalid_token",
-                        "Token is invalid or expired",
-                    )
-                }
-            }
-        }
-        Some(_) => {
-            warn!("[Auth] Invalid Authorization header format");
-            unauthorized_response_with_url(
-                &base_url,
-                "invalid_request",
-                "Invalid Authorization header format",
-            )
-        }
-        None => {
-            info!("[Auth] No Authorization header - returning 401 with OAuth discovery info");
-            unauthorized_response_with_url(&base_url, "invalid_token", "Missing access token")
-        }
-    }
-}
-
-/// Generate 401 Unauthorized response with OAuth metadata.
-///
-/// Per RFC 9728, the WWW-Authenticate header should include `resource_metadata`
-/// parameter pointing to the OAuth Protected Resource Metadata endpoint.
-fn unauthorized_response_with_url(base_url: &str, error: &str, description: &str) -> Response {
-    // RFC 9728: Protected Resource Metadata URL
-    let resource_metadata_url = format!("{}/.well-known/oauth-protected-resource/mcp", base_url);
-
-    // WWW-Authenticate header per RFC 9728
-    let www_authenticate = format!(
-        r#"Bearer realm="McpMux Gateway", error="{}", error_description="{}", resource_metadata="{}""#,
-        error, description, resource_metadata_url
-    );
-
-    let body = serde_json::json!({
-        "error": error,
-        "error_description": description,
-        "resource_metadata": resource_metadata_url,
-    });
-
-    info!(
-        "[Auth] Returning 401 with resource_metadata={}",
-        resource_metadata_url
-    );
-
-    (
-        StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, www_authenticate)],
-        axum::Json(body),
-    )
-        .into_response()
 }
 
 #[cfg(test)]

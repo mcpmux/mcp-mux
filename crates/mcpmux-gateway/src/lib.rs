@@ -18,7 +18,6 @@ pub mod pool;
 pub mod server;
 pub mod services;
 
-pub use oauth::{OAuthConfig, OAuthManager, OAuthToken};
 pub use permissions::{PermissionFilter, PermissionSet};
 pub use server::{
     AutoConnectResult, ConsentLookupError, DependenciesBuilder, GatewayConfig, GatewayDependencies,

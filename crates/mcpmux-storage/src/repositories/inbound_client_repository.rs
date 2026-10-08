@@ -386,7 +386,7 @@ impl InboundClientRepository {
     /// Mark a client as approved by the user
     ///
     /// This is called when user explicitly approves the OAuth consent.
-    /// Only approved clients get silent re-authentication.
+    /// Only approved clients can use their tokens or refresh them.
     pub async fn approve_client(&self, client_id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();
@@ -472,7 +472,9 @@ impl InboundClientRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        // Tokens and codes will be deleted via CASCADE
+        // Rows that reference the client go with it (ON DELETE CASCADE). The
+        // JWTs it was issued aren't stored anywhere; they stop working because
+        // every use requires the client to still exist.
         let rows = conn.execute(
             "DELETE FROM inbound_clients WHERE client_id = ?1",
             params![client_id],

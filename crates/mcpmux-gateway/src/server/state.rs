@@ -56,8 +56,6 @@ pub struct GatewayState {
     pub sessions: HashMap<Uuid, ClientSession>,
     /// Access key to client ID mapping
     pub access_keys: HashMap<String, Uuid>,
-    /// OAuth tokens per server (in-memory cache)
-    pub oauth_tokens: HashMap<String, super::super::oauth::OAuthToken>,
     /// Consent requests waiting for the user (request_id -> request). Kept
     /// apart from `authorization_codes` so a request_id can never be redeemed
     /// at the token endpoint.
@@ -114,7 +112,6 @@ impl GatewayState {
             network_bind: false,
             sessions: HashMap::new(),
             access_keys: HashMap::new(),
-            oauth_tokens: HashMap::new(),
             pending_consents: HashMap::new(),
             authorization_codes: HashMap::new(),
             jwt_signing_secret: None,
@@ -404,24 +401,6 @@ impl GatewayState {
         } else {
             None
         }
-    }
-
-    /// Store an OAuth token for a server
-    pub fn store_oauth_token(&mut self, server_id: String, token: super::super::oauth::OAuthToken) {
-        let expires_info = match &token.expires_at {
-            Some(dt) => format!("expires at {}", dt.format("%Y-%m-%d %H:%M:%S UTC")),
-            None => "no expiry".to_string(),
-        };
-        info!(
-            "[State] Stored OAuth token for server: {} ({})",
-            server_id, expires_info
-        );
-        self.oauth_tokens.insert(server_id, token);
-    }
-
-    /// Get an OAuth token for a server
-    pub fn get_oauth_token(&self, server_id: &str) -> Option<&super::super::oauth::OAuthToken> {
-        self.oauth_tokens.get(server_id)
     }
 }
 

@@ -183,6 +183,10 @@ impl Database {
         // Enable foreign keys
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
+        // Overwrite deleted content instead of leaving it in free pages, so
+        // a removed credential's ciphertext doesn't stay in the file.
+        conn.pragma_update(None, "secure_delete", "ON")?;
+
         // Set journal mode to WAL for better concurrency
         conn.pragma_update(None, "journal_mode", "WAL")?;
 
@@ -200,6 +204,10 @@ impl Database {
 
         // Enable foreign keys
         conn.pragma_update(None, "foreign_keys", "ON")?;
+
+        // Overwrite deleted content instead of leaving it in free pages, so
+        // a removed credential's ciphertext doesn't stay in the file.
+        conn.pragma_update(None, "secure_delete", "ON")?;
 
         debug!("Opened in-memory database");
 
@@ -385,6 +393,18 @@ impl Database {
     /// Get a reference to the underlying connection.
     pub fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Copy the WAL back into the database file and truncate it, so pages
+    /// that held deleted rows don't linger in `-wal`. Best effort: a busy
+    /// checkpoint just leaves the WAL for the next one.
+    pub fn checkpoint_wal(&self) {
+        if let Err(e) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        {
+            tracing::debug!("WAL checkpoint skipped: {e}");
+        }
     }
 
     /// Execute a closure within a transaction.

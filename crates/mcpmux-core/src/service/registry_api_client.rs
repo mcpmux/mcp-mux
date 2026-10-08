@@ -244,8 +244,7 @@ impl RegistryApiClient {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let body = response
-            .bytes()
+        let body = read_capped(response, MAX_BUNDLE_BYTES)
             .await
             .context("Failed to read registry bundle response")?;
         let bundle = parse_bundle(&body)?;
@@ -265,6 +264,28 @@ impl RegistryApiClient {
             etag,
         })
     }
+}
+
+/// Largest registry bundle accepted. The real bundle is far smaller; the
+/// cap keeps a broken or hostile registry from exhausting memory.
+const MAX_BUNDLE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Read a response body, failing once it exceeds `max` bytes.
+async fn read_capped(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > max as u64)
+    {
+        anyhow::bail!("registry bundle is larger than {max} bytes");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > max {
+            anyhow::bail!("registry bundle is larger than {max} bytes");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 /// Parse a `/v1/bundle` response body.

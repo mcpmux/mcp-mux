@@ -7,6 +7,7 @@ import { Code } from 'lucide-react';
 import type { ServerViewModel } from '../../types/registry';
 import { ServerIcon } from '../../components/ServerIcon';
 import { ServerDefinitionModal } from '../../components/ServerDefinitionModal';
+import { TransportSummary } from '../../components/TransportSummary';
 
 interface ServerDetailModalProps {
   server: ServerViewModel;
@@ -157,6 +158,9 @@ export function ServerDetailModal({
               <span className="text-xs text-[rgb(var(--muted))]">
                 ({server.transport.type})
               </span>
+            </div>
+            <div className="mt-2">
+              <TransportSummary transport={server.transport} />
             </div>
           </div>
 

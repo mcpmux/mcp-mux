@@ -1856,10 +1856,11 @@ export function ServersPage() {
       )}
 
       {/* Log Viewer Modal */}
-      {logViewerServer && (
+      {logViewerServer && viewSpace && (
         <ServerLogViewer
           serverId={logViewerServer.id}
           serverName={logViewerServer.name}
+          spaceId={viewSpace.id}
           onClose={() => setLogViewerServer(null)}
         />
       )}

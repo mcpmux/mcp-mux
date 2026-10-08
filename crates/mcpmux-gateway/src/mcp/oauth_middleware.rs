@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::origin_guard::is_allowed_origin;
-use crate::auth::validate_token;
+use crate::auth::validate_access_token;
 use crate::logging::TraceContext;
 use crate::server::ServiceContainer;
 
@@ -101,7 +101,9 @@ pub async fn mcp_oauth_middleware(
         .as_deref()
         .and_then(|v| v.strip_prefix("Bearer "));
 
-    // Verify the Bearer token whenever one is present.
+    // Verify the Bearer token whenever one is present. Only access tokens are
+    // accepted, and only while their client is still registered and approved:
+    // deleting a client in the desktop app cuts off its tokens immediately.
     let claims = match token {
         Some(token) => {
             let jwt_secret = {
@@ -109,13 +111,36 @@ pub async fn mcp_oauth_middleware(
                 state.get_jwt_secret().map(|s| s.to_vec())
             };
             match jwt_secret {
-                Some(secret) => validate_token(token, &secret),
+                Some(secret) => validate_access_token(token, &secret),
                 None => {
                     warn!(trace_id = %trace_id, "JWT secret not configured");
                     None
                 }
             }
         }
+        None => None,
+    };
+    let claims = match claims {
+        Some(claims) => match services
+            .dependencies
+            .inbound_client_repo
+            .get_client(&claims.client_id)
+            .await
+        {
+            Ok(Some(client)) if client.approved => Some(claims),
+            Ok(_) => {
+                warn!(
+                    trace_id = %trace_id,
+                    client_id = %claims.client_id,
+                    "Rejected a token for a client that is unknown or not approved"
+                );
+                None
+            }
+            Err(e) => {
+                warn!(trace_id = %trace_id, "Client lookup failed: {}", e);
+                None
+            }
+        },
         None => None,
     };
 

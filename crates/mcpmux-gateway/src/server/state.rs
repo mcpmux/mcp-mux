@@ -84,6 +84,9 @@ pub struct GatewayState {
 /// How long an issued authorization code can be redeemed, in seconds.
 pub const AUTHORIZATION_CODE_TTL_SECS: i64 = 600;
 
+/// Upper bound on consent requests waiting for the user at once.
+const MAX_PENDING_CONSENTS: usize = 256;
+
 /// Why a consent request could not be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsentLookupError {
@@ -234,6 +237,17 @@ impl GatewayState {
     /// desktop app. Expired requests and codes are dropped first.
     pub fn store_pending_consent(&mut self, request_id: &str, request: PendingAuthorization) {
         self.prune_expired_oauth_entries();
+        // Bound memory: when full, the request closest to expiry makes room.
+        if self.pending_consents.len() >= MAX_PENDING_CONSENTS {
+            if let Some(oldest) = self
+                .pending_consents
+                .iter()
+                .min_by_key(|(_, r)| r.expires_at)
+                .map(|(id, _)| id.clone())
+            {
+                self.pending_consents.remove(&oldest);
+            }
+        }
         self.pending_consents
             .insert(request_id.to_string(), request);
     }
@@ -285,6 +299,7 @@ impl GatewayState {
 
     /// Remove a consent request without a consent token. Only for the
     /// test-mode HTTP approval endpoint, which has no access to the token.
+    #[cfg(feature = "e2e")]
     pub fn take_pending_consent_without_token(
         &mut self,
         request_id: &str,
@@ -511,6 +526,23 @@ mod tests {
             .insert("mc_old".to_string(), entry);
 
         assert!(state.consume_authorization_code("mc_old").is_none());
+    }
+
+    #[test]
+    fn pending_consents_are_bounded() {
+        let mut state = GatewayState::default();
+        let now = unix_now();
+        for i in 0..MAX_PENDING_CONSENTS {
+            state.store_pending_consent(&format!("req-{i}"), consent_request(now + 300 + i as i64));
+        }
+        state.store_pending_consent("newest", consent_request(now + 10_000));
+
+        assert_eq!(state.pending_consents.len(), MAX_PENDING_CONSENTS);
+        assert!(state.pending_consents.contains_key("newest"));
+        assert!(
+            !state.pending_consents.contains_key("req-0"),
+            "the request closest to expiry made room"
+        );
     }
 
     #[test]

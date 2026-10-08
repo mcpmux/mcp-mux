@@ -7,6 +7,7 @@
 
 mod bootstrap;
 mod event_bridge;
+mod gateway_http;
 mod lock;
 
 use std::path::PathBuf;

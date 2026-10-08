@@ -39,6 +39,8 @@ const APP_IDENTIFIER: &str = env!("TAURI_APP_IDENTIFIER");
 /// - macOS: ~/Library/Application Support/<identifier>/
 /// - Linux: ~/.local/share/<identifier>/
 fn get_app_data_dir() -> std::path::PathBuf {
+    // E2E builds only: keep test runs out of the user's real profile.
+    #[cfg(feature = "e2e")]
     if std::env::var_os("MCPMUX_E2E_TEST").is_some() {
         if let Some(path) = std::env::var_os("MCPMUX_E2E_DATA_DIR") {
             if !path.is_empty() {

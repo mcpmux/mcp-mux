@@ -6,6 +6,11 @@ license.workspace = true
 publish = false
 description = "McpMux Gateway - MCP proxy server with OAuth and aggregation"
 
+[features]
+# Test-only HTTP consent approval (`POST /oauth/consent/approve`) for automated
+# end-to-end runs. Release builds never enable it.
+e2e = []
+
 [dependencies]
 # Async runtime
 tokio.workspace = true

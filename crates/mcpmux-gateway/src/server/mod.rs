@@ -18,9 +18,10 @@ mod state;
 // (register → authorize → consent → token → authenticated /mcp) end to end.
 // AppState is also used throughout this module.
 pub(crate) use handlers::effective_base_url;
+#[cfg(feature = "e2e")]
+pub use handlers::oauth_consent_approve;
 pub use handlers::{
-    oauth_authorize, oauth_consent_approve, oauth_metadata, oauth_register, oauth_token,
-    resource_metadata, AppState,
+    oauth_authorize, oauth_metadata, oauth_register, oauth_token, resource_metadata, AppState,
 };
 
 pub use dependencies::{DependenciesBuilder, GatewayDependencies};
@@ -434,7 +435,7 @@ impl GatewayServer {
             )
             .with_state(app_state.clone());
 
-        let mut router = Router::new()
+        let router = Router::new()
             // Health check (public)
             .route("/health", get(handlers::health))
             // OAuth endpoints (public) - use app_state for base_url access
@@ -480,15 +481,19 @@ impl GatewayServer {
                 delete(handlers::oauth_delete_client),
             );
 
-        // E2E test mode: re-enable HTTP consent endpoint (guarded by env var).
-        // In production this endpoint does NOT exist—consent is Tauri-IPC-only.
-        if std::env::var("MCPMUX_E2E_TEST").is_ok() {
+        // E2E test builds only (cargo feature `e2e`, plus MCPMUX_E2E_TEST at
+        // runtime): an HTTP consent endpoint for automated runs. Other builds
+        // don't contain it; consent is Tauri-IPC-only.
+        #[cfg(feature = "e2e")]
+        let router = if std::env::var("MCPMUX_E2E_TEST").is_ok() {
             warn!("[Gateway] E2E test mode: /oauth/consent/approve HTTP endpoint enabled");
-            router = router.route(
+            router.route(
                 "/oauth/consent/approve",
                 post(handlers::oauth_consent_approve),
-            );
-        }
+            )
+        } else {
+            router
+        };
 
         // Rate limiter for OAuth endpoints (prevents abuse / consent flooding)
         let rate_limiter = rate_limit::default_oauth_rate_limiter();
@@ -506,8 +511,10 @@ impl GatewayServer {
                 logging_middleware::http_logging_middleware,
             ))
             // Rate limiting on OAuth endpoints
-            .layer(axum::Extension(rate_limiter))
-            .layer(middleware::from_fn(rate_limit::rate_limit_middleware))
+            .layer(middleware::from_fn_with_state(
+                rate_limiter,
+                rate_limit::rate_limit_middleware,
+            ))
             // Keep desktop-only client management off the LAN on a 0.0.0.0 bind.
             .layer(middleware::from_fn(restrict_management_to_loopback));
 

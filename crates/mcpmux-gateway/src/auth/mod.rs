@@ -233,6 +233,8 @@ pub struct TokenClaims {
     pub scope: Option<String>,
     pub exp: i64, // Expiration timestamp
     pub iat: i64, // Issued at timestamp
+    /// `"access"` or `"refresh"`, as set when the token was issued.
+    pub token_type: Option<String>,
 }
 
 /// Extractor for authenticated client claims (ISP pattern)
@@ -292,6 +294,10 @@ pub fn validate_token(token: &str, secret: &[u8]) -> Option<TokenClaims> {
         .map(|s| s.to_string());
     let exp = claims.get("exp")?.as_i64()?;
     let iat = claims.get("iat")?.as_i64()?;
+    let token_type = claims
+        .get("token_type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     // Check expiration
     let now = chrono::Utc::now().timestamp();
@@ -305,7 +311,19 @@ pub fn validate_token(token: &str, secret: &[u8]) -> Option<TokenClaims> {
         scope,
         exp,
         iat,
+        token_type,
     })
+}
+
+/// Validate a token that must be an access token. Refresh tokens are only
+/// accepted at the token endpoint, never as a Bearer credential.
+pub fn validate_access_token(token: &str, secret: &[u8]) -> Option<TokenClaims> {
+    validate_token(token, secret).filter(|claims| claims.token_type.as_deref() == Some("access"))
+}
+
+/// Validate a token that must be a refresh token (for the refresh grant).
+pub fn validate_refresh_token(token: &str, secret: &[u8]) -> Option<TokenClaims> {
+    validate_token(token, secret).filter(|claims| claims.token_type.as_deref() == Some("refresh"))
 }
 
 /// Create a signed access token
@@ -411,7 +429,7 @@ pub async fn oauth_auth_middleware(
             let token = &auth[7..];
 
             // Validate token
-            match validate_token(token, secret) {
+            match validate_access_token(token, secret) {
                 Some(claims) => {
                     debug!("[Auth] Valid token for client: {}", claims.client_id);
 
@@ -506,6 +524,18 @@ mod jwt_tests {
         let claims = validate_token(&token, secret2);
 
         assert!(claims.is_none());
+    }
+
+    #[test]
+    fn access_and_refresh_tokens_are_not_interchangeable() {
+        let secret = b"test_secret_key_32_bytes_long!!";
+        let access = create_access_token("test_client", None, 3600, secret);
+        let refresh = create_refresh_token("test_client", None, secret);
+
+        assert!(validate_access_token(&access, secret).is_some());
+        assert!(validate_access_token(&refresh, secret).is_none());
+        assert!(validate_refresh_token(&refresh, secret).is_some());
+        assert!(validate_refresh_token(&access, secret).is_none());
     }
 
     #[test]

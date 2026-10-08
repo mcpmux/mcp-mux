@@ -272,6 +272,10 @@ pub async fn resource_metadata(
     }))
 }
 
+/// Longest `state` or `scope` value `/authorize` accepts. Both are stored
+/// while the user decides, so they are bounded.
+const MAX_OAUTH_PARAM_LEN: usize = 4096;
+
 /// OAuth authorization query params
 #[derive(Debug, Deserialize)]
 pub struct AuthorizeParams {
@@ -318,18 +322,9 @@ pub async fn oauth_authorize(
         params.client_id, params.response_type, params.redirect_uri
     );
 
-    if params.response_type != "code" {
-        warn!(
-            "[OAuth] Unsupported response_type: {}",
-            params.response_type
-        );
-        return oauth_error_redirect(
-            &params.redirect_uri,
-            "unsupported_response_type",
-            "Only 'code' response type is supported",
-            params.state.as_deref(),
-        );
-    }
+    // Until the client and its redirect URI are validated, errors are shown
+    // here and never redirected (RFC 6749 §4.1.2.1): redirecting to an
+    // unvalidated redirect_uri would make this endpoint an open redirector.
 
     // Resolve and validate client (CIMD or traditional).
     //
@@ -344,11 +339,10 @@ pub async fn oauth_authorize(
     };
     let Some(client_metadata_service) = client_metadata_service else {
         error!("[OAuth] ClientMetadataService not available");
-        return oauth_error_redirect(
-            &params.redirect_uri,
+        return oauth_error_page(
+            StatusCode::SERVICE_UNAVAILABLE,
             "server_error",
-            "Service not available",
-            params.state.as_deref(),
+            "The authorization service is not available.",
         );
     };
 
@@ -368,11 +362,10 @@ pub async fn oauth_authorize(
                     "[OAuth] Invalid redirect_uri for client: {} (expected one of: {:?})",
                     params.redirect_uri, client.redirect_uris
                 );
-                return oauth_error_redirect(
-                    &params.redirect_uri,
-                    "invalid_redirect_uri",
-                    "Redirect URI not registered for this client",
-                    params.state.as_deref(),
+                return oauth_error_page(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    "The redirect_uri is not registered for this client.",
                 );
             }
             // Re-check the scheme policy at use time: rows saved before the
@@ -383,33 +376,55 @@ pub async fn oauth_authorize(
                     "[OAuth] Refusing redirect_uri outside the allowed redirect policy for client: {}",
                     params.client_id
                 );
-                return (
+                return oauth_error_page(
                     StatusCode::BAD_REQUEST,
-                    "This redirect_uri is not an allowed OAuth redirect target.",
-                )
-                    .into_response();
+                    "invalid_request",
+                    "The redirect_uri is not an allowed OAuth redirect target.",
+                );
             }
             client.client_name
         }
         Ok(None) => {
             warn!("[OAuth] Unknown client_id: {}", params.client_id);
-            return oauth_error_redirect(
-                &params.redirect_uri,
+            return oauth_error_page(
+                StatusCode::BAD_REQUEST,
                 "invalid_client",
-                "Client not registered",
-                params.state.as_deref(),
+                "This client is not registered.",
             );
         }
         Err(e) => {
             error!("[OAuth] Client resolution failed: {}", e);
-            return oauth_error_redirect(
-                &params.redirect_uri,
-                "server_error",
-                "Client resolution error",
-                params.state.as_deref(),
+            return oauth_error_page(
+                StatusCode::BAD_REQUEST,
+                "invalid_client",
+                "The client could not be resolved.",
             );
         }
     };
+
+    // Client and redirect_uri are valid: remaining errors go back to the client.
+    let too_long = |v: &Option<String>| v.as_ref().is_some_and(|v| v.len() > MAX_OAUTH_PARAM_LEN);
+    if too_long(&params.state) || too_long(&params.scope) {
+        warn!("[OAuth] Oversized state or scope parameter");
+        return oauth_error_redirect(
+            &params.redirect_uri,
+            "invalid_request",
+            "state or scope is too long",
+            None,
+        );
+    }
+    if params.response_type != "code" {
+        warn!(
+            "[OAuth] Unsupported response_type: {}",
+            params.response_type
+        );
+        return oauth_error_redirect(
+            &params.redirect_uri,
+            "unsupported_response_type",
+            "Only 'code' response type is supported",
+            params.state.as_deref(),
+        );
+    }
 
     // PKCE is required for public clients, and only S256 is accepted (the
     // metadata advertises S256 only). A missing method is read as S256.
@@ -711,9 +726,23 @@ fn oauth_error_redirect(
         urlencoding::encode(description)
     ));
     if let Some(s) = state {
-        url.push_str(&format!("&state={}", s));
+        url.push_str(&format!("&state={}", urlencoding::encode(s)));
     }
     axum::response::Redirect::to(&url).into_response()
+}
+
+/// Plain-text OAuth error shown to the user when the request can't be sent
+/// back to the client (unknown client or unvalidated redirect_uri).
+fn oauth_error_page(status: StatusCode, error: &str, description: &str) -> Response {
+    (
+        status,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
+        format!("Authorization failed ({error}): {description}"),
+    )
+        .into_response()
 }
 
 /// OAuth token request body
@@ -881,8 +910,8 @@ pub async fn oauth_token(
                 ));
             };
 
-            // Validate the refresh token
-            let Some(claims) = crate::auth::validate_token(refresh_token, secret) else {
+            // Validate the refresh token (access tokens are not accepted here)
+            let Some(claims) = crate::auth::validate_refresh_token(refresh_token, secret) else {
                 warn!("[OAuth] Invalid or expired refresh token");
                 return Err(token_error(
                     "invalid_grant",
@@ -896,6 +925,13 @@ pub async fn oauth_token(
             // would fail with "Client not found" after we issue a new token.
             if let Some(repo) = gateway_state.inbound_client_repository() {
                 match repo.get_client(&claims.client_id).await {
+                    Ok(Some(client)) if !client.approved => {
+                        warn!(
+                            "[OAuth] Client {} is not approved; refusing to refresh",
+                            claims.client_id
+                        );
+                        return Err(token_error("invalid_grant", "Client is not approved"));
+                    }
                     Ok(Some(_)) => {
                         // Client exists, update last_seen
                         if let Err(e) = repo.update_client_last_seen(&claims.client_id).await {
@@ -975,9 +1011,8 @@ fn is_s256_code_challenge(challenge: &str) -> bool {
 // OAuth Consent Approval (called by McpMux app after user approval)
 // ============================================================================
 
-/// Request body for consent approval
-/// Future feature - not yet routed
-#[allow(dead_code)]
+/// Request body for the test-mode consent approval endpoint
+#[cfg(feature = "e2e")]
 #[derive(Debug, Deserialize)]
 pub struct ConsentApprovalRequest {
     /// The request_id from the pending authorization
@@ -989,9 +1024,8 @@ pub struct ConsentApprovalRequest {
     pub client_alias: Option<String>,
 }
 
-/// Response from consent approval
-/// Future feature - not yet routed
-#[allow(dead_code)]
+/// Response from the test-mode consent approval endpoint
+#[cfg(feature = "e2e")]
 #[derive(Debug, Serialize)]
 pub struct ConsentApprovalResponse {
     /// Whether the approval was successful
@@ -1003,12 +1037,11 @@ pub struct ConsentApprovalResponse {
     pub error: Option<String>,
 }
 
-/// Approve or deny an OAuth consent request
+/// Approve or deny an OAuth consent request over HTTP.
 ///
-/// This endpoint is called by the McpMux desktop app after the user has reviewed
-/// and approved (or denied) an OAuth authorization request.
-/// Future feature - not yet routed
-#[allow(dead_code)]
+/// Only compiled with the `e2e` feature and only routed when MCPMUX_E2E_TEST is
+/// set, so automated end-to-end runs can complete the flow without the UI.
+#[cfg(feature = "e2e")]
 pub async fn oauth_consent_approve(
     State(state): State<Arc<RwLock<GatewayState>>>,
     Json(request): Json<ConsentApprovalRequest>,
@@ -1059,10 +1092,17 @@ pub async fn oauth_consent_approve(
         });
     }
 
-    // User approved - issue a one-time authorization code
+    // User approved - issue a one-time authorization code and mark the client
+    // approved, as the desktop's consent approval does.
     let code = {
         let mut gateway_state = state.write().await;
         let code = gateway_state.issue_authorization_code(&pending);
+
+        if let Some(repo) = gateway_state.inbound_client_repository() {
+            if let Err(e) = repo.approve_client(&pending.client_id).await {
+                warn!("[OAuth] Failed to approve client: {}", e);
+            }
+        }
 
         // Store client alias in database if provided
         if let Some(alias) = &request.client_alias {

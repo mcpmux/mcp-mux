@@ -61,12 +61,13 @@ impl ClientMetadataService {
     /// Otherwise, fetches fresh metadata from the CIMD URL.
     async fn get_or_fetch_cimd_client(&self, client_id_url: &str) -> Result<InboundClient> {
         // Try to load from database
-        if let Some(existing) = self.repository.get_client(client_id_url).await? {
+        let existing = self.repository.get_client(client_id_url).await?;
+        if let Some(existing) = &existing {
             if existing.registration_type == RegistrationType::Cimd
-                && self.is_cimd_cache_valid(&existing)
+                && self.is_cimd_cache_valid(existing)
             {
                 debug!("[CIMD] Using cached metadata for: {}", client_id_url);
-                return Ok(existing);
+                return Ok(existing.clone());
             }
         }
 
@@ -83,8 +84,15 @@ impl ClientMetadataService {
             );
         }
 
-        // Convert to InboundClient
-        let client = self.cimd_metadata_to_client(metadata);
+        // Convert to InboundClient. A refresh of a known CIMD client keeps the
+        // user's decisions (approval, alias) and its creation time: the
+        // client_id URL is the identity, the document only updates metadata.
+        let mut client = self.cimd_metadata_to_client(metadata);
+        if let Some(existing) = existing.filter(|c| c.registration_type == RegistrationType::Cimd) {
+            client.approved = existing.approved;
+            client.client_alias = existing.client_alias;
+            client.created_at = existing.created_at;
+        }
 
         // Save to database
         self.repository.save_client(&client).await?;

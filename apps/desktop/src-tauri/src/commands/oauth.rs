@@ -719,14 +719,14 @@ pub async fn get_oauth_clients(
 
 /// Approve a registered OAuth client by ID (for E2E testing only).
 ///
-/// Guarded by the `MCPMUX_E2E_TEST` environment variable. In production
-/// builds this command is a no-op that returns an error.
+/// Only works in builds with the `e2e` feature and with `MCPMUX_E2E_TEST` set;
+/// everywhere else it returns an error without touching any client.
 #[tauri::command]
 pub async fn approve_oauth_client(
     client_id: String,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<(), String> {
-    if std::env::var("MCPMUX_E2E_TEST").is_err() {
+    if !cfg!(feature = "e2e") || std::env::var("MCPMUX_E2E_TEST").is_err() {
         return Err("approve_oauth_client is only available in E2E test mode".to_string());
     }
 

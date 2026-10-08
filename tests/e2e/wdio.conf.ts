@@ -37,7 +37,8 @@ const STUB_MCP_HTTP_PORT = 3457;
 const STUB_MCP_OAUTH_PORT = 3458;
 
 // Keep E2E data outside the user's McpMux profile. The desktop app accepts this
-// directory only when MCPMUX_E2E_TEST is also set.
+// directory only in builds with the `e2e` cargo feature, and only when
+// MCPMUX_E2E_TEST is also set.
 const APP_DATA_DIR = path.join(os.tmpdir(), 'mcpmux-e2e');
 const BUNDLE_CACHE_PATH = path.join(APP_DATA_DIR, 'cache', 'registry-bundle.json');
 
@@ -51,15 +52,17 @@ const APP_PATH =
 function checkAppBuilt(): void {
   if (!fs.existsSync(APP_PATH)) {
     console.error(`\n[ERROR] App not built. Expected at: ${APP_PATH}`);
-    console.error('Run "pnpm build" first.\n');
+    console.error('Run "pnpm --filter @mcpmux/desktop exec tauri build --features e2e" first.\n');
     process.exit(1);
   }
 
-  // A binary built before MCPMUX_E2E_DATA_DIR support silently ignores it and would
+  // A binary built without the `e2e` feature ignores MCPMUX_E2E_DATA_DIR and would
   // run every spec against the developer's real McpMux profile.
   if (!fs.readFileSync(APP_PATH).includes('MCPMUX_E2E_DATA_DIR')) {
-    console.error(`\n[ERROR] App at ${APP_PATH} does not support MCPMUX_E2E_DATA_DIR.`);
-    console.error('Rebuild it with "pnpm build" so E2E stays out of your real profile.\n');
+    console.error(`\n[ERROR] App at ${APP_PATH} was built without the e2e feature.`);
+    console.error(
+      'Rebuild it with "pnpm --filter @mcpmux/desktop exec tauri build --features e2e" so E2E stays out of your real profile.\n'
+    );
     process.exit(1);
   }
 }
@@ -543,7 +546,7 @@ export const config: Options.Testrunner = {
     );
 
     // Pass environment variables to tauri-driver (which passes to the app)
-    // MCPMUX_E2E_TEST=1 enables test-only endpoints:
+    // MCPMUX_E2E_TEST=1 enables test-only endpoints (in `--features e2e` builds):
     //   - POST /oauth/consent/approve (HTTP consent for programmatic OAuth flow)
     //   - approve_oauth_client Tauri IPC command
     tauriDriver = spawn(tauriDriverPath, [], {

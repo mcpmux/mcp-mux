@@ -9,7 +9,6 @@
 //! - FeatureSet repository (builtin types, members)
 //! - Outbound OAuth repository (server credentials)
 
-mod ciphertext_binding;
 mod feature_set;
 mod inbound_client;
 mod installed_server;
@@ -17,3 +16,5 @@ mod migrations;
 mod outbound_oauth;
 mod repositories;
 mod space_base_dir;
+
+mod ciphertext_binding;

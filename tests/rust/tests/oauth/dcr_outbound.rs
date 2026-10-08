@@ -1304,3 +1304,30 @@ async fn new_public_client_is_used_even_if_it_cannot_be_saved() {
     );
     flow.start().await.expect("sign-in should start");
 }
+
+/// The registration request goes only to the registration endpoint the server
+/// advertised; a redirect elsewhere is not followed
+#[tokio::test]
+async fn registration_redirect_is_not_followed() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(
+            ResponseTemplate::new(307)
+                .insert_header("Location", format!("{}/elsewhere", mock_server.uri())),
+        )
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/elsewhere"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let flow = Flow::new(&mock_server);
+    let error = flow.start().await.expect_err("registration should fail");
+    assert!(error.to_string().contains("307"), "{error}");
+    assert!(flow.registration().await.is_none());
+}

@@ -23,6 +23,10 @@ use tracing::warn;
 
 const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How much of a rejected registration's response body goes into the error. It ends
+/// up in the UI and the server log, and the server decides how long it is.
+const MAX_ERROR_BODY_CHARS: usize = 1000;
+
 /// A client registered with an authorization server
 #[derive(Clone)]
 pub struct RegisteredClient {
@@ -132,11 +136,12 @@ impl RegistrationResponse {
         // Some servers send `"client_secret": ""` for a public client. Sending an
         // empty secret would make the token request fail, so treat it as none.
         let client_secret = self.client_secret.filter(|s| !s.is_empty());
-        // RFC 7591 §3.2.1: seconds since the epoch, or 0 if the secret never expires
+        // RFC 7591 §3.2.1: seconds since the epoch, or 0 if the secret never expires.
+        // Some servers send it as a float or a string.
         let client_secret_expires_at = client_secret
             .as_ref()
             .and(self.client_secret_expires_at.as_ref())
-            .and_then(|v| v.as_i64().or_else(|| v.as_str()?.trim().parse().ok()))
+            .and_then(epoch_seconds)
             .filter(|&secs| secs > 0)
             .and_then(|secs| DateTime::from_timestamp(secs, 0));
         let token_endpoint_auth_method = self
@@ -153,6 +158,17 @@ impl RegistrationResponse {
             token_endpoint_auth_method,
         }
     }
+}
+
+/// Whole seconds from a JSON number or numeric string, e.g. `1900000000`,
+/// `1.9e9` or `"1900000000"`
+fn epoch_seconds(value: &serde_json::Value) -> Option<i64> {
+    let secs = match value {
+        serde_json::Value::String(s) => s.trim().parse::<f64>().ok()?,
+        other => other.as_f64()?,
+    };
+    // Covers the whole range DateTime accepts; anything else isn't a timestamp
+    (secs.is_finite() && secs.abs() < 1e15).then_some(secs as i64)
 }
 
 /// Whether a rejected registration may succeed without the optional client metadata.
@@ -180,8 +196,11 @@ pub async fn register_client(
     redirect_uri: &str,
     scopes: &[String],
 ) -> Result<RegisteredClient, AuthError> {
+    // No redirects, like rmcp's token requests: the registration endpoint comes from
+    // the server's metadata and is the one place the request goes.
     let http = reqwest::Client::builder()
         .timeout(REGISTRATION_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| AuthError::RegistrationFailed(format!("HTTP client error: {}", e)))?;
 
@@ -241,6 +260,7 @@ async fn post_registration(
         let body = response
             .text()
             .await
+            .map(|body| truncate_chars(body, MAX_ERROR_BODY_CHARS))
             .unwrap_or_else(|_| "cannot get error details".to_string());
         return Err(RegistrationError::Rejected { status, body });
     }
@@ -251,6 +271,14 @@ async fn post_registration(
         .map_err(|e| RegistrationError::Other(format!("analyze response error: {}", e)))?;
 
     Ok(parsed.into_client())
+}
+
+/// `text` cut to at most `max` characters, marked when cut
+fn truncate_chars(text: String, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
+    }
 }
 
 #[cfg(test)]
@@ -362,6 +390,28 @@ mod tests {
             client.client_secret_expires_at,
             DateTime::from_timestamp(1_900_000_000, 0)
         );
+    }
+
+    #[test]
+    fn secret_expiry_sent_as_a_float_is_read() {
+        for value in [serde_json::json!(1.9e9), serde_json::json!("1900000000.0")] {
+            let client = parse_response(serde_json::json!({
+                "client_id": "client-123",
+                "client_secret": "s3cr3t-value",
+                "client_secret_expires_at": value,
+            }));
+            assert_eq!(
+                client.client_secret_expires_at,
+                DateTime::from_timestamp(1_900_000_000, 0),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn error_body_is_truncated_on_a_char_boundary() {
+        assert_eq!(truncate_chars("short".to_string(), 10), "short");
+        assert_eq!(truncate_chars("ééééé".to_string(), 3), "ééé…");
     }
 
     #[test]

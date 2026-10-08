@@ -126,6 +126,9 @@ importers:
       lucide-react:
         specifier: ^0.561.0
         version: 0.561.0(react@19.2.3)
+      monaco-editor:
+        specifier: ^0.55.1
+        version: 0.55.1
       posthog-js:
         specifier: ^1.387.0
         version: 1.387.0
@@ -172,9 +175,6 @@ importers:
       globals:
         specifier: ^16.5.0
         version: 16.5.0
-      monaco-editor:
-        specifier: ^0.55.1
-        version: 0.55.1
       postcss:
         specifier: ^8.5.23
         version: 8.5.29

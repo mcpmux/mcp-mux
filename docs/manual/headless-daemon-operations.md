@@ -102,8 +102,9 @@ Confirm that the socket remains loopback-only:
 
     ss -ltnp '( sport = :45818 )'
 
-The listening address must be 127.0.0.1:45818. Do not use
---auth-disabled in a persistent deployment.
+The listening address must be 127.0.0.1:45818. `--auth-disabled` is for
+one-off local runs only: `mcpmuxd service install` refuses it, and the daemon
+refuses to start with both `--auth-disabled` and `--public-base-url`.
 
 ## Remote operator access
 

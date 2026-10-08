@@ -45,9 +45,22 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Flag combinations the daemon refuses to start with.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn check_args(args: &Args) -> anyhow::Result<()> {
+    if args.auth_disabled && args.public_base_url.is_some() {
+        anyhow::bail!(
+            "--auth-disabled can't be combined with --public-base-url: anyone who reaches \
+             the public URL would get tool access without signing in"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 async fn run(args: Args) -> anyhow::Result<()> {
     let _log_guard = init_logging(&args);
+    check_args(&args)?;
 
     if matches!(
         &args.command,
@@ -257,5 +270,30 @@ fn map_key_policy(arg: KeyProviderArg) -> KeyProviderPolicy {
         KeyProviderArg::Auto => KeyProviderPolicy::Auto,
         KeyProviderArg::Keychain => KeyProviderPolicy::Keychain,
         KeyProviderArg::File => KeyProviderPolicy::File,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_args, Args};
+    use clap::Parser;
+
+    #[test]
+    fn auth_cannot_be_disabled_behind_a_public_url() {
+        let args = Args::parse_from([
+            "mcpmuxd",
+            "--auth-disabled",
+            "--public-base-url",
+            "https://mcp.example.com",
+        ]);
+        assert!(check_args(&args).is_err());
+
+        assert!(check_args(&Args::parse_from(["mcpmuxd", "--auth-disabled"])).is_ok());
+        assert!(check_args(&Args::parse_from([
+            "mcpmuxd",
+            "--public-base-url",
+            "https://mcp.example.com"
+        ]))
+        .is_ok());
     }
 }

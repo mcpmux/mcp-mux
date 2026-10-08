@@ -701,6 +701,107 @@ async fn reused_registration_is_kept_when_the_exchange_fails_otherwise() {
     assert!(event.success, "sign-in failed: {:?}", event.error);
 }
 
+/// Records every registration saved, i.e. every row a concurrent connection could read
+#[derive(Default)]
+struct RecordingOAuthRepo {
+    inner: MockOutboundOAuthRepository,
+    saved: std::sync::Mutex<Vec<OutboundOAuthRegistration>>,
+}
+
+#[async_trait::async_trait]
+impl OutboundOAuthRepository for RecordingOAuthRepo {
+    async fn get(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+    ) -> anyhow::Result<Option<OutboundOAuthRegistration>> {
+        self.inner.get(space_id, server_id).await
+    }
+
+    async fn save(&self, registration: &OutboundOAuthRegistration) -> anyhow::Result<()> {
+        self.saved.lock().unwrap().push(registration.clone());
+        self.inner.save(registration).await
+    }
+
+    async fn delete(&self, space_id: &Uuid, server_id: &str) -> anyhow::Result<()> {
+        self.inner.delete(space_id, server_id).await
+    }
+
+    async fn list_for_space(
+        &self,
+        space_id: &Uuid,
+    ) -> anyhow::Result<Vec<OutboundOAuthRegistration>> {
+        self.inner.list_for_space(space_id).await
+    }
+}
+
+/// Whatever row a connection reads during or after the sign-in, the confidential
+/// client is there with its secret and metadata. When the tokens arrive, rmcp's
+/// credential store saves a bare registration for a client_id it doesn't know; if
+/// the full one were saved only after the exchange, a connection in between would
+/// refresh without the secret and fall back to "sign in required".
+#[tokio::test]
+async fn new_client_is_never_stored_without_its_secret() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    mount_token_endpoint(&mock_server, ClientAuth::Basic).await;
+
+    let repo = Arc::new(RecordingOAuthRepo::default());
+    let flow = Flow::with_oauth_repo(&mock_server, repo.clone(), Uuid::new_v4());
+    let event = flow.sign_in().await;
+    assert!(event.success, "sign-in failed: {:?}", event.error);
+
+    let saved = repo.saved.lock().unwrap().clone();
+    assert!(!saved.is_empty());
+    for registration in &saved {
+        assert_eq!(registration.client_id, CLIENT_ID);
+        assert_eq!(
+            registration.client_secret.as_deref(),
+            Some(CLIENT_SECRET),
+            "a registration was stored without its secret: {registration:?}"
+        );
+        assert!(registration.metadata.is_some(), "stored without metadata");
+    }
+}
+
+/// A new client is saved before its code exchange, so a sign-in that fails for
+/// another reason than `invalid_client` leaves it for the next attempt to reuse,
+/// instead of registering another client at the server
+#[tokio::test]
+async fn new_client_is_reused_after_a_failed_exchange() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&mock_server)
+        .await;
+    mount_token_endpoint(&mock_server, ClientAuth::Basic).await;
+
+    let flow = Flow::new(&mock_server);
+    let event = flow.sign_in().await;
+    assert!(!event.success, "the exchange should fail with the 503");
+    let registration = flow.registration().await.expect("new client kept");
+    assert_eq!(registration.client_secret.as_deref(), Some(CLIENT_SECRET));
+
+    let event = flow.sign_in().await;
+    assert!(event.success, "sign-in failed: {:?}", event.error);
+}
+
 /// A registration whose secret expires is reused until it does; after that, the
 /// next sign-in registers a new client instead of sending the expired secret
 #[tokio::test]

@@ -274,12 +274,48 @@ impl OutboundOAuthManager {
             .is_none_or(|types| types.iter().any(|t| t == "code"))
     }
 
+    /// The OAuth error code of a failed code exchange (RFC 6749 §5.2), e.g.
+    /// `invalid_grant`. rmcp passes on oauth2's message as text:
+    /// "Server returned error response: <code>[: <description>][ (see <uri>)]".
+    fn token_error_code(error: &AuthError) -> Option<&str> {
+        let AuthError::TokenExchangeFailed(msg) = error else {
+            return None;
+        };
+        msg.strip_prefix("Server returned error response: ")?
+            .split([':', ' '])
+            .next()
+            .filter(|code| !code.is_empty())
+    }
+
     /// Whether a failed code exchange means the server no longer accepts the client
     /// (`invalid_client`, RFC 6749 §5.2), so its registration can't be used again.
     /// Other failures (network errors, 5xx, `invalid_grant` for an expired or reused
-    /// code, a failed save) say nothing about the registration.
+    /// code, a failed save) say nothing about the registration. Only the error code
+    /// counts: a description or error URI that mentions invalid_client doesn't.
     fn is_invalid_client(error: &AuthError) -> bool {
-        matches!(error, AuthError::TokenExchangeFailed(msg) if msg.contains("invalid_client"))
+        Self::token_error_code(error) == Some("invalid_client")
+    }
+
+    /// Drop the stored client registration, and the tokens issued to it, after the
+    /// server answered `invalid_client` for `client_id`. Only if that client is still
+    /// the stored one: a sign-in started meanwhile may have registered another, and
+    /// its registration must stay. Returns whether anything was dropped.
+    async fn drop_rejected_client(
+        backend_oauth_repo: &dyn OutboundOAuthRepository,
+        credential_repo: &dyn CredentialRepository,
+        space_id: Uuid,
+        server_id: &str,
+        client_id: &str,
+    ) -> anyhow::Result<bool> {
+        let stored = backend_oauth_repo
+            .get_client_id(&space_id, server_id)
+            .await?;
+        if stored.as_deref() != Some(client_id) {
+            return Ok(false);
+        }
+        backend_oauth_repo.delete(&space_id, server_id).await?;
+        credential_repo.clear_tokens(&space_id, server_id).await?;
+        Ok(true)
     }
 
     /// Convert scope Vec to slice references for RMCP API
@@ -329,7 +365,7 @@ impl OutboundOAuthManager {
         &self,
         backend_oauth_repo: &dyn OutboundOAuthRepository,
         registration: &mcpmux_core::OutboundOAuthRegistration,
-    ) {
+    ) -> anyhow::Result<()> {
         let space_id_str = registration.space_id.to_string();
         let server_id = registration.server_id.as_str();
         match backend_oauth_repo.save(registration).await {
@@ -352,6 +388,7 @@ impl OutboundOAuthManager {
                     })),
                 )
                 .await;
+                Ok(())
             }
             Err(e) => {
                 error!("[OAuth] Failed to save registration: {}", e);
@@ -363,6 +400,7 @@ impl OutboundOAuthManager {
                     Some(serde_json::json!({"error": e.to_string()})),
                 )
                 .await;
+                Err(e)
             }
         }
     }
@@ -1122,10 +1160,13 @@ impl OutboundOAuthManager {
         // The client from our own DCR, with its secret if the server issued one. rmcp
         // keeps the secret only in memory, so it's saved with the registration.
         let mut registered_client: Option<RegisteredClient> = None;
+        // The client_id this sign-in uses, so a failed exchange drops only that client
+        let flow_client_id: String;
 
         if can_reuse_dcr {
             // REUSE EXISTING CLIENT_ID - redirect_uri matches!
             let reg = existing_registration.as_ref().unwrap();
+            flow_client_id = reg.client_id.clone();
             info!(
                 "[OAuth] Reusing existing client_id={} for {}/{} (redirect_uri matches)",
                 reg.client_id, space_id, server_id
@@ -1413,8 +1454,19 @@ impl OutboundOAuthManager {
                         metadata_for_storage.as_ref(),
                         registered_client.as_ref(),
                     );
-                    self.save_registration(backend_oauth_repo.as_ref(), &registration)
+                    let saved = self
+                        .save_registration(backend_oauth_repo.as_ref(), &registration)
                         .await;
+                    // Without the saved registration, the tokens would be stored with a
+                    // bare one and every refresh would go out without the secret. A
+                    // public client loses nothing but its metadata, so it carries on.
+                    if let (Err(e), Some(_)) = (saved, registration.client_secret.as_ref()) {
+                        return Err(anyhow::anyhow!(
+                            "Failed to save the new client registration: {}",
+                            e
+                        ));
+                    }
+                    flow_client_id = client_id;
                     oauth_state = OAuthState::Session(session);
                     let message = if uses_cimd {
                         "Client configured with Client ID Metadata Document (CIMD)"
@@ -1547,6 +1599,7 @@ impl OutboundOAuthManager {
         let timeout = self.timeout;
         let completion_tx = self.completion_tx.clone();
         let backend_oauth_repo_clone = backend_oauth_repo.clone();
+        let flow_client_id_clone = flow_client_id.clone();
 
         // Clone log manager for the spawned task
         let log_manager_clone = self.log_manager.clone();
@@ -1720,20 +1773,23 @@ impl OutboundOAuthManager {
                         // issued to it, so the next attempt registers a fresh client.
                         // Any other failure says nothing about the registration.
                         if Self::is_invalid_client(&e) {
-                            let dropped = match backend_oauth_repo_clone
-                                .delete(&space_id, &server_id_clone)
-                                .await
-                            {
-                                Ok(()) => credential_repo_clone
-                                    .clear_tokens(&space_id, &server_id_clone)
-                                    .await
-                                    .map(|_| ()),
-                                Err(e) => Err(e),
-                            };
+                            let dropped = Self::drop_rejected_client(
+                                backend_oauth_repo_clone.as_ref(),
+                                credential_repo_clone.as_ref(),
+                                space_id,
+                                &server_id_clone,
+                                &flow_client_id_clone,
+                            )
+                            .await;
                             match dropped {
-                                Ok(()) => {
+                                Ok(false) => info!(
+                                    "[OAuth] Client rejected for {}/{}, but the stored \
+                                     registration is another client now; keeping it",
+                                    space_id, server_id_clone
+                                ),
+                                Ok(true) => {
                                     warn!(
-                                        "[OAuth] Dropped reused client registration for {}/{} \
+                                        "[OAuth] Dropped client registration for {}/{} \
                                          after invalid_client",
                                         space_id, server_id_clone
                                     );
@@ -1895,6 +1951,48 @@ impl OutboundOAuthManager {
 impl Default for OutboundOAuthManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod token_error_tests {
+    use super::OutboundOAuthManager;
+    use rmcp::transport::auth::AuthError;
+
+    fn exchange_error(msg: &str) -> AuthError {
+        AuthError::TokenExchangeFailed(msg.to_string())
+    }
+
+    #[test]
+    fn invalid_client_is_read_from_the_error_code() {
+        for msg in [
+            "Server returned error response: invalid_client",
+            "Server returned error response: invalid_client: bad client secret",
+            "Server returned error response: invalid_client (see https://auth.example/e)",
+        ] {
+            assert!(
+                OutboundOAuthManager::is_invalid_client(&exchange_error(msg)),
+                "{msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_client_elsewhere_in_the_message_is_not_the_code() {
+        for msg in [
+            "Server returned error response: invalid_grant: code issued to invalid_client 42",
+            "Server returned error response: invalid_grant (see https://auth.example/invalid_client)",
+            "Server returned error response: invalid_client_metadata",
+            "server returned empty error response",
+        ] {
+            assert!(
+                !OutboundOAuthManager::is_invalid_client(&exchange_error(msg)),
+                "{msg}"
+            );
+        }
+        assert!(!OutboundOAuthManager::is_invalid_client(
+            &AuthError::RegistrationFailed("invalid_client".to_string())
+        ));
     }
 }
 

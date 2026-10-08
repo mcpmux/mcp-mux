@@ -239,9 +239,18 @@ impl Flow {
     async fn sign_in(&self) -> OAuthCompleteEvent {
         let mut events = self.manager.subscribe();
         let auth_url = self.start().await.expect("start_oauth_flow should succeed");
+        self.complete(&auth_url, &mut events).await
+    }
 
-        let redirect_uri = query_param(&auth_url, "redirect_uri").expect("redirect_uri param");
-        let state = query_param(&auth_url, "state").expect("state param");
+    /// Play the browser for a started flow: send the authorization code to the
+    /// loopback redirect URI and wait for McpMux to finish the token exchange
+    async fn complete(
+        &self,
+        auth_url: &url::Url,
+        events: &mut tokio::sync::broadcast::Receiver<OAuthCompleteEvent>,
+    ) -> OAuthCompleteEvent {
+        let redirect_uri = query_param(auth_url, "redirect_uri").expect("redirect_uri param");
+        let state = query_param(auth_url, "state").expect("state param");
         let mut callback = url::Url::parse(&redirect_uri).unwrap();
         callback
             .query_pairs_mut()
@@ -1158,4 +1167,140 @@ async fn http_transport_reconnects_despite_an_unusable_redirect_uri() {
         reg.redirect_uri = Some("not a url".to_string());
     })
     .await;
+}
+
+/// A sign-in that fails with invalid_client drops only the client it used. If
+/// another sign-in registered a different client in the meantime, that one stays.
+#[tokio::test]
+async fn invalid_client_keeps_a_client_registered_meanwhile() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(invalid_client())
+        .mount(&mock_server)
+        .await;
+
+    let flow = Flow::new(&mock_server);
+    let mut events = flow.manager.subscribe();
+    let auth_url = flow.start().await.expect("start_oauth_flow should succeed");
+    flow.edit_registration(|registration| {
+        registration.client_id = "client-from-a-newer-sign-in".to_string();
+    })
+    .await;
+
+    let event = flow.complete(&auth_url, &mut events).await;
+    assert!(!event.success);
+    let registration = flow.registration().await.expect("newer client kept");
+    assert_eq!(registration.client_id, "client-from-a-newer-sign-in");
+}
+
+/// Only the error code counts: an invalid_grant whose description or error_uri
+/// mentions invalid_client says nothing about the client
+#[tokio::test]
+async fn invalid_client_in_an_error_description_keeps_the_client() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "invalid_grant",
+            "error_description": "code was issued to invalid_client 42",
+            "error_uri": "https://auth.example/errors/invalid_client",
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let flow = Flow::new(&mock_server);
+    let event = flow.sign_in().await;
+    assert!(!event.success);
+    let registration = flow.registration().await.expect("registration kept");
+    assert_eq!(registration.client_id, CLIENT_ID);
+    assert_eq!(registration.client_secret.as_deref(), Some(CLIENT_SECRET));
+}
+
+/// A registration store whose saves fail, e.g. a locked database
+#[derive(Default)]
+struct UnwritableOAuthRepo(MockOutboundOAuthRepository);
+
+#[async_trait::async_trait]
+impl OutboundOAuthRepository for UnwritableOAuthRepo {
+    async fn get(
+        &self,
+        space_id: &Uuid,
+        server_id: &str,
+    ) -> anyhow::Result<Option<OutboundOAuthRegistration>> {
+        self.0.get(space_id, server_id).await
+    }
+
+    async fn save(&self, _registration: &OutboundOAuthRegistration) -> anyhow::Result<()> {
+        anyhow::bail!("database is locked")
+    }
+
+    async fn delete(&self, space_id: &Uuid, server_id: &str) -> anyhow::Result<()> {
+        self.0.delete(space_id, server_id).await
+    }
+
+    async fn list_for_space(
+        &self,
+        space_id: &Uuid,
+    ) -> anyhow::Result<Vec<OutboundOAuthRegistration>> {
+        self.0.list_for_space(space_id).await
+    }
+}
+
+/// A new confidential client that can't be saved fails the sign-in: otherwise the
+/// tokens would be stored with a bare registration, and every refresh would go out
+/// without the secret
+#[tokio::test]
+async fn new_confidential_client_that_cannot_be_saved_fails_the_sign_in() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .mount(&mock_server)
+        .await;
+
+    let flow = Flow::with_oauth_repo(
+        &mock_server,
+        Arc::new(UnwritableOAuthRepo::default()),
+        Uuid::new_v4(),
+    );
+    let error = flow.start().await.expect_err("sign-in should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to save the new client registration"),
+        "{error}"
+    );
+}
+
+/// A public client has nothing to lose but its metadata, so the sign-in goes on
+#[tokio::test]
+async fn new_public_client_is_used_even_if_it_cannot_be_saved() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata(&mock_server).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(None))
+        .mount(&mock_server)
+        .await;
+
+    let flow = Flow::with_oauth_repo(
+        &mock_server,
+        Arc::new(UnwritableOAuthRepo::default()),
+        Uuid::new_v4(),
+    );
+    flow.start().await.expect("sign-in should start");
 }

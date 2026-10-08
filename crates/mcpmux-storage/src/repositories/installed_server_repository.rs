@@ -86,6 +86,85 @@ impl SqliteInstalledServerRepository {
         })
     }
 
+    /// Encrypt one JSON settings column (env overrides, appended args, extra
+    /// headers). They routinely hold secrets (`Authorization` headers,
+    /// `--api-key=…` arguments, tokens in env), like the input values.
+    fn encrypt_json<T: serde::Serialize>(&self, field: &str, value: &T) -> Result<String> {
+        let json = serde_json::to_string(value)?;
+        self.encryptor
+            .encrypt(&json)
+            .map_err(|e| anyhow::anyhow!("Failed to encrypt {field}: {e}"))
+    }
+
+    /// Decrypt one JSON settings column, accepting legacy plaintext JSON.
+    /// Same three cases as [`Self::decrypt_input_values`].
+    fn decrypt_json<T: serde::de::DeserializeOwned + Default>(
+        &self,
+        field: &str,
+        stored: Option<String>,
+    ) -> Result<T> {
+        let Some(data) = stored.filter(|d| !d.trim().is_empty()) else {
+            return Ok(T::default());
+        };
+        if let Ok(json) = self.encryptor.decrypt(&data) {
+            return serde_json::from_str(&json)
+                .map_err(|e| anyhow::anyhow!("Corrupt decrypted {field} (not JSON): {e}"));
+        }
+        serde_json::from_str(&data).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to decrypt {field} and data is not valid plaintext JSON \
+                 (wrong master key or tampered ciphertext): {e}"
+            )
+        })
+    }
+
+    /// Encrypt settings columns still stored as plaintext JSON by earlier
+    /// versions (input values, env overrides, appended args, extra
+    /// headers). Run once at startup; returns how many rows changed.
+    pub async fn encrypt_plaintext_rows(&self) -> Result<usize> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let rows: Vec<(String, [Option<String>; 4])> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, input_values, env_overrides, args_append, extra_headers
+                 FROM installed_servers",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?],
+                ))
+            })?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+
+        let mut changed = 0;
+        for (id, columns) in rows {
+            let mut updated = columns.clone();
+            for value in updated.iter_mut().flatten() {
+                let is_plaintext_json = !value.trim().is_empty()
+                    && self.encryptor.decrypt(value).is_err()
+                    && serde_json::from_str::<serde_json::Value>(value).is_ok();
+                if is_plaintext_json {
+                    *value = self
+                        .encryptor
+                        .encrypt(value)
+                        .map_err(|e| anyhow::anyhow!("Failed to encrypt server {id}: {e}"))?;
+                }
+            }
+            if updated != columns {
+                conn.execute(
+                    "UPDATE installed_servers
+                     SET input_values = ?2, env_overrides = ?3, args_append = ?4, extra_headers = ?5
+                     WHERE id = ?1",
+                    params![id, updated[0], updated[1], updated[2], updated[3]],
+                )?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
+    }
+
     /// Parse a datetime string to DateTime<Utc>.
     fn parse_datetime(s: &str) -> DateTime<Utc> {
         // Try RFC3339 first
@@ -99,26 +178,9 @@ impl SqliteInstalledServerRepository {
         Utc::now()
     }
 
-    /// Parse JSON string to HashMap.
-    fn parse_json_map(s: Option<String>) -> HashMap<String, String> {
-        s.and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
-    }
-
-    /// Parse JSON string to Vec.
-    fn parse_json_vec(s: Option<String>) -> Vec<String> {
-        s.and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
-    }
-
     /// Serialize HashMap to JSON string.
     fn serialize_json_map(map: &HashMap<String, String>) -> String {
         serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string())
-    }
-
-    /// Serialize Vec to JSON string.
-    fn serialize_json_vec(vec: &[String]) -> String {
-        serde_json::to_string(vec).unwrap_or_else(|_| "[]".to_string())
     }
 
     /// Serialize InstallationSource to database string format.
@@ -178,6 +240,16 @@ impl SqliteInstalledServerRepository {
         let input_values = self
             .decrypt_input_values(row.input_values)
             .map_err(|e| anyhow::anyhow!("server {}: {}", row.server_id, e))?;
+        let with_server = |e: anyhow::Error| anyhow::anyhow!("server {}: {}", row.server_id, e);
+        let env_overrides = self
+            .decrypt_json("env overrides", row.env_overrides)
+            .map_err(with_server)?;
+        let args_append = self
+            .decrypt_json("appended args", row.args_append)
+            .map_err(with_server)?;
+        let extra_headers = self
+            .decrypt_json("extra headers", row.extra_headers)
+            .map_err(with_server)?;
         Ok(InstalledServer {
             id: Uuid::parse_str(&row.id).unwrap_or_else(|_| Uuid::new_v4()),
             space_id: row.space_id,
@@ -186,9 +258,9 @@ impl SqliteInstalledServerRepository {
             cached_definition: row.cached_definition,
             input_values,
             enabled: row.enabled,
-            env_overrides: Self::parse_json_map(row.env_overrides),
-            args_append: Self::parse_json_vec(row.args_append),
-            extra_headers: Self::parse_json_map(row.extra_headers),
+            env_overrides,
+            args_append,
+            extra_headers,
             oauth_connected: row.oauth_connected,
             source: Self::parse_source(row.source),
             created_at: Self::parse_datetime(&row.created_at),
@@ -308,9 +380,9 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.cached_definition,
                 encrypted_inputs,
                 server.enabled,
-                Self::serialize_json_map(&server.env_overrides),
-                Self::serialize_json_vec(&server.args_append),
-                Self::serialize_json_map(&server.extra_headers),
+                self.encrypt_json("env overrides", &server.env_overrides)?,
+                self.encrypt_json("appended args", &server.args_append)?,
+                self.encrypt_json("extra headers", &server.extra_headers)?,
                 server.oauth_connected,
                 server.created_at.to_rfc3339(),
                 server.updated_at.to_rfc3339(),
@@ -338,9 +410,9 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.cached_definition,
                 encrypted_inputs,
                 server.enabled,
-                Self::serialize_json_map(&server.env_overrides),
-                Self::serialize_json_vec(&server.args_append),
-                Self::serialize_json_map(&server.extra_headers),
+                self.encrypt_json("env overrides", &server.env_overrides)?,
+                self.encrypt_json("appended args", &server.args_append)?,
+                self.encrypt_json("extra headers", &server.extra_headers)?,
                 server.oauth_connected,
                 Utc::now().to_rfc3339(),
                 Self::serialize_source(&server.source),

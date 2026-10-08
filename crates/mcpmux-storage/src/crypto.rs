@@ -143,7 +143,8 @@ impl FieldEncryptor {
         let nonce = Nonce::assume_unique_for_key(nonce_array);
 
         // Decrypt in-place
-        let mut in_out = encrypted.to_vec();
+        // Decrypted in place: wipe this copy once the String is built.
+        let mut in_out = zeroize::Zeroizing::new(encrypted.to_vec());
         let plaintext = self
             .key
             .open_in_place(nonce, aad, &mut in_out)

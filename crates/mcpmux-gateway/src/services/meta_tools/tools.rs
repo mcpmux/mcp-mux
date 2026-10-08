@@ -461,6 +461,75 @@ fn opt_str_arg(args: &Value, field: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Longest FeatureSet name a client may set. Names appear in the approval
+/// dialog and in every FeatureSet picker, so they stay short and single-line.
+const MAX_NAME_CHARS: usize = 64;
+/// Longest FeatureSet description a client may set.
+const MAX_DESCRIPTION_CHARS: usize = 500;
+
+/// Like [`opt_str_arg`], for text the user will read in the approval dialog
+/// and the UI: at most `max_chars` characters and no control characters, so
+/// a client can't pad or break up the dialog with what it chose.
+fn opt_label_arg(
+    args: &Value,
+    field: &str,
+    max_chars: usize,
+) -> Result<Option<String>, MetaToolError> {
+    let Some(value) = opt_str_arg(args, field) else {
+        return Ok(None);
+    };
+    if value.chars().count() > max_chars {
+        return Err(MetaToolError::InvalidArgument(format!(
+            "`{field}` is longer than {max_chars} characters"
+        )));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(MetaToolError::InvalidArgument(format!(
+            "`{field}` must not contain control characters or line breaks"
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// Qualified names of the tools a set of FeatureSets grants in a Space,
+/// sorted — what the approval dialog lists as before/after.
+async fn feature_set_tool_names(
+    call: &MetaToolCall<'_>,
+    space_id: Uuid,
+    feature_set_ids: &[String],
+) -> Result<Vec<String>, MetaToolError> {
+    if feature_set_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let features = call
+        .ctx
+        .feature_service
+        .resolve_feature_sets(&space_id.to_string(), feature_set_ids)
+        .await
+        .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+    let mut names: Vec<String> = features
+        .iter()
+        .filter(|f| f.feature_type == FeatureType::Tool && f.is_available)
+        .map(|f| f.qualified_name())
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// `{ before?, after, added, removed }` for the approval dialog. `before` is
+/// omitted when there was no previous state to compare against.
+fn tool_diff(before: Option<&[String]>, after: &[String]) -> Value {
+    let previous = before.unwrap_or_default();
+    let added: Vec<&String> = after.iter().filter(|t| !previous.contains(t)).collect();
+    let removed: Vec<&String> = previous.iter().filter(|t| !after.contains(t)).collect();
+    let mut diff = json!({ "after": after, "added": added, "removed": removed });
+    if let Some(before) = before {
+        diff["before"] = json!(before);
+    }
+    diff
+}
+
 /// String-array arg (e.g. a list of qualified tool names); empty when absent.
 fn str_array_arg(args: &Value, field: &str) -> Vec<String> {
     args.get(field)
@@ -534,10 +603,10 @@ impl ManageFeatureSetTool {
         call: &MetaToolCall<'_>,
         space_id: Uuid,
     ) -> Result<CallToolResult, MetaToolError> {
-        let name = opt_str_arg(&call.args, "name").ok_or_else(|| {
+        let name = opt_label_arg(&call.args, "name", MAX_NAME_CHARS)?.ok_or_else(|| {
             MetaToolError::InvalidArgument("create requires a non-empty `name`".into())
         })?;
-        let description = opt_str_arg(&call.args, "description");
+        let description = opt_label_arg(&call.args, "description", MAX_DESCRIPTION_CHARS)?;
         let add = str_array_arg(&call.args, "add");
         if add.is_empty() {
             return Err(MetaToolError::InvalidArgument(
@@ -611,8 +680,8 @@ impl ManageFeatureSetTool {
             })?;
         ensure_custom_in_space(&fs, space_id, fs_id)?;
 
-        let new_name = opt_str_arg(&call.args, "name");
-        let new_description = opt_str_arg(&call.args, "description");
+        let new_name = opt_label_arg(&call.args, "name", MAX_NAME_CHARS)?;
+        let new_description = opt_label_arg(&call.args, "description", MAX_DESCRIPTION_CHARS)?;
         let add = str_array_arg(&call.args, "add");
         let remove = str_array_arg(&call.args, "remove");
         if new_name.is_none() && new_description.is_none() && add.is_empty() && remove.is_empty() {
@@ -663,18 +732,14 @@ impl ManageFeatureSetTool {
             true,
             call.args.clone(),
             || async move {
-                // Rename / description first — `update` rewrites the row from
-                // `fs.members` (the set we loaded, unchanged here), so the
-                // member deltas below still land on top.
+                // Rename / description only touch those columns: the members
+                // loaded before the (possibly minutes-long) approval wait may
+                // be stale by now, and must not be written back over edits
+                // made in the meantime.
                 if new_name.is_some() || new_description.is_some() {
-                    let mut updated = fs.clone();
-                    if let Some(n) = new_name {
-                        updated.name = n;
-                    }
-                    if let Some(d) = new_description {
-                        updated.description = Some(d);
-                    }
-                    fs_repo.update(&updated).await?;
+                    fs_repo
+                        .update_details(&fs_id_s, new_name.as_deref(), new_description.as_deref())
+                        .await?;
                 }
                 for feature in &remove_features {
                     fs_repo
@@ -718,6 +783,8 @@ impl ManageFeatureSetTool {
 
         let space = space_label(call, space_id).await;
         let summary = format!("Delete FeatureSet '{}' in Space '{space}'", fs.name);
+        let granted = feature_set_tool_names(call, space_id, &[fs_id.to_string()]).await?;
+        let diff = tool_diff(Some(&granted), &[]);
         let fs_repo = call.ctx.feature_set_repo.clone();
         let event_tx = call.ctx.domain_event_tx.clone();
         let fs_id_s = fs_id.to_string();
@@ -727,7 +794,7 @@ impl ManageFeatureSetTool {
             summary,
             Some(space),
             Some(space_id),
-            None,
+            Some(diff),
             true,
             call.args.clone(),
             || async move {
@@ -915,6 +982,12 @@ impl MetaTool for BindCurrentWorkspaceTool {
             .await?;
         let verb = if existing.is_some() { "Rebind" } else { "Bind" };
         let space = space_label(&call, space_id).await;
+        let after = feature_set_tool_names(&call, space_id, &fs_ids).await?;
+        let before = match &existing {
+            Some(b) => Some(feature_set_tool_names(&call, b.space_id, &b.feature_set_ids).await?),
+            None => None,
+        };
+        let diff = tool_diff(before.as_deref(), &after);
         let summary = format!(
             "{verb} workspace '{normalized}' to FeatureSet '{fs_label}' in Space '{space}'. \
              Affects every future connection that reports this path."
@@ -928,7 +1001,7 @@ impl MetaTool for BindCurrentWorkspaceTool {
             summary,
             Some(space),
             Some(space_id),
-            None,
+            Some(diff),
             true,
             call.args.clone(),
             || async move {

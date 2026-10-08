@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { AlertTriangle, CheckCircle2, SlidersHorizontal, XCircle } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
 import { useNavigateTo } from '@/stores';
+import { listOAuthClients } from '@/lib/api/gateway';
 
 /**
  * Incoming approval request emitted by the gateway's ApprovalBroker.
@@ -25,15 +26,30 @@ export interface ApprovalRequest {
     /**
      * Tool-list diff the dialog renders. Freeform by design — the backend's
      * `ApprovalPayload.diff` is an arbitrary JSON value and each write tool
-     * sends a different shape (`mcpmux_create_feature_set` sends
-     * `{ added_tools }`; others may send `{ before, after, added, removed }`).
-     * Read it defensively (see `toStringArray`); never assume a field exists.
+     * sends a different shape (`{ added }`, `{ added, removed }`, or
+     * `{ before?, after, added, removed }` for binds and deletes; older
+     * builds sent `{ added_tools }`). Read it defensively (see
+     * `toStringArray`); never assume a field exists.
      */
     diff: null | Record<string, unknown>;
     raw_args: unknown;
     affects_other_clients: boolean;
   };
   expires_at_unix_secs: number;
+}
+
+/** Longest argument dump the dialog renders. */
+const MAX_ARGS_CHARS = 4000;
+
+/** The client's raw arguments as indented JSON, capped at `MAX_ARGS_CHARS`. */
+export function formatRawArgs(args: unknown): string {
+  let text: string;
+  try {
+    text = JSON.stringify(args ?? null, null, 2) ?? 'null';
+  } catch {
+    text = String(args);
+  }
+  return text.length > MAX_ARGS_CHARS ? `${text.slice(0, MAX_ARGS_CHARS)}\n…` : text;
 }
 
 /** Coerce a freeform JSON value into a `string[]`, dropping non-strings. */
@@ -55,6 +71,32 @@ export function MetaToolApprovalDialog() {
   const [queue, setQueue] = useState<ApprovalRequest[]>([]);
   const current = queue[0];
   const navigateTo = useNavigateTo();
+
+  // Name the requesting client the way the user knows it (their alias, else
+  // its registered name) from McpMux's own client list, never from the request.
+  const [requester, setRequester] = useState<{ clientId: string; name: string } | null>(null);
+  const currentClientId = current?.client_id;
+  useEffect(() => {
+    if (!currentClientId) return;
+    let cancelled = false;
+    listOAuthClients()
+      .then((clients) => {
+        if (cancelled || !Array.isArray(clients)) return;
+        const client = clients.find((c) => c.client_id === currentClientId);
+        if (client) {
+          setRequester({
+            clientId: currentClientId,
+            name: client.client_alias || client.client_name,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentClientId]);
+  const requesterName =
+    requester && requester.clientId === currentClientId ? requester.name : null;
 
   useEffect(() => {
     const unlistenPromise = listen<ApprovalRequest>(
@@ -109,6 +151,7 @@ export function MetaToolApprovalDialog() {
   );
   const removed = useMemo(() => toStringArray(rawDiff?.removed), [rawDiff]);
   const hasBeforeAfter = rawDiff != null && ('before' in rawDiff || 'after' in rawDiff);
+  const hasBefore = rawDiff != null && 'before' in rawDiff;
   const beforeCount = toStringArray(rawDiff?.before).length;
   const afterCount = hasBeforeAfter ? toStringArray(rawDiff?.after).length : added.length;
   const hasDiff = rawDiff != null && (added.length > 0 || removed.length > 0 || hasBeforeAfter);
@@ -144,6 +187,20 @@ export function MetaToolApprovalDialog() {
                 tool:&nbsp;{current.payload.tool_name}
               </span>
             </div>
+            <p
+              className="mt-1 text-xs text-[rgb(var(--muted))]"
+              data-testid="meta-tool-approval-client"
+            >
+              Requested by{' '}
+              <span className="font-medium text-[rgb(var(--foreground))]">
+                {requesterName ?? 'an unknown client'}
+              </span>{' '}
+              <span className="font-mono break-all" title={current.client_id}>
+                ({current.client_id.length > 60
+                  ? `${current.client_id.slice(0, 60)}…`
+                  : current.client_id})
+              </span>
+            </p>
           </div>
 
           {current.payload.affects_other_clients && (
@@ -163,7 +220,7 @@ export function MetaToolApprovalDialog() {
           {hasDiff && (
             <div className="border border-[rgb(var(--border-subtle))] rounded text-xs">
               <div className="grid grid-cols-3 divide-x divide-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
-                <Stat label="Before" value={hasBeforeAfter ? beforeCount : '—'} />
+                <Stat label="Before" value={hasBefore ? beforeCount : '—'} />
                 <Stat label="After" value={afterCount} emphasis />
                 <Stat label="Delta" value={deltaLabel} />
               </div>
@@ -189,6 +246,15 @@ export function MetaToolApprovalDialog() {
               )}
             </div>
           )}
+
+          <details className="text-xs" data-testid="meta-tool-approval-args">
+            <summary className="cursor-pointer text-[rgb(var(--muted))]">
+              Arguments sent by the client
+            </summary>
+            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-[rgb(var(--surface))] p-2 font-mono">
+              {formatRawArgs(current.payload.raw_args)}
+            </pre>
+          </details>
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button

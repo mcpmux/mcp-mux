@@ -70,14 +70,15 @@ async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
 /// `mcpmux_list_spaces` — writes stay gated by the approval dialog, which names
 /// the target Space so cross-Space changes are a conscious user choice.
 async fn target_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError> {
-    // When the caller's workspace is scoped to a Space by base directory, that
+    // When the caller is confined to one Space (a client locked to a Space, a
+    // tokenless connection, or a workspace scoped by base directory), that
     // Space is authoritative: the meta-tools see ONLY it (no cross-Space
     // targeting). An explicit `space_id` that names a different Space is
-    // rejected; omitting it (or naming the scoped Space) resolves to it.
+    // rejected; omitting it (or naming the confined Space) resolves to it.
     if let Some(scoped) = call
         .ctx
         .resolver
-        .scoped_space_for_session(call.session_id)
+        .confined_space(call.session_id, call.client_id)
         .await?
     {
         if let Some(s) = opt_str_arg(&call.args, "space_id") {
@@ -86,7 +87,7 @@ async fn target_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
             })?;
             if id != scoped {
                 return Err(MetaToolError::InvalidArgument(format!(
-                    "This workspace is scoped to space '{scoped}' by its base directory; \
+                    "This connection is limited to space '{scoped}'; \
                      it can't target another space ('{id}')."
                 )));
             }
@@ -315,13 +316,13 @@ impl MetaTool for ListSpacesTool {
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
         let mut spaces = call.ctx.space_repo.list().await?;
-        // When the caller's workspace is scoped to a Space by base directory,
-        // expose ONLY that Space — self-optimization must not reach across into
-        // other Spaces' tools.
+        // When the caller is confined to one Space (locked client, tokenless
+        // connection, or base-dir-scoped workspace), expose ONLY that Space —
+        // self-optimization must not reach across into other Spaces' tools.
         if let Some(scoped) = call
             .ctx
             .resolver
-            .scoped_space_for_session(call.session_id)
+            .confined_space(call.session_id, call.client_id)
             .await?
         {
             spaces.retain(|s| s.id == scoped);
@@ -417,6 +418,7 @@ async fn with_approval<F, Fut, T>(
     tool_name: &'static str,
     summary: String,
     space_name: Option<String>,
+    space_id: Option<Uuid>,
     diff: Option<Value>,
     affects_other_clients: bool,
     raw_args: Value,
@@ -430,6 +432,7 @@ where
         tool_name: tool_name.to_string(),
         summary,
         space_name,
+        space_id,
         diff,
         raw_args,
         affects_other_clients,
@@ -566,6 +569,7 @@ impl ManageFeatureSetTool {
             "mcpmux_manage_feature_set",
             summary,
             Some(space),
+            Some(space_id),
             Some(diff),
             false,
             call.args.clone(),
@@ -654,6 +658,7 @@ impl ManageFeatureSetTool {
             "mcpmux_manage_feature_set",
             summary,
             Some(space),
+            Some(space_id),
             Some(diff),
             true,
             call.args.clone(),
@@ -721,6 +726,7 @@ impl ManageFeatureSetTool {
             "mcpmux_manage_feature_set",
             summary,
             Some(space),
+            Some(space_id),
             None,
             true,
             call.args.clone(),
@@ -921,6 +927,7 @@ impl MetaTool for BindCurrentWorkspaceTool {
             "mcpmux_bind_current_workspace",
             summary,
             Some(space),
+            Some(space_id),
             None,
             true,
             call.args.clone(),

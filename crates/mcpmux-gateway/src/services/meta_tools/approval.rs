@@ -35,6 +35,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::MetaToolError;
+use crate::services::ANONYMOUS_CLIENT_ID;
 
 /// Default timeout for a single approval prompt.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -79,6 +80,10 @@ pub struct ApprovalPayload {
     /// `None` for writes with no single target Space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space_name: Option<String>,
+    /// Id of the Space this write targets. "Always allow" grants are scoped
+    /// to it, so approving writes to one Space never approves another.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_id: Option<Uuid>,
     /// Tool-list diff the dialog shows to make the change concrete.
     /// Optional because some writes (e.g. create_feature_set without
     /// activation) don't shift the caller's resolved toolset.
@@ -110,15 +115,25 @@ pub type ApprovalPublisher = Arc<
     dyn Fn(ApprovalRequest) -> futures::future::BoxFuture<'static, bool> + Send + Sync + 'static,
 >;
 
+/// What an "always allow" grant covers: one client, one tool, one target Space.
+type GrantKey = (String, String, Option<Uuid>);
+
+/// A prompt waiting for the user. The grant scope is kept here, server-side,
+/// so a response can't widen it.
+struct PendingApproval {
+    tx: oneshot::Sender<ApprovalDecision>,
+    grant: GrantKey,
+}
+
 /// The broker itself.
 pub struct ApprovalBroker {
-    /// Pending oneshot senders keyed by request_id — the Tauri command
+    /// Pending prompts keyed by request_id — the Tauri command
     /// `respond_to_meta_tool_approval` resolves these.
-    pending: DashMap<String, oneshot::Sender<ApprovalDecision>>,
-    /// Session-scoped always-allow grants, keyed by (client_id, tool_name).
-    /// `client_id` is opaque (UUID for preset clients, URL for DCR clients);
-    /// the broker only does equality lookups.
-    always_allow: DashMap<(String, String), ()>,
+    pending: DashMap<String, PendingApproval>,
+    /// Session-scoped always-allow grants, keyed by (client_id, tool_name,
+    /// target Space). `client_id` is opaque (UUID for preset clients, URL for
+    /// DCR clients); the broker only does equality lookups.
+    always_allow: DashMap<GrantKey, ()>,
     /// (client_id) -> Vec<request_timestamp> for rate limiting.
     rate_limit: DashMap<String, Vec<Instant>>,
     /// Published to the desktop layer; `None` means headless.
@@ -181,9 +196,9 @@ impl ApprovalBroker {
     /// For tests / headless scenarios: pre-approve everything from a
     /// specific client.
     #[cfg(test)]
-    pub fn insert_always_allow(&self, client_id: &str, tool_name: &str) {
+    pub fn insert_always_allow(&self, client_id: &str, tool_name: &str, space_id: Option<Uuid>) {
         self.always_allow
-            .insert((client_id.to_string(), tool_name.to_string()), ());
+            .insert((client_id.to_string(), tool_name.to_string(), space_id), ());
     }
 
     /// Resolve a pending approval. Called from Tauri command when the user
@@ -196,21 +211,29 @@ impl ApprovalBroker {
         tool_name: &str,
         decision: ApprovalDecision,
     ) -> bool {
-        // Persist always-allow before firing the waiter so a racing second
-        // call from the same client sees it.
-        if matches!(decision, ApprovalDecision::AlwaysForThisSessionAndClient) {
-            self.always_allow
-                .insert((client_id.to_string(), tool_name.to_string()), ());
-        }
-        if let Some((_, tx)) = self.pending.remove(request_id) {
-            tx.send(decision).is_ok()
-        } else {
+        let Some((_, pending)) = self.pending.remove(request_id) else {
             warn!(
                 %request_id,
                 "[ApprovalBroker] respond() for unknown/expired request",
             );
-            false
+            return false;
+        };
+        let (grant_client, grant_tool, _) = &pending.grant;
+        if grant_client != client_id || grant_tool != tool_name {
+            warn!(
+                %request_id,
+                "[ApprovalBroker] response names a different client/tool than the request; using the request's",
+            );
         }
+        // Persist always-allow before firing the waiter so a racing second
+        // call from the same client sees it. Tokenless connections all share
+        // one identity, so they never get a standing grant.
+        if matches!(decision, ApprovalDecision::AlwaysForThisSessionAndClient)
+            && grant_client != ANONYMOUS_CLIENT_ID
+        {
+            self.always_allow.insert(pending.grant.clone(), ());
+        }
+        pending.tx.send(decision).is_ok()
     }
 
     /// List currently pending (unresolved) approvals. Useful for UI recovery
@@ -220,15 +243,16 @@ impl ApprovalBroker {
     }
 
     /// List always-allow grants (for the UI to display + revoke).
-    pub fn list_always_allow(&self) -> Vec<(String, String)> {
+    pub fn list_always_allow(&self) -> Vec<(String, String, Option<Uuid>)> {
         self.always_allow.iter().map(|e| e.key().clone()).collect()
     }
 
-    /// Revoke an always-allow entry.
+    /// Revoke a client's always-allow grants for a tool (in every Space).
     pub fn revoke_always_allow(&self, client_id: &str, tool_name: &str) -> bool {
+        let before = self.always_allow.len();
         self.always_allow
-            .remove(&(client_id.to_string(), tool_name.to_string()))
-            .is_some()
+            .retain(|(c, t, _), _| !(c == client_id && t == tool_name));
+        self.always_allow.len() != before
     }
 
     /// Core entry point for write meta tools.
@@ -256,11 +280,13 @@ impl ApprovalBroker {
             return Ok(ApprovalDecision::AllowOnce);
         }
 
-        // 1. Always-allow short-circuit.
-        if self
-            .always_allow
-            .contains_key(&(client_id.to_string(), tool_name.to_string()))
-        {
+        // 1. Always-allow short-circuit (same client, tool and target Space).
+        let grant: GrantKey = (
+            client_id.to_string(),
+            tool_name.to_string(),
+            payload.space_id,
+        );
+        if self.always_allow.contains_key(&grant) {
             debug!(
                 %client_id,
                 tool = tool_name,
@@ -314,7 +340,8 @@ impl ApprovalBroker {
         };
 
         let (tx, rx) = oneshot::channel();
-        self.pending.insert(request_id.clone(), tx);
+        self.pending
+            .insert(request_id.clone(), PendingApproval { tx, grant });
 
         let delivered = publisher(request.clone()).await;
         if !delivered {
@@ -353,10 +380,15 @@ mod tests {
     use futures::FutureExt;
 
     fn make_payload() -> ApprovalPayload {
+        payload_for(None)
+    }
+
+    fn payload_for(space_id: Option<Uuid>) -> ApprovalPayload {
         ApprovalPayload {
             tool_name: "mcpmux_pin_this_session".into(),
             summary: "test".into(),
             space_name: None,
+            space_id,
             diff: None,
             raw_args: serde_json::json!({}),
             affects_other_clients: false,
@@ -381,7 +413,7 @@ mod tests {
     async fn always_allow_short_circuits() {
         let broker = ApprovalBroker::new();
         let client_id = Uuid::new_v4().to_string();
-        broker.insert_always_allow(&client_id, "mcpmux_pin_this_session");
+        broker.insert_always_allow(&client_id, "mcpmux_pin_this_session", None);
         let d = broker
             .request_approval(&client_id, "mcpmux_pin_this_session", make_payload())
             .await
@@ -429,7 +461,7 @@ mod tests {
         // approval flow because we tried to parse the URL as a UUID.
         let broker = ApprovalBroker::new();
         let url_client_id = "https://claude.ai/oauth/claude-code-client-metadata";
-        broker.insert_always_allow(url_client_id, "mcpmux_pin_this_session");
+        broker.insert_always_allow(url_client_id, "mcpmux_pin_this_session", None);
         let d = broker
             .request_approval(url_client_id, "mcpmux_pin_this_session", make_payload())
             .await
@@ -555,5 +587,117 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(d2, ApprovalDecision::AllowOnce);
+    }
+
+    /// A publisher that answers every prompt with `decision`, counting prompts.
+    fn answering(
+        broker: &Arc<ApprovalBroker>,
+        decision: ApprovalDecision,
+        prompts: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> ApprovalPublisher {
+        let broker = broker.clone();
+        Arc::new(move |req| {
+            let b = broker.clone();
+            let prompts = prompts.clone();
+            async move {
+                prompts.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    b.respond(
+                        &req.request_id,
+                        &req.client_id,
+                        &req.payload.tool_name,
+                        decision,
+                    );
+                });
+                true
+            }
+            .boxed()
+        })
+    }
+
+    #[tokio::test]
+    async fn always_allow_is_scoped_to_the_target_space() {
+        let broker = Arc::new(ApprovalBroker::new().with_timeout(Duration::from_millis(500)));
+        let prompts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        broker
+            .set_publisher(answering(
+                &broker,
+                ApprovalDecision::AlwaysForThisSessionAndClient,
+                prompts.clone(),
+            ))
+            .await;
+        let client_id = Uuid::new_v4().to_string();
+        let (space_a, space_b) = (Uuid::new_v4(), Uuid::new_v4());
+
+        broker
+            .request_approval(
+                &client_id,
+                "mcpmux_manage_feature_set",
+                payload_for(Some(space_a)),
+            )
+            .await
+            .unwrap();
+        broker
+            .request_approval(
+                &client_id,
+                "mcpmux_manage_feature_set",
+                payload_for(Some(space_a)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prompts.load(Ordering::SeqCst), 1, "same Space: granted");
+
+        broker
+            .request_approval(
+                &client_id,
+                "mcpmux_manage_feature_set",
+                payload_for(Some(space_b)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            prompts.load(Ordering::SeqCst),
+            2,
+            "another Space prompts again"
+        );
+    }
+
+    #[tokio::test]
+    async fn tokenless_connections_never_get_a_standing_grant() {
+        let broker = Arc::new(ApprovalBroker::new().with_timeout(Duration::from_millis(500)));
+        let prompts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        broker
+            .set_publisher(answering(
+                &broker,
+                ApprovalDecision::AlwaysForThisSessionAndClient,
+                prompts.clone(),
+            ))
+            .await;
+
+        for _ in 0..2 {
+            broker
+                .request_approval(
+                    ANONYMOUS_CLIENT_ID,
+                    "mcpmux_manage_feature_set",
+                    make_payload(),
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(prompts.load(Ordering::SeqCst), 2);
+        assert!(broker.list_always_allow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn responses_to_unknown_requests_grant_nothing() {
+        let broker = ApprovalBroker::new();
+        assert!(!broker.respond(
+            "no-such-request",
+            "some-client",
+            "mcpmux_manage_feature_set",
+            ApprovalDecision::AlwaysForThisSessionAndClient,
+        ));
+        assert!(broker.list_always_allow().is_empty());
     }
 }

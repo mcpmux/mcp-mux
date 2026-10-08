@@ -147,7 +147,7 @@ export function MetaToolGrantsPanel() {
               const key = `${g.client_id}:${g.tool_name}`;
               return (
                 <li
-                  key={key}
+                  key={`${key}:${g.space_id ?? ''}`}
                   className="flex items-center justify-between py-2 text-sm"
                   data-testid={`meta-tool-grant-${g.tool_name}`}
                 >
@@ -155,6 +155,7 @@ export function MetaToolGrantsPanel() {
                     <span className="truncate font-mono text-xs">{g.tool_name}</span>
                     <span className="truncate text-[11px] text-[rgb(var(--muted))]">
                       client {g.client_id.slice(0, 8)}…
+                      {g.space_id ? ` · space ${g.space_id.slice(0, 8)}…` : ''}
                     </span>
                   </div>
                   <Button

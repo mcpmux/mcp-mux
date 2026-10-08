@@ -27,6 +27,8 @@ const REQUIRE_APPROVAL_KEY: &str = "meta_tools.require_approval";
 pub struct MetaToolGrantEntry {
     pub client_id: String,
     pub tool_name: String,
+    /// The Space the grant applies to (`None` for writes with no single Space).
+    pub space_id: Option<String>,
 }
 
 /// Resolve a pending approval dialog.
@@ -92,9 +94,10 @@ pub async fn list_meta_tool_grants(
     Ok(broker
         .list_always_allow()
         .into_iter()
-        .map(|(client_id, tool_name)| MetaToolGrantEntry {
+        .map(|(client_id, tool_name, space_id)| MetaToolGrantEntry {
             client_id,
             tool_name,
+            space_id: space_id.map(|id| id.to_string()),
         })
         .collect())
 }

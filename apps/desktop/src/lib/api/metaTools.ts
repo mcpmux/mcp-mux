@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 
-/** An "always allow from (client, tool)" entry kept in the gateway's broker. */
+/** An "always allow from (client, tool, Space)" entry kept in the gateway's broker. */
 export interface MetaToolGrantEntry {
   client_id: string;
   tool_name: string;
+  /** The Space the grant applies to; `null` for writes with no single Space. */
+  space_id: string | null;
 }
 
 /** Audit row emitted on every `mcpmux_*` invocation. */

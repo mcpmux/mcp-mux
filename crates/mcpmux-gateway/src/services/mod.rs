@@ -19,7 +19,9 @@ mod space_resolver;
 pub use authorization::AuthorizationService;
 pub use client_metadata_service::ClientMetadataService;
 pub use event_emitter::EventEmitter;
-pub use feature_set_resolver::{FeatureSetResolverService, ResolutionSource, ResolvedFeatureSet};
+pub use feature_set_resolver::{
+    FeatureSetResolverService, ResolutionSource, ResolvedFeatureSet, ANONYMOUS_CLIENT_ID,
+};
 pub use grant_service::GrantService;
 pub use meta_tools::{
     is_meta_tool, ApprovalBroker, ApprovalDecision, ApprovalPayload, ApprovalPublisher,

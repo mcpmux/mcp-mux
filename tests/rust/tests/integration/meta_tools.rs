@@ -775,6 +775,50 @@ async fn list_spaces_returns_all_spaces_including_default() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn tokenless_connections_only_see_and_target_the_default_space() {
+    use mcpmux_gateway::services::ANONYMOUS_CLIENT_ID;
+
+    let f = Fixture::new().await;
+    let other = mcpmux_core::Space::new("Second Space");
+    f.space_repo.create(&other).await.unwrap();
+
+    let body = Fixture::result_json(
+        &f.registry
+            .call(
+                "mcpmux_list_spaces",
+                ANONYMOUS_CLIENT_ID,
+                Some(&f.session_id),
+                json!({}),
+            )
+            .await
+            .unwrap(),
+    );
+    let ids: Vec<&str> = body["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec![f.space_id.to_string().as_str()]);
+
+    let err = f
+        .registry
+        .call(
+            "mcpmux_list_all_tools",
+            ANONYMOUS_CLIENT_ID,
+            Some(&f.session_id),
+            json!({ "space_id": other.id.to_string() }),
+        )
+        .await
+        .unwrap_err()
+        .into_call_tool_result();
+    assert_eq!(
+        Fixture::result_json(&err)["error"].as_str(),
+        Some("invalid_argument")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn explicit_unknown_space_id_is_rejected() {
     let f = Fixture::new().await;
     let res = f

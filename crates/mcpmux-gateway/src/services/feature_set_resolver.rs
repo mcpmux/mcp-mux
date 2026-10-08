@@ -113,6 +113,10 @@ use super::session_roots::SessionRootsRegistry;
 /// catches clients that declared `roots` but never actually report one.
 const DEFAULT_PENDING_ROOTS_GRACE: Duration = Duration::from_secs(5);
 
+/// Client id used for connections accepted without a token while inbound auth
+/// is disabled. Every such connection shares it.
+pub const ANONYMOUS_CLIENT_ID: &str = "mcpmux-anonymous";
+
 /// Why the resolver picked the FS(es) it picked (or didn't pick any).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -228,6 +232,26 @@ impl FeatureSetResolverService {
     /// sits under that Space's base dir — or `None` when it isn't base-dir
     /// scoped (no session, no roots, or no matching base dir). The meta-tools
     /// use this to hard-restrict self-optimization to the matched Space.
+    /// The one Space a caller may see and change through the meta-tools, or
+    /// `None` when it may target any Space. Anonymous (tokenless) callers are
+    /// confined to the default Space, clients locked to a Space to that Space,
+    /// and base-dir-scoped workspaces to their Space.
+    pub async fn confined_space(
+        &self,
+        session_id: Option<&str>,
+        client_id: &str,
+    ) -> Result<Option<Uuid>> {
+        if client_id == ANONYMOUS_CLIENT_ID {
+            return Ok(self.space_repo.get_default().await?.map(|s| s.id));
+        }
+        if let Some(locked) = self.client_repo.get_locked_space(client_id).await? {
+            if let Ok(locked) = locked.parse::<Uuid>() {
+                return Ok(Some(locked));
+            }
+        }
+        self.scoped_space_for_session(session_id).await
+    }
+
     pub async fn scoped_space_for_session(&self, session_id: Option<&str>) -> Result<Option<Uuid>> {
         let Some(sid) = session_id else {
             return Ok(None);
@@ -400,6 +424,16 @@ impl FeatureSetResolverService {
                 });
             }
         };
+
+        // Tokenless callers (inbound auth disabled) share one anonymous
+        // identity that nobody approved, so they are confined to the default
+        // Space like a locked client: the workspace header and roots can pick
+        // a FeatureSet there, never another Space's tools or credentials.
+        if client_id == Some(ANONYMOUS_CLIENT_ID) {
+            return self
+                .resolve_locked(session_id, client_id, default_space_id)
+                .await;
+        }
 
         // Lock-confine: a client locked to Space L only ever resolves to L. The
         // header/roots may still pick a FeatureSet *within* L; a binding that

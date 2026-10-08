@@ -378,6 +378,9 @@ async fn doctor(state: &ControlState) -> Result<serde_json::Value, ApiError> {
         }
     });
 
+    // Which master key the stored data is encrypted with.
+    checks.push(check_master_key_source(&state.runtime.data_dir));
+
     // Listener: the gateway is up by the time the control socket exists.
     checks.push(DoctorCheck {
         id: "gateway_listener".into(),
@@ -496,6 +499,41 @@ fn check_key_files(keys_dir: &std::path::Path) -> mcpmux_control::DoctorCheck {
             message: "key permission audit is Unix-only".into(),
             hint: None,
         }
+    }
+}
+
+/// Report where the master key lives (OS keychain or key file), from the
+/// record the runtime keeps in the data directory.
+fn check_master_key_source(data_dir: &std::path::Path) -> mcpmux_control::DoctorCheck {
+    use mcpmux_control::{CheckStatus, DoctorCheck};
+    use mcpmux_runtime::master_key::{read_key_record, KeySource};
+
+    match read_key_record(data_dir) {
+        Ok(Some(record)) => DoctorCheck {
+            id: "master_key".into(),
+            status: CheckStatus::Ok,
+            message: format!("master key: {}", record.source),
+            hint: match record.source {
+                KeySource::File => Some(
+                    "the key is a file in the data directory; a Secret Service provider \
+                     (e.g. gnome-keyring) keeps it out of the file system"
+                        .into(),
+                ),
+                KeySource::Keychain => None,
+            },
+        },
+        Ok(None) => DoctorCheck {
+            id: "master_key".into(),
+            status: CheckStatus::Skip,
+            message: "no master-key record (Windows DPAPI, or not started yet)".into(),
+            hint: None,
+        },
+        Err(e) => DoctorCheck {
+            id: "master_key".into(),
+            status: CheckStatus::Fail,
+            message: e.to_string(),
+            hint: Some("fix or remove master-key.json in the data directory".into()),
+        },
     }
 }
 

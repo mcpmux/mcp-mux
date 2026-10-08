@@ -657,6 +657,31 @@ async fn config_import_round_trips_a_space() {
     let _ = child.wait();
 }
 
+/// `doctor` says where the master key lives.
+#[tokio::test]
+async fn doctor_reports_the_master_key_source() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let (mut child, _port) = spawn_daemon(data_dir.path(), runtime_dir.path()).await;
+    let socket = socket_path(runtime_dir.path(), data_dir.path());
+
+    let report = call(&socket, &request("k1", "doctor")).await.data.unwrap();
+    let check = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "master_key")
+        .cloned()
+        .expect("doctor has a master_key check");
+    assert_eq!(check["status"], "ok", "{check}");
+    assert_eq!(check["message"], "master key: key file");
+
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let _ = child.wait();
+}
+
 #[tokio::test]
 async fn doctor_reports_core_checks() {
     let data_dir = tempfile::tempdir().unwrap();

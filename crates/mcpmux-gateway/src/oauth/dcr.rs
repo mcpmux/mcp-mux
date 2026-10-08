@@ -574,37 +574,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn os_handler_schemes_are_not_redirect_targets() {
-        for uri in [
-            "search-ms:query=x&crumb=location:\\\\evil\\share",
-            "ms-officecmd:{}",
-            "ms-word:ofe|u|https://evil.example/doc",
-            "microsoft-edge:https://evil.example/cb",
-            "x-safari-https://evil.example/cb",
-            "smb://evil.example/share",
-            "file:///etc/passwd",
-            "itms-services://?action=download-manifest",
-            "MS-SETTINGS:privacy",
-        ] {
-            assert!(
-                !is_valid_registered_redirect_uri(uri),
-                "{uri} must be refused"
-            );
-        }
-        for uri in [
-            "cursor://anysphere.cursor-mcp/oauth/callback",
-            "vscode://vscode.github-authentication/did-authenticate",
-            "claude://claude.ai/oauth/callback",
-            "com.example.app:/oauth2redirect",
-        ] {
-            assert!(
-                is_valid_registered_redirect_uri(uri),
-                "{uri} must be accepted"
-            );
-        }
-    }
-
-    #[test]
     fn test_validate_loopback_uris() {
         // Valid loopback URIs
         assert!(validate_redirect_uris(&["http://127.0.0.1:8080/callback".to_string()]).is_ok());
@@ -832,4 +801,35 @@ mod tests {
     // Note: Integration tests for idempotent registration are better handled
     // in tests that use an actual database, since process_dcr_request now
     // persists directly to the database.
+
+    #[test]
+    fn os_handler_schemes_are_not_redirect_targets() {
+        for uri in [
+            "search-ms:query=x&crumb=location:\\\\evil\\share",
+            "ms-officecmd:{}",
+            "ms-word:ofe|u|https://evil.example/doc",
+            "microsoft-edge:https://evil.example/cb",
+            "x-safari-https://evil.example/cb",
+            "smb://evil.example/share",
+            "file:///etc/passwd",
+            "itms-services://?action=download-manifest",
+            "MS-SETTINGS:privacy",
+        ] {
+            assert!(
+                !is_valid_registered_redirect_uri(uri),
+                "{uri} must be refused"
+            );
+        }
+        for uri in [
+            "cursor://anysphere.cursor-mcp/oauth/callback",
+            "vscode://vscode.github-authentication/did-authenticate",
+            "claude://claude.ai/oauth/callback",
+            "com.example.app:/oauth2redirect",
+        ] {
+            assert!(
+                is_valid_registered_redirect_uri(uri),
+                "{uri} must be accepted"
+            );
+        }
+    }
 }

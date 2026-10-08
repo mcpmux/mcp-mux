@@ -19,7 +19,7 @@ import {
   CardTitle,
 } from '@mcpmux/ui';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
-import { openRedirectUrl } from '@/lib/oauthRedirect';
+import { describeRedirectTarget, openRedirectUrl } from '@/lib/oauthRedirect';
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import claudeIcon from '@/assets/client-icons/claude.svg';
@@ -55,6 +55,8 @@ interface ConsentRequestDetails {
   expiresAt: number;
   /** Cryptographic token shared only via Tauri IPC — must be sent back on approval. */
   consentToken: string;
+  /** The client has never been approved before. */
+  firstTime: boolean;
 }
 
 interface ConsentError {
@@ -188,8 +190,12 @@ export function OAuthConsentModal() {
         },
       });
 
-      if (response.success && response.redirect_url) {
-        await openRedirectUrl(response.redirect_url);
+      if (response.success) {
+        // A denial is only sent back to http(s) callbacks; app callbacks get
+        // nothing rather than launching another app the user just declined.
+        if (response.redirect_url) {
+          await openRedirectUrl(response.redirect_url);
+        }
         setModalState({ type: 'hidden' });
       } else {
         setProcessError(response.error || 'Failed to deny connection');
@@ -281,6 +287,30 @@ export function OAuthConsentModal() {
               It will be able to call tools you enable for this folder.
             </p>
           </div>
+
+          <dl
+            className="w-full space-y-1.5 rounded-lg bg-[rgb(var(--surface))] p-3 text-left text-xs"
+            data-testid="consent-client-details"
+          >
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[rgb(var(--muted))]">Returns to</dt>
+              <dd className="truncate font-mono" title={details.redirectUri}>
+                {describeRedirectTarget(details.redirectUri)}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="shrink-0 text-[rgb(var(--muted))]">Client ID</dt>
+              <dd className="truncate font-mono" title={details.clientId}>
+                {details.clientId}
+              </dd>
+            </div>
+            {details.firstTime && (
+              <p className="pt-1 text-[rgb(var(--muted))]">
+                First time this app asks to connect. Only allow it if you just started connecting
+                it.
+              </p>
+            )}
+          </dl>
 
           {processError && (
             <div className="flex w-full items-start gap-2 rounded-lg bg-red-500/10 p-3 text-left text-sm text-red-500">

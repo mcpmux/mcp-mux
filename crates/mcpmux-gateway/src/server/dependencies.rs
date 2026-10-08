@@ -194,6 +194,13 @@ impl DependenciesBuilder {
         self
     }
 
+    /// Override the CIMD metadata fetcher (tests use one that accepts a
+    /// loopback mock server).
+    pub fn with_cimd_fetcher(mut self, fetcher: Arc<CimdMetadataFetcher>) -> Self {
+        self.cimd_fetcher = Some(fetcher);
+        self
+    }
+
     pub fn with_database(mut self, db: Arc<Mutex<Database>>) -> Self {
         self.database = Some(db);
         self

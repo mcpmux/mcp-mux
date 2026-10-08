@@ -31,20 +31,21 @@ pub use startup::{AutoConnectResult, StartupOrchestrator, TokenRefreshResult};
 pub use state::{ClientSession, ConsentLookupError, GatewayState, AUTHORIZATION_CODE_TTL_SECS};
 
 use axum::{
-    extract::ConnectInfo,
+    extract::State,
     middleware,
     response::IntoResponse,
-    routing::{delete, get, post, put},
+    routing::{get, post},
     Router,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
 
 use crate::consumers::MCPNotifier;
+use crate::mcp::origin_guard::is_allowed_origin;
 use crate::mcp::{mcp_oauth_middleware, McpMuxGatewayHandler};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -163,39 +164,69 @@ impl GatewayConfig {
     }
 }
 
-/// The desktop-only client-management routes (list / update / delete clients).
-/// `/oauth/clients/{id}/features` is intentionally excluded — it is the public
-/// client-facing endpoint.
-fn is_management_path(path: &str) -> bool {
-    path == "/oauth/clients"
-        || (path.starts_with("/oauth/clients/") && !path.ends_with("/features"))
+/// Whether a `Host` header value is one this gateway answers to. An empty
+/// allow-list (network bind) accepts any host; entries without a port match any
+/// port, entries with a port must match it exactly.
+fn host_is_allowed(host_header: &str, allowed_hosts: &[String]) -> bool {
+    if allowed_hosts.is_empty() {
+        return true;
+    }
+    let Ok(authority) = http::uri::Authority::try_from(host_header.trim()) else {
+        return false;
+    };
+    let normalize = |h: &str| h.trim_matches(['[', ']']).to_ascii_lowercase();
+    let host = normalize(authority.host());
+    let port = authority.port_u16();
+    allowed_hosts.iter().any(
+        |allowed| match http::uri::Authority::try_from(allowed.trim()) {
+            Ok(a) => {
+                normalize(a.host()) == host && (a.port_u16().is_none() || a.port_u16() == port)
+            }
+            Err(_) => normalize(allowed) == host,
+        },
+    )
 }
 
-/// Reject the desktop-only client-management endpoints when the request comes
-/// from a non-loopback peer.
+/// State for [`reject_foreign_requests`].
+#[derive(Clone)]
+struct RequestGuard {
+    gateway_state: Arc<RwLock<GatewayState>>,
+    allowed_hosts: Arc<Vec<String>>,
+}
+
+/// Keep web pages and DNS-rebinding pages off every route, not just `/mcp`.
 ///
-/// On a loopback bind every peer is local, so this is a no-op. On a `0.0.0.0`
-/// (network) bind the whole router is exposed, but client enumeration / CRUD
-/// must stay off the LAN — the OAuth flow and `/oauth/clients/{id}/features`
-/// remain reachable. The peer socket address (not the spoofable `Host` header)
-/// is the trust signal. Falls open only when no peer address is available
-/// (an embedded/test server without `ConnectInfo`), which never happens on the
-/// real network listener.
-async fn restrict_management_to_loopback(
+/// Browsers attach an `Origin` header to cross-site requests (and to CORS
+/// preflights); native clients send none. Requests whose `Origin` is not this
+/// machine (or the configured public URL) are refused. The `Host` allow-list
+/// stops a rebinding page, whose requests look same-origin, from reaching the
+/// gateway under its own domain. Top-level navigations to `/authorize` carry no
+/// cross-site `Origin`, so the OAuth flow is unaffected.
+async fn reject_foreign_requests(
+    State(guard): State<RequestGuard>,
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
-    if is_management_path(request.uri().path()) {
-        let peer_is_local = request
-            .extensions()
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|info| info.0.ip().is_loopback())
-            .unwrap_or(true);
-        if !peer_is_local {
-            warn!("[Gateway] Rejected non-loopback access to a client-management endpoint");
+    let headers = request.headers();
+    if let Some(host) = headers.get(http::header::HOST) {
+        let allowed = host
+            .to_str()
+            .is_ok_and(|h| host_is_allowed(h, &guard.allowed_hosts));
+        if !allowed {
+            warn!("[Gateway] Rejected a request for an unexpected Host");
+            return (axum::http::StatusCode::FORBIDDEN, "Unexpected Host header").into_response();
+        }
+    }
+    if let Some(origin) = headers.get(http::header::ORIGIN) {
+        let public_base_url = guard.gateway_state.read().await.public_base_url.clone();
+        let allowed = origin
+            .to_str()
+            .is_ok_and(|o| is_allowed_origin(o, public_base_url.as_deref()));
+        if !allowed {
+            warn!("[Gateway] Rejected a browser request from a web page");
             return (
                 axum::http::StatusCode::FORBIDDEN,
-                "Client management is only available from this machine",
+                "McpMux only accepts requests from apps on this computer.",
             )
                 .into_response();
         }
@@ -425,16 +456,6 @@ impl GatewayServer {
                     mcp_oauth_middleware,
                 ));
 
-        // Client features endpoint (needs services, public)
-        // Supports both DCR (simple IDs) and CIMD (URL-encoded IDs)
-        // Clients should URL-encode client_ids that contain special characters
-        let client_features_routes = Router::new()
-            .route(
-                "/oauth/clients/{client_id}/features",
-                get(handlers::oauth_get_client_features),
-            )
-            .with_state(app_state.clone());
-
         let router = Router::new()
             // Health check (public)
             .route("/health", get(handlers::health))
@@ -468,18 +489,9 @@ impl GatewayServer {
             // (approve_oauth_consent), which can only be invoked by the desktop
             // app's own WebView—not by external HTTP clients, scripts, or bots.
             // Client registration (DCR - public)
-            .route("/oauth/register", post(handlers::oauth_register))
-            // Client management (for desktop app)
-            .route("/oauth/clients", get(handlers::oauth_list_clients))
-            // Client CRUD - expects URL-encoded client_id for CIMD clients
-            .route(
-                "/oauth/clients/{client_id}",
-                put(handlers::oauth_update_client),
-            )
-            .route(
-                "/oauth/clients/{client_id}",
-                delete(handlers::oauth_delete_client),
-            );
+            .route("/oauth/register", post(handlers::oauth_register));
+        // Client management (list / rename / delete) is not served over HTTP;
+        // the desktop app uses Tauri IPC and the daemon its control socket.
 
         // E2E test builds only (cargo feature `e2e`, plus MCPMUX_E2E_TEST at
         // runtime): an HTTP consent endpoint for automated runs. Other builds
@@ -501,8 +513,6 @@ impl GatewayServer {
         let mut router = router
             // Protected MCP routes (using rmcp's StreamableHttpService)
             .merge(mcp_routes)
-            // Client features (needs services)
-            .merge(client_features_routes)
             // Global state for all routes
             .with_state(app_state.clone())
             .layer(TraceLayer::new_for_http())
@@ -515,13 +525,26 @@ impl GatewayServer {
                 rate_limiter,
                 rate_limit::rate_limit_middleware,
             ))
-            // Keep desktop-only client management off the LAN on a 0.0.0.0 bind.
-            .layer(middleware::from_fn(restrict_management_to_loopback));
+            // Web pages and DNS-rebinding pages are refused on every route.
+            .layer(middleware::from_fn_with_state(
+                RequestGuard {
+                    gateway_state: self.state.clone(),
+                    allowed_hosts: Arc::new(self.config.allowed_hosts()),
+                },
+                reject_foreign_requests,
+            ));
 
-        // Add CORS if enabled
+        // CORS for browser-based tools served from this machine (e.g. the MCP
+        // Inspector) and for the configured public URL. Other origins get no
+        // CORS headers, so browsers keep their responses from web pages.
         if self.config.enable_cors {
+            let public_base_url = self.config.public_base_url.clone();
             let cors = CorsLayer::new()
-                .allow_origin(Any)
+                .allow_origin(AllowOrigin::predicate(move |origin, _| {
+                    origin
+                        .to_str()
+                        .is_ok_and(|o| is_allowed_origin(o, public_base_url.as_deref()))
+                }))
                 .allow_methods(Any)
                 .allow_headers(Any);
             router = router.layer(cors);
@@ -838,14 +861,22 @@ mod config_tests {
     }
 
     #[test]
-    fn management_path_matching_excludes_features_and_oauth_flow() {
-        assert!(super::is_management_path("/oauth/clients")); // list
-        assert!(super::is_management_path("/oauth/clients/abc123")); // update/delete
-                                                                     // Client-facing + OAuth-flow + other routes are NOT loopback-gated.
-        assert!(!super::is_management_path("/oauth/clients/abc123/features"));
-        assert!(!super::is_management_path("/oauth/authorize"));
-        assert!(!super::is_management_path("/oauth/token"));
-        assert!(!super::is_management_path("/mcp"));
-        assert!(!super::is_management_path("/health"));
+    fn host_header_matching() {
+        let allowed = config_on_host("127.0.0.1").allowed_hosts();
+        assert!(super::host_is_allowed("localhost:45818", &allowed));
+        assert!(super::host_is_allowed("127.0.0.1:45818", &allowed));
+        assert!(super::host_is_allowed("[::1]:45818", &allowed));
+        assert!(super::host_is_allowed("LOCALHOST", &allowed));
+        assert!(!super::host_is_allowed("evil.example:45818", &allowed));
+        assert!(!super::host_is_allowed("localhost.evil.example", &allowed));
+        // A network bind accepts any host.
+        assert!(super::host_is_allowed(
+            "192.168.1.50:45818",
+            &config_on_host("0.0.0.0").allowed_hosts()
+        ));
+        // Entries with a port only match that port.
+        let tunnel = vec!["mcp.example.com:8443".to_string()];
+        assert!(super::host_is_allowed("mcp.example.com:8443", &tunnel));
+        assert!(!super::host_is_allowed("mcp.example.com:9999", &tunnel));
     }
 }

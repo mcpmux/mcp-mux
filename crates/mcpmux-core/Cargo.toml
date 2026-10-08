@@ -24,6 +24,7 @@ regex = "1.11"
 lazy_static = "1.5"
 base64 = "0.22"
 urlencoding = "2.1"
+url.workspace = true
 toml_edit = "0.23"
 
 [dev-dependencies]

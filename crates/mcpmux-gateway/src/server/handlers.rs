@@ -7,7 +7,6 @@ use axum::{
 };
 use mcpmux_core::branding;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -315,8 +314,22 @@ pub struct PendingAuthorization {
 /// 3. Generates auth code and redirects back to client
 pub async fn oauth_authorize(
     State(state): State<Arc<RwLock<GatewayState>>>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<AuthorizeParams>,
 ) -> Response {
+    // The consent flow is a page the user's browser opens. Requests a web
+    // page makes in the background (fetch, image, iframe) are refused, so a
+    // page can't start authorization requests the user never sees.
+    let fetch_dest = headers.get("sec-fetch-dest").and_then(|v| v.to_str().ok());
+    if fetch_dest.is_some_and(|dest| dest != "document") {
+        warn!("[OAuth] Refused a non-navigation authorize request");
+        return oauth_error_page(
+            StatusCode::FORBIDDEN,
+            "invalid_request",
+            "Open this authorization link in your browser.",
+        );
+    }
+
     info!(
         "[OAuth] Authorization request: client_id={}, response_type={}, redirect_uri={}",
         params.client_id, params.response_type, params.redirect_uri
@@ -690,7 +703,18 @@ pub async fn oauth_authorize(
 </html>"##
     );
 
-    axum::response::Html(html).into_response()
+    // The consent page must never be framed by another site.
+    (
+        [
+            (
+                axum::http::header::CONTENT_SECURITY_POLICY,
+                "frame-ancestors 'none'",
+            ),
+            (axum::http::header::X_FRAME_OPTIONS, "DENY"),
+        ],
+        axum::response::Html(html),
+    )
+        .into_response()
 }
 
 /// Minimal HTML entity escaping for untrusted text interpolated into
@@ -1142,343 +1166,6 @@ pub async fn oauth_consent_approve(
         redirect_url,
         error: None,
     })
-}
-
-// ============================================================================
-// OAuth Clients List (for McpMux app to display connected clients)
-// ============================================================================
-
-/// Response for OAuth client info
-/// OAuth client information response
-#[derive(Debug, Serialize)]
-pub struct OAuthClientInfoResponse {
-    pub client_id: String,
-    pub registration_type: String,
-    pub client_name: String,
-    pub client_alias: Option<String>,
-    pub redirect_uris: Vec<String>,
-    pub scope: Option<String>,
-
-    // RFC 7591 Client Metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub logo_uri: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_uri: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub software_version: Option<String>,
-
-    // CIMD-specific fields
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata_cached_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata_cache_ttl: Option<i64>,
-
-    pub last_seen: Option<String>,
-    pub created_at: String,
-}
-
-/// List all registered OAuth clients
-/// List all registered OAuth clients
-pub async fn oauth_list_clients(
-    State(state): State<Arc<RwLock<GatewayState>>>,
-) -> impl IntoResponse {
-    let gateway_state = state.read().await;
-
-    // Get clients from database (required)
-    let Some(repo) = gateway_state.inbound_client_repository() else {
-        warn!("[OAuth] Database not available for listing clients");
-        return Json(vec![]); // Return empty list if database unavailable
-    };
-
-    match repo.list_clients().await {
-        Ok(db_clients) => {
-            let clients: Vec<OAuthClientInfoResponse> = db_clients
-                .into_iter()
-                .map(|c| OAuthClientInfoResponse {
-                    client_id: c.client_id,
-                    registration_type: c.registration_type.as_str().to_string(),
-                    client_name: c.client_name,
-                    client_alias: c.client_alias,
-                    redirect_uris: c.redirect_uris,
-                    scope: c.scope,
-                    logo_uri: c.logo_uri,
-                    client_uri: c.client_uri,
-                    software_id: c.software_id,
-                    software_version: c.software_version,
-                    metadata_url: c.metadata_url,
-                    metadata_cached_at: c.metadata_cached_at,
-                    metadata_cache_ttl: c.metadata_cache_ttl,
-                    last_seen: c.last_seen,
-                    created_at: c.created_at,
-                })
-                .collect();
-            info!("[OAuth] Listed {} clients from database", clients.len());
-            Json(clients)
-        }
-        Err(e) => {
-            error!("[OAuth] Failed to list clients from database: {}", e);
-            Json(vec![]) // Return empty list on error
-        }
-    }
-}
-
-/// Request body for updating client settings
-#[derive(Debug, Deserialize)]
-pub struct UpdateClientRequest {
-    pub client_alias: Option<String>,
-}
-
-/// Update client settings (connection mode, alias, etc.)
-/// Get resolved features (tools/prompts/resources) for a client
-///
-/// DIP: Thin handler that orchestrates services
-/// Get resolved features (tools/prompts/resources) for a client
-///
-/// Supports both DCR and CIMD clients. CIMD client_ids (URLs) should be URL-encoded.
-/// Axum automatically URL-decodes path parameters.
-pub async fn oauth_get_client_features(
-    State(state): State<AppState>,
-    axum::extract::Path(client_id): axum::extract::Path<String>,
-) -> Response {
-    info!(
-        "[OAuth] Getting resolved features for client: {}",
-        client_id
-    );
-
-    // Step 1: Resolve space for client (SRP: SpaceResolverService)
-    let space_id = match state
-        .services
-        .space_resolver_service
-        .resolve_space_for_client(&client_id)
-        .await
-    {
-        Ok(id) => id,
-        Err(e) => {
-            warn!(
-                "[OAuth] Failed to resolve space for client {}: {}",
-                client_id, e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "space_resolution_failed",
-                    "error_description": format!("Failed to resolve space: {}", e)
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    debug!(
-        "[OAuth] Resolved space {} for client {}",
-        space_id, client_id
-    );
-
-    // Step 2: Get client grants via the resolver.
-    // No MCP session context here (this is an HTTP API endpoint for the
-    // desktop UI), so workspace-binding resolution is skipped; the
-    // resolver falls back to the Space's Default FeatureSet.
-    let feature_set_ids = match state
-        .services
-        .authorization_service
-        .get_client_grants(&client_id, &space_id, None)
-        .await
-    {
-        Ok(grants) => grants,
-        Err(e) => {
-            warn!(
-                "[OAuth] Failed to get grants for client {}: {}",
-                client_id, e
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "authorization_failed",
-                    "error_description": format!("Failed to get grants: {}", e)
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    debug!(
-        "[OAuth] Client {} has {} grants",
-        client_id,
-        feature_set_ids.len()
-    );
-
-    // Step 3: Resolve features (SRP: FeatureService)
-    let space_id_str = space_id.to_string();
-
-    let tools = state
-        .services
-        .pool_services
-        .feature_service
-        .get_tools_for_grants(&space_id_str, &feature_set_ids)
-        .await
-        .unwrap_or_default();
-
-    let prompts = state
-        .services
-        .pool_services
-        .feature_service
-        .get_prompts_for_grants(&space_id_str, &feature_set_ids)
-        .await
-        .unwrap_or_default();
-
-    let resources = state
-        .services
-        .pool_services
-        .feature_service
-        .get_resources_for_grants(&space_id_str, &feature_set_ids)
-        .await
-        .unwrap_or_default();
-
-    info!(
-        "[OAuth] Client {} features: {} tools, {} prompts, {} resources",
-        client_id,
-        tools.len(),
-        prompts.len(),
-        resources.len()
-    );
-
-    // Convert to response format
-    let tools_response: Vec<_> = tools
-        .iter()
-        .map(|f| {
-            json!({
-                "name": f.feature_name,
-                "description": f.description,
-                "server_id": f.server_id,
-            })
-        })
-        .collect();
-
-    let prompts_response: Vec<_> = prompts
-        .iter()
-        .map(|f| {
-            json!({
-                "name": f.feature_name,
-                "description": f.description,
-                "server_id": f.server_id,
-            })
-        })
-        .collect();
-
-    let resources_response: Vec<_> = resources
-        .iter()
-        .map(|f| {
-            json!({
-                "name": f.feature_name,
-                "description": f.description,
-                "server_id": f.server_id,
-            })
-        })
-        .collect();
-
-    Json(json!({
-        "space_id": space_id_str,
-        "feature_set_ids": feature_set_ids,
-        "tools": tools_response,
-        "prompts": prompts_response,
-        "resources": resources_response,
-    }))
-    .into_response()
-}
-
-/// Update client settings (connection mode, alias, etc.)
-///
-/// Supports both DCR and CIMD clients. CIMD client_ids (URLs) should be URL-encoded.
-pub async fn oauth_update_client(
-    State(state): State<Arc<RwLock<GatewayState>>>,
-    axum::extract::Path(client_id): axum::extract::Path<String>,
-    Json(req): Json<UpdateClientRequest>,
-) -> Response {
-    info!("[OAuth] Updating client settings: {}", client_id);
-
-    let gateway_state = state.read().await;
-
-    let Some(repo) = gateway_state.inbound_client_repository() else {
-        warn!("[OAuth] Database not available for client update");
-        return (StatusCode::SERVICE_UNAVAILABLE, "Database not available").into_response();
-    };
-
-    match repo.update_client_alias(&client_id, req.client_alias).await {
-        Ok(Some(client)) => {
-            let response = OAuthClientInfoResponse {
-                client_id: client.client_id,
-                registration_type: client.registration_type.as_str().to_string(),
-                client_name: client.client_name,
-                client_alias: client.client_alias,
-                redirect_uris: client.redirect_uris,
-                scope: client.scope,
-                logo_uri: client.logo_uri,
-                client_uri: client.client_uri,
-                software_id: client.software_id,
-                software_version: client.software_version,
-                metadata_url: client.metadata_url,
-                metadata_cached_at: client.metadata_cached_at,
-                metadata_cache_ttl: client.metadata_cache_ttl,
-                last_seen: client.last_seen,
-                created_at: client.created_at,
-            };
-            info!("[OAuth] Client updated: {}", response.client_id);
-            Json(response).into_response()
-        }
-        Ok(None) => {
-            warn!("[OAuth] Client not found: {}", client_id);
-            (StatusCode::NOT_FOUND, "Client not found").into_response()
-        }
-        Err(e) => {
-            warn!("[OAuth] Failed to update client: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to update client: {}", e),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Delete a client and revoke all tokens
-/// Delete a client and revoke all tokens
-///
-/// Supports both DCR and CIMD clients. CIMD client_ids (URLs) should be URL-encoded.
-pub async fn oauth_delete_client(
-    State(state): State<Arc<RwLock<GatewayState>>>,
-    axum::extract::Path(client_id): axum::extract::Path<String>,
-) -> Response {
-    info!("[OAuth] Deleting client: {}", client_id);
-
-    let gateway_state = state.read().await;
-
-    let Some(repo) = gateway_state.inbound_client_repository() else {
-        warn!("[OAuth] Database not available for client deletion");
-        return (StatusCode::SERVICE_UNAVAILABLE, "Database not available").into_response();
-    };
-
-    match repo.delete_client(&client_id).await {
-        Ok(true) => {
-            info!("[OAuth] Client deleted: {}", client_id);
-            StatusCode::NO_CONTENT.into_response()
-        }
-        Ok(false) => {
-            warn!("[OAuth] Client not found: {}", client_id);
-            (StatusCode::NOT_FOUND, "Client not found").into_response()
-        }
-        Err(e) => {
-            warn!("[OAuth] Failed to delete client: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to delete client: {}", e),
-            )
-                .into_response()
-        }
-    }
 }
 
 // ============================================================================

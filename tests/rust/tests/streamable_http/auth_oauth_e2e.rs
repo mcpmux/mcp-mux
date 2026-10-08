@@ -108,6 +108,11 @@ impl Harness {
                 mcpmux_core::LogConfig::default(),
             )))
             .with_database(database.clone())
+            // CIMD documents in these tests come from a loopback mock server.
+            .with_cimd_fetcher(Arc::new(
+                mcpmux_core::CimdMetadataFetcher::allowing_loopback_http_for_tests()
+                    .expect("cimd fetcher"),
+            ))
             .build()
             .expect("build dependencies");
         let deps = GatewayDependencies {
@@ -471,6 +476,21 @@ async fn consent_request_id_is_never_redeemable_as_a_code() {
     let (status, body) = token_with_code(&http, &h.base, &code, Some(&client_id)).await;
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "invalid_grant", "codes are single-use");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consent_page_cannot_be_framed() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let client_id = register(&http, &h.base, "framing-check").await;
+
+    let response = authorize(&http, &h.base, &client_id, REDIRECT, "S256").await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.headers()["x-frame-options"], "DENY");
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "frame-ancestors 'none'"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

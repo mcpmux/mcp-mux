@@ -127,13 +127,6 @@ pub fn default_oauth_rate_limiter() -> RateLimiter {
                 window: Duration::from_secs(60),
             },
         ),
-        (
-            "/oauth/clients".to_string(),
-            RateLimitConfig {
-                max_requests: 30,
-                window: Duration::from_secs(60),
-            },
-        ),
     ])
 }
 

@@ -29,6 +29,8 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct ControlClient {
     reader: BufReader<OwnedReadHalf>,
     writer: OwnedWriteHalf,
+    /// Pid of the process serving the socket, when the OS reports it.
+    peer_pid: Option<i32>,
 }
 
 #[cfg(unix)]
@@ -44,11 +46,32 @@ impl ControlClient {
                 path.display()
             )
         })?;
+        // Only talk to a daemon run by this user: a socket elsewhere (a shared
+        // `--socket` path, a planted file) could otherwise collect our
+        // requests and steer `daemon restart` at any pid.
+        let peer = stream
+            .peer_cred()
+            .with_context(|| format!("cannot identify the process behind {}", path.display()))?;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        if peer.uid() != uid {
+            bail!(
+                "{} is served by another user (uid {}); refusing to use it",
+                path.display(),
+                peer.uid()
+            );
+        }
         let (read_half, write_half) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(read_half),
             writer: write_half,
+            peer_pid: peer.pid(),
         })
+    }
+
+    /// Pid of the process serving the socket, when the OS reports it.
+    pub fn peer_pid(&self) -> Option<i32> {
+        self.peer_pid
     }
 
     /// Send one request and decode the response, mapping daemon errors to

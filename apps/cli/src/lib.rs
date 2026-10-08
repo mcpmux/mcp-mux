@@ -477,11 +477,17 @@ async fn run_config(client: &mut ControlClient, cli: &Cli, command: &ConfigComma
             format,
             server,
             space,
+            include_secrets,
         } => {
             let value = client
                 .call(
                     Method::ConfigExport,
-                    json!({"format": format, "server_id": server, "space_id": space}),
+                    json!({
+                        "format": format,
+                        "server_id": server,
+                        "space_id": space,
+                        "include_secrets": include_secrets,
+                    }),
                 )
                 .await?;
             emit(&cli.output, &value, render_config_export)
@@ -493,7 +499,7 @@ async fn run_config(client: &mut ControlClient, cli: &Cli, command: &ConfigComma
             match out {
                 Some(path) => {
                     let content = value.get("content").and_then(Value::as_str).unwrap_or("");
-                    std::fs::write(path, content)
+                    write_private_file(path, content.as_bytes())
                         .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
                     if cli.output == OutputMode::Human {
                         println!(
@@ -518,16 +524,23 @@ async fn run_config(client: &mut ControlClient, cli: &Cli, command: &ConfigComma
             dry_run,
         } => {
             let file = daemon_side_path(file)?;
-            let value = client
-                .call(
-                    Method::ConfigImport,
-                    json!({
-                        "file": file.to_string_lossy(),
-                        "space_id": space,
-                        "dry_run": dry_run,
-                    }),
-                )
-                .await?;
+            let call = |dry_run: bool| {
+                json!({
+                    "file": file.to_string_lossy(),
+                    "space_id": space,
+                    "dry_run": dry_run,
+                })
+            };
+            if !dry_run {
+                // Show what the import adds, changes and removes, and what
+                // each server runs, before anything is written.
+                let plan = client.call(Method::ConfigImport, call(true)).await?;
+                if cli.output == OutputMode::Human && !cli.yes {
+                    render_config_import(&plan)?;
+                }
+                confirm(cli, "import these servers (new ones start enabled)")?;
+            }
+            let value = client.call(Method::ConfigImport, call(*dry_run)).await?;
             emit(&cli.output, &value, render_config_import)
         }
         ConfigCommand::Validate { file } => {
@@ -606,6 +619,27 @@ fn emit(mode: &OutputMode, value: &Value, human: fn(&Value) -> Result<()>) -> Re
         }
         OutputMode::Human => human(value),
     }
+}
+
+/// Write a file only its owner can read: exports can hold server commands
+/// and URLs worth keeping private.
+fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    // `mode` only applies to a new file; tighten an existing one too.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents)
 }
 
 fn confirm(cli: &Cli, action: &str) -> Result<()> {
@@ -938,9 +972,17 @@ fn render_config_import(value: &Value) -> Result<()> {
         .unwrap_or(false);
     if dry {
         println!("dry run - would import:");
-        for id in as_array(value.get("added").unwrap_or(&Value::Null)) {
-            if let Some(id) = id.as_str() {
-                println!("  + {id}");
+        for (mark, key) in [("+", "added"), ("~", "updated"), ("-", "removed")] {
+            for id in as_array(value.get(key).unwrap_or(&Value::Null)) {
+                if let Some(id) = id.as_str() {
+                    println!("  {mark} {id}");
+                }
+            }
+        }
+        if let Some(launches) = value.get("launches").and_then(Value::as_object) {
+            println!("servers in the file run:");
+            for (key, launch) in launches {
+                println!("  {key}: {}", launch.as_str().unwrap_or_default());
             }
         }
         return Ok(());
@@ -1038,6 +1080,15 @@ async fn daemon_restart(
     let pid: u32 = str_at(&status, "pid")
         .parse()
         .map_err(|_| anyhow::anyhow!("daemon status did not return a numeric pid"))?;
+    // Signal only the process actually serving the socket.
+    if let Some(peer) = client.peer_pid() {
+        if u32::try_from(peer).ok() != Some(pid) {
+            bail!(
+                "the daemon reported pid {pid}, but the socket is served by pid {peer}; \
+                 refusing to signal either"
+            );
+        }
+    }
     let data_dir = str_at(&status, "data_dir");
 
     let proc = std::path::PathBuf::from(format!("/proc/{pid}"));
@@ -1260,6 +1311,27 @@ fn join_keys(value: &Value, key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(unix)]
+    #[test]
+    fn export_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mcpmux-cli-out-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let existing = dir.join("space.json");
+        std::fs::write(&existing, "old").unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let fresh = dir.join("fresh.json");
+        let _ = std::fs::remove_file(&fresh);
+        for file in [&existing, &fresh] {
+            write_private_file(file, b"{}").unwrap();
+            assert_eq!(std::fs::read_to_string(file).unwrap(), "{}");
+            let mode = std::fs::metadata(file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", file.display());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     #[test]

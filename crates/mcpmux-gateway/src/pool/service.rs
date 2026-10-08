@@ -322,9 +322,9 @@ impl PoolService {
 
         // Use proper InstanceKey constructors that include the URL
         let instance_key = match &ctx.transport {
-            ResolvedTransport::Stdio { command, args, env } => {
-                InstanceKey::stdio(ctx.space_id, command, args, env)
-            }
+            ResolvedTransport::Stdio {
+                command, args, env, ..
+            } => InstanceKey::stdio(ctx.space_id, command, args, env),
             ResolvedTransport::Http { url, headers, .. } => {
                 InstanceKey::http(ctx.space_id, url, headers)
             }

@@ -342,6 +342,7 @@ fn spawn_stderr_reader(
     log_manager: Option<Arc<ServerLogManager>>,
     space_id: Uuid,
     server_id: String,
+    redact: Arc<Vec<String>>,
 ) {
     let Some(log_manager) = log_manager else {
         return;
@@ -378,6 +379,7 @@ fn spawn_stderr_reader(
                     break;
                 }
             };
+            let message = scrub(&message, &redact);
             let level = classify_stderr_line(&message);
             let log = ServerLog::new(level, LogSource::Stderr, &message);
             let _ = log_manager.append(&space_id_str, &server_id, log).await;
@@ -432,6 +434,19 @@ where
     ))
 }
 
+/// Replace every occurrence of the given secret values with `[redacted]`.
+/// Servers commonly echo their configuration (an API key in an error, a
+/// token in a debug dump) to stderr, which is stored in the server log.
+fn scrub(line: &str, secrets: &[String]) -> String {
+    let mut out = line.to_string();
+    for secret in secrets {
+        if !secret.is_empty() && out.contains(secret.as_str()) {
+            out = out.replace(secret.as_str(), "[redacted]");
+        }
+    }
+    out
+}
+
 /// Classify a stderr line into a log level based on content heuristics.
 fn classify_stderr_line(line: &str) -> LogLevel {
     let lower = line.to_lowercase();
@@ -456,6 +471,8 @@ pub struct StdioTransport {
     log_manager: Option<Arc<ServerLogManager>>,
     connect_timeout: Duration,
     event_tx: Option<tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>>,
+    /// Secret values scrubbed from stderr before it is logged.
+    redact: Arc<Vec<String>>,
 }
 
 impl StdioTransport {
@@ -479,7 +496,15 @@ impl StdioTransport {
             log_manager,
             connect_timeout,
             event_tx,
+            redact: Arc::new(Vec::new()),
         }
+    }
+
+    /// Scrub these exact values (the server's own secrets) from its stderr
+    /// before writing it to the server log.
+    pub fn with_redacted_values(mut self, values: Vec<String>) -> Self {
+        self.redact = Arc::new(values);
+        self
     }
 
     /// Log a message to the server log manager.
@@ -594,6 +619,7 @@ impl Transport for StdioTransport {
                 self.log_manager.clone(),
                 self.space_id,
                 self.server_id.clone(),
+                Arc::clone(&self.redact),
             );
         } else {
             warn!(
@@ -713,6 +739,22 @@ mod tests {
                 StderrLine::Line("last".into()),
             ]
         );
+    }
+
+    #[test]
+    fn stderr_lines_have_the_servers_secrets_scrubbed() {
+        let secrets = vec![
+            "ghp_longer_secret_value".to_string(),
+            "sk-12345678".to_string(),
+        ];
+        assert_eq!(
+            scrub(
+                "auth failed for ghp_longer_secret_value (sk-12345678)",
+                &secrets
+            ),
+            "auth failed for [redacted] ([redacted])"
+        );
+        assert_eq!(scrub("nothing to hide", &secrets), "nothing to hide");
     }
 
     use super::*;

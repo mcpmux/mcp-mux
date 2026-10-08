@@ -19,6 +19,7 @@ fn stdio_ctx(space_id: Uuid, server_id: &str) -> ConnectionContext {
             command: "mcpmux-test-command-that-does-not-exist".to_string(),
             args: vec![],
             env: HashMap::new(),
+            redact: vec![],
         },
     )
 }

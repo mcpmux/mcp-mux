@@ -61,6 +61,10 @@ pub enum ResolvedTransport {
         command: String,
         args: Vec<String>,
         env: HashMap<String, String>,
+        /// Exact secret values (secret inputs, env overrides, appended
+        /// arguments) to scrub from the server's stderr before it is logged.
+        /// Not passed to the server.
+        redact: Vec<String>,
     },
     Http {
         url: String,
@@ -92,7 +96,9 @@ impl ResolvedTransport {
 
         let mut hasher = DefaultHasher::new();
         match self {
-            ResolvedTransport::Stdio { command, args, env } => {
+            ResolvedTransport::Stdio {
+                command, args, env, ..
+            } => {
                 "stdio".hash(&mut hasher);
                 command.hash(&mut hasher);
                 args.hash(&mut hasher);
@@ -141,16 +147,24 @@ impl TransportFactory {
         event_tx: Option<tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>>,
     ) -> Box<dyn Transport> {
         match config {
-            ResolvedTransport::Stdio { command, args, env } => Box::new(StdioTransport::new(
-                command.clone(),
-                args.clone(),
-                env.clone(),
-                space_id,
-                server_id,
-                log_manager,
-                connect_timeout,
-                event_tx,
-            )),
+            ResolvedTransport::Stdio {
+                command,
+                args,
+                env,
+                redact,
+            } => Box::new(
+                StdioTransport::new(
+                    command.clone(),
+                    args.clone(),
+                    env.clone(),
+                    space_id,
+                    server_id,
+                    log_manager,
+                    connect_timeout,
+                    event_tx,
+                )
+                .with_redacted_values(redact.clone()),
+            ),
             ResolvedTransport::Http { url, headers } => Box::new(HttpTransport::new(
                 url.clone(),
                 headers.clone(),

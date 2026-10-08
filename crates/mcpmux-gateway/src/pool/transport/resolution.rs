@@ -102,6 +102,7 @@ pub fn build_transport_config(
                 command: resolved_command,
                 args: resolved_args,
                 env: resolved_env,
+                redact: secret_values(registry_transport, &effective_values, installed),
             }
         }
         RegistryConfig::Http { url, headers, .. } => {
@@ -122,6 +123,34 @@ pub fn build_transport_config(
             }
         }
     }
+}
+
+/// Values that must not show up in a stdio server's logs: its secret inputs,
+/// and anything the user set as an env override or appended argument (where
+/// tokens commonly go). Short values are left out — they'd mostly scrub
+/// unrelated text — and longer ones come first so a value containing another
+/// is replaced whole.
+fn secret_values(
+    registry_transport: &RegistryConfig,
+    effective_values: &HashMap<String, String>,
+    installed: &InstalledServer,
+) -> Vec<String> {
+    const MIN_LEN: usize = 8;
+    let secret_inputs = registry_transport
+        .metadata()
+        .inputs
+        .iter()
+        .filter(|input| input.secret)
+        .filter_map(|input| effective_values.get(&input.id));
+    let mut values: Vec<String> = secret_inputs
+        .chain(installed.env_overrides.values())
+        .chain(installed.args_append.iter())
+        .filter(|v| v.len() >= MIN_LEN)
+        .cloned()
+        .collect();
+    values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    values.dedup();
+    values
 }
 
 fn apply_state_dir_env(
@@ -179,6 +208,52 @@ mod tests {
             obtain_url: None,
             obtain_instructions: None,
         }
+    }
+
+    #[test]
+    fn secret_inputs_and_overrides_are_marked_for_redaction() {
+        let mut api_key = make_input("API_KEY", None);
+        api_key.secret = true;
+        let transport = RegistryConfig::Stdio {
+            command: "node".to_string(),
+            args: vec!["server.js".to_string()],
+            env: HashMap::new(),
+            metadata: TransportMetadata {
+                inputs: vec![api_key, make_input("REGION", None)],
+            },
+        };
+        let mut installed = make_installed(HashMap::from([
+            ("API_KEY".to_string(), "sk-live-0123456789".to_string()),
+            ("REGION".to_string(), "eu-central-1".to_string()),
+        ]));
+        installed
+            .env_overrides
+            .insert("TOKEN".to_string(), "override-token-value".to_string());
+        installed
+            .env_overrides
+            .insert("DEBUG".to_string(), "1".to_string());
+        installed
+            .args_append
+            .push("--password=hunter2hunter2".to_string());
+
+        let ResolvedTransport::Stdio { redact, .. } =
+            build_transport_config(&transport, &installed, None)
+        else {
+            panic!("Expected Stdio transport");
+        };
+        for secret in [
+            "sk-live-0123456789",
+            "override-token-value",
+            "--password=hunter2hunter2",
+        ] {
+            assert!(
+                redact.contains(&secret.to_string()),
+                "{secret} not redacted"
+            );
+        }
+        // Not secret, or too short to scrub safely.
+        assert!(!redact.contains(&"eu-central-1".to_string()));
+        assert!(!redact.contains(&"1".to_string()));
     }
 
     #[test]

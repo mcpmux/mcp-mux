@@ -27,7 +27,7 @@ pub use dependencies::{DependenciesBuilder, GatewayDependencies};
 pub use handlers::PendingAuthorization;
 pub use service_container::ServiceContainer;
 pub use startup::{AutoConnectResult, StartupOrchestrator, TokenRefreshResult};
-pub use state::{ClientSession, GatewayState};
+pub use state::{ClientSession, ConsentLookupError, GatewayState, AUTHORIZATION_CODE_TTL_SECS};
 
 use axum::{
     extract::ConnectInfo,

@@ -65,9 +65,6 @@ The generated unit uses the exact executable that ran service install and
 preserves supplied options such as --data-dir, --port, --registry-url,
 --log-dir, --log-filter, and --public-base-url.
 
-Use --key-provider file on a headless Linux host. It keeps master and JWT keys
-under the selected data directory with owner-only file permissions.
-
 The data directory's master-key.json records which key (OS keychain or key
 file) the stored credentials are encrypted with, as a one-way fingerprint. If
 that key can't be loaded, for example because the keyring is locked or the key
@@ -75,6 +72,9 @@ file was deleted, McpMux refuses to start instead of creating a new key that
 would make the stored credentials unreadable. Unlock the keyring or restore the
 key file and start again; to start over on purpose, move the data directory
 aside.
+
+Use --key-provider file on a headless Linux host. It keeps master and JWT keys
+under the selected data directory with owner-only file permissions.
 
 ## Verify and operate
 

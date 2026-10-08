@@ -1250,6 +1250,12 @@ impl ServerManager {
 
     /// Open browser with auth URL (without terminal flash on Windows)
     pub fn open_browser(&self, url: &str) {
+        // The authorization URL is built from server-supplied metadata: only
+        // ever hand an https (or loopback http) page to the OS.
+        if !crate::pool::oauth_utils::is_acceptable_oauth_endpoint(url) {
+            error!("[ServerManager] Refusing to open an authorization URL that isn't https");
+            return;
+        }
         info!(url = %url, "[ServerManager] Opening browser for OAuth");
 
         // Log browser opening (if we have server context)

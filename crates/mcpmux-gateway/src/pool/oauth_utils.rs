@@ -79,8 +79,57 @@ pub async fn discover_and_convert_metadata(
     server_url: &str,
 ) -> Result<(AuthorizationMetadata, StoredOAuthMetadata), AuthError> {
     let metadata = discover_metadata_with_fallback(manager, server_url).await?;
+    check_discovered_endpoints(&metadata)?;
     let stored = convert_to_stored_metadata(&metadata);
     Ok((metadata, stored))
+}
+
+/// Whether McpMux may send a browser or credentials to this OAuth endpoint:
+/// `https`, or `http` on a loopback host (local development servers).
+///
+/// The endpoints come from metadata the MCP server (or its authorization
+/// server) controls; anything else (`file:`, `smb:`, OS protocol handlers,
+/// plain http on the network) is refused before it reaches the browser or a
+/// token request.
+pub fn is_acceptable_oauth_endpoint(url: &str) -> bool {
+    let Ok(url) = Url::parse(url) else {
+        return false;
+    };
+    match url.scheme() {
+        "https" => url.host().is_some(),
+        "http" => match url.host() {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+fn check_discovered_endpoints(metadata: &AuthorizationMetadata) -> Result<(), AuthError> {
+    let endpoints = [
+        (
+            "authorization_endpoint",
+            Some(&metadata.authorization_endpoint),
+        ),
+        ("token_endpoint", Some(&metadata.token_endpoint)),
+        (
+            "registration_endpoint",
+            metadata.registration_endpoint.as_ref(),
+        ),
+    ];
+    for (name, url) in endpoints {
+        if let Some(url) = url {
+            if !is_acceptable_oauth_endpoint(url) {
+                warn!("[OAuth] Refusing server metadata: {name} is not an https URL");
+                return Err(AuthError::MetadataError(format!(
+                    "{name} must be an https URL (or http on localhost)"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Convert RMCP's AuthorizationMetadata to our StoredOAuthMetadata format.
@@ -357,5 +406,32 @@ mod tests {
         assert!(initialize_from_store(&mut manager, Some(&registration))
             .await
             .unwrap());
+    }
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::is_acceptable_oauth_endpoint;
+
+    #[test]
+    fn only_https_or_loopback_http_endpoints_are_acceptable() {
+        for url in [
+            "https://auth.example.com/authorize",
+            "http://localhost:8080/authorize",
+            "http://127.0.0.1:9000/token",
+            "http://[::1]:9000/token",
+        ] {
+            assert!(is_acceptable_oauth_endpoint(url), "{url}");
+        }
+        for url in [
+            "http://auth.example.com/authorize",
+            "file:///etc/passwd",
+            "search-ms:query=x",
+            "smb://host/share",
+            "javascript:alert(1)",
+            "not a url",
+        ] {
+            assert!(!is_acceptable_oauth_endpoint(url), "{url}");
+        }
     }
 }

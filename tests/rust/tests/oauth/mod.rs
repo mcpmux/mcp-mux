@@ -5,5 +5,6 @@
 mod cimd;
 mod dcr;
 mod dcr_outbound;
+mod endpoint_policy;
 mod flow;
 mod token;

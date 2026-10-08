@@ -937,7 +937,6 @@ impl OutboundOAuthManager {
         );
         manager.set_credential_store(store);
 
-        // Try to initialize from stored credentials, client secret included
         let registration = backend_oauth_repo
             .get(&space_id, server_id)
             .await
@@ -945,6 +944,16 @@ impl OutboundOAuthManager {
                 warn!("[OAuth] Failed to load client registration: {}", e);
                 None
             });
+
+        // Pin the metadata saved at sign-in, as the connect path does. Without
+        // it rmcp re-discovers on refresh and would send the stored refresh
+        // token (and client secret) to whatever token endpoint the server's
+        // metadata names at that moment.
+        if let Some(metadata) = registration.as_ref().and_then(|r| r.metadata.as_ref()) {
+            manager.set_metadata(oauth_utils::convert_from_stored_metadata(metadata));
+        }
+
+        // Try to initialize from stored credentials, client secret included
         if oauth_utils::initialize_from_store(&mut manager, registration.as_ref())
             .await
             .unwrap_or(false)

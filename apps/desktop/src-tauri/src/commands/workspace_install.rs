@@ -523,6 +523,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// A directory junction (no admin rights needed to create one) pointing
+    /// outside the workspace is refused like a symlink.
+    #[cfg(windows)]
+    #[test]
+    fn junctioned_config_directory_is_refused() {
+        let tmp =
+            std::env::temp_dir().join(format!("mcpmux-wsinstall-junction-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let ws = tmp.join("ws");
+        let outside = tmp.join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(ws.join(".cursor"))
+            .arg(&outside)
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success(), "mklink /J failed");
+
+        let r = install_one(spec("cursor"), &ws, "http://x/mcp", "/p", None);
+        assert_eq!(r.action, "error", "{:?}", r.error);
+        assert!(
+            !outside.join("mcp.json").exists(),
+            "nothing written through the junction"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn snippet_lists_all_clients() {
         let clients = list_workspace_install_clients();

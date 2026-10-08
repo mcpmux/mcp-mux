@@ -379,6 +379,18 @@ impl Database {
         Ok(())
     }
 
+    /// Copy the WAL back into the database file and truncate it, so pages
+    /// that held deleted rows don't linger in `-wal`. Best effort: a busy
+    /// checkpoint just leaves the WAL for the next one.
+    pub fn checkpoint_wal(&self) {
+        if let Err(e) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        {
+            tracing::debug!("WAL checkpoint skipped: {e}");
+        }
+    }
+
     /// Get the current schema version (highest applied migration).
     fn get_schema_version(&self) -> i64 {
         self.conn
@@ -393,18 +405,6 @@ impl Database {
     /// Get a reference to the underlying connection.
     pub fn connection(&self) -> &Connection {
         &self.conn
-    }
-
-    /// Copy the WAL back into the database file and truncate it, so pages
-    /// that held deleted rows don't linger in `-wal`. Best effort: a busy
-    /// checkpoint just leaves the WAL for the next one.
-    pub fn checkpoint_wal(&self) {
-        if let Err(e) = self
-            .conn
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-        {
-            tracing::debug!("WAL checkpoint skipped: {e}");
-        }
     }
 
     /// Execute a closure within a transaction.

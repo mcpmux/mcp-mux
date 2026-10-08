@@ -6,6 +6,7 @@ import { getServerLogs, clearServerLogs, getServerLogFile, type ServerLogEntry }
 interface ServerLogViewerProps {
   serverId: string;
   serverName: string;
+  spaceId: string;
   onClose: () => void;
 }
 
@@ -32,7 +33,7 @@ const SOURCE_COLORS: Record<string, string> = {
   server: 'text-cyan-400',
 };
 
-export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogViewerProps) {
+export function ServerLogViewer({ serverId, serverName, spaceId, onClose }: ServerLogViewerProps) {
   const [logs, setLogs] = useState<ServerLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +50,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
       setError(null);
       const fetchedLogs = await getServerLogs(
         serverId,
+        spaceId,
         500, // Load last 500 logs
         levelFilter === 'all' ? undefined : levelFilter
       );
@@ -72,7 +74,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
 
   useEffect(() => {
     loadLogs();
-  }, [serverId, levelFilter]);
+  }, [serverId, spaceId, levelFilter]);
 
   // Auto-refresh every 2 seconds if enabled
   useEffect(() => {
@@ -83,7 +85,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
     }, 2000);
     
     return () => clearInterval(interval);
-  }, [autoRefresh, serverId, levelFilter]);
+  }, [autoRefresh, serverId, spaceId, levelFilter]);
 
   // Track scroll position
   const handleScroll = () => {
@@ -104,7 +106,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
     }
     
     try {
-      await clearServerLogs(serverId);
+      await clearServerLogs(serverId, spaceId);
       setLogs([]);
       success('Logs cleared', `All logs for "${serverName}" have been cleared`);
     } catch (e) {
@@ -114,7 +116,7 @@ export function ServerLogViewer({ serverId, serverName, onClose }: ServerLogView
 
   const handleOpenInEditor = async () => {
     try {
-      const filePath = await getServerLogFile(serverId);
+      const filePath = await getServerLogFile(serverId, spaceId);
       await navigator.clipboard.writeText(filePath);
       success('Path copied', `Log file path copied to clipboard`);
     } catch (e) {

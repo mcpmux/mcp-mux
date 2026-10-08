@@ -12,32 +12,35 @@ export interface ServerLogEntry {
 }
 
 /**
- * Get recent logs for a server.
+ * Get recent logs for a server in a Space. Logs are stored per Space, so the
+ * Space the server is viewed in is part of the lookup.
  */
 export async function getServerLogs(
   serverId: string,
+  spaceId: string,
   limit?: number,
   levelFilter?: string
 ): Promise<ServerLogEntry[]> {
   return invoke('get_server_logs', {
     serverId,
+    spaceId,
     limit,
     levelFilter,
   });
 }
 
 /**
- * Clear logs for a server.
+ * Clear logs for a server in a Space.
  */
-export async function clearServerLogs(serverId: string): Promise<void> {
-  return invoke('clear_server_logs', { serverId });
+export async function clearServerLogs(serverId: string, spaceId: string): Promise<void> {
+  return invoke('clear_server_logs', { serverId, spaceId });
 }
 
 /**
- * Get the log file path for a server (for external viewers).
+ * Get the log file path for a server in a Space (for external viewers).
  */
-export async function getServerLogFile(serverId: string): Promise<string> {
-  return invoke('get_server_log_file', { serverId });
+export async function getServerLogFile(serverId: string, spaceId: string): Promise<string> {
+  return invoke('get_server_log_file', { serverId, spaceId });
 }
 
 /**

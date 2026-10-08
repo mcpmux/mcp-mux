@@ -718,3 +718,127 @@ async fn test_installed_server_special_characters_persist() {
         Some(&"Bearer tok3n+/=".to_string())
     );
 }
+
+/// The raw row for a server, as stored.
+async fn raw_settings(db: &Arc<Mutex<mcpmux_storage::Database>>, id: &uuid::Uuid) -> String {
+    let db = db.lock().await;
+    db.connection()
+        .query_row(
+            "SELECT input_values || env_overrides || args_append || extra_headers
+             FROM installed_servers WHERE id = ?1",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn server_settings_are_encrypted_at_rest() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "secret-server");
+    server
+        .extra_headers
+        .insert("Authorization".into(), "Bearer header-secret".into());
+    server
+        .env_overrides
+        .insert("TOKEN".into(), "env-secret".into());
+    server.args_append.push("--api-key=arg-secret".into());
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    let raw = raw_settings(&db, &server.id).await;
+    for secret in [
+        "header-secret",
+        "env-secret",
+        "arg-secret",
+        "Authorization",
+        "TOKEN",
+    ] {
+        assert!(!raw.contains(secret), "{secret} stored in plaintext: {raw}");
+    }
+    let loaded = InstalledServerRepository::get(&server_repo, &server.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.extra_headers, server.extra_headers);
+    assert_eq!(loaded.env_overrides, server.env_overrides);
+    assert_eq!(loaded.args_append, server.args_append);
+}
+
+#[tokio::test]
+async fn plaintext_settings_from_older_versions_are_read_and_then_encrypted() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let server = fixtures::test_installed_server(&space.id.to_string(), "legacy-server");
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+    // What an older version left behind: every settings column as JSON.
+    db.lock()
+        .await
+        .connection()
+        .execute(
+            r#"UPDATE installed_servers
+               SET input_values = '{"KEY":"input-secret"}', env_overrides = '{"TOKEN":"env-secret"}',
+                   args_append = '["--api-key=arg-secret"]',
+                   extra_headers = '{"Authorization":"Bearer header-secret"}'
+               WHERE id = ?1"#,
+            [server.id.to_string()],
+        )
+        .unwrap();
+
+    let loaded = InstalledServerRepository::get(&server_repo, &server.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.env_overrides["TOKEN"], "env-secret");
+    assert_eq!(loaded.args_append, vec!["--api-key=arg-secret".to_string()]);
+
+    assert_eq!(server_repo.encrypt_plaintext_rows().await.unwrap(), 1);
+    let raw = raw_settings(&db, &server.id).await;
+    for secret in ["input-secret", "env-secret", "arg-secret", "header-secret"] {
+        assert!(!raw.contains(secret), "{secret} still plaintext: {raw}");
+    }
+    let reloaded = InstalledServerRepository::get(&server_repo, &server.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reloaded.input_values["KEY"], "input-secret");
+    assert_eq!(
+        reloaded.extra_headers["Authorization"],
+        "Bearer header-secret"
+    );
+    // Nothing left to do on the next start.
+    assert_eq!(server_repo.encrypt_plaintext_rows().await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn undecryptable_settings_are_an_error_not_empty() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let server = fixtures::test_installed_server(&space.id.to_string(), "other-key");
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    // The same rows read with a different master key.
+    let other = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    assert!(InstalledServerRepository::get(&other, &server.id)
+        .await
+        .is_err());
+}

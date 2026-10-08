@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::crypto::FieldEncryptor;
+use crate::crypto::{binding, FieldEncryptor};
 use crate::Database;
 
 /// Columns `get` and `list_for_space` read, in `RegistrationRow::from_row` order
@@ -70,11 +70,18 @@ impl SqliteOutboundOAuthRepository {
         Self { db, encryptor }
     }
 
-    fn encrypt_secret(&self, secret: Option<&str>) -> Result<Option<String>> {
+    /// Encrypt a client secret bound to the Space and server it belongs to.
+    fn encrypt_secret(
+        &self,
+        secret: Option<&str>,
+        space_id: &str,
+        server_id: &str,
+    ) -> Result<Option<String>> {
+        let context = binding::outbound_client_secret(space_id, server_id);
         secret
             .map(|s| {
                 self.encryptor
-                    .encrypt(s)
+                    .encrypt_bound(s, &context)
                     .map_err(|e| anyhow::anyhow!("Failed to encrypt client secret: {}", e))
             })
             .transpose()
@@ -85,22 +92,31 @@ impl SqliteOutboundOAuthRepository {
     /// its secret would make the next sign-in reuse it and fail. The sign-in flow
     /// instead treats a failed lookup as no registration, so it registers a fresh
     /// client, whose save overwrites this row.
-    fn decrypt_secret(&self, encrypted: Option<String>, server_id: &str) -> Result<Option<String>> {
+    fn decrypt_secret(
+        &self,
+        encrypted: Option<String>,
+        space_id: &str,
+        server_id: &str,
+    ) -> Result<Option<String>> {
+        let context = binding::outbound_client_secret(space_id, server_id);
         encrypted
             .map(|encrypted| {
-                self.encryptor.decrypt(&encrypted).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to decrypt OAuth client secret for {}: {}",
-                        server_id,
-                        e
-                    )
-                })
+                self.encryptor
+                    .decrypt_bound(&encrypted, &context)
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to decrypt OAuth client secret for {}: {}",
+                            server_id,
+                            e
+                        )
+                    })
             })
             .transpose()
     }
 
     fn to_registration(&self, row: RegistrationRow) -> Result<OutboundOAuthRegistration> {
-        let client_secret = self.decrypt_secret(row.client_secret_encrypted, &row.server_id)?;
+        let client_secret =
+            self.decrypt_secret(row.client_secret_encrypted, &row.space_id, &row.server_id)?;
 
         let metadata: Option<StoredOAuthMetadata> = row.metadata_json.and_then(|json| {
             serde_json::from_str(&json)
@@ -187,7 +203,11 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
             .metadata
             .as_ref()
             .and_then(|m| serde_json::to_string(m).ok());
-        let client_secret_encrypted = self.encrypt_secret(reg.client_secret.as_deref())?;
+        let client_secret_encrypted = self.encrypt_secret(
+            reg.client_secret.as_deref(),
+            &reg.space_id.to_string(),
+            &reg.server_id,
+        )?;
 
         conn.execute(
             "INSERT INTO outbound_oauth_clients (

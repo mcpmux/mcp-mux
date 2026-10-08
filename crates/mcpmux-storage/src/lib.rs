@@ -60,8 +60,8 @@ pub mod keychain_dpapi;
 pub mod keychain_file;
 mod repositories;
 
-pub use crypto::{generate_master_key, key_fingerprint, FieldEncryptor, KEY_SIZE};
-pub use database::Database;
+pub use crypto::{binding, generate_master_key, key_fingerprint, FieldEncryptor, KEY_SIZE};
+pub use database::{Database, EncryptedSample};
 pub use keychain::{
     generate_jwt_secret, JwtSecretProvider, KeychainJwtSecretProvider, KeychainKeyProvider,
     MasterKeyProvider, JWT_SECRET_SIZE,

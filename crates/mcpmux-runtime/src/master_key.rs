@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(windows))]
 use mcpmux_storage::Database;
-use mcpmux_storage::{key_fingerprint, FieldEncryptor, KEY_SIZE};
+use mcpmux_storage::{key_fingerprint, EncryptedSample, FieldEncryptor, KEY_SIZE};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -112,7 +112,7 @@ pub fn choose_master_key(
     record: Option<&KeyRecord>,
     keychain: &KeychainLookup,
     file_key: Option<&Key>,
-    samples: &[String],
+    samples: &[EncryptedSample],
 ) -> Result<KeyChoice, KeyChoiceError> {
     let candidates: Vec<(KeySource, &Key)> = allowed
         .iter()
@@ -162,7 +162,7 @@ pub fn choose_master_key(
         let decrypts = |key: &Key| match FieldEncryptor::new(key) {
             Ok(encryptor) => samples
                 .iter()
-                .filter(|s| encryptor.decrypt(s).is_ok())
+                .filter(|s| encryptor.decrypt_bound(&s.value, &s.context).is_ok())
                 .count(),
             Err(_) => 0,
         };
@@ -335,11 +335,42 @@ mod tests {
         Zeroizing::new([byte; KEY_SIZE])
     }
 
-    fn ciphertexts(k: &Key, n: usize) -> Vec<String> {
+    /// Bound (`v2:`) ciphertexts, as current builds store them.
+    fn ciphertexts(k: &Key, n: usize) -> Vec<EncryptedSample> {
         let enc = FieldEncryptor::new(k).unwrap();
         (0..n)
-            .map(|i| enc.encrypt(&format!("secret-{i}")).unwrap())
+            .map(|i| {
+                let context = format!("credentials|credential_value|s|srv{i}|access_token");
+                EncryptedSample {
+                    value: enc.encrypt_bound(&format!("secret-{i}"), &context).unwrap(),
+                    context,
+                }
+            })
             .collect()
+    }
+
+    /// Unbound ciphertexts, as earlier builds stored them.
+    fn legacy_ciphertexts(k: &Key, n: usize) -> Vec<EncryptedSample> {
+        let enc = FieldEncryptor::new(k).unwrap();
+        (0..n)
+            .map(|i| EncryptedSample {
+                value: enc.encrypt(&format!("secret-{i}")).unwrap(),
+                context: "ignored".to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn legacy_unbound_data_still_identifies_its_key() {
+        let (kc, stale) = (key(1), key(2));
+        let choice = choose_master_key(
+            AUTO,
+            None,
+            &KeychainLookup::Found(kc.clone()),
+            Some(&stale),
+            &legacy_ciphertexts(&kc, 3),
+        );
+        assert_eq!(choice, Ok(KeyChoice::Use(KeySource::Keychain)));
     }
 
     fn record(source: KeySource, k: &Key) -> KeyRecord {
@@ -454,9 +485,18 @@ mod tests {
         }
     }
 
+    /// A database holding one credential, encrypted (bound) with `k`.
     fn database_with_ciphertext(dir: &Path, k: &Key) -> Database {
         let db = Database::open(&dir.join("mcpmux.db")).unwrap();
-        let value = FieldEncryptor::new(k).unwrap().encrypt("token").unwrap();
+        let space: String = db
+            .connection()
+            .query_row("SELECT id FROM spaces LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        let context = mcpmux_storage::binding::credential(&space, "srv", "access_token");
+        let value = FieldEncryptor::new(k)
+            .unwrap()
+            .encrypt_bound("token", &context)
+            .unwrap();
         db.connection()
             .execute(
                 "INSERT INTO credentials (id, space_id, server_id, credential_type, credential_value, created_at, updated_at)
@@ -465,6 +505,23 @@ mod tests {
             )
             .unwrap();
         db
+    }
+
+    #[test]
+    fn a_database_of_bound_ciphertexts_identifies_its_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = key(3);
+        let db = database_with_ciphertext(tmp.path(), &file);
+        std::fs::create_dir_all(tmp.path().join("keys")).unwrap();
+        std::fs::write(tmp.path().join("keys/master.key"), *file).unwrap();
+        let keychain = FakeKeychain {
+            lookup: || KeychainLookup::Found(key(4)),
+            created: Cell::new(false),
+        };
+        // No record yet: the stored (bound) data decides, not preference.
+        let (chosen, source) = resolve_master_key(tmp.path(), &db, AUTO, &keychain).unwrap();
+        assert_eq!(source, KeySource::File);
+        assert_eq!(*chosen, *file);
     }
 
     #[test]

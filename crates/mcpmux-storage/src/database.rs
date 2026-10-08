@@ -160,6 +160,14 @@ const MIGRATIONS: &[Migration] = &[
     },
 ];
 
+/// A stored ciphertext with the context it is bound to (see
+/// [`crate::crypto::binding`]); legacy unbound values ignore the context.
+#[derive(Debug, Clone)]
+pub struct EncryptedSample {
+    pub value: String,
+    pub context: String,
+}
+
 /// SQLite database wrapper.
 pub struct Database {
     conn: Connection,
@@ -392,20 +400,93 @@ impl Database {
     /// legacy rows kept as plaintext JSON). Empty when nothing encrypted has
     /// been stored yet. Used to tell which candidate key the existing data
     /// was encrypted with.
-    pub fn encrypted_samples(&self, limit: usize) -> Result<Vec<String>> {
+    pub fn encrypted_samples(&self, limit: usize) -> Result<Vec<EncryptedSample>> {
+        use crate::crypto::binding;
         let mut stmt = self.conn.prepare(
-            "SELECT credential_value FROM credentials
+            "SELECT 'credential', credential_value, space_id, server_id, credential_type
+               FROM credentials
              UNION ALL
-             SELECT client_secret_encrypted FROM outbound_oauth_clients
+             SELECT 'client_secret', client_secret_encrypted, space_id, server_id, ''
+               FROM outbound_oauth_clients
               WHERE client_secret_encrypted IS NOT NULL AND client_secret_encrypted != ''
              UNION ALL
-             SELECT input_values FROM installed_servers
+             SELECT 'input_values', input_values, id, '', ''
+               FROM installed_servers
               WHERE input_values IS NOT NULL AND input_values != ''
                 AND substr(input_values, 1, 1) != '{'
              LIMIT ?1",
         )?;
-        let rows = stmt.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+        let rows = stmt.query_map([limit as i64], |row| {
+            let kind: String = row.get(0)?;
+            let (a, b, c): (String, String, String) = (row.get(2)?, row.get(3)?, row.get(4)?);
+            let context = match kind.as_str() {
+                "credential" => binding::credential(&a, &b, &c),
+                "client_secret" => binding::outbound_client_secret(&a, &b),
+                _ => binding::installed_server("input_values", &a),
+            };
+            Ok(EncryptedSample {
+                value: row.get(1)?,
+                context,
+            })
+        })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Re-encrypt credentials and outbound client secrets written by earlier
+    /// versions (unbound ciphertexts) bound to where they are stored. Values
+    /// that don't decrypt with `encryptor` are left untouched. Returns how
+    /// many values changed.
+    pub fn bind_legacy_ciphertexts(&self, encryptor: &crate::FieldEncryptor) -> Result<usize> {
+        use crate::crypto::binding;
+        let mut changed = 0;
+        let credentials: Vec<(String, String, String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT space_id, server_id, credential_type, credential_value FROM credentials",
+            )?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        for (space, server, kind, value) in credentials {
+            if crate::FieldEncryptor::is_bound(&value) {
+                continue;
+            }
+            let Ok(plaintext) = encryptor.decrypt(&value) else {
+                continue;
+            };
+            let bound = encryptor
+                .encrypt_bound(&plaintext, &binding::credential(&space, &server, &kind))?;
+            changed += self.conn.execute(
+                "UPDATE credentials SET credential_value = ?4
+                 WHERE space_id = ?1 AND server_id = ?2 AND credential_type = ?3",
+                rusqlite::params![space, server, kind, bound],
+            )?;
+        }
+        let secrets: Vec<(String, String, String)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT space_id, server_id, client_secret_encrypted FROM outbound_oauth_clients
+                 WHERE client_secret_encrypted IS NOT NULL AND client_secret_encrypted != ''",
+            )?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        for (space, server, value) in secrets {
+            if crate::FieldEncryptor::is_bound(&value) {
+                continue;
+            }
+            let Ok(plaintext) = encryptor.decrypt(&value) else {
+                continue;
+            };
+            let bound = encryptor.encrypt_bound(
+                &plaintext,
+                &binding::outbound_client_secret(&space, &server),
+            )?;
+            changed += self.conn.execute(
+                "UPDATE outbound_oauth_clients SET client_secret_encrypted = ?3
+                 WHERE space_id = ?1 AND server_id = ?2",
+                rusqlite::params![space, server, bound],
+            )?;
+        }
+        Ok(changed)
     }
 
     /// Execute a closure within a transaction.

@@ -197,7 +197,15 @@ impl RuntimeBuilder {
 
         let repositories = Repositories::new(database.clone(), encryptor.clone());
 
-        // Server settings saved before they were encrypted at rest.
+        // Credentials and client secrets written before ciphertexts were bound
+        // to where they are stored.
+        match database.lock().await.bind_legacy_ciphertexts(&encryptor) {
+            Ok(0) => {}
+            Ok(n) => info!(values = n, "[runtime] bound stored secrets to their rows"),
+            Err(e) => tracing::warn!(error = %e, "[runtime] could not bind stored secrets"),
+        }
+
+        // Server settings saved before they were encrypted at rest (or bound).
         match SqliteInstalledServerRepository::new(database.clone(), encryptor.clone())
             .encrypt_plaintext_rows()
             .await
@@ -205,7 +213,7 @@ impl RuntimeBuilder {
             Ok(0) => {}
             Ok(n) => info!(
                 rows = n,
-                "[runtime] encrypted server settings stored as plaintext"
+                "[runtime] encrypted and bound server settings from an earlier version"
             ),
             Err(e) => {
                 tracing::warn!(error = %e, "[runtime] could not encrypt plaintext server settings")

@@ -1,6 +1,5 @@
 //! SQLite implementation of InstalledServerRepository.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,7 +11,10 @@ use rusqlite::{params, OptionalExtension};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::{crypto::FieldEncryptor, Database};
+use crate::{
+    crypto::{binding, FieldEncryptor},
+    Database,
+};
 
 /// Raw row data extracted from SQLite before decryption.
 struct RawServerRow {
@@ -44,84 +46,72 @@ impl SqliteInstalledServerRepository {
         Self { db, encryptor }
     }
 
-    /// Encrypt input values for storage.
-    fn encrypt_input_values(&self, values: &HashMap<String, String>) -> Result<String> {
-        let json = Self::serialize_json_map(values);
+    /// Encrypt one settings column (input values, env overrides, appended
+    /// args, extra headers) as JSON, bound to its column and row. They
+    /// routinely hold secrets (API keys, `Authorization` headers,
+    /// `--api-key=…` arguments, tokens in env).
+    fn encrypt_json<T: serde::Serialize>(
+        &self,
+        column: &str,
+        id: &str,
+        value: &T,
+    ) -> Result<String> {
+        let json = serde_json::to_string(value)?;
         self.encryptor
-            .encrypt(&json)
-            .map_err(|e| anyhow::anyhow!("Failed to encrypt input values: {}", e))
+            .encrypt_bound(&json, &binding::installed_server(column, id))
+            .map_err(|e| anyhow::anyhow!("Failed to encrypt {column}: {e}"))
     }
 
-    /// Decrypt input values from storage.
+    /// Decrypt one settings column.
     ///
     /// Three cases, kept distinct so a real failure can't masquerade as an
     /// empty config (which would silently launch a server with all its
     /// secrets missing):
-    ///   * `None` / empty column → no input values (`Ok(empty)`).
-    ///   * Decrypts cleanly → parse the plaintext JSON (a parse failure here
-    ///     is corruption → error).
+    ///   * `None` / empty column → the default (empty).
+    ///   * Decrypts cleanly (bound, or legacy unbound) → parse the JSON (a
+    ///     parse failure here is corruption → error).
     ///   * Decrypt fails → it may be a legacy *unencrypted* row, so try a
     ///     plaintext-JSON parse; if THAT also fails the data is neither
-    ///     decryptable nor valid plaintext (wrong master key or tampered
-    ///     ciphertext) → propagate a hard error rather than returning empty.
-    fn decrypt_input_values(&self, stored: Option<String>) -> Result<HashMap<String, String>> {
-        let Some(data) = stored else {
-            return Ok(HashMap::new());
-        };
-        if data.trim().is_empty() {
-            return Ok(HashMap::new());
-        }
-        // Try decrypting first (new encrypted format).
-        if let Ok(json) = self.encryptor.decrypt(&data) {
-            return serde_json::from_str(&json)
-                .map_err(|e| anyhow::anyhow!("Corrupt decrypted input values (not JSON): {}", e));
-        }
-        // Fallback: legacy unencrypted row stored as plaintext JSON.
-        serde_json::from_str(&data).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to decrypt input values and data is not valid plaintext JSON \
-                 (wrong master key or tampered ciphertext): {}",
-                e
-            )
-        })
-    }
-
-    /// Encrypt one JSON settings column (env overrides, appended args, extra
-    /// headers). They routinely hold secrets (`Authorization` headers,
-    /// `--api-key=…` arguments, tokens in env), like the input values.
-    fn encrypt_json<T: serde::Serialize>(&self, field: &str, value: &T) -> Result<String> {
-        let json = serde_json::to_string(value)?;
-        self.encryptor
-            .encrypt(&json)
-            .map_err(|e| anyhow::anyhow!("Failed to encrypt {field}: {e}"))
-    }
-
-    /// Decrypt one JSON settings column, accepting legacy plaintext JSON.
-    /// Same three cases as [`Self::decrypt_input_values`].
+    ///     decryptable nor valid plaintext (wrong master key, tampered or
+    ///     moved ciphertext) → a hard error rather than an empty value.
     fn decrypt_json<T: serde::de::DeserializeOwned + Default>(
         &self,
-        field: &str,
+        column: &str,
+        id: &str,
         stored: Option<String>,
     ) -> Result<T> {
         let Some(data) = stored.filter(|d| !d.trim().is_empty()) else {
             return Ok(T::default());
         };
-        if let Ok(json) = self.encryptor.decrypt(&data) {
+        let context = binding::installed_server(column, id);
+        if let Ok(json) = self.encryptor.decrypt_bound(&data, &context) {
             return serde_json::from_str(&json)
-                .map_err(|e| anyhow::anyhow!("Corrupt decrypted {field} (not JSON): {e}"));
+                .map_err(|e| anyhow::anyhow!("Corrupt decrypted {column} (not JSON): {e}"));
+        }
+        if FieldEncryptor::is_bound(&data) {
+            anyhow::bail!(
+                "Failed to decrypt {column} (wrong master key, or the value was moved or tampered with)"
+            );
         }
         serde_json::from_str(&data).map_err(|e| {
             anyhow::anyhow!(
-                "Failed to decrypt {field} and data is not valid plaintext JSON \
+                "Failed to decrypt {column} and data is not valid plaintext JSON \
                  (wrong master key or tampered ciphertext): {e}"
             )
         })
     }
 
-    /// Encrypt settings columns still stored as plaintext JSON by earlier
-    /// versions (input values, env overrides, appended args, extra
-    /// headers). Run once at startup; returns how many rows changed.
+    /// Bring settings columns written by earlier versions up to date: encrypt
+    /// plaintext JSON, and re-encrypt unbound ciphertexts bound to their row.
+    /// Values that can't be read are left untouched. Run at startup; returns
+    /// how many rows changed.
     pub async fn encrypt_plaintext_rows(&self) -> Result<usize> {
+        const COLUMNS: [&str; 4] = [
+            "input_values",
+            "env_overrides",
+            "args_append",
+            "extra_headers",
+        ];
         let db = self.db.lock().await;
         let conn = db.connection();
         let rows: Vec<(String, [Option<String>; 4])> = {
@@ -141,16 +131,24 @@ impl SqliteInstalledServerRepository {
         let mut changed = 0;
         for (id, columns) in rows {
             let mut updated = columns.clone();
-            for value in updated.iter_mut().flatten() {
-                let is_plaintext_json = !value.trim().is_empty()
-                    && self.encryptor.decrypt(value).is_err()
-                    && serde_json::from_str::<serde_json::Value>(value).is_ok();
-                if is_plaintext_json {
-                    *value = self
-                        .encryptor
-                        .encrypt(value)
-                        .map_err(|e| anyhow::anyhow!("Failed to encrypt server {id}: {e}"))?;
+            for (column, value) in COLUMNS.iter().zip(updated.iter_mut()) {
+                let Some(value) = value.as_mut() else {
+                    continue;
+                };
+                if value.trim().is_empty() || FieldEncryptor::is_bound(value) {
+                    continue;
                 }
+                let plaintext = match self.encryptor.decrypt(value) {
+                    Ok(plaintext) => plaintext,
+                    Err(_) if serde_json::from_str::<serde_json::Value>(value).is_ok() => {
+                        value.clone()
+                    }
+                    Err(_) => continue,
+                };
+                *value = self
+                    .encryptor
+                    .encrypt_bound(&plaintext, &binding::installed_server(column, &id))
+                    .map_err(|e| anyhow::anyhow!("Failed to encrypt server {id}: {e}"))?;
             }
             if updated != columns {
                 conn.execute(
@@ -176,11 +174,6 @@ impl SqliteInstalledServerRepository {
             return dt.and_utc();
         }
         Utc::now()
-    }
-
-    /// Serialize HashMap to JSON string.
-    fn serialize_json_map(map: &HashMap<String, String>) -> String {
-        serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Serialize InstallationSource to database string format.
@@ -238,17 +231,17 @@ impl SqliteInstalledServerRepository {
     /// Build InstalledServer from extracted row data (needs &self for decryption).
     fn build_server(&self, row: RawServerRow) -> Result<InstalledServer> {
         let input_values = self
-            .decrypt_input_values(row.input_values)
+            .decrypt_json("input_values", &row.id, row.input_values)
             .map_err(|e| anyhow::anyhow!("server {}: {}", row.server_id, e))?;
         let with_server = |e: anyhow::Error| anyhow::anyhow!("server {}: {}", row.server_id, e);
         let env_overrides = self
-            .decrypt_json("env overrides", row.env_overrides)
+            .decrypt_json("env_overrides", &row.id, row.env_overrides)
             .map_err(with_server)?;
         let args_append = self
-            .decrypt_json("appended args", row.args_append)
+            .decrypt_json("args_append", &row.id, row.args_append)
             .map_err(with_server)?;
         let extra_headers = self
-            .decrypt_json("extra headers", row.extra_headers)
+            .decrypt_json("extra_headers", &row.id, row.extra_headers)
             .map_err(with_server)?;
         Ok(InstalledServer {
             id: Uuid::parse_str(&row.id).unwrap_or_else(|_| Uuid::new_v4()),
@@ -365,7 +358,9 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        let encrypted_inputs = self.encrypt_input_values(&server.input_values)?;
+        let server_row_id = server.id.to_string();
+        let encrypted_inputs =
+            self.encrypt_json("input_values", &server_row_id, &server.input_values)?;
 
         conn.execute(
             "INSERT INTO installed_servers
@@ -380,9 +375,9 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.cached_definition,
                 encrypted_inputs,
                 server.enabled,
-                self.encrypt_json("env overrides", &server.env_overrides)?,
-                self.encrypt_json("appended args", &server.args_append)?,
-                self.encrypt_json("extra headers", &server.extra_headers)?,
+                self.encrypt_json("env_overrides", &server_row_id, &server.env_overrides)?,
+                self.encrypt_json("args_append", &server_row_id, &server.args_append)?,
+                self.encrypt_json("extra_headers", &server_row_id, &server.extra_headers)?,
                 server.oauth_connected,
                 server.created_at.to_rfc3339(),
                 server.updated_at.to_rfc3339(),
@@ -396,7 +391,9 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        let encrypted_inputs = self.encrypt_input_values(&server.input_values)?;
+        let server_row_id = server.id.to_string();
+        let encrypted_inputs =
+            self.encrypt_json("input_values", &server_row_id, &server.input_values)?;
 
         conn.execute(
             "UPDATE installed_servers
@@ -410,9 +407,9 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.cached_definition,
                 encrypted_inputs,
                 server.enabled,
-                self.encrypt_json("env overrides", &server.env_overrides)?,
-                self.encrypt_json("appended args", &server.args_append)?,
-                self.encrypt_json("extra headers", &server.extra_headers)?,
+                self.encrypt_json("env_overrides", &server_row_id, &server.env_overrides)?,
+                self.encrypt_json("args_append", &server_row_id, &server.args_append)?,
+                self.encrypt_json("extra_headers", &server_row_id, &server.extra_headers)?,
                 server.oauth_connected,
                 Utc::now().to_rfc3339(),
                 Self::serialize_source(&server.source),
@@ -494,7 +491,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        let encrypted_inputs = self.encrypt_input_values(&input_values)?;
+        let encrypted_inputs = self.encrypt_json("input_values", &id.to_string(), &input_values)?;
 
         tracing::debug!(
             "[InstalledServerRepo] Updating inputs for {}: {} values (encrypted)",

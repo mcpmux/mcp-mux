@@ -303,7 +303,8 @@ pub fn run() {
                 Some(app_state.server_feature_repository_core.clone()),
                 Some(app_state.credential_repository.clone()),
                 event_sender,
-            );
+            )
+            .with_outbound_oauth_repo(app_state.runtime().repositories.backend_oauth.clone());
 
             let managed_app_service = Arc::new(RwLock::new(Some(server_app_service)));
             app.manage(managed_app_service);

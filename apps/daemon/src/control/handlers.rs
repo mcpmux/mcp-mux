@@ -110,6 +110,7 @@ impl ControlState {
             Some(self.runtime.repositories.credential.clone()),
             self.gateway_events.clone(),
         )
+        .with_outbound_oauth_repo(self.runtime.repositories.backend_oauth.clone())
     }
 
     fn permission_app_service(&self) -> PermissionAppService {

@@ -5,10 +5,13 @@
 
 use chrono::{Duration, Utc};
 use mcpmux_core::domain::{Credential, CredentialType, OutboundOAuthRegistration};
-use mcpmux_core::repository::{CredentialRepository, OutboundOAuthRepository, SpaceRepository};
+use mcpmux_core::repository::{
+    CredentialRepository, InstalledServerRepository, OutboundOAuthRepository, SpaceRepository,
+};
+use mcpmux_core::{create_shared_event_bus, ServerAppService};
 use mcpmux_storage::{
-    generate_master_key, FieldEncryptor, SqliteCredentialRepository, SqliteOutboundOAuthRepository,
-    SqliteSpaceRepository,
+    generate_master_key, FieldEncryptor, SqliteCredentialRepository,
+    SqliteInstalledServerRepository, SqliteOutboundOAuthRepository, SqliteSpaceRepository,
 };
 use std::sync::Arc;
 use tests::{db::TestDatabase, fixtures};
@@ -735,4 +738,77 @@ async fn test_different_encryptors_cannot_read_each_others_data() {
         result.is_err() || result.unwrap().is_none(),
         "Should fail to decrypt with wrong key"
     );
+}
+
+/// Uninstalling a server deletes its OAuth client registration, client secret
+/// included, along with its tokens. Other servers' registrations stay.
+#[tokio::test]
+async fn test_uninstall_deletes_the_client_registration() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let encryptor = test_encryptor();
+    let oauth_repo = Arc::new(SqliteOutboundOAuthRepository::new(
+        Arc::clone(&db),
+        Arc::clone(&encryptor),
+    ));
+    let cred_repo = Arc::new(SqliteCredentialRepository::new(
+        Arc::clone(&db),
+        Arc::clone(&encryptor),
+    ));
+    let server_repo = Arc::new(SqliteInstalledServerRepository::new(
+        Arc::clone(&db),
+        encryptor,
+    ));
+    let space_repo = SqliteSpaceRepository::new(db);
+
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    for server_id in ["removed-server", "kept-server"] {
+        let server = fixtures::test_installed_server(&space.id.to_string(), server_id);
+        InstalledServerRepository::install(server_repo.as_ref(), &server)
+            .await
+            .unwrap();
+        let registration = create_test_registration(space.id, server_id)
+            .with_client_secret(Some("s3cr3t-value".to_string()));
+        OutboundOAuthRepository::save(oauth_repo.as_ref(), &registration)
+            .await
+            .unwrap();
+        let token = Credential::access_token(space.id, server_id, "token", None);
+        CredentialRepository::save(cred_repo.as_ref(), &token)
+            .await
+            .unwrap();
+    }
+
+    let service = ServerAppService::new(
+        server_repo,
+        None,
+        Some(cred_repo.clone()),
+        create_shared_event_bus().sender(),
+    )
+    .with_outbound_oauth_repo(oauth_repo.clone());
+    service.uninstall(space.id, "removed-server").await.unwrap();
+
+    let removed = OutboundOAuthRepository::get(oauth_repo.as_ref(), &space.id, "removed-server")
+        .await
+        .unwrap();
+    assert!(
+        removed.is_none(),
+        "registration left behind after uninstall"
+    );
+    let removed_token = CredentialRepository::get(
+        cred_repo.as_ref(),
+        &space.id,
+        "removed-server",
+        &CredentialType::AccessToken,
+    )
+    .await
+    .unwrap();
+    assert!(removed_token.is_none());
+
+    let kept = OutboundOAuthRepository::get(oauth_repo.as_ref(), &space.id, "kept-server")
+        .await
+        .unwrap()
+        .expect("other server's registration kept");
+    assert_eq!(kept.client_secret.as_deref(), Some("s3cr3t-value"));
 }

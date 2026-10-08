@@ -11,7 +11,7 @@
 //! 3. Pre-registration - server pre-configures client_id
 
 use anyhow::Result;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -182,6 +182,19 @@ pub struct ApiKeyAuth {
 }
 
 /// OAuth Repository with database persistence
+/// Outcome of presenting a refresh token of a family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshRotation {
+    /// Accepted; the new token id is now current.
+    Rotated,
+    /// An older token of the family was presented; the family is now revoked.
+    Reused,
+    /// The family was revoked earlier.
+    Revoked,
+    /// No such family for this client.
+    Unknown,
+}
+
 pub struct InboundClientRepository {
     db: Arc<Mutex<Database>>,
 }
@@ -371,6 +384,96 @@ impl InboundClientRepository {
     }
 
     /// Update a client's last_seen timestamp
+    /// Start a refresh-token family for a fresh sign-in.
+    pub async fn create_refresh_family(
+        &self,
+        family_id: &str,
+        client_id: &str,
+        token_id: &str,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        db.connection().execute(
+            "INSERT INTO inbound_refresh_families (family_id, client_id, current_jti, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                family_id,
+                client_id,
+                token_id,
+                chrono::Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Rotate a refresh-token family: accept `presented` if it is the
+    /// family's current token (or its previous one within `grace` of the
+    /// last rotation, for a client retrying after a lost response) and make
+    /// `next` current. Any other token of the family revokes it.
+    pub async fn rotate_refresh_family(
+        &self,
+        family_id: &str,
+        client_id: &str,
+        presented: &str,
+        next: &str,
+        grace: chrono::Duration,
+    ) -> Result<RefreshRotation> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let row: Option<(String, Option<String>, Option<String>, bool)> = conn
+            .query_row(
+                "SELECT current_jti, previous_jti, rotated_at, revoked
+                 FROM inbound_refresh_families WHERE family_id = ?1 AND client_id = ?2",
+                params![family_id, client_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? != 0)),
+            )
+            .optional()?;
+        let Some((current, previous, rotated_at, revoked)) = row else {
+            return Ok(RefreshRotation::Unknown);
+        };
+        if revoked {
+            return Ok(RefreshRotation::Revoked);
+        }
+        let now = chrono::Utc::now();
+        if presented == current {
+            conn.execute(
+                "UPDATE inbound_refresh_families
+                 SET previous_jti = current_jti, current_jti = ?2, rotated_at = ?3
+                 WHERE family_id = ?1",
+                params![family_id, next, now.to_rfc3339()],
+            )?;
+            return Ok(RefreshRotation::Rotated);
+        }
+        let within_grace = previous.as_deref() == Some(presented)
+            && rotated_at
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
+                .is_some_and(|t| now.signed_duration_since(t) <= grace);
+        if within_grace {
+            // The retry gets a new token; the window doesn't move.
+            conn.execute(
+                "UPDATE inbound_refresh_families SET current_jti = ?2 WHERE family_id = ?1",
+                params![family_id, next],
+            )?;
+            return Ok(RefreshRotation::Rotated);
+        }
+        conn.execute(
+            "UPDATE inbound_refresh_families SET revoked = 1 WHERE family_id = ?1",
+            params![family_id],
+        )?;
+        Ok(RefreshRotation::Reused)
+    }
+
+    /// Record a pre-rotation refresh token as used. Returns false if it was
+    /// already used.
+    pub async fn spend_legacy_refresh_token(&self, token_hash: &str) -> Result<bool> {
+        let db = self.db.lock().await;
+        let inserted = db.connection().execute(
+            "INSERT OR IGNORE INTO inbound_spent_legacy_refresh (token_hash, spent_at)
+             VALUES (?1, ?2)",
+            params![token_hash, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(inserted == 1)
+    }
+
     pub async fn update_client_last_seen(&self, client_id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();

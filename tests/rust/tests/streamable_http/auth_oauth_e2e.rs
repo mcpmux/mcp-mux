@@ -733,7 +733,8 @@ async fn tokens_for_unapproved_clients_are_refused() {
     // older build) must not open /mcp or refresh.
     let client_id = register(&http, &h.base, "never-approved").await;
     let access = mcpmux_gateway::auth::create_access_token(&client_id, None, 3600, &JWT_SECRET);
-    let refresh = mcpmux_gateway::auth::create_refresh_token(&client_id, None, &JWT_SECRET);
+    let refresh =
+        mcpmux_gateway::auth::create_refresh_token(&client_id, None, "fam", "tok", &JWT_SECRET);
 
     assert_eq!(
         mcp_status(&http, &h.base, &access).await,
@@ -913,4 +914,88 @@ async fn authorize_errors_only_redirect_to_a_validated_redirect_uri() {
         Some("unsupported_response_type")
     );
     assert!(location.ends_with("&state=a%26b%3Dc"), "{location}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_tokens_rotate_and_reuse_revokes_the_family() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let (_client_id, _access, first) = signed_in_client(&http, &h.base, "rotation").await;
+    let refresh = |token: String| {
+        let (http, base) = (http.clone(), h.base.clone());
+        async move {
+            let (status, body) = refresh_with(&http, &base, &token).await;
+            (status, body["refresh_token"].as_str().map(str::to_string))
+        }
+    };
+
+    let (status, second) = refresh(first.clone()).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let second = second.expect("a new refresh token");
+    assert_ne!(second, first, "each refresh issues a new refresh token");
+
+    // A client retrying right after a lost response may present the
+    // previous token once more.
+    let (status, third) = refresh(first.clone()).await;
+    assert_eq!(status, reqwest::StatusCode::OK, "retry window");
+    let (status, fourth) = refresh(third.unwrap()).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let fourth = fourth.unwrap();
+
+    // The first token is now stale: presenting it revokes the family...
+    let (status, _) = refresh(first).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    // ...including the newest token.
+    let (status, _) = refresh(fourth).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+}
+
+/// HMAC-SHA256 the way the gateway signs tokens (block size 64).
+fn hmac_sha256(key: &[u8], message: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut block = [0u8; 64];
+    if key.len() > 64 {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let pad = |byte: u8| block.iter().map(|b| b ^ byte).collect::<Vec<u8>>();
+    let inner = Sha256::digest([pad(0x36), message.to_vec()].concat());
+    Sha256::digest([pad(0x5c), inner.to_vec()].concat()).to_vec()
+}
+
+/// A refresh token as issued before rotation existed: no family or id.
+fn legacy_refresh_token(client_id: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let now = chrono::Utc::now().timestamp();
+    let payload = serde_json::json!({
+        "client_id": client_id, "scope": null, "exp": now + 3600, "iat": now,
+        "token_type": "refresh"
+    });
+    let payload = URL_SAFE_NO_PAD.encode(payload.to_string());
+    let signature = URL_SAFE_NO_PAD.encode(hmac_sha256(&JWT_SECRET, payload.as_bytes()));
+    format!("{payload}.{signature}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pre_rotation_refresh_tokens_work_exactly_once() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let (client_id, _access, _refresh) = signed_in_client(&http, &h.base, "legacy").await;
+    let legacy = legacy_refresh_token(&client_id);
+
+    let (status, body) = refresh_with(&http, &h.base, &legacy).await;
+    assert_eq!(status, reqwest::StatusCode::OK, "first use: {body}");
+    let rotated = body["refresh_token"].as_str().unwrap().to_string();
+
+    let (status, _) = refresh_with(&http, &h.base, &legacy).await;
+    assert_eq!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST,
+        "a copy can't be reused"
+    );
+
+    // The client carries on with the token it got back.
+    let (status, _) = refresh_with(&http, &h.base, &rotated).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
 }

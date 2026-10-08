@@ -21,7 +21,13 @@ fn test_create_access_token() {
 
 #[test]
 fn test_create_refresh_token() {
-    let token = create_refresh_token("client-123", Some("mcp"), TEST_SECRET);
+    let token = create_refresh_token(
+        "client-123",
+        Some("mcp"),
+        "family-1",
+        "token-1",
+        TEST_SECRET,
+    );
 
     let parts: Vec<&str> = token.split('.').collect();
     assert_eq!(parts.len(), 2);

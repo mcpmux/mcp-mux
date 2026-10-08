@@ -235,6 +235,11 @@ pub struct TokenClaims {
     pub iat: i64, // Issued at timestamp
     /// `"access"` or `"refresh"`, as set when the token was issued.
     pub token_type: Option<String>,
+    /// Refresh tokens: the sign-in's token family (`fid`). Absent on refresh
+    /// tokens issued before rotation existed.
+    pub family_id: Option<String>,
+    /// Refresh tokens: this token's id within its family (`jti`).
+    pub token_id: Option<String>,
 }
 
 /// Extractor for authenticated client claims (ISP pattern)
@@ -298,6 +303,14 @@ pub fn validate_token(token: &str, secret: &[u8]) -> Option<TokenClaims> {
         .get("token_type")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let string_claim = |name: &str| {
+        claims
+            .get(name)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
+    let family_id = string_claim("fid");
+    let token_id = string_claim("jti");
 
     // Check expiration
     let now = chrono::Utc::now().timestamp();
@@ -312,6 +325,8 @@ pub fn validate_token(token: &str, secret: &[u8]) -> Option<TokenClaims> {
         exp,
         iat,
         token_type,
+        family_id,
+        token_id,
     })
 }
 
@@ -347,8 +362,15 @@ pub fn create_access_token(
     sign_token(&claims.to_string(), secret)
 }
 
-/// Create a signed refresh token
-pub fn create_refresh_token(client_id: &str, scope: Option<&str>, secret: &[u8]) -> String {
+/// Create a signed refresh token belonging to `family_id` (one per sign-in)
+/// with id `token_id`; every refresh issues the family a new id.
+pub fn create_refresh_token(
+    client_id: &str,
+    scope: Option<&str>,
+    family_id: &str,
+    token_id: &str,
+    secret: &[u8],
+) -> String {
     let now = chrono::Utc::now().timestamp();
     // Refresh tokens expire in 30 days
     let exp = now + (30 * 24 * 60 * 60);
@@ -358,7 +380,9 @@ pub fn create_refresh_token(client_id: &str, scope: Option<&str>, secret: &[u8])
         "scope": scope,
         "exp": exp,
         "iat": now,
-        "token_type": "refresh"
+        "token_type": "refresh",
+        "fid": family_id,
+        "jti": token_id
     });
 
     sign_token(&claims.to_string(), secret)
@@ -530,7 +554,7 @@ mod jwt_tests {
     fn access_and_refresh_tokens_are_not_interchangeable() {
         let secret = b"test_secret_key_32_bytes_long!!";
         let access = create_access_token("test_client", None, 3600, secret);
-        let refresh = create_refresh_token("test_client", None, secret);
+        let refresh = create_refresh_token("test_client", None, "fam", "tok", secret);
 
         assert!(validate_access_token(&access, secret).is_some());
         assert!(validate_access_token(&refresh, secret).is_none());

@@ -53,16 +53,12 @@ impl TestNotificationHandler {
 impl ServerHandler for TestNotificationHandler {
     fn get_info(&self) -> ServerInfo {
         let capabilities = ServerCapabilities::builder()
-            .enable_tools_with(ToolsCapability {
-                list_changed: Some(true), // Key: advertise notification support
-            })
-            .enable_prompts_with(PromptsCapability {
-                list_changed: Some(true),
-            })
-            .enable_resources_with(ResourcesCapability {
-                subscribe: Some(false),
-                list_changed: Some(true),
-            })
+            .enable_tools()
+            .enable_tool_list_changed() // Key: advertise notification support
+            .enable_prompts()
+            .enable_prompts_list_changed()
+            .enable_resources()
+            .enable_resources_list_changed()
             .build();
         let mut info = ServerInfo::new(capabilities);
         info.server_info = Implementation::new("test-notification-server", "1.0.0");
@@ -105,7 +101,7 @@ impl ServerHandler for TestNotificationHandler {
         params: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Called: {}",
             params.name
         ))]))

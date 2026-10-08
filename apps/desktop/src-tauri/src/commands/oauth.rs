@@ -332,6 +332,7 @@ fn handle_oauth_callback_deep_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>,
         state,
         error: params.get("error").map(|s| s.to_string()),
         error_description: params.get("error_description").map(|s| s.to_string()),
+        iss: params.get("iss").map(|s| s.to_string()),
     };
 
     // Get the pool service and route the callback

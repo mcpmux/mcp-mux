@@ -49,6 +49,11 @@ pub struct OAuthCallback {
     pub error: Option<String>,
     #[serde(default)]
     pub error_description: Option<String>,
+    /// Authorization server issuer (RFC 9207). rmcp checks it against the
+    /// discovered issuer, and requires it when the server advertises
+    /// `authorization_response_iss_parameter_supported`.
+    #[serde(default)]
+    pub iss: Option<String>,
 }
 
 /// Result of initiating OAuth flow
@@ -1749,7 +1754,14 @@ impl OutboundOAuthManager {
                             .await;
                     }
 
-                    if let Err(e) = oauth_state.handle_callback(&code, &callback.state).await {
+                    if let Err(e) = oauth_state
+                        .handle_callback_with_issuer(
+                            &code,
+                            &callback.state,
+                            callback.iss.as_deref(),
+                        )
+                        .await
+                    {
                         error!(
                             "[OAuth] Callback handling failed for {}: {}",
                             server_id_clone, e

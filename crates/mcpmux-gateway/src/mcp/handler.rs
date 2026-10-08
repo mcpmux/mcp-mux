@@ -204,6 +204,8 @@ impl McpMuxGatewayHandler {
         Ok((space_id, resolved.feature_set_ids))
     }
 
+    // Roots is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     /// On-demand `roots/list` probe for sessions that initialized as
     /// roots-capable but have no roots yet — typically because the first
     /// `list_roots()` from `on_initialized` raced this request, or its
@@ -353,21 +355,15 @@ impl McpMuxGatewayHandler {
 
 impl ServerHandler for McpMuxGatewayHandler {
     fn get_info(&self) -> ServerInfo {
-        use rmcp::model::{PromptsCapability, ResourcesCapability, ToolsCapability};
-
         // Note: get_info is called frequently, no logging needed
 
         let capabilities = ServerCapabilities::builder()
-            .enable_tools_with(ToolsCapability {
-                list_changed: Some(true),
-            })
-            .enable_prompts_with(PromptsCapability {
-                list_changed: Some(true),
-            })
-            .enable_resources_with(ResourcesCapability {
-                subscribe: Some(false),
-                list_changed: Some(true),
-            })
+            .enable_tools()
+            .enable_tool_list_changed()
+            .enable_prompts()
+            .enable_prompts_list_changed()
+            .enable_resources()
+            .enable_resources_list_changed()
             .build();
         let mut server_info = Implementation::new("mcpmux-gateway", env!("CARGO_PKG_VERSION"));
         server_info.title = Some("McpMux".to_string());
@@ -422,6 +418,8 @@ impl ServerHandler for McpMuxGatewayHandler {
         Ok(self.build_initialize_result(negotiated_version))
     }
 
+    // Roots is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
         let oauth_ctx = match self.get_oauth_context(&context.extensions) {
             Ok(ctx) => ctx,
@@ -637,6 +635,8 @@ impl ServerHandler for McpMuxGatewayHandler {
         );
     }
 
+    // Roots is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     /// The client told us its roots list changed (e.g. VS Code added a
     /// folder to a multi-root workspace). Re-fetch via `list_roots`,
     /// update the session registry, and re-run the resolver — if any root

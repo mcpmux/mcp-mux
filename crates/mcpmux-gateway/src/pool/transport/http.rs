@@ -479,6 +479,7 @@ impl HttpTransport {
     ) -> Result<reqwest::Client, String> {
         reqwest::Client::builder()
             .default_headers(header_map)
+            .redirect(same_origin_redirects())
             .build()
             .map_err(|e| {
                 let err = format!("Failed to build HTTP client: {}", e);
@@ -657,6 +658,39 @@ impl Transport for HttpTransport {
 
     fn description(&self) -> String {
         format!("http:{}", self.url)
+    }
+}
+
+/// Most redirects a backend may send before the request fails.
+const MAX_REDIRECTS: usize = 10;
+
+/// Follows a redirect only while it stays on the backend's origin.
+///
+/// Definition headers (API keys and the like) are default headers on the
+/// client, and reqwest replays them to any redirect target; it only strips
+/// `Authorization` and cookies when the host changes. rmcp's own client
+/// refuses redirects for the same reason, but we pass our client in.
+fn same_origin_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() > MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        match attempt.previous().first() {
+            Some(origin) if !same_origin(origin, attempt.url()) => attempt.stop(),
+            _ => attempt.follow(),
+        }
+    })
+}
+
+/// Same scheme, host and port. An upgrade from http to https on the same
+/// host also counts, since it doesn't hand the request to anyone new.
+fn same_origin(from: &reqwest::Url, to: &reqwest::Url) -> bool {
+    if from.host_str() != to.host_str() {
+        return false;
+    }
+    match (from.scheme(), to.scheme()) {
+        ("http", "https") => true,
+        (a, b) => a == b && from.port_or_known_default() == to.port_or_known_default(),
     }
 }
 
@@ -871,6 +905,118 @@ mod tests {
         assert!(!HttpTransport::requires_oauth("connection refused"));
         assert!(!HttpTransport::requires_oauth("DNS lookup failed"));
         assert!(!HttpTransport::requires_oauth("timeout"));
+    }
+
+    // ── redirect policy tests ──
+
+    #[test]
+    fn same_origin_needs_the_same_scheme_host_and_port() {
+        let url = |s: &str| reqwest::Url::parse(s).unwrap();
+        let origin = url("https://api.example.com/mcp");
+
+        assert!(same_origin(&origin, &url("https://api.example.com/mcp/")));
+        assert!(same_origin(&origin, &url("https://api.example.com:443/v2")));
+        assert!(same_origin(
+            &url("http://api.example.com/mcp"),
+            &url("https://api.example.com/mcp")
+        ));
+
+        assert!(!same_origin(&origin, &url("https://evil.example.com/mcp")));
+        assert!(!same_origin(
+            &origin,
+            &url("https://api.example.com:8443/mcp")
+        ));
+        assert!(!same_origin(&origin, &url("http://api.example.com/mcp")));
+    }
+
+    /// Serves `/same` (redirects to `/landing` on itself) and `/away`
+    /// (redirects to `/landing` on another port), recording the `x-api-key`
+    /// each `/landing` receives.
+    async fn redirect_servers() -> (
+        String,
+        Arc<parking_lot::Mutex<Vec<Option<String>>>>,
+        Arc<parking_lot::Mutex<Vec<Option<String>>>>,
+    ) {
+        use axum::{
+            http::{HeaderMap, StatusCode},
+            response::Redirect,
+            routing::get,
+            Router,
+        };
+        type Seen = Arc<parking_lot::Mutex<Vec<Option<String>>>>;
+
+        async fn serve(router: Router) -> std::net::SocketAddr {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            addr
+        }
+        fn landing(seen: Seen) -> Router {
+            Router::new().route(
+                "/landing",
+                get(move |headers: HeaderMap| async move {
+                    let key = headers
+                        .get("x-api-key")
+                        .map(|v| v.to_str().unwrap().to_string());
+                    seen.lock().push(key);
+                    StatusCode::OK
+                }),
+            )
+        }
+
+        let elsewhere_seen: Seen = Default::default();
+        let elsewhere = serve(landing(elsewhere_seen.clone())).await;
+        let origin_seen: Seen = Default::default();
+        let away = format!("http://{elsewhere}/landing");
+        let origin = serve(
+            landing(origin_seen.clone())
+                .route("/same", get(|| async { Redirect::temporary("/landing") }))
+                .route(
+                    "/away",
+                    get(move || async move { Redirect::temporary(&away) }),
+                ),
+        )
+        .await;
+        (format!("http://{origin}"), origin_seen, elsewhere_seen)
+    }
+
+    fn client_with_api_key() -> reqwest::Client {
+        let mut headers = HashMap::new();
+        headers.insert("X-Api-Key".to_string(), "secret".to_string());
+        let transport = make_transport(headers, Arc::new(MockCredentialRepo::new()));
+        let header_map = transport.build_default_headers().unwrap();
+        transport.build_http_client(header_map).unwrap()
+    }
+
+    #[tokio::test]
+    async fn redirect_within_the_origin_is_followed_with_headers() {
+        let (origin, origin_seen, _) = redirect_servers().await;
+
+        let response = client_with_api_key()
+            .get(format!("{origin}/same"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(*origin_seen.lock(), vec![Some("secret".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn redirect_to_another_origin_is_not_followed() {
+        let (origin, _, elsewhere_seen) = redirect_servers().await;
+
+        let response = client_with_api_key()
+            .get(format!("{origin}/away"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert!(
+            elsewhere_seen.lock().is_empty(),
+            "the other origin must not be contacted"
+        );
     }
 
     // ── build_default_headers tests ──

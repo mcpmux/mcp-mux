@@ -249,13 +249,24 @@ impl Flow {
         auth_url: &url::Url,
         events: &mut tokio::sync::broadcast::Receiver<OAuthCompleteEvent>,
     ) -> OAuthCompleteEvent {
+        self.complete_with(auth_url, events, &[]).await
+    }
+
+    /// `complete`, with `extra` query parameters on the redirect
+    async fn complete_with(
+        &self,
+        auth_url: &url::Url,
+        events: &mut tokio::sync::broadcast::Receiver<OAuthCompleteEvent>,
+        extra: &[(&str, &str)],
+    ) -> OAuthCompleteEvent {
         let redirect_uri = query_param(auth_url, "redirect_uri").expect("redirect_uri param");
         let state = query_param(auth_url, "state").expect("state param");
         let mut callback = url::Url::parse(&redirect_uri).unwrap();
         callback
             .query_pairs_mut()
             .append_pair("code", "auth-code")
-            .append_pair("state", &state);
+            .append_pair("state", &state)
+            .extend_pairs(extra);
         let response = reqwest::get(callback.as_str())
             .await
             .expect("loopback callback reachable");
@@ -1330,4 +1341,59 @@ async fn registration_redirect_is_not_followed() {
     let error = flow.start().await.expect_err("registration should fail");
     assert!(error.to_string().contains("307"), "{error}");
     assert!(flow.registration().await.is_none());
+}
+
+/// An authorization server that advertises RFC 9207: it sends `iss` with the
+/// code, and rmcp then requires it to match the discovered issuer
+async fn mount_issuer_validating_server(mock_server: &MockServer) {
+    mount_dcr_metadata_with(
+        mock_server,
+        serde_json::json!({ "authorization_response_iss_parameter_supported": true }),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .mount(mock_server)
+        .await;
+    mount_token_endpoint(mock_server, ClientAuth::Basic).await;
+}
+
+#[tokio::test]
+async fn sign_in_passes_the_callback_issuer_on() {
+    let mock_server = MockServer::start().await;
+    mount_issuer_validating_server(&mock_server).await;
+
+    let flow = Flow::new(&mock_server);
+    let mut events = flow.manager.subscribe();
+    let auth_url = flow.start().await.unwrap();
+    let event = flow
+        .complete_with(&auth_url, &mut events, &[("iss", &mock_server.uri())])
+        .await;
+
+    assert!(event.success, "sign-in failed: {:?}", event.error);
+    assert!(flow.has_tokens().await);
+}
+
+#[tokio::test]
+async fn callback_from_another_issuer_is_rejected() {
+    let mock_server = MockServer::start().await;
+    mount_issuer_validating_server(&mock_server).await;
+
+    let flow = Flow::new(&mock_server);
+    let mut events = flow.manager.subscribe();
+    let auth_url = flow.start().await.unwrap();
+    let event = flow
+        .complete_with(
+            &auth_url,
+            &mut events,
+            &[("iss", "https://other.example.com")],
+        )
+        .await;
+
+    assert!(
+        !event.success,
+        "a code from another issuer must not be exchanged"
+    );
+    assert!(!flow.has_tokens().await);
 }

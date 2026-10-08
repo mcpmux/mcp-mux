@@ -10,6 +10,8 @@ use std::sync::Arc;
 
 use mcpmux_core::{DomainEvent, LogLevel, LogSource, ServerLog, ServerLogManager};
 use parking_lot::RwLock;
+// Logging is deprecated by SEP-2577, but clients and servers still use it.
+#[allow(deprecated)]
 use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, LoggingLevel};
 use rmcp::service::{NotificationContext, RunningService};
 use rmcp::RoleClient;
@@ -70,6 +72,8 @@ impl McpClientHandler {
         }
     }
 
+    // Logging is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     /// Convert MCP protocol LoggingLevel to our internal LogLevel
     fn convert_logging_level(level: &LoggingLevel) -> LogLevel {
         match level {
@@ -219,6 +223,8 @@ impl rmcp::ClientHandler for McpClientHandler {
         }
     }
 
+    // Logging is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     fn on_logging_message(
         &self,
         params: rmcp::model::LoggingMessageNotificationParam,

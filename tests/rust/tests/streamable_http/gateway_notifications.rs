@@ -340,6 +340,8 @@ impl GatewayTestClient {
 }
 
 impl rmcp::ClientHandler for GatewayTestClient {
+    // Roots is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     fn get_info(&self) -> ClientInfo {
         let capabilities = if self.roots.is_empty() {
             ClientCapabilities::default()
@@ -352,6 +354,8 @@ impl rmcp::ClientHandler for GatewayTestClient {
         )
     }
 
+    // Roots is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     fn list_roots(
         &self,
         _context: rmcp::service::RequestContext<RoleClient>,

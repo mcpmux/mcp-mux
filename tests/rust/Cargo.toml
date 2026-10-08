@@ -56,7 +56,7 @@ zeroize = "1.8"
 parking_lot = "0.12"
 
 # RMCP for streamable HTTP transport tests
-rmcp = { version = "1.5", features = [
+rmcp = { version = "2.2", features = [
     "client",
     "server",
     "transport-streamable-http-server",

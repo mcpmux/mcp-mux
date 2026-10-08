@@ -69,7 +69,7 @@ clap = { version = "4", features = ["derive", "env"] }
 
 # MCP Protocol
 # NOTE: Never use local path dependency - E:\one-mcp\rust-sdk is for source lookup only
-rmcp = { version = "1.5", features = [
+rmcp = { version = "2.2", features = [
     "client",
     "server",
     "transport-io",

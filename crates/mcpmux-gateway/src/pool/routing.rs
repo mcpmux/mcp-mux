@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use mcpmux_core::{FeatureType, LogLevel, LogSource, ServerLog, ServerLogManager};
-use rmcp::model::{CallToolRequestParams, CallToolResult, Content, Meta};
+use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, Meta};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -71,7 +71,7 @@ impl ToolCallResult {
     }
 
     pub(crate) fn into_mcp_result(self) -> CallToolResult {
-        let content: Vec<Content> = self
+        let content: Vec<ContentBlock> = self
             .content
             .into_iter()
             .filter_map(|item| serde_json::from_value(item).ok())
@@ -754,7 +754,7 @@ impl RoutingService {
 #[cfg(test)]
 mod tests {
     use super::ToolCallResult;
-    use rmcp::model::{CallToolResult, Content, Meta};
+    use rmcp::model::{CallToolResult, ContentBlock, Meta};
     use serde_json::json;
 
     #[test]
@@ -764,13 +764,16 @@ mod tests {
         meta.0.insert("traceId".to_string(), json!("trace-123"));
 
         let mut upstream = CallToolResult::structured(structured.clone());
-        upstream.content = vec![Content::text("search completed")];
+        upstream.content = vec![ContentBlock::text("search completed")];
         upstream.meta = Some(meta.clone());
 
         let routed = ToolCallResult::from_mcp_result(upstream);
         let forwarded = routed.into_mcp_result();
 
-        assert_eq!(forwarded.content, vec![Content::text("search completed")]);
+        assert_eq!(
+            forwarded.content,
+            vec![ContentBlock::text("search completed")]
+        );
         assert_eq!(forwarded.structured_content, Some(structured));
         assert_eq!(forwarded.meta, Some(meta));
         assert_eq!(forwarded.is_error, Some(false));

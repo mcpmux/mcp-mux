@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, SlidersHorizontal, XCircle } from 'lucide-
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
 import { useNavigateTo } from '@/stores';
 import { listOAuthClients } from '@/lib/api/gateway';
+import { formatRawArgs } from '@/lib/approvalArgs';
 
 /**
  * Incoming approval request emitted by the gateway's ApprovalBroker.
@@ -36,20 +37,6 @@ export interface ApprovalRequest {
     affects_other_clients: boolean;
   };
   expires_at_unix_secs: number;
-}
-
-/** Longest argument dump the dialog renders. */
-const MAX_ARGS_CHARS = 4000;
-
-/** The client's raw arguments as indented JSON, capped at `MAX_ARGS_CHARS`. */
-export function formatRawArgs(args: unknown): string {
-  let text: string;
-  try {
-    text = JSON.stringify(args ?? null, null, 2) ?? 'null';
-  } catch {
-    text = String(args);
-  }
-  return text.length > MAX_ARGS_CHARS ? `${text.slice(0, MAX_ARGS_CHARS)}\n…` : text;
 }
 
 /** Coerce a freeform JSON value into a `string[]`, dropping non-strings. */

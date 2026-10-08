@@ -29,10 +29,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undef
 vi.mock('@/stores', () => ({ useNavigateTo: () => navigateToSpy }));
 
 import { invoke } from '@tauri-apps/api/core';
-import {
-  MetaToolApprovalDialog,
-  formatRawArgs,
-} from '@/features/metaTools/MetaToolApprovalDialog';
+import { MetaToolApprovalDialog } from '@/features/metaTools/MetaToolApprovalDialog';
+import { formatRawArgs } from '@/lib/approvalArgs';
 
 async function emitRequest(payload: Record<string, unknown>) {
   await act(async () => {

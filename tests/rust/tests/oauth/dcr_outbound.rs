@@ -174,7 +174,7 @@ impl wiremock::Match for BodyLacksKeys {
 
 struct Flow {
     manager: OutboundOAuthManager,
-    credential_repo: Arc<MockCredentialRepository>,
+    credential_repo: Arc<dyn CredentialRepository>,
     oauth_repo: Arc<dyn OutboundOAuthRepository>,
     space_id: Uuid,
     server_url: String,
@@ -194,9 +194,23 @@ impl Flow {
         oauth_repo: Arc<dyn OutboundOAuthRepository>,
         space_id: Uuid,
     ) -> Self {
+        Self::with_repos(
+            mock_server,
+            Arc::new(MockCredentialRepository::new()),
+            oauth_repo,
+            space_id,
+        )
+    }
+
+    fn with_repos(
+        mock_server: &MockServer,
+        credential_repo: Arc<dyn CredentialRepository>,
+        oauth_repo: Arc<dyn OutboundOAuthRepository>,
+        space_id: Uuid,
+    ) -> Self {
         Self {
             manager: OutboundOAuthManager::new(),
-            credential_repo: Arc::new(MockCredentialRepository::new()),
+            credential_repo,
             oauth_repo,
             space_id,
             server_url: format!("{}/mcp", mock_server.uri()),
@@ -952,14 +966,15 @@ async fn public_client_refreshes_without_a_secret() {
     assert_eq!(access_token, "access-2");
 }
 
-/// A client secret that no longer decrypts (e.g. after a master key reset) makes
-/// the registration unreadable. The next sign-in registers a fresh client on its
-/// first attempt, instead of reusing the client without its secret and failing.
+/// After a master key reset, the client secret and the tokens no longer decrypt.
+/// The next sign-in registers a fresh client on its first attempt and stores it with
+/// its secret, instead of reusing the client without its secret and failing.
 #[tokio::test]
 async fn unreadable_registration_is_replaced_on_the_first_sign_in() {
     use mcpmux_core::SpaceRepository;
     use mcpmux_storage::{
-        generate_master_key, FieldEncryptor, SqliteOutboundOAuthRepository, SqliteSpaceRepository,
+        generate_master_key, FieldEncryptor, SqliteCredentialRepository,
+        SqliteOutboundOAuthRepository, SqliteSpaceRepository,
     };
     use tokio::sync::Mutex;
 
@@ -982,25 +997,37 @@ async fn unreadable_registration_is_replaced_on_the_first_sign_in() {
         .await;
     mount_token_endpoint(&mock_server, ClientAuth::Basic).await;
 
-    let flow = Flow::with_oauth_repo(
-        &mock_server,
-        Arc::new(SqliteOutboundOAuthRepository::new(db.clone(), encryptor())),
-        space.id,
-    );
+    let flow_with_key = |key: Arc<FieldEncryptor>| {
+        Flow::with_repos(
+            &mock_server,
+            Arc::new(SqliteCredentialRepository::new(db.clone(), key.clone())),
+            Arc::new(SqliteOutboundOAuthRepository::new(db.clone(), key)),
+            space.id,
+        )
+    };
+    let flow = flow_with_key(encryptor());
     assert!(flow.sign_in().await.success);
 
-    // A different master key: the stored secret can't be decrypted
-    let flow = Flow::with_oauth_repo(
-        &mock_server,
-        Arc::new(SqliteOutboundOAuthRepository::new(db, encryptor())),
-        space.id,
-    );
+    // A different master key: neither the stored secret nor the tokens decrypt
+    let flow = flow_with_key(encryptor());
     assert!(flow.oauth_repo.get(&space.id, SERVER_ID).await.is_err());
+    assert!(flow
+        .credential_repo
+        .get(&space.id, SERVER_ID, &CredentialType::AccessToken)
+        .await
+        .is_err());
 
     let event = flow.sign_in().await;
     assert!(event.success, "sign-in failed: {:?}", event.error);
     let registration = flow.registration().await.expect("readable again");
     assert_eq!(registration.client_secret.as_deref(), Some(CLIENT_SECRET));
+    assert!(registration.metadata.is_some());
+
+    let access_token = flow
+        .access_token_after_restart()
+        .await
+        .expect("refresh with the new client's secret should succeed");
+    assert_eq!(access_token, "access-2");
 }
 
 /// Mount a minimal streamable-HTTP MCP endpoint at `/mcp` that only answers

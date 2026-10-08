@@ -1396,22 +1396,25 @@ impl OutboundOAuthManager {
                     // there and isn't overwritten. A sign-in that's abandoned or fails
                     // also leaves its client for the next attempt to reuse, instead of
                     // registering another.
-                    match session.get_credentials().await {
-                        Ok((client_id, _)) => {
-                            let registration = Self::new_registration(
-                                space_id,
-                                server_id,
-                                server_url,
-                                &client_id,
-                                &redirect_uri,
-                                metadata_for_storage.as_ref(),
-                                registered_client.as_ref(),
-                            );
-                            self.save_registration(backend_oauth_repo.as_ref(), &registration)
-                                .await;
-                        }
-                        Err(e) => warn!("[OAuth] Can't read the new client to save it: {}", e),
-                    }
+                    // The client_id comes from our DCR, or is the CIMD URL, which rmcp
+                    // uses as is. It's not read back from the session: that loads the
+                    // stored tokens, which may be stale and unreadable (e.g. after a
+                    // master key reset), and the save would be skipped.
+                    let client_id = match &registered_client {
+                        Some(client) => client.client_id.clone(),
+                        None => client_metadata_url.clone(),
+                    };
+                    let registration = Self::new_registration(
+                        space_id,
+                        server_id,
+                        server_url,
+                        &client_id,
+                        &redirect_uri,
+                        metadata_for_storage.as_ref(),
+                        registered_client.as_ref(),
+                    );
+                    self.save_registration(backend_oauth_repo.as_ref(), &registration)
+                        .await;
                     oauth_state = OAuthState::Session(session);
                     let message = if uses_cimd {
                         "Client configured with Client ID Metadata Document (CIMD)"

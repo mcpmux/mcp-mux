@@ -438,7 +438,7 @@ pub async fn get_pending_consent(
 ) -> Result<ConsentRequestDetails, ConsentError> {
     info!(
         "[OAuth] Fetching pending consent: request_id='{}'",
-        request_id
+        mcpmux_core::log_redact::id_for_log(&request_id)
     );
 
     let app_state = gateway_state.read().await;
@@ -552,7 +552,7 @@ pub async fn approve_oauth_consent(
         } else {
             "denied"
         },
-        request.request_id
+        mcpmux_core::log_redact::id_for_log(&request.request_id)
     );
 
     let app_state = gateway_state.read().await;

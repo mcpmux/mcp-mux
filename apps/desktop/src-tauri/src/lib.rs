@@ -749,7 +749,10 @@ pub fn run() {
                 // `flush_pending_deep_link`.
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
-                        info!("[DeepLink] Received URL: {}", url);
+                        info!(
+                            "[DeepLink] Received URL: {}",
+                            mcpmux_core::log_redact::url_for_log(url.as_str())
+                        );
                         route_or_buffer_deep_link(&app_handle, url.as_str());
                     }
                 });

@@ -3,13 +3,7 @@
  * Uses data-testid only (ADR-003).
  */
 
-import {
-  byTestId,
-  TIMEOUT,
-  waitForModalClose,
-  safeClick,
-  installFromRegistryCard,
-} from '../helpers/selectors';
+import { byTestId, TIMEOUT, safeClick, installFromRegistryCard } from '../helpers/selectors';
 
 describe('FeatureSet - Builtin Sets', () => {
   it('TC-FS-001: Navigate to FeatureSets page and verify builtin sets exist', async () => {

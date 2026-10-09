@@ -287,6 +287,8 @@ fn is_custom_scheme_redirect_uri(uri: &str) -> bool {
     let scheme = url.scheme();
     scheme != "http"
         && scheme != "https"
+        // McpMux's own deep links would run app actions with the code attached.
+        && !scheme.eq_ignore_ascii_case(mcpmux_core::branding::DEEP_LINK_SCHEME)
         && !DANGEROUS_REDIRECT_SCHEMES.contains(&scheme)
         && !DANGEROUS_REDIRECT_SCHEME_PREFIXES
             .iter()
@@ -636,6 +638,16 @@ mod tests {
                 validate_redirect_uris(&[uri.to_string()]).is_err(),
                 "{uri} must be rejected when it is the only redirect_uri"
             );
+        }
+
+        // McpMux's own deep-link scheme, in any case.
+        let own = mcpmux_core::branding::DEEP_LINK_SCHEME;
+        for uri in [
+            format!("{own}://install?server=x"),
+            format!("{}://callback", own.to_ascii_uppercase()),
+        ] {
+            assert!(!is_custom_scheme_redirect_uri(&uri), "{uri}");
+            assert!(validate_redirect_uris(&[uri.clone()]).is_err(), "{uri}");
         }
 
         // Legitimate native-app schemes still pass, with or without an authority.

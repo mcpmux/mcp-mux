@@ -1302,8 +1302,13 @@ pub async fn open_url(url: String) -> Result<(), String> {
         // This avoids opening a browser window for a cleaner UX
         info!("[OAuth] Delivering callback directly to localhost: {}", url);
 
+        // The URL carries the authorization code: send it only to the app's
+        // loopback listener, not on to wherever that answers with a redirect,
+        // and not through a proxy.
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 

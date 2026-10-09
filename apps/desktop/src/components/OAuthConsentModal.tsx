@@ -261,7 +261,9 @@ export function OAuthConsentModal() {
   }
 
   const { details } = modalState;
-  const logoUrl = getClientLogo(details.clientName);
+  // Any app can register under a known app's name; its logo is shown only
+  // once the client has been approved before.
+  const logoUrl = details.firstTime ? null : getClientLogo(details.clientName);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">

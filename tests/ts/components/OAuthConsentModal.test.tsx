@@ -38,9 +38,9 @@ const details = {
   firstTime: true,
 };
 
-async function openConsent(approveResponse: unknown) {
+async function openConsent(approveResponse: unknown, overrides: Partial<typeof details> = {}) {
   invokeMock.mockImplementation(async (cmd: string) => {
-    if (cmd === 'get_pending_consent') return details;
+    if (cmd === 'get_pending_consent') return { ...details, ...overrides };
     if (cmd === 'approve_oauth_consent') return approveResponse;
     return undefined;
   });
@@ -66,6 +66,17 @@ describe('OAuthConsentModal', () => {
     expect(box).toHaveTextContent('cursor://anysphere.cursor-mcp');
     expect(box).toHaveTextContent('mcp_1234abcd');
     expect(box).toHaveTextContent('First time this app asks to connect');
+  });
+
+  it("shows the initial, not a known app's logo, on a first request", async () => {
+    await openConsent({ success: true, redirect_url: '', error: null });
+    expect(screen.queryByRole('img', { name: 'Cursor' })).toBeNull();
+    expect(screen.getByText('C')).toBeInTheDocument();
+  });
+
+  it('shows the logo of a known app approved before', async () => {
+    await openConsent({ success: true, redirect_url: '', error: null }, { firstTime: false });
+    expect(screen.getByRole('img', { name: 'Cursor' })).toBeInTheDocument();
   });
 
   it('closes on Deny without launching an app callback', async () => {

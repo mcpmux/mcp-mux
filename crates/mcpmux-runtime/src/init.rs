@@ -467,7 +467,18 @@ fn master_key(
         KeyProviderPolicy::Keychain => Box::new(KeychainKeyProvider::new()?),
         KeyProviderPolicy::File => file_key_provider(data_dir)?,
     };
-    Ok((provider.get_or_create_key()?, None))
+    // Never create a new key while stored data needs the old one.
+    let database = Database::open(&data_dir.join(DATABASE_FILE))?;
+    let samples = database.encrypted_samples(crate::master_key::SAMPLE_LIMIT)?;
+    let existing = if provider.key_exists() {
+        Some(provider.get_or_create_key()?)
+    } else {
+        None
+    };
+    let key =
+        crate::master_key::guard_single_key(existing, &samples, || provider.get_or_create_key())?;
+    crate::master_key::warn_if_partly_unreadable(&key, &samples);
+    Ok((key, None))
 }
 
 #[cfg(windows)]

@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::domain::config::UserSpaceConfig;
 use crate::domain::{InstallationSource, InstalledServer, ServerDefinition};
@@ -84,7 +84,7 @@ impl UserSpaceSyncService {
         file_path: &Path,
         content: &str,
     ) -> Result<SyncResult> {
-        let (definitions, existing_map) = self
+        let (definitions, existing_map, _elsewhere) = self
             .parse_and_load_existing(space_id, file_path, content)
             .await?;
         let file_server_ids: HashSet<String> = definitions.iter().map(|d| d.id.clone()).collect();
@@ -106,13 +106,20 @@ impl UserSpaceSyncService {
     }
 
     /// Parse `content` as the user-space config stored at `file_path` and
-    /// load the servers currently installed from that file, keyed by id.
+    /// load the servers currently installed from that file into `space_id`,
+    /// keyed by id. Rows installed from the same file into another Space
+    /// (an older watcher put every Space's file into the default Space) are
+    /// returned separately so the sync can move them.
     async fn parse_and_load_existing(
         &self,
         space_id: &str,
         file_path: &Path,
         content: &str,
-    ) -> Result<(Vec<ServerDefinition>, HashMap<String, InstalledServer>)> {
+    ) -> Result<(
+        Vec<ServerDefinition>,
+        HashMap<String, InstalledServer>,
+        Vec<InstalledServer>,
+    )> {
         let config: UserSpaceConfig = serde_json::from_str(content)
             .with_context(|| format!("Failed to parse config file: {:?}", file_path))?;
 
@@ -129,12 +136,14 @@ impl UserSpaceSyncService {
             .await
             .with_context(|| "Failed to list existing servers from source file")?;
 
+        let (existing, elsewhere): (Vec<_>, Vec<_>) =
+            existing.into_iter().partition(|s| s.space_id == space_id);
         let existing_map = existing
             .into_iter()
             .map(|s| (s.server_id.clone(), s))
             .collect();
 
-        Ok((definitions, existing_map))
+        Ok((definitions, existing_map, elsewhere))
     }
 
     /// Sync servers from a user space JSON file into InstalledServer records
@@ -160,9 +169,24 @@ impl UserSpaceSyncService {
 
         // 2-3. Parse into ServerDefinitions and load the servers already
         // installed from this file
-        let (definitions, existing_map) = self
+        let (definitions, existing_map, elsewhere) = self
             .parse_and_load_existing(space_id, file_path, &content)
             .await?;
+
+        // Rows from this file that sit in another Space are removed; the
+        // servers still in the file are added below in the right Space.
+        for stale in &elsewhere {
+            warn!(
+                server_id = %stale.server_id,
+                installed_in = %stale.space_id,
+                file_space = %space_id,
+                "Moving a server installed from this file into the wrong Space"
+            );
+            self.installed_repo
+                .uninstall(&stale.id)
+                .await
+                .with_context(|| format!("Failed to uninstall server: {}", stale.server_id))?;
+        }
 
         let file_server_ids: HashSet<String> = definitions.iter().map(|d| d.id.clone()).collect();
 

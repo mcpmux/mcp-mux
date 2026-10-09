@@ -65,6 +65,9 @@ jobs:
             target: x86_64-apple-darwin
             artifact: macos-intel
 
+    # Signing and publishing secrets live in the `release` environment,
+    # which only runs from main.
+    environment: release
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write

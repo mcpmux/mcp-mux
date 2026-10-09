@@ -73,7 +73,7 @@ impl fmt::Display for CredentialType {
 ///
 /// Metadata fields (expires_at, token_type, scope) are non-sensitive and
 /// stored as plaintext in the database for queryability.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Credential {
     /// Space this credential belongs to
     pub space_id: Uuid,
@@ -104,6 +104,19 @@ pub struct Credential {
 
     /// When the credential was last used
     pub last_used: Option<DateTime<Utc>>,
+}
+
+/// Never prints the secret value, so a stray `{:?}` can't log a token.
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credential")
+            .field("space_id", &self.space_id)
+            .field("server_id", &self.server_id)
+            .field("credential_type", &self.credential_type)
+            .field("value", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Credential {

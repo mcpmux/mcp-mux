@@ -160,16 +160,13 @@ function AppContent() {
       .catch((err) => console.error('Failed to get version:', err));
   }, []);
 
-  // Initialize analytics once we have the app version
+  // Initialize analytics once we have the app version, and only when the user
+  // has analytics on: an opted-out user never loads PostHog at all.
   useEffect(() => {
-    if (!appVersion) return;
+    if (!appVersion || !analyticsEnabled) return;
     initAnalytics(appVersion);
-    if (analyticsEnabled) {
-      optIn();
-      capture('app_opened');
-    } else {
-      optOut();
-    }
+    optIn();
+    capture('app_opened');
   }, [appVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Start the app-wide meta-tool activity listener once at launch so the
@@ -183,6 +180,7 @@ function AppContent() {
   useEffect(() => {
     if (!appVersion) return;
     if (analyticsEnabled) {
+      initAnalytics(appVersion);
       optIn();
     } else {
       optOut();

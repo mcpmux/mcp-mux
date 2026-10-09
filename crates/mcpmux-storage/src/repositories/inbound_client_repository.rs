@@ -490,9 +490,10 @@ impl InboundClientRepository {
         let db = self.db.lock().await;
         let conn = db.connection();
 
-        // Rows that reference the client go with it (ON DELETE CASCADE). The
-        // JWTs it was issued aren't stored anywhere; they stop working because
-        // every use requires the client to still exist.
+        // Rows that reference the client go with it (ON DELETE CASCADE): its
+        // grants, codes and any refresh-token records. The tokens themselves
+        // are JWTs and aren't stored; they stop working because every use
+        // requires the client to still exist.
         let rows = conn.execute(
             "DELETE FROM inbound_clients WHERE client_id = ?1",
             params![client_id],

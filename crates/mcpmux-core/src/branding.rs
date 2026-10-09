@@ -191,30 +191,6 @@ pub fn oauth_callback_uri_with_port(port: u16) -> String {
     format!("http://127.0.0.1:{}{}", port, oauth_callback_path())
 }
 
-/// Check if a URL is a loopback OAuth callback for this app
-///
-/// Matches both IPv4 (127.0.0.1) and IPv6 ([::1]) loopback addresses
-/// with the expected callback path.
-///
-/// # Example
-/// ```ignore
-/// assert!(branding::is_oauth_callback("http://127.0.0.1:9876/oauth2redirect?code=123"));
-/// assert!(branding::is_oauth_callback("http://[::1]:9876/oauth2redirect?code=123"));
-/// assert!(!branding::is_oauth_callback("https://example.com"));
-/// ```
-pub fn is_oauth_callback(url: &str) -> bool {
-    let path = oauth_callback_path();
-    // Match IPv4 loopback
-    if url.starts_with("http://127.0.0.1:") && url.contains(path) {
-        return true;
-    }
-    // Match IPv6 loopback
-    if url.starts_with("http://[::1]:") && url.contains(path) {
-        return true;
-    }
-    false
-}
-
 // =============================================================================
 // Gateway Port Service (re-exports)
 // =============================================================================
@@ -303,31 +279,6 @@ mod tests {
         assert!(uri.contains(":9876"));
         assert!(uri.ends_with("/oauth2redirect"));
         assert_eq!(uri, "http://127.0.0.1:9876/oauth2redirect");
-    }
-
-    #[test]
-    fn test_is_oauth_callback() {
-        // IPv4 loopback should match
-        assert!(is_oauth_callback("http://127.0.0.1:9876/oauth2redirect"));
-        assert!(is_oauth_callback(
-            "http://127.0.0.1:9876/oauth2redirect?code=123&state=abc"
-        ));
-        assert!(is_oauth_callback(
-            "http://127.0.0.1:51234/oauth2redirect?error=access_denied"
-        ));
-
-        // IPv6 loopback should match
-        assert!(is_oauth_callback("http://[::1]:9876/oauth2redirect"));
-        assert!(is_oauth_callback(
-            "http://[::1]:9876/oauth2redirect?code=123"
-        ));
-
-        // Non-matching formats
-        assert!(!is_oauth_callback("https://127.0.0.1:9876/oauth2redirect")); // https not http
-        assert!(!is_oauth_callback("http://localhost:9876/oauth2redirect")); // localhost not IP
-        assert!(!is_oauth_callback("http://127.0.0.1:9876/callback")); // wrong path
-        assert!(!is_oauth_callback("https://example.com/oauth2redirect"));
-        assert!(!is_oauth_callback("mcpmux://callback/oauth")); // old scheme format
     }
 
     #[test]

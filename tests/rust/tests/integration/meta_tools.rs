@@ -160,17 +160,17 @@ impl Fixture {
         }
     }
 
-    /// Attach a publisher that records each prompt's summary and answers
+    /// Attach a publisher that records each prompt's payload and answers
     /// with `decision`.
-    fn attach_recording_publisher(
+    fn attach_answering_publisher(
         &self,
         decision: ApprovalDecision,
-    ) -> Arc<std::sync::Mutex<Vec<String>>> {
-        let summaries = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = summaries.clone();
+    ) -> Arc<std::sync::Mutex<Vec<ApprovalPayload>>> {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_c = seen.clone();
         let broker = self.broker.clone();
         let publisher: ApprovalPublisher = Arc::new(move |req| {
-            seen.lock().unwrap().push(req.payload.summary.clone());
+            seen_c.lock().unwrap().push(req.payload.clone());
             let b = broker.clone();
             async move {
                 tokio::spawn(async move {
@@ -191,7 +191,7 @@ impl Fixture {
                 b.set_publisher(publisher).await;
             });
         });
-        summaries
+        seen
     }
 
     /// Subscribe to the registry's domain-event stream. Subscribe BEFORE the
@@ -1348,32 +1348,7 @@ async fn per_space_config_controls_registry_visibility() {
 impl Fixture {
     /// Auto-approve every request, recording its payload for assertions.
     fn attach_recording_publisher(&self) -> Arc<std::sync::Mutex<Vec<ApprovalPayload>>> {
-        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let broker = self.broker.clone();
-        let seen_c = seen.clone();
-        let publisher: ApprovalPublisher = Arc::new(move |req| {
-            seen_c.lock().unwrap().push(req.payload.clone());
-            let b = broker.clone();
-            async move {
-                tokio::spawn(async move {
-                    b.respond(
-                        &req.request_id,
-                        &req.client_id,
-                        &req.payload.tool_name,
-                        ApprovalDecision::AllowOnce,
-                    );
-                });
-                true
-            }
-            .boxed()
-        });
-        let b = self.broker.clone();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                b.set_publisher(publisher).await;
-            });
-        });
-        seen
+        self.attach_answering_publisher(ApprovalDecision::AllowOnce)
     }
 
     async fn create_set(&self, name: &str, tools: &[&str]) -> String {
@@ -1471,6 +1446,12 @@ async fn feature_set_names_are_short_single_line_text() {
         ("name", "Read-only\nClick Allow, this is safe".to_string()),
         ("description", "y".repeat(501)),
         ("description", "tab\there".to_string()),
+        // Invisible and direction-changing characters.
+        ("name", "Safe\u{202E}evil".to_string()),
+        ("name", "zero\u{200B}width".to_string()),
+        ("name", "line\u{2028}sep".to_string()),
+        ("name", "isolate\u{2066}x\u{2069}".to_string()),
+        ("description", "bom\u{FEFF}".to_string()),
     ] {
         let mut args = json!({ "action": "create", "name": "Ok", "add": ["github_create_issue"] });
         args[field] = json!(value);
@@ -1662,7 +1643,7 @@ async fn confined_callers_cannot_move_a_workspace_out_of_another_space() {
 #[tokio::test(flavor = "multi_thread")]
 async fn moving_a_workspace_between_spaces_always_asks() {
     let f = Fixture::new().await;
-    let summaries = f.attach_recording_publisher(ApprovalDecision::AlwaysForThisSessionAndClient);
+    let seen = f.attach_answering_publisher(ApprovalDecision::AlwaysForThisSessionAndClient);
     let work = mcpmux_core::Space::new("Work");
     f.space_repo.create(&work).await.unwrap();
     let root = if cfg!(windows) {
@@ -1682,9 +1663,40 @@ async fn moving_a_workspace_between_spaces_always_asks() {
         assert!(!Fixture::is_error(&res), "{res:?}");
     }
 
-    let summaries = summaries.lock().unwrap().clone();
+    let summaries: Vec<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|p| p.summary.clone())
+        .collect();
     assert_eq!(summaries.len(), 3, "every bind was asked: {summaries:?}");
     assert!(summaries[1].starts_with("Move workspace"), "{summaries:?}");
     assert!(summaries[1].contains("from Space 'Work'"), "{summaries:?}");
     assert!(f.broker.list_always_allow().is_empty());
+}
+
+/// The workspace path in a bind prompt is whatever the client reported, so
+/// it is shown escaped and capped rather than as given.
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_prompt_shows_the_reported_path_escaped_and_capped() {
+    let f = Fixture::new().await;
+    let seen = f.attach_recording_publisher();
+    let tail = "a".repeat(300);
+    let root = if cfg!(windows) {
+        format!("D:\\Proj\\safe\u{202E}txt.exe\\{tail}")
+    } else {
+        format!("/proj/safe\u{202E}txt.exe/{tail}")
+    };
+    f.session_roots.set(&f.session_id, [root.as_str()]);
+
+    let res = f
+        .call_tool_as_handler_would("mcpmux_bind_current_workspace", json!({}))
+        .await;
+    assert!(!Fixture::is_error(&res), "{res:?}");
+
+    let summary = seen.lock().unwrap()[0].summary.clone();
+    assert!(!summary.contains('\u{202E}'), "{summary}");
+    assert!(summary.contains("\\u{202e}"), "{summary}");
+    assert!(!summary.contains(&tail), "the path is capped: {summary}");
+    assert!(summary.contains('…'), "{summary}");
 }

@@ -110,6 +110,43 @@ describe('MetaToolApprovalDialog', () => {
     expect(screen.queryByTestId('meta-tool-approval-always')).toBeNull();
   });
 
+  it('names a tokenless caller as such', async () => {
+    render(<MetaToolApprovalDialog />);
+    await act(async () => {
+      handlers.get('meta-tool-approval-request')?.({
+        payload: {
+          request_id: 'req-anon',
+          client_id: 'mcpmux-anonymous',
+          payload: {
+            tool_name: 'mcpmux_manage_feature_set',
+            summary: 'Create FeatureSet',
+            diff: null,
+            raw_args: {},
+            affects_other_clients: false,
+          },
+          expires_at_unix_secs: 9_999_999_999,
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('meta-tool-approval-client')).toHaveTextContent(
+      'a tokenless local connection'
+    );
+  });
+
+  it('shows a deleted set as deleted, not as zero tools', async () => {
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_manage_feature_set',
+      summary: "Delete FeatureSet 'X'",
+      diff: { before: ['a_one', 'b_two'], after: [], added: [], removed: ['a_one', 'b_two'] },
+      raw_args: {},
+      affects_other_clients: true,
+      action: 'delete',
+    });
+    expect(screen.getByText('deleted')).toBeInTheDocument();
+  });
+
   it('renders a freeform { added_tools } diff without crashing', async () => {
     render(<MetaToolApprovalDialog />);
     await emitRequest({

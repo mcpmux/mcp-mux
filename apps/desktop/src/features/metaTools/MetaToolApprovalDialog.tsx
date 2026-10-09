@@ -44,6 +44,15 @@ export interface ApprovalRequest {
   expires_at_unix_secs: number;
 }
 
+/** The identity every tokenless (auth-off) connection shares. */
+const ANONYMOUS_CLIENT_ID = 'mcpmux-anonymous';
+
+/** A client's self-chosen name as shown: hidden characters removed, at most 60 characters. */
+function displayName(name: string): string {
+  const clean = name.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '');
+  return clean.length > 60 ? `${clean.slice(0, 60)}…` : clean;
+}
+
 /** Coerce a freeform JSON value into a `string[]`, dropping non-strings. */
 function toStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
@@ -88,7 +97,11 @@ export function MetaToolApprovalDialog() {
     };
   }, [currentClientId]);
   const requesterName =
-    requester && requester.clientId === currentClientId ? requester.name : null;
+    currentClientId === ANONYMOUS_CLIENT_ID
+      ? 'a tokenless local connection'
+      : requester && requester.clientId === currentClientId
+        ? displayName(requester.name)
+        : null;
 
   useEffect(() => {
     const unlistenPromise = listen<ApprovalRequest>(
@@ -213,7 +226,11 @@ export function MetaToolApprovalDialog() {
             <div className="border border-[rgb(var(--border-subtle))] rounded text-xs">
               <div className="grid grid-cols-3 divide-x divide-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
                 <Stat label="Before" value={hasBefore ? beforeCount : '—'} />
-                <Stat label="After" value={afterCount} emphasis />
+                <Stat
+                  label="After"
+                  value={current.payload.action === 'delete' ? 'deleted' : afterCount}
+                  emphasis
+                />
                 <Stat label="Delta" value={deltaLabel} />
               </div>
               {(added.length > 0 || removed.length > 0) && (

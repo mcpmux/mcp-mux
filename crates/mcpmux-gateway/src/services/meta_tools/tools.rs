@@ -470,9 +470,44 @@ const MAX_NAME_CHARS: usize = 64;
 /// Longest FeatureSet description a client may set.
 const MAX_DESCRIPTION_CHARS: usize = 500;
 
+/// Longest client-reported workspace path shown in an approval summary.
+const MAX_SHOWN_ROOT_CHARS: usize = 200;
+
+/// Characters that change how text reads without being visible: control
+/// characters, zero-width and bidi marks, line/paragraph separators, BOM.
+fn is_hidden_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
+}
+
+/// `text` as shown in an approval summary: hidden characters written out as
+/// `\u{..}` and at most `max_chars` characters, cut with "…".
+fn shown(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if is_hidden_char(c) {
+            out.push_str(&format!("\\u{{{:x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    if out.chars().count() > max_chars {
+        out = out.chars().take(max_chars.saturating_sub(1)).collect();
+        out.push('…');
+    }
+    out
+}
+
 /// Like [`opt_str_arg`], for text the user will read in the approval dialog
-/// and the UI: at most `max_chars` characters and no control characters, so
-/// a client can't pad or break up the dialog with what it chose.
+/// and the UI: at most `max_chars` characters and no control, invisible or
+/// direction-changing characters, so a client can't pad, hide or reorder
+/// what the dialog shows.
 fn opt_label_arg(
     args: &Value,
     field: &str,
@@ -486,9 +521,9 @@ fn opt_label_arg(
             "`{field}` is longer than {max_chars} characters"
         )));
     }
-    if value.chars().any(char::is_control) {
+    if value.chars().any(is_hidden_char) {
         return Err(MetaToolError::InvalidArgument(format!(
-            "`{field}` must not contain control characters or line breaks"
+            "`{field}` must not contain control, invisible or direction-changing characters"
         )));
     }
     Ok(Some(value))
@@ -1006,6 +1041,8 @@ impl MetaTool for BindCurrentWorkspaceTool {
             _ => None,
         };
         let space = space_label(&call, space_id).await;
+        // The root is whatever the client reported: shown escaped and capped.
+        let root = shown(&normalized, MAX_SHOWN_ROOT_CHARS);
         let after = feature_set_tool_names(&call, space_id, &fs_ids).await?;
         let before = match &existing {
             Some(b) => Some(feature_set_tool_names(&call, b.space_id, &b.feature_set_ids).await?),
@@ -1014,13 +1051,13 @@ impl MetaTool for BindCurrentWorkspaceTool {
         let diff = tool_diff(before.as_deref(), &after);
         let summary = match &moved_from {
             Some(from) => format!(
-                "Move workspace '{normalized}' from Space '{from}' to FeatureSet '{fs_label}' \
+                "Move workspace '{root}' from Space '{from}' to FeatureSet '{fs_label}' \
                  in Space '{space}'. Affects every future connection that reports this path."
             ),
             None => {
                 let verb = if existing.is_some() { "Rebind" } else { "Bind" };
                 format!(
-                    "{verb} workspace '{normalized}' to FeatureSet '{fs_label}' in Space \
+                    "{verb} workspace '{root}' to FeatureSet '{fs_label}' in Space \
                      '{space}'. Affects every future connection that reports this path."
                 )
             }

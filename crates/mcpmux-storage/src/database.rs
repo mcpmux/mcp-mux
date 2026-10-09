@@ -452,6 +452,27 @@ impl Database {
         &self.conn
     }
 
+    /// Up to `limit` stored ciphertexts encrypted with the master key:
+    /// credentials, outbound client secrets and server input values (minus
+    /// legacy rows kept as plaintext JSON). Empty when nothing encrypted has
+    /// been stored yet. Used to tell which candidate key the existing data
+    /// was encrypted with.
+    pub fn encrypted_samples(&self, limit: usize) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT credential_value FROM credentials
+             UNION ALL
+             SELECT client_secret_encrypted FROM outbound_oauth_clients
+              WHERE client_secret_encrypted IS NOT NULL AND client_secret_encrypted != ''
+             UNION ALL
+             SELECT input_values FROM installed_servers
+              WHERE input_values IS NOT NULL AND input_values != ''
+                AND substr(input_values, 1, 1) != '{'
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     /// Execute a closure within a transaction.
     pub fn transaction<T, F>(&self, f: F) -> Result<T>
     where

@@ -24,8 +24,24 @@ pub struct RateLimitConfig {
     pub window: Duration,
 }
 
-/// Bucket key: (route prefix, peer IP when known).
+/// Bucket key: (route prefix, peer IP when known; IPv6 peers by /64).
 type BucketKey = (String, Option<IpAddr>);
+
+/// Above this many buckets, expired ones are dropped on the next request.
+const MAX_BUCKETS: usize = 10_000;
+
+/// The address a peer is counted under: IPv6 addresses by their /64, which
+/// one host usually controls in full.
+fn peer_key(peer: IpAddr) -> IpAddr {
+    match peer {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(std::net::Ipv6Addr::from(octets))
+        }
+        v4 => v4,
+    }
+}
 
 /// Shared rate limiter state (clone-friendly via Arc).
 #[derive(Clone)]
@@ -47,6 +63,10 @@ impl RateLimiter {
     /// Check if the request should be rate limited.
     /// Returns `true` if the request is within limits (allowed).
     fn check(&self, path: &str, peer: Option<IpAddr>) -> bool {
+        let peer = peer.map(peer_key);
+        if self.buckets.len() > MAX_BUCKETS {
+            self.prune();
+        }
         for (prefix, config) in self.rules.iter() {
             if path.starts_with(prefix) {
                 let mut entry = self
@@ -71,6 +91,19 @@ impl RateLimiter {
             }
         }
         true // No matching rule, allow
+    }
+
+    /// Drop buckets whose window has passed (for every rule, so the longest
+    /// window decides).
+    fn prune(&self) {
+        let longest = self
+            .rules
+            .iter()
+            .map(|(_, config)| config.window)
+            .max()
+            .unwrap_or_default();
+        self.buckets
+            .retain(|_, (window_start, _)| window_start.elapsed() < longest);
     }
 }
 
@@ -162,5 +195,43 @@ mod tests {
         for _ in 0..5 {
             assert!(limiter.check("/health", None));
         }
+    }
+}
+
+#[cfg(test)]
+mod pruning_tests {
+    use super::*;
+
+    fn limiter() -> RateLimiter {
+        RateLimiter::new(vec![(
+            "/oauth/token".to_string(),
+            RateLimitConfig {
+                max_requests: 1,
+                window: Duration::from_millis(50),
+            },
+        )])
+    }
+
+    #[test]
+    fn ipv6_peers_share_a_bucket_per_64() {
+        let limiter = limiter();
+        let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+        let other: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+        assert!(limiter.check("/oauth/token", Some(a)));
+        assert!(!limiter.check("/oauth/token", Some(b)), "same /64");
+        assert!(limiter.check("/oauth/token", Some(other)), "another /64");
+    }
+
+    #[test]
+    fn expired_buckets_are_dropped_once_there_are_many() {
+        let limiter = limiter();
+        for i in 0..=MAX_BUCKETS as u32 {
+            limiter.check("/oauth/token", Some(IpAddr::from(i.to_be_bytes())));
+        }
+        assert!(limiter.buckets.len() > MAX_BUCKETS);
+        std::thread::sleep(Duration::from_millis(60));
+        limiter.check("/oauth/token", Some("192.0.2.1".parse().unwrap()));
+        assert!(limiter.buckets.len() <= 1, "{}", limiter.buckets.len());
     }
 }

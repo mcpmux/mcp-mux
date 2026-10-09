@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use mcpmux_core::{FeatureType, LogLevel, LogSource, ServerLog, ServerLogManager};
+use mcpmux_core::{FeatureType, LogLevel, LogSource, ServerFeature, ServerLog, ServerLogManager};
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content, Meta};
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -234,10 +234,15 @@ impl RoutingService {
             .resolve_feature_sets(&space_id_str, feature_set_ids)
             .await?;
 
-        let feature = allowed_features.iter().find(|f| {
-            f.feature_type == FeatureType::Tool && f.is_available && f.qualified_name() == tool_name
-        });
+        let feature =
+            match_feature(&allowed_features, FeatureType::Tool, tool_name).map_err(|e| {
+                warn!("[RoutingService] {}", e);
+                e
+            })?;
 
+        // Whether the tool says calling it twice is harmless; only then is a
+        // call whose result was an auth error run again after reconnecting.
+        let retry_safe = feature.is_some_and(Self::tool_is_retry_safe);
         let (server_id, actual_tool_name) = match feature {
             Some(f) => (f.server_id.clone(), f.feature_name.clone()),
             None => {
@@ -349,7 +354,7 @@ impl RoutingService {
                     // Some servers (e.g., Atlassian) return 401 as tool results rather than
                     // HTTP errors. The SDK refreshes the token successfully, but the server's
                     // internal session may be stale. A fresh MCP connection fixes this.
-                    if Self::content_has_auth_error(&result.content) {
+                    if Self::result_is_auth_failure(&result.content, true) {
                         warn!(
                             "[RoutingService] Auth error in tool result for {}/{}, attempting auto-reconnect",
                             server_id, actual_tool_name
@@ -371,6 +376,17 @@ impl RoutingService {
                             .reconnect_instance(space_id, &server_id)
                             .await
                         {
+                            // The result may come from a call that ran: only
+                            // tools marked read-only or idempotent run again.
+                            // Others return the result; the next call uses the
+                            // fresh connection.
+                            ConnectionResult::Connected { .. } if !retry_safe => {
+                                info!(
+                                    "[RoutingService] Reconnected {}; not re-running {} (not marked read-only or idempotent)",
+                                    server_id, actual_tool_name
+                                );
+                                Ok(result)
+                            }
                             ConnectionResult::Connected { .. } => {
                                 info!(
                                     "[RoutingService] Reconnected {}, retrying tool call: {}",
@@ -471,7 +487,7 @@ impl RoutingService {
                     // Even on "success" (is_error=false), some servers (e.g., Atlassian)
                     // return auth errors as plain text content like {"code":401,"message":"Unauthorized"}.
                     // Detect these and auto-reconnect + retry.
-                    if Self::content_has_auth_error(&result.content) {
+                    if Self::result_is_auth_failure(&result.content, false) {
                         warn!(
                             "[RoutingService] Auth error in successful tool result for {}/{}, attempting auto-reconnect",
                             server_id, actual_tool_name
@@ -493,6 +509,17 @@ impl RoutingService {
                             .reconnect_instance(space_id, &server_id)
                             .await
                         {
+                            // The result may come from a call that ran: only
+                            // tools marked read-only or idempotent run again.
+                            // Others return the result; the next call uses the
+                            // fresh connection.
+                            ConnectionResult::Connected { .. } if !retry_safe => {
+                                info!(
+                                    "[RoutingService] Reconnected {}; not re-running {} (not marked read-only or idempotent)",
+                                    server_id, actual_tool_name
+                                );
+                                Ok(result)
+                            }
                             ConnectionResult::Connected { .. } => {
                                 info!(
                                     "[RoutingService] Reconnected {}, retrying tool call: {}",
@@ -732,22 +759,284 @@ impl RoutingService {
         indicators.iter().any(|s| error_str.contains(s))
     }
 
-    /// Check if tool result content contains authentication error indicators.
+    /// Whether a tool result is the server reporting an authentication failure
+    /// (rather than tool output that happens to mention one).
     ///
     /// Some MCP servers (e.g., Atlassian) return auth errors as tool results
-    /// (`is_error: true` with 401 in the text) rather than HTTP-level errors.
-    /// The SDK may have already refreshed the token, but the server's internal
-    /// session can be stale. A fresh connection (reconnect) fixes this.
-    fn content_has_auth_error(content: &[Value]) -> bool {
-        for item in content {
-            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                let lower = text.to_lowercase();
-                if Self::is_auth_error(&lower) {
-                    return true;
-                }
+    /// rather than HTTP-level errors — `is_error: true` with a 401 message, or
+    /// even a "successful" `{"code":401,"message":"Unauthorized"}`. The SDK may
+    /// have already refreshed the token, but the server's internal session can
+    /// be stale, and a fresh connection fixes it; the caller then reconnects and
+    /// runs the call again. Because the retry repeats the call, only a result
+    /// that is *itself* an auth error qualifies: a single short text item that
+    /// is a structured 401 error, or, for `is_error` results, a short auth error
+    /// message. Output that merely contains these words (an issue body, a web
+    /// page, documentation) never triggers a second call.
+    fn result_is_auth_failure(content: &[Value], is_error: bool) -> bool {
+        const MAX_ERROR_TEXT: usize = 512;
+        let [item] = content else {
+            return false;
+        };
+        let Some(text) = item.get("text").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        let text = text.trim();
+        if text.len() > MAX_ERROR_TEXT {
+            return false;
+        }
+        if let Ok(json) = serde_json::from_str::<Value>(text) {
+            // A "successful" result only counts when it is nothing but an
+            // error envelope, not tool output (e.g. a fetched page's body)
+            // that carries a 401 among other fields.
+            if Self::json_is_auth_error(&json) && (is_error || Self::is_error_envelope(&json)) {
+                return true;
             }
         }
-        false
+        // A failed call whose (short) error message names an auth failure, e.g.
+        // "401 Unauthorized" or {"message":"Token expired"}.
+        is_error && Self::is_auth_error(&text.to_lowercase())
+    }
+
+    /// A JSON object made only of error-envelope fields.
+    fn is_error_envelope(json: &Value) -> bool {
+        const ENVELOPE_KEYS: [&str; 7] = [
+            "code",
+            "status",
+            "statusCode",
+            "status_code",
+            "message",
+            "error",
+            "error_description",
+        ];
+        json.as_object()
+            .is_some_and(|obj| obj.keys().all(|k| ENVELOPE_KEYS.contains(&k.as_str())))
+    }
+
+    /// Whether a tool's MCP annotations say running it again is harmless
+    /// (`readOnlyHint` or `idempotentHint`).
+    fn tool_is_retry_safe(feature: &ServerFeature) -> bool {
+        let hint = |name: &str| {
+            feature
+                .raw_json
+                .as_ref()
+                .and_then(|tool| tool.get("annotations"))
+                .and_then(|a| a.get(name))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        };
+        hint("readOnlyHint") || hint("idempotentHint")
+    }
+
+    /// A JSON error object carrying a 401 status/code, or an OAuth
+    /// `invalid_token`/`unauthorized` error code.
+    fn json_is_auth_error(json: &Value) -> bool {
+        let Some(obj) = json.as_object() else {
+            return false;
+        };
+        let is_401 = |v: &Value| v.as_u64() == Some(401) || v.as_str() == Some("401");
+        let is_auth_code = |v: &Value| {
+            v.as_str().is_some_and(|s| {
+                matches!(
+                    s.to_ascii_lowercase().as_str(),
+                    "unauthorized" | "invalid_token" | "unauthenticated"
+                )
+            })
+        };
+        ["code", "status", "statusCode", "status_code"]
+            .iter()
+            .filter_map(|k| obj.get(*k))
+            .any(|v| is_401(v) || is_auth_code(v))
+            || obj
+                .get("error")
+                .is_some_and(|e| is_auth_code(e) || Self::json_is_auth_error(e))
+    }
+}
+
+/// The one available feature of `feature_type` answering to `qualified_name`.
+///
+/// Features on two servers must never share a qualified name (prefixes are
+/// unique, but `_` is legal inside tool names, so `gh` + `evil_delete` and
+/// `gh_evil` + `delete` still collide; resource URIs aren't prefixed at all).
+/// If they do, the request is refused rather than sent — with its arguments —
+/// to whichever server happens to come first.
+pub(crate) fn match_feature<'a>(
+    features: &'a [ServerFeature],
+    feature_type: FeatureType,
+    qualified_name: &str,
+) -> Result<Option<&'a ServerFeature>> {
+    let mut matches = features.iter().filter(|f| {
+        f.feature_type == feature_type && f.is_available && f.qualified_name() == qualified_name
+    });
+    let Some(first) = matches.next() else {
+        return Ok(None);
+    };
+    if let Some(other) = matches.find(|f| f.server_id != first.server_id) {
+        return Err(anyhow!(
+            "'{}' matches features on more than one server ({} and {}); \
+             rename or disable one of them",
+            qualified_name,
+            first.server_id,
+            other.server_id
+        ));
+    }
+    Ok(Some(first))
+}
+
+#[cfg(test)]
+mod auth_failure_tests {
+    use super::RoutingService;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn tools_sharing_a_name_across_servers_are_refused() {
+        use mcpmux_core::{FeatureType, ServerFeature};
+        let tool = |server: &str, alias: &str, name: &str| {
+            let mut f = ServerFeature::tool("space", server, name);
+            f.server_alias = Some(alias.to_string());
+            f.is_available = true;
+            f
+        };
+        let find = |features: &[ServerFeature], name: &str| {
+            super::match_feature(features, FeatureType::Tool, name)
+                .map(|f| f.map(|f| f.server_id.clone()))
+        };
+        let one = vec![tool("server-a", "github", "create_issue")];
+        assert_eq!(
+            find(&one, "github_create_issue").unwrap().as_deref(),
+            Some("server-a")
+        );
+
+        // Same alias on two servers.
+        let clash = vec![
+            tool("server-a", "github", "create_issue"),
+            tool("server-b", "github", "create_issue"),
+        ];
+        assert!(find(&clash, "github_create_issue").is_err());
+        assert!(find(&clash, "github_other").unwrap().is_none());
+
+        // Distinct prefixes whose qualified names still coincide.
+        let underscore = vec![
+            tool("server-a", "gh", "evil_delete"),
+            tool("server-b", "gh_evil", "delete"),
+        ];
+        assert!(find(&underscore, "gh_evil_delete").is_err());
+    }
+
+    #[test]
+    fn resources_with_the_same_uri_on_two_servers_are_refused() {
+        use mcpmux_core::{FeatureType, ServerFeature};
+        let resource = |server: &str| {
+            let mut f = ServerFeature::resource("space", server, "memo://notes");
+            f.is_available = true;
+            f
+        };
+        let one = vec![resource("server-a")];
+        assert!(
+            super::match_feature(&one, FeatureType::Resource, "memo://notes")
+                .unwrap()
+                .is_some()
+        );
+        let clash = vec![resource("server-a"), resource("server-b")];
+        assert!(super::match_feature(&clash, FeatureType::Resource, "memo://notes").is_err());
+    }
+
+    fn text(t: &str) -> Vec<Value> {
+        vec![json!({ "type": "text", "text": t })]
+    }
+
+    #[test]
+    fn structured_401_results_are_auth_failures() {
+        for t in [
+            r#"{"code":401,"message":"Unauthorized"}"#,
+            r#"{"status":"401"}"#,
+            r#"{"error":"invalid_token"}"#,
+            r#"{"error":{"code":401,"message":"token expired"}}"#,
+        ] {
+            assert!(
+                RoutingService::result_is_auth_failure(&text(t), false),
+                "{t}"
+            );
+            assert!(
+                RoutingService::result_is_auth_failure(&text(t), true),
+                "{t}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_auth_error_messages_count_only_when_the_call_failed() {
+        for msg in [
+            text("401 Unauthorized: token expired"),
+            text(r#"{"message":"401 Unauthorized"}"#),
+        ] {
+            assert!(RoutingService::result_is_auth_failure(&msg, true));
+            assert!(!RoutingService::result_is_auth_failure(&msg, false));
+        }
+    }
+
+    #[test]
+    fn a_successful_result_must_be_only_an_error_envelope() {
+        // A fetch tool relaying another service's 401 body, with other fields.
+        for t in [
+            r#"{"url":"https://api.example.com","status":401,"body":"Unauthorized"}"#,
+            r#"{"code":401,"message":"Unauthorized","data":[1,2,3]}"#,
+        ] {
+            assert!(
+                !RoutingService::result_is_auth_failure(&text(t), false),
+                "{t}"
+            );
+            // The same text as a failed call's error still counts.
+            assert!(
+                RoutingService::result_is_auth_failure(&text(t), true),
+                "{t}"
+            );
+        }
+        assert!(RoutingService::result_is_auth_failure(
+            &text(r#"{"error":"invalid_token","error_description":"expired"}"#),
+            false
+        ));
+    }
+
+    #[test]
+    fn only_tools_marked_read_only_or_idempotent_are_re_run() {
+        use mcpmux_core::ServerFeature;
+        let tool = |annotations: Value| {
+            ServerFeature::tool(uuid::Uuid::nil(), "s", "t")
+                .with_raw_json(json!({ "name": "t", "annotations": annotations }))
+        };
+        assert!(RoutingService::tool_is_retry_safe(&tool(
+            json!({ "readOnlyHint": true })
+        )));
+        assert!(RoutingService::tool_is_retry_safe(&tool(
+            json!({ "idempotentHint": true })
+        )));
+        assert!(!RoutingService::tool_is_retry_safe(&tool(
+            json!({ "destructiveHint": true })
+        )));
+        assert!(!RoutingService::tool_is_retry_safe(&tool(json!({}))));
+        assert!(!RoutingService::tool_is_retry_safe(&ServerFeature::tool(
+            uuid::Uuid::nil(),
+            "s",
+            "t"
+        )));
+    }
+
+    #[test]
+    fn output_that_mentions_auth_words_is_not_retried() {
+        // A created issue whose body happens to say "401 Unauthorized".
+        let created =
+            text(r#"{"id":4012,"title":"Login fails","body":"API returns 401 Unauthorized"}"#);
+        assert!(!RoutingService::result_is_auth_failure(&created, false));
+        // Documentation text.
+        let docs = text("To call the API, send your access token in the Authorization header.");
+        assert!(!RoutingService::result_is_auth_failure(&docs, false));
+        // Long output is never treated as an error message.
+        let long = text(&format!("unauthorized {}", "x".repeat(600)));
+        assert!(!RoutingService::result_is_auth_failure(&long, true));
+        // Several content items are tool output, not an error.
+        let mut many = text(r#"{"code":401}"#);
+        many.extend(text("more"));
+        assert!(!RoutingService::result_is_auth_failure(&many, true));
     }
 }
 

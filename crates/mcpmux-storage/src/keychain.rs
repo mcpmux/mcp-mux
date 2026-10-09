@@ -60,6 +60,33 @@ impl KeychainKeyProvider {
     }
 }
 
+impl KeychainKeyProvider {
+    /// The key stored in the keychain, without creating one. `Ok(None)` when
+    /// the keychain works but holds no McpMux key; `Err` when the keychain
+    /// itself can't be used (no Secret Service, locked, prompt dismissed).
+    pub fn get_existing_key(&self) -> Result<Option<Zeroizing<[u8; KEY_SIZE]>>> {
+        match self.entry.get_password() {
+            Ok(hex_key) => {
+                let key_bytes = Zeroizing::new(
+                    hex::decode(&hex_key).context("Invalid key format in keychain")?,
+                );
+                if key_bytes.len() != KEY_SIZE {
+                    anyhow::bail!(
+                        "Invalid key size in keychain: expected {}, got {}",
+                        KEY_SIZE,
+                        key_bytes.len()
+                    );
+                }
+                let mut key = Zeroizing::new([0u8; KEY_SIZE]);
+                key.copy_from_slice(&key_bytes);
+                Ok(Some(key))
+            }
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(anyhow::anyhow!("Failed to access keychain: {}", e)),
+        }
+    }
+}
+
 impl MasterKeyProvider for KeychainKeyProvider {
     fn get_or_create_key(&self) -> Result<Zeroizing<[u8; KEY_SIZE]>> {
         // Try to get existing key

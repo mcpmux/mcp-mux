@@ -231,6 +231,7 @@ impl OutboundOAuthRepository for SqliteOutboundOAuthRepository {
             "DELETE FROM outbound_oauth_clients WHERE space_id = ? AND server_id = ?",
             params![space_id.to_string(), server_id],
         )?;
+        db.checkpoint_wal();
 
         Ok(())
     }

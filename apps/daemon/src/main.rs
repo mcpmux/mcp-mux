@@ -51,7 +51,13 @@ fn check_args(args: &Args) -> anyhow::Result<()> {
     if args.auth_disabled && args.public_base_url.is_some() {
         anyhow::bail!(
             "--auth-disabled can't be combined with --public-base-url: anyone who reaches \
-             the public URL would get tool access without signing in"
+             the public URL would get tool access without signing in{}",
+            if std::env::var_os("INVOCATION_ID").is_some() {
+                // Started by systemd: most likely a unit from an older version.
+                ". Re-run `mcpmuxd service install` to regenerate the unit"
+            } else {
+                ""
+            }
         );
     }
     Ok(())

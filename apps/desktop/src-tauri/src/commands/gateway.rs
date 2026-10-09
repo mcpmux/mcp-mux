@@ -195,6 +195,25 @@ pub(crate) async fn gateway_exposure_configured(
             .is_some()
 }
 
+/// Why inbound auth can't be turned off, if it can't: the settings expose the
+/// gateway, or the running gateway is still exposed (exposure changes only
+/// apply on restart).
+fn auth_off_refusal(exposure_configured: bool, running_exposed: bool) -> Option<&'static str> {
+    if exposure_configured {
+        Some(
+            "Authentication can't be turned off while the gateway is reachable from other \
+             machines. Turn off network access and remove the public URL first.",
+        )
+    } else if running_exposed {
+        Some(
+            "Authentication can't be turned off yet: the running gateway is still reachable \
+             from other machines. Restart the gateway first.",
+        )
+    } else {
+        None
+    }
+}
+
 /// Whether inbound auth is off. Auth is always on while the gateway is
 /// reachable from other machines (network bind or public URL), whatever was
 /// chosen earlier. While only this machine can reach it, an explicit choice in
@@ -1227,12 +1246,18 @@ pub async fn set_gateway_auth_disabled(
     app_state: State<'_, AppState>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<bool, String> {
-    if disabled && gateway_exposure_configured(&app_state.settings_repository).await {
-        return Err(
-            "Authentication can't be turned off while the gateway is reachable \
-                    from other machines. Turn off network access and remove the public URL first."
-                .to_string(),
-        );
+    if disabled {
+        let configured = gateway_exposure_configured(&app_state.settings_repository).await;
+        let running = {
+            let state = gateway_state.read().await;
+            match state.gateway_state {
+                Some(ref gw) => gw.read().await.exposed(),
+                None => false,
+            }
+        };
+        if let Some(reason) = auth_off_refusal(configured, running) {
+            return Err(reason.to_string());
+        }
     }
     app_state
         .settings_repository
@@ -2010,7 +2035,19 @@ mod public_base_url_tests {
 
 #[cfg(test)]
 mod gateway_auth_settings_tests {
-    use super::{load_gateway_auth_disabled_from_repo, GATEWAY_AUTH_DISABLED_KEY};
+    use super::{
+        auth_off_refusal, load_gateway_auth_disabled_from_repo, GATEWAY_AUTH_DISABLED_KEY,
+    };
+
+    #[test]
+    fn auth_can_only_be_turned_off_on_a_gateway_that_is_and_will_stay_local() {
+        assert!(auth_off_refusal(false, false).is_none());
+        assert!(auth_off_refusal(true, false).is_some());
+        // Exposure turned off in settings, gateway not restarted yet.
+        assert!(auth_off_refusal(false, true)
+            .is_some_and(|reason| reason.contains("Restart the gateway")));
+        assert!(auth_off_refusal(true, true).is_some());
+    }
     use mcpmux_core::AppSettingsRepository;
     use mcpmux_storage::{Database, SqliteAppSettingsRepository};
     use std::sync::Arc;

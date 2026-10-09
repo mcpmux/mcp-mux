@@ -106,6 +106,12 @@ The listening address must be 127.0.0.1:45818. `--auth-disabled` is for
 one-off local runs only: `mcpmuxd service install` refuses it, and the daemon
 refuses to start with both `--auth-disabled` and `--public-base-url`.
 
+A unit installed by an older version may still pass `--auth-disabled`. If it
+also passes `--public-base-url`, the daemon now exits at start and systemd
+restarts it in a loop. Re-run `mcpmuxd service install` (without
+`--auth-disabled`) to regenerate the unit, then
+`systemctl --user daemon-reload && systemctl --user restart mcpmux.service`.
+
 ## Remote operator access
 
 Keep the gateway private and tunnel it from an operator workstation:

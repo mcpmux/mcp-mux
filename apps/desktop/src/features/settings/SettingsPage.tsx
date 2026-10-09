@@ -306,6 +306,7 @@ export function SettingsPage() {
     try {
       await invoke('reset_gateway_public_base_url');
       await loadPublicUrlSettings();
+      await loadAuthDisabled();
       success('Public URL cleared', 'Restart the gateway to return OAuth metadata to localhost.');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

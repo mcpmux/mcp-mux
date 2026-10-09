@@ -842,3 +842,102 @@ async fn undecryptable_settings_are_an_error_not_empty() {
         .await
         .is_err());
 }
+
+/// One server whose settings can't be read (garbage, or another key) is left
+/// out of listings instead of failing them: the other servers still load
+/// and connect.
+#[tokio::test]
+async fn one_unreadable_server_does_not_hide_the_others() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let good = fixtures::test_installed_server(&space.id.to_string(), "good");
+    let bad = fixtures::test_installed_server(&space.id.to_string(), "bad");
+    for server in [&good, &bad] {
+        InstalledServerRepository::install(&server_repo, server)
+            .await
+            .unwrap();
+    }
+    db.lock()
+        .await
+        .connection()
+        .execute(
+            "UPDATE installed_servers SET env_overrides = 'not json, not ciphertext' WHERE id = ?1",
+            [bad.id.to_string()],
+        )
+        .unwrap();
+
+    let space_id = space.id.to_string();
+    let listings = [
+        InstalledServerRepository::list(&server_repo).await.unwrap(),
+        InstalledServerRepository::list_for_space(&server_repo, &space_id)
+            .await
+            .unwrap(),
+        InstalledServerRepository::list_enabled(&server_repo, &space_id)
+            .await
+            .unwrap(),
+        InstalledServerRepository::list_enabled_all(&server_repo)
+            .await
+            .unwrap(),
+    ];
+    for listed in listings {
+        let ids: Vec<&str> = listed.iter().map(|s| s.server_id.as_str()).collect();
+        assert_eq!(ids, ["good"]);
+    }
+    // Asking for the bad one directly still reports the problem.
+    assert!(InstalledServerRepository::get(&server_repo, &bad.id)
+        .await
+        .is_err());
+}
+
+/// The startup pass only encrypts readable plaintext JSON: values it can't
+/// read (another key's ciphertext, garbage) are left as they are, and the
+/// pass carries on.
+#[tokio::test]
+async fn the_encryption_pass_leaves_unreadable_values_alone() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let foreign = fixtures::test_installed_server(&space.id.to_string(), "foreign");
+    let garbage = fixtures::test_installed_server(&space.id.to_string(), "garbage");
+    let legacy = fixtures::test_installed_server(&space.id.to_string(), "legacy");
+    // `foreign` is written with another key.
+    let other_key = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    InstalledServerRepository::install(&other_key, &foreign)
+        .await
+        .unwrap();
+    for server in [&garbage, &legacy] {
+        InstalledServerRepository::install(&server_repo, server)
+            .await
+            .unwrap();
+    }
+    {
+        let db = db.lock().await;
+        let conn = db.connection();
+        conn.execute(
+            "UPDATE installed_servers SET env_overrides = 'garbage' WHERE id = ?1",
+            [garbage.id.to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            r#"UPDATE installed_servers SET env_overrides = '{"TOKEN":"legacy-secret"}' WHERE id = ?1"#,
+            [legacy.id.to_string()],
+        )
+        .unwrap();
+    }
+    let before_foreign = raw_settings(&db, &foreign.id).await;
+    let before_garbage = raw_settings(&db, &garbage.id).await;
+
+    assert_eq!(server_repo.encrypt_plaintext_rows().await.unwrap(), 1);
+    assert_eq!(raw_settings(&db, &foreign.id).await, before_foreign);
+    assert_eq!(raw_settings(&db, &garbage.id).await, before_garbage);
+    assert!(!raw_settings(&db, &legacy.id)
+        .await
+        .contains("legacy-secret"));
+}

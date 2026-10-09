@@ -483,7 +483,6 @@ jobs:
     uses: ./.github/workflows/e2e-desktop.yml
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
-    secrets: inherit
 
   # ─────────────────────────────────────────────────────────────
   # The one required check. A skipped check counts as passing on

@@ -26,13 +26,14 @@ if ($ShowSecrets) {
     Write-Host "McpMux GitHub Secrets Status" -ForegroundColor Cyan
     Write-Host "============================" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Repository: https://github.com/$repo/settings/secrets/actions" -ForegroundColor Gray
+    Write-Host "Environment: https://github.com/$repo/settings/environments (release)" -ForegroundColor Gray
     Write-Host ""
 
-    # Check which secrets exist via gh CLI
+    # Signing and publishing secrets live in the `release` environment,
+    # which only workflows running from main can use.
     $existingSecrets = @()
     try {
-        $existingSecrets = gh secret list --repo $repo --json name --jq '.[].name' 2>$null | ForEach-Object { $_.Trim() }
+        $existingSecrets = gh secret list --repo $repo --env release --json name --jq '.[].name' 2>$null | ForEach-Object { $_.Trim() }
     } catch {}
 
     $allSecrets = @(
@@ -107,7 +108,7 @@ if ($SetupHomebrew) {
     $token = Read-Host "Paste the token here (or press Enter to skip)"
     if ([string]::IsNullOrWhiteSpace($token)) {
         Write-Host "Skipped. Set it manually:" -ForegroundColor Yellow
-        Write-Host "  gh secret set HOMEBREW_TAP_TOKEN --repo $repo" -ForegroundColor White
+        Write-Host "  gh secret set HOMEBREW_TAP_TOKEN --repo $repo --env release" -ForegroundColor White
         Write-Host ""
         exit 0
     }
@@ -115,12 +116,12 @@ if ($SetupHomebrew) {
     # Set the secret
     Write-Host ""
     Write-Host "Setting HOMEBREW_TAP_TOKEN secret on $repo..." -ForegroundColor Gray
-    $token | gh secret set HOMEBREW_TAP_TOKEN --repo $repo
+    $token | gh secret set HOMEBREW_TAP_TOKEN --repo $repo --env release
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Done! HOMEBREW_TAP_TOKEN is now set." -ForegroundColor Green
     } else {
         Write-Host "Failed to set secret. Try manually:" -ForegroundColor Red
-        Write-Host "  gh secret set HOMEBREW_TAP_TOKEN --repo $repo" -ForegroundColor White
+        Write-Host "  gh secret set HOMEBREW_TAP_TOKEN --repo $repo --env release" -ForegroundColor White
     }
     Write-Host ""
     exit 0
@@ -182,12 +183,12 @@ try {
         Write-Host "1. Copy the PUBLIC key to tauri.conf.json:" -ForegroundColor Gray
         Write-Host "   .\setup-release.ps1 -ShowPubkey" -ForegroundColor White
         Write-Host ""
-        Write-Host "2. Add the PRIVATE key to GitHub secrets:" -ForegroundColor Gray
-        Write-Host "   - Go to: https://github.com/mcpmux/mcp-mux/settings/secrets/actions" -ForegroundColor White
+        Write-Host "2. Add the PRIVATE key to the 'release' environment secrets:" -ForegroundColor Gray
+        Write-Host "   - Go to: https://github.com/mcpmux/mcp-mux/settings/environments" -ForegroundColor White
         Write-Host "   - Add secret: TAURI_SIGNING_PRIVATE_KEY" -ForegroundColor White
         Write-Host "   - Value: contents of $keyPath" -ForegroundColor White
         Write-Host ""
-        Write-Host "3. (Optional) Add password to GitHub secrets:" -ForegroundColor Gray
+        Write-Host "3. (Optional) Add the password to the 'release' environment secrets:" -ForegroundColor Gray
         Write-Host "   - Add secret: TAURI_SIGNING_PRIVATE_KEY_PASSWORD" -ForegroundColor White
         Write-Host ""
     }

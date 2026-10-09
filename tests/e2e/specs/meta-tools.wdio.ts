@@ -110,6 +110,8 @@ describe('Meta tools - Approval dialog', () => {
         },
         raw_args: { feature_set_id: '11111111-1111-1111-1111-111111111111' },
         affects_other_clients: false,
+        action: 'update',
+        allow_always: true,
       },
       expires_at_unix_secs: Math.floor(Date.now() / 1000) + 60,
     });

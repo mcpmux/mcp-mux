@@ -37,7 +37,7 @@ pub enum InstallationSource {
 ///
 /// Note: Connection status is NOT stored here - it's runtime-only state
 /// managed by ServerManager and communicated via events.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct InstalledServer {
     /// Unique installation ID
     pub id: Uuid,
@@ -86,6 +86,34 @@ pub struct InstalledServer {
 
     /// Last update timestamp
     pub updated_at: DateTime<Utc>,
+}
+
+/// Lists which inputs, env vars and headers are set, never their values (API
+/// keys, tokens), so a server can be logged with `{:?}`.
+impl std::fmt::Debug for InstalledServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn keys(map: &HashMap<String, String>) -> Vec<&str> {
+            let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            keys
+        }
+        f.debug_struct("InstalledServer")
+            .field("id", &self.id)
+            .field("space_id", &self.space_id)
+            .field("server_id", &self.server_id)
+            .field("server_name", &self.server_name)
+            .field("input_values", &keys(&self.input_values))
+            .field("enabled", &self.enabled)
+            .field("env_overrides", &keys(&self.env_overrides))
+            .field(
+                "args_append",
+                &format_args!("<{} args>", self.args_append.len()),
+            )
+            .field("extra_headers", &keys(&self.extra_headers))
+            .field("oauth_connected", &self.oauth_connected)
+            .field("source", &self.source)
+            .finish_non_exhaustive()
+    }
 }
 
 impl InstalledServer {
@@ -183,6 +211,33 @@ impl InstalledServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debug_output_names_settings_without_their_values() {
+        let mut server = InstalledServer::new("space", "srv");
+        server
+            .input_values
+            .insert("API_KEY".into(), "sk-secret-input".into());
+        server
+            .env_overrides
+            .insert("TOKEN".into(), "env-secret-value".into());
+        server.args_append = vec!["--key=arg-secret".into()];
+        server
+            .extra_headers
+            .insert("Authorization".into(), "Bearer header-secret".into());
+        let shown = format!("{server:?}");
+        for secret in [
+            "sk-secret-input",
+            "env-secret-value",
+            "arg-secret",
+            "header-secret",
+        ] {
+            assert!(!shown.contains(secret), "{secret} in {shown}");
+        }
+        for key in ["API_KEY", "TOKEN", "Authorization", "<1 args>"] {
+            assert!(shown.contains(key), "{key} missing from {shown}");
+        }
+    }
 
     #[test]
     fn test_new_installed_server() {

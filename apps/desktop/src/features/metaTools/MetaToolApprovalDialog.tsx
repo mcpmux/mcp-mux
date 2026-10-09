@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { AlertTriangle, CheckCircle2, SlidersHorizontal, XCircle } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@mcpmux/ui';
 import { useNavigateTo } from '@/stores';
+import { listOAuthClients } from '@/lib/api/gateway';
+import { formatRawArgs } from '@/lib/approvalArgs';
 
 /**
  * Incoming approval request emitted by the gateway's ApprovalBroker.
@@ -25,15 +27,30 @@ export interface ApprovalRequest {
     /**
      * Tool-list diff the dialog renders. Freeform by design — the backend's
      * `ApprovalPayload.diff` is an arbitrary JSON value and each write tool
-     * sends a different shape (`mcpmux_create_feature_set` sends
-     * `{ added_tools }`; others may send `{ before, after, added, removed }`).
-     * Read it defensively (see `toStringArray`); never assume a field exists.
+     * sends a different shape (`{ added }`, `{ added, removed }`, or
+     * `{ before?, after, added, removed }` for binds and deletes; older
+     * builds sent `{ added_tools }`). Read it defensively (see
+     * `toStringArray`); never assume a field exists.
      */
     diff: null | Record<string, unknown>;
     raw_args: unknown;
     affects_other_clients: boolean;
+    /** The tool's action (e.g. "create"); "Always" grants cover only it. */
+    action?: string | null;
+    /** Whether "Always" may be offered. False for workspace binding, deletes
+     *  and tokenless connections. */
+    allow_always?: boolean;
   };
   expires_at_unix_secs: number;
+}
+
+/** The identity every tokenless (auth-off) connection shares. */
+const ANONYMOUS_CLIENT_ID = 'mcpmux-anonymous';
+
+/** A client's self-chosen name as shown: hidden characters removed, at most 60 characters. */
+function displayName(name: string): string {
+  const clean = name.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '');
+  return clean.length > 60 ? `${clean.slice(0, 60)}…` : clean;
 }
 
 /** Coerce a freeform JSON value into a `string[]`, dropping non-strings. */
@@ -55,6 +72,36 @@ export function MetaToolApprovalDialog() {
   const [queue, setQueue] = useState<ApprovalRequest[]>([]);
   const current = queue[0];
   const navigateTo = useNavigateTo();
+
+  // Name the requesting client the way the user knows it (their alias, else
+  // its registered name) from McpMux's own client list, never from the request.
+  const [requester, setRequester] = useState<{ clientId: string; name: string } | null>(null);
+  const currentClientId = current?.client_id;
+  useEffect(() => {
+    if (!currentClientId) return;
+    let cancelled = false;
+    listOAuthClients()
+      .then((clients) => {
+        if (cancelled || !Array.isArray(clients)) return;
+        const client = clients.find((c) => c.client_id === currentClientId);
+        if (client) {
+          setRequester({
+            clientId: currentClientId,
+            name: client.client_alias || client.client_name,
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentClientId]);
+  const requesterName =
+    currentClientId === ANONYMOUS_CLIENT_ID
+      ? 'a tokenless local connection'
+      : requester && requester.clientId === currentClientId
+        ? displayName(requester.name)
+        : null;
 
   useEffect(() => {
     const unlistenPromise = listen<ApprovalRequest>(
@@ -109,6 +156,7 @@ export function MetaToolApprovalDialog() {
   );
   const removed = useMemo(() => toStringArray(rawDiff?.removed), [rawDiff]);
   const hasBeforeAfter = rawDiff != null && ('before' in rawDiff || 'after' in rawDiff);
+  const hasBefore = rawDiff != null && 'before' in rawDiff;
   const beforeCount = toStringArray(rawDiff?.before).length;
   const afterCount = hasBeforeAfter ? toStringArray(rawDiff?.after).length : added.length;
   const hasDiff = rawDiff != null && (added.length > 0 || removed.length > 0 || hasBeforeAfter);
@@ -144,6 +192,20 @@ export function MetaToolApprovalDialog() {
                 tool:&nbsp;{current.payload.tool_name}
               </span>
             </div>
+            <p
+              className="mt-1 text-xs text-[rgb(var(--muted))]"
+              data-testid="meta-tool-approval-client"
+            >
+              Requested by{' '}
+              <span className="font-medium text-[rgb(var(--foreground))]">
+                {requesterName ?? 'an unknown client'}
+              </span>{' '}
+              <span className="font-mono break-all" title={current.client_id}>
+                ({current.client_id.length > 60
+                  ? `${current.client_id.slice(0, 60)}…`
+                  : current.client_id})
+              </span>
+            </p>
           </div>
 
           {current.payload.affects_other_clients && (
@@ -163,8 +225,12 @@ export function MetaToolApprovalDialog() {
           {hasDiff && (
             <div className="border border-[rgb(var(--border-subtle))] rounded text-xs">
               <div className="grid grid-cols-3 divide-x divide-[rgb(var(--border-subtle))] bg-[rgb(var(--surface))]">
-                <Stat label="Before" value={hasBeforeAfter ? beforeCount : '—'} />
-                <Stat label="After" value={afterCount} emphasis />
+                <Stat label="Before" value={hasBefore ? beforeCount : '—'} />
+                <Stat
+                  label="After"
+                  value={current.payload.action === 'delete' ? 'deleted' : afterCount}
+                  emphasis
+                />
                 <Stat label="Delta" value={deltaLabel} />
               </div>
               {(added.length > 0 || removed.length > 0) && (
@@ -190,6 +256,15 @@ export function MetaToolApprovalDialog() {
             </div>
           )}
 
+          <details className="text-xs" data-testid="meta-tool-approval-args">
+            <summary className="cursor-pointer text-[rgb(var(--muted))]">
+              Arguments sent by the client
+            </summary>
+            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-[rgb(var(--surface))] p-2 font-mono">
+              {formatRawArgs(current.payload.raw_args)}
+            </pre>
+          </details>
+
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button
               variant="secondary"
@@ -199,15 +274,17 @@ export function MetaToolApprovalDialog() {
             >
               <XCircle className="h-4 w-4 mr-1" /> Deny
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => respond('always_for_this_session_and_client')}
-              title="Allow this (client, tool) pair without prompting again until the gateway restarts"
-              data-testid="meta-tool-approval-always"
-            >
-              Always for this session
-            </Button>
+            {current.payload.allow_always && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => respond('always_for_this_session_and_client')}
+                title="Allow this app to make this kind of change in this Space without asking again until McpMux restarts"
+                data-testid="meta-tool-approval-always"
+              >
+                Always (until restart)
+              </Button>
+            )}
             <Button
               variant="primary"
               size="sm"

@@ -180,6 +180,33 @@ pub trait FeatureSetRepository: Send + Sync {
     /// Update a feature set
     async fn update(&self, feature_set: &FeatureSet) -> RepoResult<()>;
 
+    /// Change only a custom FeatureSet's name and/or description, leaving its
+    /// members untouched (unlike [`update`](Self::update), which rewrites them
+    /// from the given struct). `None` keeps the current value. Builtin sets
+    /// keep their identity.
+    ///
+    /// The default goes through `update` with freshly loaded members;
+    /// storage backends override it with a write that never touches members.
+    async fn update_details(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> RepoResult<()> {
+        let mut feature_set = self
+            .get_with_members(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("FeatureSet not found: {id}"))?;
+        if let Some(name) = name {
+            feature_set.name = name.to_string();
+        }
+        if let Some(description) = description {
+            feature_set.description = Some(description.to_string());
+        }
+        feature_set.updated_at = chrono::Utc::now();
+        self.update(&feature_set).await
+    }
+
     /// Delete a feature set (soft delete)
     async fn delete(&self, id: &str) -> RepoResult<()>;
 

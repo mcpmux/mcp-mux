@@ -402,7 +402,9 @@ pub async fn process_dcr_request(
             redirect_uris: filter_valid_redirect_uris(&existing.redirect_uris),
             grant_types: existing.grant_types,
             response_types: existing.response_types,
-            token_endpoint_auth_method: existing.token_endpoint_auth_method,
+            // Public client: no secret is ever issued, whatever an older
+            // registration stored.
+            token_endpoint_auth_method: "none".to_string(),
             scope: existing.scope,
             client_id_issued_at: now_unix,
             logo_uri: existing.logo_uri,
@@ -447,10 +449,9 @@ pub async fn process_dcr_request(
         request.response_types.clone()
     };
 
-    let token_endpoint_auth_method = request
-        .token_endpoint_auth_method
-        .clone()
-        .unwrap_or_else(|| "none".to_string());
+    // Registered clients are public: no secret is ever issued, so record
+    // (and answer) "none" whatever was asked for.
+    let token_endpoint_auth_method = "none".to_string();
 
     // Use helper to build new client (default settings)
     let client = build_inbound_client_from_request(

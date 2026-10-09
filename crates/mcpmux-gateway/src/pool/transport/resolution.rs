@@ -125,30 +125,82 @@ pub fn build_transport_config(
     }
 }
 
-/// Values that must not show up in a stdio server's logs: its secret inputs,
-/// and anything the user set as an env override or appended argument (where
-/// tokens commonly go). Short values are left out — they'd mostly scrub
-/// unrelated text — and longer ones come first so a value containing another
-/// is replaced whole.
+/// Values a stdio server's log lines are scrubbed of, longest first:
+/// - inputs marked secret (from 4 bytes);
+/// - env overrides whose name looks like a secret (`*KEY*`, `*TOKEN*`,
+///   `*SECRET*`, `*PASS*`, `*AUTH*`, `*CRED*`, `*COOKIE*`, `*SESSION*`,
+///   `*PAT*`);
+/// - in appended args, the value of such a flag: `--api-key=VALUE`, or the
+///   argument after `--token`.
+///
+/// Each multi-line value (a PEM key) also contributes its lines. Plain
+/// settings (`NODE_ENV=production`, directories, `--verbose`) are left
+/// alone, so the log stays readable.
 fn secret_values(
     registry_transport: &RegistryConfig,
     effective_values: &HashMap<String, String>,
     installed: &InstalledServer,
 ) -> Vec<String> {
     const MIN_LEN: usize = 8;
-    let secret_inputs = registry_transport
+    const MIN_SECRET_INPUT_LEN: usize = 4;
+
+    fn looks_secret(name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        [
+            "key", "token", "secret", "pass", "auth", "cred", "cookie", "session", "pat",
+        ]
+        .iter()
+        .any(|word| name.contains(word))
+    }
+
+    fn add(values: &mut Vec<String>, value: &str, min: usize) {
+        if value.len() >= min {
+            values.push(value.to_string());
+        }
+        if value.contains('\n') {
+            values.extend(
+                value
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| line.len() >= MIN_LEN)
+                    .map(str::to_string),
+            );
+        }
+    }
+
+    let mut values = Vec::new();
+    for input in registry_transport
         .metadata()
         .inputs
         .iter()
         .filter(|input| input.secret)
-        .filter_map(|input| effective_values.get(&input.id));
-    let mut values: Vec<String> = secret_inputs
-        .chain(installed.env_overrides.values())
-        .chain(installed.args_append.iter())
-        .filter(|v| v.len() >= MIN_LEN)
-        .cloned()
-        .collect();
-    values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    {
+        if let Some(value) = effective_values.get(&input.id) {
+            add(&mut values, value, MIN_SECRET_INPUT_LEN);
+        }
+    }
+    for (name, value) in &installed.env_overrides {
+        if looks_secret(name) {
+            add(&mut values, value, MIN_LEN);
+        }
+    }
+    let mut after_secret_flag = false;
+    for arg in &installed.args_append {
+        if after_secret_flag {
+            add(&mut values, arg, MIN_LEN);
+            after_secret_flag = false;
+            continue;
+        }
+        if !arg.starts_with('-') {
+            continue;
+        }
+        match arg.split_once('=') {
+            Some((flag, value)) if looks_secret(flag) => add(&mut values, value, MIN_LEN),
+            Some(_) => {}
+            None => after_secret_flag = looks_secret(arg),
+        }
+    }
+    values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
     values.dedup();
     values
 }
@@ -233,8 +285,19 @@ mod tests {
             .env_overrides
             .insert("DEBUG".to_string(), "1".to_string());
         installed
-            .args_append
-            .push("--password=hunter2hunter2".to_string());
+            .env_overrides
+            .insert("NODE_ENV".to_string(), "production".to_string());
+        installed.env_overrides.insert(
+            "TLS_KEY".to_string(),
+            "-----BEGIN KEY-----\nMIIEvQIBADANBgkqhkiG9w0B\n-----END KEY-----".to_string(),
+        );
+        installed.args_append.extend([
+            "--password=hunter2hunter2".to_string(),
+            "--token".to_string(),
+            "separate-token-value".to_string(),
+            "--verbose".to_string(),
+            "/home/me/projects".to_string(),
+        ]);
 
         let ResolvedTransport::Stdio { redact, .. } =
             build_transport_config(&transport, &installed, None)
@@ -244,16 +307,31 @@ mod tests {
         for secret in [
             "sk-live-0123456789",
             "override-token-value",
-            "--password=hunter2hunter2",
+            // The value alone, so a server printing just the value is caught.
+            "hunter2hunter2",
+            "separate-token-value",
+            // Each line of a multi-line key.
+            "MIIEvQIBADANBgkqhkiG9w0B",
         ] {
             assert!(
                 redact.contains(&secret.to_string()),
-                "{secret} not redacted"
+                "{secret} not redacted: {redact:?}"
             );
         }
         // Not secret, or too short to scrub safely.
-        assert!(!redact.contains(&"eu-central-1".to_string()));
-        assert!(!redact.contains(&"1".to_string()));
+        for kept in [
+            "eu-central-1",
+            "1",
+            "production",
+            "--verbose",
+            "/home/me/projects",
+        ] {
+            assert!(!redact.contains(&kept.to_string()), "{kept} redacted");
+        }
+        // Longest first, without duplicates.
+        assert!(redact
+            .windows(2)
+            .all(|w| w[0].len() >= w[1].len() && w[0] != w[1]));
     }
 
     #[test]

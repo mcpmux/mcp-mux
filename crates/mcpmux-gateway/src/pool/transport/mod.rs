@@ -186,6 +186,26 @@ pub fn create_client_handler(
     space_id: uuid::Uuid,
     event_tx: Option<tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>>,
     log_manager: Option<Arc<ServerLogManager>>,
+    redact: Arc<Vec<String>>,
 ) -> McpClientHandler {
-    McpClientHandler::new(server_id, space_id, event_tx, log_manager)
+    McpClientHandler::new(server_id, space_id, event_tx, log_manager).with_redacted(redact)
 }
+
+/// Replace every occurrence of the given secret values with `[redacted]`.
+/// Servers commonly echo their configuration (an API key in an error, a
+/// token in a debug dump) to their logs. `secrets` should be longest first,
+/// so a value containing another is replaced whole. Encoded forms (base64,
+/// URL-encoded) of a secret are not caught.
+pub(crate) fn scrub_secrets(line: &str, secrets: &[String]) -> String {
+    let mut out = line.to_string();
+    for secret in secrets {
+        if !secret.is_empty() && out.contains(secret.as_str()) {
+            out = out.replace(secret.as_str(), "[redacted]");
+        }
+    }
+    out
+}
+
+/// Longest server log line kept (stderr lines and `notifications/message`
+/// alike); longer ones are cut on a character boundary.
+pub(crate) const MAX_SERVER_LOG_LINE: usize = 16 * 1024;

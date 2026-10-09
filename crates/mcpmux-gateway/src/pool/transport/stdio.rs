@@ -32,7 +32,7 @@ use process_wrap::tokio::{CommandWrap, KillOnDrop, ProcessGroup};
 /// Longest stderr line kept from a stdio server; the rest of the line is
 /// dropped. Without a cap a server writing without newlines grows memory
 /// without bound.
-const MAX_STDERR_LINE: usize = 16 * 1024;
+const MAX_STDERR_LINE: usize = super::MAX_SERVER_LOG_LINE;
 
 /// Kills a stdio server's whole process group when its child handle is
 /// dropped.
@@ -416,7 +416,7 @@ fn spawn_stderr_reader(
                     break;
                 }
             };
-            let message = scrub(&message, &redact);
+            let message = super::scrub_secrets(&message, &redact);
             let level = classify_stderr_line(&message);
             let log = ServerLog::new(level, LogSource::Stderr, &message);
             let _ = log_manager.append(&space_id_str, &server_id, log).await;
@@ -476,19 +476,6 @@ where
         return Ok(StderrLine::TooLong);
     }
     Ok(StderrLine::Line(String::from_utf8_lossy(&buf).into_owned()))
-}
-
-/// Replace every occurrence of the given secret values with `[redacted]`.
-/// Servers commonly echo their configuration (an API key in an error, a
-/// token in a debug dump) to stderr, which is stored in the server log.
-fn scrub(line: &str, secrets: &[String]) -> String {
-    let mut out = line.to_string();
-    for secret in secrets {
-        if !secret.is_empty() && out.contains(secret.as_str()) {
-            out = out.replace(secret.as_str(), "[redacted]");
-        }
-    }
-    out
 }
 
 /// Classify a stderr line into a log level based on content heuristics.
@@ -678,6 +665,7 @@ impl Transport for StdioTransport {
             self.space_id,
             self.event_tx.clone(),
             self.log_manager.clone(),
+            Arc::clone(&self.redact),
         );
 
         // Connect with timeout
@@ -818,13 +806,16 @@ mod tests {
             "sk-12345678".to_string(),
         ];
         assert_eq!(
-            scrub(
+            crate::pool::transport::scrub_secrets(
                 "auth failed for ghp_longer_secret_value (sk-12345678)",
                 &secrets
             ),
             "auth failed for [redacted] ([redacted])"
         );
-        assert_eq!(scrub("nothing to hide", &secrets), "nothing to hide");
+        assert_eq!(
+            crate::pool::transport::scrub_secrets("nothing to hide", &secrets),
+            "nothing to hide"
+        );
     }
 
     use super::*;

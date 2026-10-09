@@ -42,6 +42,8 @@ pub struct McpClientHandler {
     log_manager: Option<Arc<ServerLogManager>>,
     /// Per list kind: a forward is already scheduled (see `forward_list_changed`).
     pending_list_changed: [Arc<AtomicBool>; 3],
+    /// Secret values scrubbed from the server's log messages.
+    redact: Arc<Vec<String>>,
 }
 
 /// Upstream `*/list_changed` notifications arriving within this window are
@@ -83,7 +85,15 @@ impl McpClientHandler {
             event_tx,
             log_manager,
             pending_list_changed: Default::default(),
+            redact: Arc::new(Vec::new()),
         }
+    }
+
+    /// Scrub these secret values (longest first) from the server's log
+    /// messages.
+    pub fn with_redacted(mut self, redact: Arc<Vec<String>>) -> Self {
+        self.redact = redact;
+        self
     }
 
     /// Forward an upstream `list_changed` to the domain event bus, at most
@@ -213,12 +223,24 @@ impl rmcp::ClientHandler for McpClientHandler {
         let server_id = self.server_id.clone();
         let space_id = self.space_id;
         let log_manager = self.log_manager.clone();
+        let redact = Arc::clone(&self.redact);
         async move {
-            // Format the log message from the MCP data field
+            // Format the log message from the MCP data field, then scrub the
+            // server's own secrets and cap it like a stderr line.
             let message = match &params.data {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
+            let mut message = crate::pool::transport::scrub_secrets(&message, &redact);
+            let max = crate::pool::transport::MAX_SERVER_LOG_LINE;
+            if message.len() > max {
+                let mut cut = max;
+                while !message.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                message.truncate(cut);
+                message.push('…');
+            }
 
             let level = Self::convert_logging_level(&params.level);
 

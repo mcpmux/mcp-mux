@@ -49,6 +49,7 @@ const CODE_VERIFIER: &str = "e2e_pkce_code_verifier_0123456789_abcdefghijklmno";
 
 struct Harness {
     base: String,
+    inbound_client_repo: Arc<InboundClientRepository>,
     ct: CancellationToken,
 }
 
@@ -111,7 +112,7 @@ impl Harness {
             .expect("build dependencies");
         let deps = GatewayDependencies {
             space_repo: space_repo as Arc<dyn mcpmux_core::SpaceRepository>,
-            inbound_client_repo,
+            inbound_client_repo: inbound_client_repo.clone(),
             ..deps
         };
 
@@ -186,6 +187,7 @@ impl Harness {
 
         Self {
             base: format!("http://127.0.0.1:{port}"),
+            inbound_client_repo,
             ct,
         }
     }
@@ -343,4 +345,267 @@ async fn auth_enabled_full_oauth_flow_then_authenticated_mcp() {
         reqwest::StatusCode::UNAUTHORIZED,
         "a tokenless request must 401 when auth is enabled"
     );
+}
+
+fn no_redirect_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("client")
+}
+
+/// Register a DCR client with one redirect URI and return its client_id.
+async fn register(http: &reqwest::Client, base: &str, name: &str) -> String {
+    let reg: serde_json::Value = http
+        .post(format!("{base}/oauth/register"))
+        .json(&serde_json::json!({
+            "client_name": name,
+            "redirect_uris": [REDIRECT],
+            "token_endpoint_auth_method": "none"
+        }))
+        .send()
+        .await
+        .expect("register request")
+        .json()
+        .await
+        .expect("register json");
+    reg["client_id"].as_str().expect("client_id").to_string()
+}
+
+/// GET /oauth/authorize with an S256 challenge (or the given method) and
+/// return the raw response.
+async fn authorize(
+    http: &reqwest::Client,
+    base: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    method: &str,
+) -> reqwest::Response {
+    let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+    let challenge = if method == "plain" {
+        CODE_VERIFIER.to_string()
+    } else {
+        code_challenge()
+    };
+    http.get(format!(
+        "{base}/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&state=st&code_challenge={}&code_challenge_method={method}",
+        enc(client_id),
+        enc(redirect_uri),
+        challenge,
+    ))
+    .send()
+    .await
+    .expect("authorize request")
+}
+
+async fn request_id_of(response: reqwest::Response) -> Option<String> {
+    let html = response.text().await.ok()?;
+    between(&html, "request_id=", &['"', '&', ' ', '\''])
+}
+
+async fn token_with_code(
+    http: &reqwest::Client,
+    base: &str,
+    code: &str,
+    client_id: Option<&str>,
+) -> (reqwest::StatusCode, serde_json::Value) {
+    let mut form = vec![
+        ("grant_type", "authorization_code"),
+        ("code", code),
+        ("redirect_uri", REDIRECT),
+        ("code_verifier", CODE_VERIFIER),
+    ];
+    if let Some(client_id) = client_id {
+        form.push(("client_id", client_id));
+    }
+    let response = http
+        .post(format!("{base}/oauth/token"))
+        .form(&form)
+        .send()
+        .await
+        .expect("token request");
+    let status = response.status();
+    (status, response.json().await.unwrap_or_default())
+}
+
+async fn approve(http: &reqwest::Client, base: &str, request_id: &str) -> String {
+    let approve: serde_json::Value = http
+        .post(format!("{base}/oauth/consent/approve"))
+        .json(&serde_json::json!({ "request_id": request_id, "approved": true }))
+        .send()
+        .await
+        .expect("approve request")
+        .json()
+        .await
+        .expect("approve json");
+    let redirect_url = approve["redirect_url"].as_str().expect("redirect_url");
+    query_param(redirect_url, "code").expect("authorization code")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consent_request_id_is_never_redeemable_as_a_code() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let client_id = register(&http, &h.base, "request-id-check").await;
+
+    let response = authorize(&http, &h.base, &client_id, REDIRECT, "S256").await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let request_id = request_id_of(response).await.expect("request_id");
+
+    // Before the user answers: the request id is not a code.
+    let (status, body) = token_with_code(&http, &h.base, &request_id, Some(&client_id)).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_grant");
+
+    // After approval only the issued code redeems, and only once.
+    let code = approve(&http, &h.base, &request_id).await;
+    let (status, _) = token_with_code(&http, &h.base, &request_id, Some(&client_id)).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    let (status, body) = token_with_code(&http, &h.base, &code, Some(&client_id)).await;
+    assert_eq!(
+        status,
+        reqwest::StatusCode::OK,
+        "issued code redeems: {body}"
+    );
+    assert!(body["access_token"].is_string());
+    let (status, body) = token_with_code(&http, &h.base, &code, Some(&client_id)).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_grant", "codes are single-use");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn token_exchange_requires_client_id() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let client_id = register(&http, &h.base, "client-id-check").await;
+    let request_id = request_id_of(authorize(&http, &h.base, &client_id, REDIRECT, "S256").await)
+        .await
+        .expect("request_id");
+    let code = approve(&http, &h.base, &request_id).await;
+
+    let (status, body) = token_with_code(&http, &h.base, &code, None).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_request");
+
+    let (status, body) = token_with_code(&http, &h.base, &code, Some("mcp_someone_else")).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_grant");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plain_pkce_is_rejected_at_authorize() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let client_id = register(&http, &h.base, "plain-pkce-check").await;
+
+    let response = authorize(&http, &h.base, &client_id, REDIRECT, "plain").await;
+    assert_eq!(response.status(), reqwest::StatusCode::SEE_OTHER);
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(location.starts_with(REDIRECT), "{location}");
+    assert_eq!(
+        query_param(&location, "error").as_deref(),
+        Some("invalid_request")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cimd_redirect_uris_follow_the_registration_policy() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+
+    let metadata_server = MockServer::start().await;
+    let client_id = format!("{}/client.json", metadata_server.uri());
+    let script_redirect = "javascript:alert(1)//";
+    Mock::given(method("GET"))
+        .and(path("/client.json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "client_id": client_id,
+            "client_name": "Metadata Client",
+            "redirect_uris": [script_redirect, REDIRECT],
+        })))
+        .mount(&metadata_server)
+        .await;
+
+    // The script URI is dropped from the stored client, so it can't be used.
+    let response = authorize(&http, &h.base, &client_id, script_redirect, "S256").await;
+    assert_ne!(response.status(), reqwest::StatusCode::OK);
+    assert!(request_id_of(response).await.is_none());
+
+    let stored = h
+        .inbound_client_repo
+        .get_client(&client_id)
+        .await
+        .expect("db")
+        .expect("CIMD client saved");
+    assert_eq!(stored.redirect_uris, vec![REDIRECT.to_string()]);
+
+    // The acceptable redirect still works.
+    let response = authorize(&http, &h.base, &client_id, REDIRECT, "S256").await;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert!(request_id_of(response).await.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cimd_document_without_acceptable_redirects_is_refused() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+
+    let metadata_server = MockServer::start().await;
+    let client_id = format!("{}/client.json", metadata_server.uri());
+    let script_redirect = "javascript:alert(1)//";
+    Mock::given(method("GET"))
+        .and(path("/client.json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "client_id": client_id,
+            "client_name": "Visual Studio Code",
+            "redirect_uris": [script_redirect],
+        })))
+        .mount(&metadata_server)
+        .await;
+
+    let response = authorize(&http, &h.base, &client_id, script_redirect, "S256").await;
+    assert_ne!(response.status(), reqwest::StatusCode::OK);
+    assert!(request_id_of(response).await.is_none());
+    assert!(h
+        .inbound_client_repo
+        .get_client(&client_id)
+        .await
+        .expect("db")
+        .is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stored_redirect_outside_the_policy_is_refused_at_authorize() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let client_id = register(&http, &h.base, "legacy-row").await;
+
+    // Simulate a row saved before the redirect policy covered every path.
+    let mut client = h
+        .inbound_client_repo
+        .get_client(&client_id)
+        .await
+        .expect("db")
+        .expect("client");
+    let script_redirect = "javascript:alert(1)//".to_string();
+    client.redirect_uris.push(script_redirect.clone());
+    h.inbound_client_repo
+        .save_client(&client)
+        .await
+        .expect("save");
+
+    let response = authorize(&http, &h.base, &client_id, &script_redirect, "S256").await;
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert!(response.headers().get("location").is_none());
 }

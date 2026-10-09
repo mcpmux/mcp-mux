@@ -9,8 +9,8 @@ mod pkce;
 mod token;
 
 pub use dcr::{
-    is_redirect_uri_allowed, process_dcr_request, validate_redirect_uris, DcrError, DcrRequest,
-    DcrResponse,
+    filter_valid_redirect_uris, is_redirect_uri_allowed, is_valid_registered_redirect_uri,
+    process_dcr_request, validate_redirect_uris, DcrError, DcrRequest, DcrResponse,
 };
 pub use discovery::{OAuthDiscovery, OAuthMetadata};
 pub use flow::{AuthorizationCallback, AuthorizationRequest, OAuthFlow};

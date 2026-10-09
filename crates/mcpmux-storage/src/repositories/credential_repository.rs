@@ -191,6 +191,9 @@ impl CredentialRepository for SqliteCredentialRepository {
                 credential.updated_at.to_rfc3339(),
             ],
         )?;
+        // A save often replaces a value (a refreshed token): don't leave the
+        // old one in the WAL.
+        db.checkpoint_wal();
 
         Ok(())
     }

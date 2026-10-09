@@ -35,6 +35,11 @@ export interface ApprovalRequest {
     diff: null | Record<string, unknown>;
     raw_args: unknown;
     affects_other_clients: boolean;
+    /** The tool's action (e.g. "create"); "Always" grants cover only it. */
+    action?: string | null;
+    /** Whether "Always" may be offered. False for workspace binding, deletes
+     *  and tokenless connections. */
+    allow_always?: boolean;
   };
   expires_at_unix_secs: number;
 }
@@ -252,15 +257,17 @@ export function MetaToolApprovalDialog() {
             >
               <XCircle className="h-4 w-4 mr-1" /> Deny
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => respond('always_for_this_session_and_client')}
-              title="Allow this (client, tool) pair without prompting again until the gateway restarts"
-              data-testid="meta-tool-approval-always"
-            >
-              Always for this session
-            </Button>
+            {current.payload.allow_always && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => respond('always_for_this_session_and_client')}
+                title="Allow this app to make this kind of change in this Space without asking again until McpMux restarts"
+                data-testid="meta-tool-approval-always"
+              >
+                Always (until restart)
+              </Button>
+            )}
             <Button
               variant="primary"
               size="sm"

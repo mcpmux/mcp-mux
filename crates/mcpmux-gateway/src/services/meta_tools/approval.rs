@@ -49,7 +49,8 @@ const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     AllowOnce,
-    /// Allow this (client, tool) pair for the rest of the gateway session.
+    /// Allow this (client, tool, action, Space) for the rest of the gateway
+    /// session (until McpMux restarts).
     AlwaysForThisSessionAndClient,
     Deny,
 }
@@ -88,6 +89,14 @@ pub struct ApprovalPayload {
     /// Optional because some writes (e.g. create_feature_set without
     /// activation) don't shift the caller's resolved toolset.
     pub diff: Option<serde_json::Value>,
+    /// The tool's `action` argument (e.g. create / update / delete for
+    /// `mcpmux_manage_feature_set`). "Always allow" grants are scoped to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// Whether the dialog may offer "Always allow". Set by the broker: never
+    /// for workspace binding, deletes, or tokenless connections.
+    #[serde(default)]
+    pub allow_always: bool,
     /// Raw arguments the LLM supplied; shown verbatim for auditability.
     pub raw_args: serde_json::Value,
     /// Does this change affect clients other than the caller? Dictates
@@ -115,14 +124,26 @@ pub type ApprovalPublisher = Arc<
     dyn Fn(ApprovalRequest) -> futures::future::BoxFuture<'static, bool> + Send + Sync + 'static,
 >;
 
-/// What an "always allow" grant covers: one client, one tool, one target Space.
-type GrantKey = (String, String, Option<Uuid>);
+/// What an "always allow" grant covers: one client, one tool, one action of
+/// that tool, one target Space.
+pub type GrantKey = (String, String, Option<String>, Option<Uuid>);
 
 /// A prompt waiting for the user. The grant scope is kept here, server-side,
 /// so a response can't widen it.
 struct PendingApproval {
     tx: oneshot::Sender<ApprovalDecision>,
     grant: GrantKey,
+    /// Whether "always" may be stored for this request.
+    allow_always: bool,
+}
+
+/// Whether a write may get a standing "always allow" grant. Moving a
+/// workspace between Spaces and deleting are approved one at a time, and
+/// tokenless connections all share one identity, so never get one.
+fn standing_grant_allowed(client_id: &str, tool_name: &str, action: Option<&str>) -> bool {
+    client_id != ANONYMOUS_CLIENT_ID
+        && tool_name != "mcpmux_bind_current_workspace"
+        && action != Some("delete")
 }
 
 /// The broker itself.
@@ -196,9 +217,22 @@ impl ApprovalBroker {
     /// For tests / headless scenarios: pre-approve everything from a
     /// specific client.
     #[cfg(test)]
-    pub fn insert_always_allow(&self, client_id: &str, tool_name: &str, space_id: Option<Uuid>) {
-        self.always_allow
-            .insert((client_id.to_string(), tool_name.to_string(), space_id), ());
+    pub fn insert_always_allow(
+        &self,
+        client_id: &str,
+        tool_name: &str,
+        action: Option<&str>,
+        space_id: Option<Uuid>,
+    ) {
+        self.always_allow.insert(
+            (
+                client_id.to_string(),
+                tool_name.to_string(),
+                action.map(str::to_string),
+                space_id,
+            ),
+            (),
+        );
     }
 
     /// Resolve a pending approval. Called from Tauri command when the user
@@ -218,7 +252,7 @@ impl ApprovalBroker {
             );
             return false;
         };
-        let (grant_client, grant_tool, _) = &pending.grant;
+        let (grant_client, grant_tool, _, _) = &pending.grant;
         if grant_client != client_id || grant_tool != tool_name {
             warn!(
                 %request_id,
@@ -226,10 +260,10 @@ impl ApprovalBroker {
             );
         }
         // Persist always-allow before firing the waiter so a racing second
-        // call from the same client sees it. Tokenless connections all share
-        // one identity, so they never get a standing grant.
+        // call from the same client sees it — only where a standing grant is
+        // allowed (see `standing_grant_allowed`); otherwise it counts as once.
         if matches!(decision, ApprovalDecision::AlwaysForThisSessionAndClient)
-            && grant_client != ANONYMOUS_CLIENT_ID
+            && pending.allow_always
         {
             self.always_allow.insert(pending.grant.clone(), ());
         }
@@ -243,16 +277,13 @@ impl ApprovalBroker {
     }
 
     /// List always-allow grants (for the UI to display + revoke).
-    pub fn list_always_allow(&self) -> Vec<(String, String, Option<Uuid>)> {
+    pub fn list_always_allow(&self) -> Vec<GrantKey> {
         self.always_allow.iter().map(|e| e.key().clone()).collect()
     }
 
-    /// Revoke a client's always-allow grants for a tool (in every Space).
-    pub fn revoke_always_allow(&self, client_id: &str, tool_name: &str) -> bool {
-        let before = self.always_allow.len();
-        self.always_allow
-            .retain(|(c, t, _), _| !(c == client_id && t == tool_name));
-        self.always_allow.len() != before
+    /// Revoke one always-allow grant, exactly as listed.
+    pub fn revoke_always_allow(&self, grant: &GrantKey) -> bool {
+        self.always_allow.remove(grant).is_some()
     }
 
     /// Core entry point for write meta tools.
@@ -267,7 +298,7 @@ impl ApprovalBroker {
         &self,
         client_id: &str,
         tool_name: &str,
-        payload: ApprovalPayload,
+        mut payload: ApprovalPayload,
     ) -> Result<ApprovalDecision, MetaToolError> {
         // 0. Global "require approval" switch OFF — the user has opted to
         //    auto-approve every write on this (trusted, local) machine.
@@ -280,12 +311,16 @@ impl ApprovalBroker {
             return Ok(ApprovalDecision::AllowOnce);
         }
 
-        // 1. Always-allow short-circuit (same client, tool and target Space).
+        // 1. Always-allow short-circuit (same client, tool, action and
+        //    target Space).
         let grant: GrantKey = (
             client_id.to_string(),
             tool_name.to_string(),
+            payload.action.clone(),
             payload.space_id,
         );
+        let allow_always = standing_grant_allowed(client_id, tool_name, payload.action.as_deref());
+        payload.allow_always = allow_always;
         if self.always_allow.contains_key(&grant) {
             debug!(
                 %client_id,
@@ -340,8 +375,14 @@ impl ApprovalBroker {
         };
 
         let (tx, rx) = oneshot::channel();
-        self.pending
-            .insert(request_id.clone(), PendingApproval { tx, grant });
+        self.pending.insert(
+            request_id.clone(),
+            PendingApproval {
+                tx,
+                grant,
+                allow_always,
+            },
+        );
 
         let delivered = publisher(request.clone()).await;
         if !delivered {
@@ -384,12 +425,18 @@ mod tests {
     }
 
     fn payload_for(space_id: Option<Uuid>) -> ApprovalPayload {
+        payload_with(None, space_id)
+    }
+
+    fn payload_with(action: Option<&str>, space_id: Option<Uuid>) -> ApprovalPayload {
         ApprovalPayload {
             tool_name: "mcpmux_pin_this_session".into(),
             summary: "test".into(),
             space_name: None,
             space_id,
             diff: None,
+            action: action.map(str::to_string),
+            allow_always: false,
             raw_args: serde_json::json!({}),
             affects_other_clients: false,
         }
@@ -413,7 +460,7 @@ mod tests {
     async fn always_allow_short_circuits() {
         let broker = ApprovalBroker::new();
         let client_id = Uuid::new_v4().to_string();
-        broker.insert_always_allow(&client_id, "mcpmux_pin_this_session", None);
+        broker.insert_always_allow(&client_id, "mcpmux_pin_this_session", None, None);
         let d = broker
             .request_approval(&client_id, "mcpmux_pin_this_session", make_payload())
             .await
@@ -461,7 +508,7 @@ mod tests {
         // approval flow because we tried to parse the URL as a UUID.
         let broker = ApprovalBroker::new();
         let url_client_id = "https://claude.ai/oauth/claude-code-client-metadata";
-        broker.insert_always_allow(url_client_id, "mcpmux_pin_this_session", None);
+        broker.insert_always_allow(url_client_id, "mcpmux_pin_this_session", None, None);
         let d = broker
             .request_approval(url_client_id, "mcpmux_pin_this_session", make_payload())
             .await
@@ -687,6 +734,132 @@ mod tests {
         }
         assert_eq!(prompts.load(Ordering::SeqCst), 2);
         assert!(broker.list_always_allow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn always_allow_is_scoped_to_the_action() {
+        let broker = Arc::new(ApprovalBroker::new().with_timeout(Duration::from_millis(500)));
+        let prompts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        broker
+            .set_publisher(answering(
+                &broker,
+                ApprovalDecision::AlwaysForThisSessionAndClient,
+                prompts.clone(),
+            ))
+            .await;
+        let client_id = Uuid::new_v4().to_string();
+        let space = Some(Uuid::new_v4());
+        let request = |action: &'static str| {
+            let broker = broker.clone();
+            let client_id = client_id.clone();
+            async move {
+                broker
+                    .request_approval(
+                        &client_id,
+                        "mcpmux_manage_feature_set",
+                        payload_with(Some(action), space),
+                    )
+                    .await
+                    .unwrap();
+            }
+        };
+
+        request("create").await;
+        request("create").await;
+        assert_eq!(prompts.load(Ordering::SeqCst), 1, "create: granted");
+        request("update").await;
+        assert_eq!(
+            prompts.load(Ordering::SeqCst),
+            2,
+            "update isn't covered by create"
+        );
+        request("delete").await;
+        request("delete").await;
+        assert_eq!(
+            prompts.load(Ordering::SeqCst),
+            4,
+            "delete prompts every time"
+        );
+        let actions: Vec<_> = broker
+            .list_always_allow()
+            .into_iter()
+            .map(|(_, _, action, _)| action)
+            .collect();
+        assert!(
+            !actions.contains(&Some("delete".to_string())),
+            "{actions:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_binding_never_gets_a_standing_grant() {
+        let broker = Arc::new(ApprovalBroker::new().with_timeout(Duration::from_millis(500)));
+        let offered = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = offered.clone();
+        let responder = broker.clone();
+        broker
+            .set_publisher(Arc::new(move |req: ApprovalRequest| {
+                seen.lock().unwrap().push(req.payload.allow_always);
+                let broker = responder.clone();
+                async move {
+                    tokio::spawn(async move {
+                        broker.respond(
+                            &req.request_id,
+                            &req.client_id,
+                            &req.payload.tool_name,
+                            ApprovalDecision::AlwaysForThisSessionAndClient,
+                        );
+                    });
+                    true
+                }
+                .boxed()
+            }))
+            .await;
+        let client_id = Uuid::new_v4().to_string();
+
+        for tool in [
+            "mcpmux_bind_current_workspace",
+            "mcpmux_bind_current_workspace",
+        ] {
+            broker
+                .request_approval(&client_id, tool, payload_for(Some(Uuid::nil())))
+                .await
+                .unwrap();
+        }
+        broker
+            .request_approval(
+                &client_id,
+                "mcpmux_pin_this_session",
+                payload_for(Some(Uuid::nil())),
+            )
+            .await
+            .unwrap();
+
+        // The dialog is told not to offer "always" for binding, and nothing
+        // is stored even if a response claims it.
+        assert_eq!(*offered.lock().unwrap(), [false, false, true]);
+        let tools: Vec<_> = broker
+            .list_always_allow()
+            .into_iter()
+            .map(|(_, tool, _, _)| tool)
+            .collect();
+        assert_eq!(tools, ["mcpmux_pin_this_session"]);
+    }
+
+    #[tokio::test]
+    async fn revoking_removes_only_that_grant() {
+        let broker = ApprovalBroker::new();
+        let (a, b) = (Some(Uuid::new_v4()), Some(Uuid::new_v4()));
+        broker.insert_always_allow("c", "mcpmux_manage_feature_set", Some("create"), a);
+        broker.insert_always_allow("c", "mcpmux_manage_feature_set", Some("create"), b);
+        assert!(broker.revoke_always_allow(&(
+            "c".into(),
+            "mcpmux_manage_feature_set".into(),
+            Some("create".into()),
+            a
+        )));
+        assert_eq!(broker.list_always_allow().len(), 1);
+        assert_eq!(broker.list_always_allow()[0].3, b);
     }
 
     #[tokio::test]

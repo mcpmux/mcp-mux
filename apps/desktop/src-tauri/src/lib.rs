@@ -511,6 +511,7 @@ pub fn run() {
                 let app_state: tauri::State<'_, AppState> = app.state();
                 let spaces_dir = app_state.spaces_dir().to_path_buf();
                 let installed_repo = app_state.installed_server_repository.clone();
+                let space_repo = app_state.runtime().repositories.space.clone();
                 let app_handle_for_watcher = app.handle().clone();
 
                 // Use the well-known default space UUID
@@ -524,6 +525,7 @@ pub fn run() {
                         spaces_dir.clone(),
                         Arc::new(mcpmux_core::application::UserSpaceSyncService::new(installed_repo)),
                         default_space_id,
+                        space_repo,
                         Some(move |space_id: &str, result: &mcpmux_core::application::SyncResult| {
                             // Emit event to refresh UI
                             if result.has_changes() {

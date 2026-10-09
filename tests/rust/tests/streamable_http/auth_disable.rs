@@ -345,8 +345,20 @@ async fn oversized_chunked_mcp_bodies_are_refused() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let h = Harness::start(true).await;
     let addr = h.base.trim_start_matches("http://").to_string();
-    let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
-    stream
+    let stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    // Read the answer while still sending: the server answers 413 as soon as
+    // the cap is passed and closes, and on Windows that close can turn into a
+    // reset that discards a response nobody had read yet.
+    let read = tokio::spawn(async move {
+        let mut response = vec![0u8; 64];
+        reader
+            .read(&mut response)
+            .await
+            .map(|n| String::from_utf8_lossy(&response[..n]).into_owned())
+    });
+
+    let mut write_failed = writer
         .write_all(
             format!(
                 "POST /mcp HTTP/1.1\r\nhost: {addr}\r\ncontent-type: application/json\r\n\
@@ -355,22 +367,34 @@ async fn oversized_chunked_mcp_bodies_are_refused() {
             .as_bytes(),
         )
         .await
-        .unwrap();
+        .is_err();
     let chunk = vec![b' '; 1024 * 1024];
     let header = format!("{:x}\r\n", chunk.len());
     for _ in 0..(mcpmux_gateway::mcp::MAX_MCP_REQUEST_BODY / chunk.len() + 1) {
-        if stream.write_all(header.as_bytes()).await.is_err()
-            || stream.write_all(&chunk).await.is_err()
-            || stream.write_all(b"\r\n").await.is_err()
-        {
+        if write_failed {
             break; // the server already answered and closed
         }
+        write_failed = writer.write_all(header.as_bytes()).await.is_err()
+            || writer.write_all(&chunk).await.is_err()
+            || writer.write_all(b"\r\n").await.is_err();
     }
-    let _ = stream.write_all(b"0\r\n\r\n").await;
-    let mut response = vec![0u8; 64];
-    let n = stream.read(&mut response).await.unwrap();
-    let status_line = String::from_utf8_lossy(&response[..n]);
-    assert!(status_line.starts_with("HTTP/1.1 413"), "{status_line}");
+    if !write_failed {
+        let _ = writer.write_all(b"0\r\n\r\n").await;
+    }
+
+    match read.await.unwrap() {
+        Ok(status_line) => assert!(status_line.starts_with("HTTP/1.1 413"), "{status_line}"),
+        // The reset beat the status line: only acceptable when the server cut
+        // the upload off, which it does only after refusing it.
+        Err(e) => assert!(
+            write_failed
+                && matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ),
+            "{e} (write failed: {write_failed})"
+        ),
+    }
 }
 
 /// Routes other than `/mcp` read their bodies before any auth, so the logging

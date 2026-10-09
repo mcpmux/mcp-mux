@@ -47,7 +47,9 @@ hex = "0.4"
 ring = "0.17"  # Cryptography for field-level encryption
 # Cross-platform OS keychain access - must enable platform-specific features!
 # Without features, keyring v3 uses mock store that doesn't persist
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# crypto-rust: Secret Service sessions use DH + AES instead of sending the
+# key in clear over D-Bus.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 zeroize = { version = "1.8", features = ["derive"] }  # Secure memory clearing
 
 # Utilities

@@ -168,6 +168,13 @@ impl GatewayPortService {
 
     /// Save the gateway port to settings.
     pub async fn save_port(&self, port: u16) -> Result<(), PortAllocationError> {
+        if port == 0 {
+            // Binding port 0 picks a random port, so nothing could find the
+            // gateway (and a supervised daemon would restart in a loop).
+            return Err(PortAllocationError::PersistFailed(
+                "port 0 is not a usable gateway port".to_string(),
+            ));
+        }
         self.settings
             .set(keys::gateway::PORT, &port.to_string())
             .await

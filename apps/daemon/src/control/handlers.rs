@@ -361,6 +361,13 @@ async fn doctor(state: &ControlState) -> Result<serde_json::Value, ApiError> {
     // Key material: file provider only — check permissions where applicable.
     checks.push(check_key_files(&state.runtime.keys_dir));
 
+    // Who can read the data and logs.
+    checks.push(check_private_paths(
+        &state.runtime.data_dir,
+        &state.runtime.logs_dir,
+        &state.runtime.db_path,
+    ));
+
     // Database.
     checks.push(if state.runtime.db_path.is_file() {
         DoctorCheck {
@@ -448,6 +455,110 @@ async fn doctor(state: &ControlState) -> Result<serde_json::Value, ApiError> {
     let healthy = !checks.iter().any(|c| c.status == CheckStatus::Fail);
     let report = DoctorReport { checks, healthy };
     Ok(serde_json::to_value(report).expect("DoctorReport is serializable"))
+}
+
+/// `text` single-quoted for a POSIX shell.
+#[cfg(unix)]
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+/// The data directory holds the database (encrypted secrets plus everything
+/// else), Space configs and possibly keys; the logs directory holds server
+/// output. Both should be owned by the daemon's user and closed to others,
+/// which also protects every file inside whatever its own mode.
+fn check_private_paths(
+    data_dir: &std::path::Path,
+    logs_dir: &std::path::Path,
+    db_path: &std::path::Path,
+) -> mcpmux_control::DoctorCheck {
+    use mcpmux_control::{CheckStatus, DoctorCheck};
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        let mut foreign = Vec::new();
+        let mut open: Vec<(std::path::PathBuf, u32)> = Vec::new();
+        let mut unreadable = Vec::new();
+        let canonical = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or(p.to_path_buf());
+        let mut dirs = vec![data_dir];
+        if !canonical(logs_dir).starts_with(canonical(data_dir)) {
+            dirs.push(logs_dir);
+        }
+        for dir in dirs {
+            let meta = match std::fs::metadata(dir) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    unreadable.push(format!("{} ({e})", dir.display()));
+                    continue;
+                }
+            };
+            let mode = meta.permissions().mode() & 0o777;
+            if meta.uid() != euid {
+                foreign.push(format!("{} (uid {})", dir.display(), meta.uid()));
+            } else if mode & 0o077 != 0 {
+                open.push((dir.to_path_buf(), mode));
+            }
+        }
+        let db_mode = std::fs::metadata(db_path)
+            .map(|m| format!("{:o}", m.permissions().mode() & 0o777))
+            .unwrap_or_else(|_| "missing".into());
+        if !foreign.is_empty() {
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Fail,
+                message: format!("owned by another user: {}", foreign.join(", ")),
+                hint: Some("run the daemon as the owner, or give it its own --data-dir".into()),
+            }
+        } else if !open.is_empty() {
+            let listed: Vec<String> = open
+                .iter()
+                .map(|(dir, mode)| format!("{} is {mode:o}", dir.display()))
+                .collect();
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Warn,
+                message: format!(
+                    "readable by other users: {} (database {db_mode})",
+                    listed.join(", ")
+                ),
+                hint: Some(format!(
+                    "run: chmod 700 {}",
+                    open.iter()
+                        .map(|(dir, _)| shell_quote(&dir.to_string_lossy()))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )),
+            }
+        } else if !unreadable.is_empty() {
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Warn,
+                message: format!("cannot check: {}", unreadable.join(", ")),
+                hint: None,
+            }
+        } else {
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Ok,
+                message: format!("data and log directories are owner-only (database {db_mode})"),
+                hint: None,
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (data_dir, logs_dir, db_path);
+        DoctorCheck {
+            id: "file_permissions".into(),
+            status: CheckStatus::Skip,
+            message: "permission audit is Unix-only (Windows uses the profile ACLs)".into(),
+            hint: None,
+        }
+    }
 }
 
 /// Inspect the key directory and any key files present. A `file` provider that
@@ -1017,7 +1128,8 @@ async fn servers_inspect(
             "configured_inputs": server.input_values.keys().collect::<Vec<_>>(),
             "env_overrides": server.env_overrides.keys().collect::<Vec<_>>(),
             "extra_headers": server.extra_headers.keys().collect::<Vec<_>>(),
-            "args_append": server.args_append,
+            // Appended arguments can carry secrets (`--api-key=…`) too.
+            "args_append": server.args_append.len(),
         }));
     }
     Ok(serde_json::Value::Array(out))
@@ -1748,26 +1860,67 @@ fn resolve_placeholders(template: &str, values: &HashMap<String, String>) -> Str
     result
 }
 
-fn resolved_server(installed: &mcpmux_core::InstalledServer) -> Option<ResolvedServer> {
+/// Stand-in for a value left out of an export.
+const REDACTED: &str = "<redacted>";
+
+/// The server's runnable transport. Without `include_secrets`, `${input:…}`
+/// placeholders stay unresolved, literal env/header values become
+/// placeholders too, and env/header/argument overrides are replaced with
+/// [`REDACTED`], so the export holds no stored secret.
+fn resolved_server(
+    installed: &mcpmux_core::InstalledServer,
+    include_secrets: bool,
+) -> Option<ResolvedServer> {
     let definition = installed.get_definition()?;
+    let no_values = HashMap::new();
+    let values = if include_secrets {
+        &installed.input_values
+    } else {
+        &no_values
+    };
+    let definition_value = |key: &str, value: &str| {
+        if include_secrets {
+            resolve_placeholders(value, values)
+        } else {
+            as_input_placeholder(key, value)
+        }
+    };
+    let overrides = |map: &HashMap<String, String>| -> HashMap<String, String> {
+        map.iter()
+            .map(|(k, v)| {
+                let v = if include_secrets {
+                    v.clone()
+                } else {
+                    REDACTED.to_string()
+                };
+                (k.clone(), v)
+            })
+            .collect()
+    };
     let transport = match &definition.transport {
         TransportConfig::Stdio {
             command, args, env, ..
         } => {
             let mut resolved_env: HashMap<String, String> = env
                 .iter()
-                .map(|(k, v)| (k.clone(), resolve_placeholders(v, &installed.input_values)))
+                .map(|(k, v)| (k.clone(), definition_value(k, v)))
                 .collect();
-            resolved_env.extend(installed.env_overrides.clone());
+            resolved_env.extend(overrides(&installed.env_overrides));
 
             let mut resolved_args: Vec<String> = args
                 .iter()
-                .map(|a| resolve_placeholders(a, &installed.input_values))
+                .map(|a| resolve_placeholders(a, values))
                 .collect();
-            resolved_args.extend(installed.args_append.clone());
+            resolved_args.extend(installed.args_append.iter().map(|a| {
+                if include_secrets {
+                    a.clone()
+                } else {
+                    REDACTED.to_string()
+                }
+            }));
 
             ResolvedTransport::Stdio {
-                command: resolve_placeholders(command, &installed.input_values),
+                command: resolve_placeholders(command, values),
                 args: resolved_args,
                 env: resolved_env,
             }
@@ -1775,11 +1928,11 @@ fn resolved_server(installed: &mcpmux_core::InstalledServer) -> Option<ResolvedS
         TransportConfig::Http { url, headers, .. } => {
             let mut resolved_headers: HashMap<String, String> = headers
                 .iter()
-                .map(|(k, v)| (k.clone(), resolve_placeholders(v, &installed.input_values)))
+                .map(|(k, v)| (k.clone(), definition_value(k, v)))
                 .collect();
-            resolved_headers.extend(installed.extra_headers.clone());
+            resolved_headers.extend(overrides(&installed.extra_headers));
             ResolvedTransport::Http {
-                url: resolve_placeholders(url, &installed.input_values),
+                url: resolve_placeholders(url, values),
                 headers: resolved_headers,
             }
         }
@@ -1803,7 +1956,7 @@ async fn config_export(
             p.server_id
         )));
     }
-    let resolved = resolved_server(&installed).ok_or_else(|| {
+    let resolved = resolved_server(&installed, p.include_secrets).ok_or_else(|| {
         ApiError::invalid(format!("server {} has no cached definition", p.server_id))
     })?;
     let content = ConfigExporter::new()
@@ -1818,9 +1971,34 @@ async fn config_export(
     .expect("ConfigExportResponse is serializable"))
 }
 
+/// `${input:ID}` for a literal env/header value, with an input id derived
+/// from its key (`X-Api-Key` → `X_API_KEY`); values that already reference
+/// inputs are kept. Importing the document then asks for these values
+/// instead of carrying them.
+fn as_input_placeholder(key: &str, value: &str) -> String {
+    if value.is_empty() || value.contains("${input:") {
+        return value.to_string();
+    }
+    let mut id: String = key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if id.is_empty() || id.starts_with(|c: char| c.is_ascii_digit()) {
+        id.insert(0, '_');
+    }
+    format!("${{input:{id}}}")
+}
+
 /// Export every server installed in a Space as a portable `mcpServers`
 /// document. Mirrors the user-space config format so it round-trips through
-/// `config import`. Credentials are NOT included.
+/// `config import`. Credentials are NOT included: literal env and header
+/// values become `${input:…}` placeholders.
 async fn config_export_space(
     state: &ControlState,
     p: ConfigExportSpaceParams,
@@ -1848,6 +2026,10 @@ async fn config_export_space(
                     entry.insert("args".into(), json!(args));
                 }
                 if !env.is_empty() {
+                    let env: HashMap<&String, String> = env
+                        .iter()
+                        .map(|(k, v)| (k, as_input_placeholder(k, v)))
+                        .collect();
                     entry.insert("env".into(), json!(env));
                 }
                 entry
@@ -1856,6 +2038,10 @@ async fn config_export_space(
                 let mut entry = serde_json::Map::new();
                 entry.insert("url".into(), json!(url));
                 if !headers.is_empty() {
+                    let headers: HashMap<&String, String> = headers
+                        .iter()
+                        .map(|(k, v)| (k, as_input_placeholder(k, v)))
+                        .collect();
                     entry.insert("headers".into(), json!(headers));
                 }
                 entry
@@ -1903,6 +2089,48 @@ async fn config_import(
             "'mcpServers' is empty; nothing to import",
         ));
     }
+    // What each entry would run, for the confirmation the CLI shows.
+    let launches: std::collections::BTreeMap<String, String> = servers
+        .iter()
+        .map(|(key, entry)| {
+            let launch = if let Some(url) = entry.get("url").and_then(|v| v.as_str()) {
+                url.to_string()
+            } else {
+                let command = entry.get("command").and_then(|v| v.as_str()).unwrap_or("?");
+                let args = entry
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| v.to_string())
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let line = std::iter::once(command.to_string())
+                    .chain(args)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                // The env changes what runs too (LD_PRELOAD, NODE_OPTIONS,
+                // PATH, ...): name the variables, never their values.
+                let mut env: Vec<&str> = entry
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                    .map(|env| env.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                env.sort_unstable();
+                if env.is_empty() {
+                    line
+                } else {
+                    format!("{line}  [env: {}]", env.join(", "))
+                }
+            };
+            (key.clone(), launch)
+        })
+        .collect();
 
     let space_config =
         mcpmux_core::get_space_config_path(&state.runtime.spaces_dir, &space.to_string())
@@ -1927,6 +2155,7 @@ async fn config_import(
             updated: plan.updated,
             removed: plan.removed,
             backup: None,
+            launches,
         })
         .expect("ConfigImportResponse is serializable"));
     }
@@ -1968,6 +2197,7 @@ async fn config_import(
         updated: result.updated,
         removed: result.removed,
         backup: backup.map(|bak| bak.to_string_lossy().to_string()),
+        launches,
     })
     .expect("ConfigImportResponse is serializable"))
 }
@@ -2068,6 +2298,9 @@ async fn port_get(state: &ControlState) -> Result<serde_json::Value, ApiError> {
 }
 
 async fn port_set(state: &ControlState, p: PortSetParams) -> Result<serde_json::Value, ApiError> {
+    if p.port == 0 {
+        return Err(ApiError::invalid("port must be between 1 and 65535"));
+    }
     state
         .runtime
         .gateway_port_service
@@ -2121,5 +2354,38 @@ mod master_key_check_tests {
             check_master_key_source(None, keys.path()).status,
             CheckStatus::Skip
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod private_paths_tests {
+    use super::check_private_paths;
+    use mcpmux_control::CheckStatus;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_chmod_hint_quotes_paths_with_spaces() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("Application Support").join("mcpmux");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let check = check_private_paths(&data, &data.join("logs"), &data.join("mcpmux.db"));
+        assert_eq!(check.status, CheckStatus::Warn);
+        let hint = check.hint.unwrap();
+        assert_eq!(hint, format!("run: chmod 700 '{}'", data.display()));
+    }
+
+    #[test]
+    fn a_directory_that_cannot_be_checked_is_not_reported_ok() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let missing_logs = root.path().join("elsewhere").join("logs");
+
+        let check = check_private_paths(&data, &missing_logs, &data.join("mcpmux.db"));
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(check.message.contains("cannot check"), "{}", check.message);
     }
 }

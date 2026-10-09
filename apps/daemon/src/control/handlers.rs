@@ -1815,20 +1815,7 @@ fn as_input_placeholder(key: &str, value: &str) -> String {
     if value.contains("${input:") {
         return value.to_string();
     }
-    let mut id: String = key
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if id.is_empty() || id.starts_with(|c: char| c.is_ascii_digit()) {
-        id.insert(0, '_');
-    }
-    format!("${{input:{id}}}")
+    format!("${{input:{}}}", mcpmux_core::input_id_for_name(key))
 }
 
 /// Export every server installed in a Space as a portable `mcpServers`
@@ -1914,7 +1901,7 @@ async fn config_import(
     let raw = std::fs::read_to_string(&path)
         .map_err(|e| ApiError::invalid(format!("cannot read {}: {e}", p.file)))?;
     // Reject malformed input before touching storage.
-    let parsed: serde_json::Value = serde_json::from_str(&raw)
+    let mut parsed: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|e| ApiError::invalid(format!("{} is not valid JSON: {e}", p.file)))?;
     let servers = parsed
         .get("mcpServers")
@@ -1955,6 +1942,22 @@ async fn config_import(
         })
         .collect();
 
+    // Literal env and header values (API keys, tokens) go into the servers'
+    // encrypted inputs; the Space file gets `${input:ID}` placeholders.
+    let moved = mcpmux_core::move_literal_values_to_inputs(&mut parsed);
+    let content = if moved.is_empty() {
+        raw
+    } else {
+        let mut content =
+            serde_json::to_string_pretty(&parsed).expect("a parsed document serializes");
+        content.push('\n');
+        content
+    };
+    let stored_as_inputs: std::collections::BTreeMap<String, Vec<String>> = moved
+        .iter()
+        .map(|m| (m.key.clone(), m.values.keys().cloned().collect()))
+        .collect();
+
     let space_config =
         mcpmux_core::get_space_config_path(&state.runtime.spaces_dir, &space.to_string())
             .map_err(|e| ApiError::invalid(e.to_string()))?;
@@ -1967,7 +1970,7 @@ async fn config_import(
     // rejects a document the sync would refuse (e.g. two keys normalizing to
     // one server id) before the Space file is touched.
     let plan = sync
-        .plan_from_content(&space.to_string(), &space_config, &raw)
+        .plan_from_content(&space.to_string(), &space_config, &content)
         .await
         .map_err(|e| ApiError::invalid(format!("{e:#}")))?;
     if p.dry_run {
@@ -1979,6 +1982,7 @@ async fn config_import(
             removed: plan.removed,
             backup: None,
             launches,
+            stored_as_inputs,
         })
         .expect("ConfigImportResponse is serializable"));
     }
@@ -1993,25 +1997,40 @@ async fn config_import(
     } else {
         None
     };
-    std::fs::write(&space_config, &raw)
+    std::fs::write(&space_config, &content)
         .map_err(|e| ApiError::internal(format!("cannot write {}: {e}", space_config.display())))?;
+
+    // Put the previous Space file back so it keeps matching the installed
+    // servers.
+    let restore = || {
+        let restored = match &backup {
+            Some(bak) => std::fs::copy(bak, &space_config).map(|_| ()),
+            None => std::fs::remove_file(&space_config),
+        };
+        if let Err(restore_err) = restored {
+            warn!(error = %restore_err, path = %space_config.display(),
+                "[control] failed to restore the Space file after a failed import");
+        }
+    };
 
     let result = match sync.sync_from_file(&space.to_string(), &space_config).await {
         Ok(result) => result,
         Err(e) => {
-            // Put the previous Space file back so it keeps matching the
-            // installed servers.
-            let restored = match &backup {
-                Some(bak) => std::fs::copy(bak, &space_config).map(|_| ()),
-                None => std::fs::remove_file(&space_config),
-            };
-            if let Err(restore_err) = restored {
-                warn!(error = %restore_err, path = %space_config.display(),
-                    "[control] failed to restore the Space file after a failed import");
-            }
+            restore();
             return Err(ApiError::invalid(format!("{e:#}")));
         }
     };
+
+    if let Err(e) = store_moved_inputs(state, space, &moved).await {
+        // Undo the import: the servers would otherwise run with
+        // unresolved placeholders.
+        restore();
+        if let Err(resync_err) = sync.sync_from_file(&space.to_string(), &space_config).await {
+            warn!(error = %resync_err,
+                "[control] failed to re-sync the Space file after a failed import");
+        }
+        return Err(e);
+    }
 
     Ok(serde_json::to_value(ConfigImportResponse {
         space_id: space.to_string(),
@@ -2021,8 +2040,28 @@ async fn config_import(
         removed: result.removed,
         backup: backup.map(|bak| bak.to_string_lossy().to_string()),
         launches,
+        stored_as_inputs,
     })
     .expect("ConfigImportResponse is serializable"))
+}
+
+/// Store values taken out of an imported document as the servers' inputs,
+/// keeping inputs they already have.
+async fn store_moved_inputs(
+    state: &ControlState,
+    space: Uuid,
+    moved: &[mcpmux_core::MovedInputValues],
+) -> Result<(), ApiError> {
+    for m in moved {
+        let installed = find_installed(state, space, &m.server_id).await?;
+        let mut inputs = installed.input_values;
+        inputs.extend(m.values.clone());
+        state
+            .server_app_service()
+            .update_config(space, &m.server_id, inputs, None, None, None)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn config_validate(p: ConfigValidateParams) -> Result<serde_json::Value, ApiError> {

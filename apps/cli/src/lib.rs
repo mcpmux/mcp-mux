@@ -965,6 +965,24 @@ fn render_config_export_space(value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// List the env and header values an import keeps out of the Space file.
+fn print_stored_as_inputs(value: &Value, what: &str) {
+    let Some(stored) = value.get("stored_as_inputs").and_then(Value::as_object) else {
+        return;
+    };
+    if stored.is_empty() {
+        return;
+    }
+    println!("env/header values {what} as server inputs, not in the Space file:");
+    for (key, ids) in stored {
+        let ids: Vec<&str> = as_array(ids)
+            .into_iter()
+            .filter_map(Value::as_str)
+            .collect();
+        println!("  {key}: {}", ids.join(", "));
+    }
+}
+
 fn render_config_import(value: &Value) -> Result<()> {
     let dry = value
         .get("dry_run")
@@ -985,6 +1003,7 @@ fn render_config_import(value: &Value) -> Result<()> {
                 println!("  {key}: {}", launch.as_str().unwrap_or_default());
             }
         }
+        print_stored_as_inputs(value, "would be stored encrypted");
         return Ok(());
     }
     println!(
@@ -993,6 +1012,7 @@ fn render_config_import(value: &Value) -> Result<()> {
         as_array(value.get("updated").unwrap_or(&Value::Null)).len(),
         as_array(value.get("removed").unwrap_or(&Value::Null)).len(),
     );
+    print_stored_as_inputs(value, "stored encrypted");
     let backup = str_at(value, "backup");
     if !backup.is_empty() {
         println!("backup: {backup}");

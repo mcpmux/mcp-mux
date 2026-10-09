@@ -451,8 +451,12 @@ async fn doctor(state: &ControlState) -> Result<serde_json::Value, ApiError> {
     Ok(serde_json::to_value(report).expect("DoctorReport is serializable"))
 }
 
-/// Inspect the key directory and any key files present. A `file` provider that
-/// has not created keys yet is `Skip`, not a failure.
+/// `text` single-quoted for a POSIX shell.
+#[cfg(unix)]
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
 /// The data directory holds the database (encrypted secrets plus everything
 /// else), Space configs and possibly keys; the logs directory holds server
 /// output. Both should be owned by the daemon's user and closed to others,
@@ -470,20 +474,26 @@ fn check_private_paths(
         // SAFETY: geteuid has no preconditions and cannot fail.
         let euid = unsafe { libc::geteuid() };
         let mut foreign = Vec::new();
-        let mut open = Vec::new();
+        let mut open: Vec<(std::path::PathBuf, u32)> = Vec::new();
+        let mut unreadable = Vec::new();
+        let canonical = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or(p.to_path_buf());
         let mut dirs = vec![data_dir];
-        if !logs_dir.starts_with(data_dir) {
+        if !canonical(logs_dir).starts_with(canonical(data_dir)) {
             dirs.push(logs_dir);
         }
         for dir in dirs {
-            let Ok(meta) = std::fs::metadata(dir) else {
-                continue;
+            let meta = match std::fs::metadata(dir) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    unreadable.push(format!("{} ({e})", dir.display()));
+                    continue;
+                }
             };
             let mode = meta.permissions().mode() & 0o777;
             if meta.uid() != euid {
                 foreign.push(format!("{} (uid {})", dir.display(), meta.uid()));
             } else if mode & 0o077 != 0 {
-                open.push(format!("{} is {mode:o}", dir.display()));
+                open.push((dir.to_path_buf(), mode));
             }
         }
         let db_mode = std::fs::metadata(db_path)
@@ -497,20 +507,31 @@ fn check_private_paths(
                 hint: Some("run the daemon as the owner, or give it its own --data-dir".into()),
             }
         } else if !open.is_empty() {
+            let listed: Vec<String> = open
+                .iter()
+                .map(|(dir, mode)| format!("{} is {mode:o}", dir.display()))
+                .collect();
             DoctorCheck {
                 id: "file_permissions".into(),
                 status: CheckStatus::Warn,
                 message: format!(
                     "readable by other users: {} (database {db_mode})",
-                    open.join(", ")
+                    listed.join(", ")
                 ),
                 hint: Some(format!(
                     "run: chmod 700 {}",
                     open.iter()
-                        .map(|o| o.rsplit_once(" is ").map_or(o.as_str(), |(p, _)| p))
+                        .map(|(dir, _)| shell_quote(&dir.to_string_lossy()))
                         .collect::<Vec<_>>()
                         .join(" ")
                 )),
+            }
+        } else if !unreadable.is_empty() {
+            DoctorCheck {
+                id: "file_permissions".into(),
+                status: CheckStatus::Warn,
+                message: format!("cannot check: {}", unreadable.join(", ")),
+                hint: None,
             }
         } else {
             DoctorCheck {
@@ -534,6 +555,8 @@ fn check_private_paths(
     }
 }
 
+/// Inspect the key directory and any key files present. A `file` provider that
+/// has not created keys yet is `Skip`, not a failure.
 fn check_key_files(keys_dir: &std::path::Path) -> mcpmux_control::DoctorCheck {
     use mcpmux_control::{CheckStatus, DoctorCheck};
 
@@ -2130,4 +2153,37 @@ async fn port_clear(state: &ControlState) -> Result<serde_json::Value, ApiError>
         default_port: mcpmux_core::DEFAULT_GATEWAY_PORT,
     })
     .expect("PortResponse is serializable"))
+}
+
+#[cfg(all(test, unix))]
+mod private_paths_tests {
+    use super::check_private_paths;
+    use mcpmux_control::CheckStatus;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_chmod_hint_quotes_paths_with_spaces() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("Application Support").join("mcpmux");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let check = check_private_paths(&data, &data.join("logs"), &data.join("mcpmux.db"));
+        assert_eq!(check.status, CheckStatus::Warn);
+        let hint = check.hint.unwrap();
+        assert_eq!(hint, format!("run: chmod 700 '{}'", data.display()));
+    }
+
+    #[test]
+    fn a_directory_that_cannot_be_checked_is_not_reported_ok() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let missing_logs = root.path().join("elsewhere").join("logs");
+
+        let check = check_private_paths(&data, &missing_logs, &data.join("mcpmux.db"));
+        assert_eq!(check.status, CheckStatus::Warn);
+        assert!(check.message.contains("cannot check"), "{}", check.message);
+    }
 }

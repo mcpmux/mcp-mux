@@ -1040,7 +1040,12 @@ async fn control_socket_keeps_stored_secrets_out_of_exports() {
     .await;
     assert!(preview.ok, "dry run failed: {:?}", preview.error);
     let launches = preview.data.unwrap()["launches"].clone();
-    assert_eq!(launches["gamma"], "echo --token=${input:TOKEN}");
+    // The env changes what runs, so its variables are named (never valued).
+    assert_eq!(
+        launches["gamma"],
+        "echo --token=${input:TOKEN}  [env: LITERAL_SECRET, REF]"
+    );
+    assert!(!launches.to_string().contains("ghp_literal"));
     assert_eq!(launches["web"], "http://127.0.0.1:9/mcp");
 
     let imported = call(

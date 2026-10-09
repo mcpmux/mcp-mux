@@ -260,8 +260,8 @@ config with the stored values filled in.
 
 Move a whole Space's server set between profiles or hosts with a portable
 `mcpServers` document (transport only — no credentials; literal env and header
-values are exported as `${input:…}` placeholders, which the import then asks
-for):
+values are exported as `${input:…}` placeholders; after importing, set them
+with `mcpmux-cli servers configure`):
 
     # Export every server installed in a Space.
     mcpmux-cli config export-space --space <space-id> --out space.json
@@ -271,7 +271,8 @@ for):
     mcpmux-cli config import space.json --space <space-id>
 
 `config import` rejects malformed input before touching storage, shows what it
-will add, change and remove and the command or URL each server runs, and asks
+will add, change and remove and the command or URL each server runs (with the
+names of the env vars it sets), and asks
 for confirmation (--yes skips the question). It then backs up the target
 Space's config file to `<space>.json.mcpmux-bak` and applies the 3-way diff;
 new servers are enabled automatically. Files written with --out are

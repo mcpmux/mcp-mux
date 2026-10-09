@@ -1812,7 +1812,7 @@ async fn config_export(
 /// inputs are kept. Importing the document then asks for these values
 /// instead of carrying them.
 fn as_input_placeholder(key: &str, value: &str) -> String {
-    if value.contains("${input:") {
+    if value.is_empty() || value.contains("${input:") {
         return value.to_string();
     }
     format!("${{input:{}}}", mcpmux_core::input_id_for_name(key))
@@ -1933,10 +1933,23 @@ async fn config_import(
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                std::iter::once(command.to_string())
+                let line = std::iter::once(command.to_string())
                     .chain(args)
                     .collect::<Vec<_>>()
-                    .join(" ")
+                    .join(" ");
+                // The env changes what runs too (LD_PRELOAD, NODE_OPTIONS,
+                // PATH, ...): name the variables, never their values.
+                let mut env: Vec<&str> = entry
+                    .get("env")
+                    .and_then(|v| v.as_object())
+                    .map(|env| env.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                env.sort_unstable();
+                if env.is_empty() {
+                    line
+                } else {
+                    format!("{line}  [env: {}]", env.join(", "))
+                }
             };
             (key.clone(), launch)
         })

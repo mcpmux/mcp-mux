@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, Copy, Check, Loader2 } from 'lucide-react';
-import Editor from '@monaco-editor/react';
+import { LocalEditor } from '@/components/LocalEditor';
 import type { ServerViewModel, ServerDefinition } from '../types/registry';
 
 interface ServerDefinitionModalProps {
@@ -107,7 +107,7 @@ export function ServerDefinitionModal({ server, onClose }: ServerDefinitionModal
               <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
             </div>
           ) : (
-            <Editor
+            <LocalEditor
               height="100%"
               defaultLanguage="json"
               value={json}

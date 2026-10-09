@@ -533,10 +533,15 @@ async fn run_config(client: &mut ControlClient, cli: &Cli, command: &ConfigComma
             };
             if !dry_run {
                 // Show what the import adds, changes and removes, and what
-                // each server runs, before anything is written.
+                // each server runs, before anything is written. In JSON mode
+                // it goes to stderr, keeping stdout for the result.
                 let plan = client.call(Method::ConfigImport, call(true)).await?;
-                if cli.output == OutputMode::Human && !cli.yes {
-                    render_config_import(&plan)?;
+                if !cli.yes {
+                    let lines = config_import_plan(&plan, "will import:");
+                    match cli.output {
+                        OutputMode::Human => lines.iter().for_each(|l| println!("{l}")),
+                        OutputMode::Json => lines.iter().for_each(|l| eprintln!("{l}")),
+                    }
                 }
                 confirm(cli, "import these servers (new ones start enabled)")?;
             }
@@ -642,12 +647,21 @@ fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Resul
     file.write_all(contents)
 }
 
-fn confirm(cli: &Cli, action: &str) -> Result<()> {
-    if cli.yes {
-        return Ok(());
+/// Whether a destructive command may go ahead without asking (`--yes`), must
+/// ask, or must be refused (no terminal to ask on).
+fn may_skip_prompt(yes: bool, interactive: bool, action: &str) -> Result<bool> {
+    if yes {
+        return Ok(true);
     }
-    if !std::io::stdin().is_terminal() {
+    if !interactive {
         bail!("refusing to {action} without --yes (no interactive terminal)");
+    }
+    Ok(false)
+}
+
+fn confirm(cli: &Cli, action: &str) -> Result<()> {
+    if may_skip_prompt(cli.yes, std::io::stdin().is_terminal(), action)? {
+        return Ok(());
     }
     eprint!("About to {action}. Continue? [y/N] ");
     let mut input = String::new();
@@ -965,22 +979,45 @@ fn render_config_export_space(value: &Value) -> Result<()> {
     Ok(())
 }
 
-/// List the env and header values an import keeps out of the Space file.
-fn print_stored_as_inputs(value: &Value, what: &str) {
+/// Lines listing the env and header values an import keeps out of the
+/// Space file (input ids per server, never values).
+fn stored_as_inputs_lines(value: &Value, what: &str) -> Vec<String> {
     let Some(stored) = value.get("stored_as_inputs").and_then(Value::as_object) else {
-        return;
+        return Vec::new();
     };
     if stored.is_empty() {
-        return;
+        return Vec::new();
     }
-    println!("env/header values {what} as server inputs, not in the Space file:");
+    let mut lines =
+        vec![format!("env/header values {what} as server inputs, not in the Space file:")];
     for (key, ids) in stored {
         let ids: Vec<&str> = as_array(ids)
             .into_iter()
             .filter_map(Value::as_str)
             .collect();
-        println!("  {key}: {}", ids.join(", "));
+        lines.push(format!("  {key}: {}", ids.join(", ")));
     }
+    lines
+}
+
+/// The lines describing an import plan (a dry-run response) under `heading`.
+fn config_import_plan(value: &Value, heading: &str) -> Vec<String> {
+    let mut lines = vec![heading.to_string()];
+    for (mark, key) in [("+", "added"), ("~", "updated"), ("-", "removed")] {
+        for id in as_array(value.get(key).unwrap_or(&Value::Null)) {
+            if let Some(id) = id.as_str() {
+                lines.push(format!("  {mark} {id}"));
+            }
+        }
+    }
+    if let Some(launches) = value.get("launches").and_then(Value::as_object) {
+        lines.push("servers in the file run:".to_string());
+        for (key, launch) in launches {
+            lines.push(format!("  {key}: {}", launch.as_str().unwrap_or_default()));
+        }
+    }
+    lines.extend(stored_as_inputs_lines(value, "will be stored encrypted"));
+    lines
 }
 
 fn render_config_import(value: &Value) -> Result<()> {
@@ -989,21 +1026,9 @@ fn render_config_import(value: &Value) -> Result<()> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if dry {
-        println!("dry run - would import:");
-        for (mark, key) in [("+", "added"), ("~", "updated"), ("-", "removed")] {
-            for id in as_array(value.get(key).unwrap_or(&Value::Null)) {
-                if let Some(id) = id.as_str() {
-                    println!("  {mark} {id}");
-                }
-            }
+        for line in config_import_plan(value, "dry run - would import:") {
+            println!("{line}");
         }
-        if let Some(launches) = value.get("launches").and_then(Value::as_object) {
-            println!("servers in the file run:");
-            for (key, launch) in launches {
-                println!("  {key}: {}", launch.as_str().unwrap_or_default());
-            }
-        }
-        print_stored_as_inputs(value, "would be stored encrypted");
         return Ok(());
     }
     println!(
@@ -1012,7 +1037,9 @@ fn render_config_import(value: &Value) -> Result<()> {
         as_array(value.get("updated").unwrap_or(&Value::Null)).len(),
         as_array(value.get("removed").unwrap_or(&Value::Null)).len(),
     );
-    print_stored_as_inputs(value, "stored encrypted");
+    for line in stored_as_inputs_lines(value, "stored encrypted") {
+        println!("{line}");
+    }
     let backup = str_at(value, "backup");
     if !backup.is_empty() {
         println!("backup: {backup}");
@@ -1100,14 +1127,16 @@ async fn daemon_restart(
     let pid: u32 = str_at(&status, "pid")
         .parse()
         .map_err(|_| anyhow::anyhow!("daemon status did not return a numeric pid"))?;
-    // Signal only the process actually serving the socket.
-    if let Some(peer) = client.peer_pid() {
-        if u32::try_from(peer).ok() != Some(pid) {
-            bail!(
-                "the daemon reported pid {pid}, but the socket is served by pid {peer}; \
-                 refusing to signal either"
-            );
-        }
+    // Signal only the process actually serving the socket, and only when the
+    // OS says which one that is.
+    let Some(peer) = client.peer_pid() else {
+        bail!("cannot tell which process serves the control socket; refusing to signal it");
+    };
+    if u32::try_from(peer).ok() != Some(pid) {
+        bail!(
+            "the daemon reported pid {pid}, but the socket is served by pid {peer}; \
+             refusing to signal either"
+        );
     }
     let data_dir = str_at(&status, "data_dir");
 
@@ -1353,6 +1382,32 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn destructive_commands_without_a_terminal_need_yes() {
+        assert!(may_skip_prompt(true, false, "import").unwrap());
+        assert!(!may_skip_prompt(false, true, "import").unwrap());
+        let err = may_skip_prompt(false, false, "import").unwrap_err();
+        assert!(err.to_string().contains("without --yes"), "{err}");
+    }
+
+    #[test]
+    fn the_import_plan_names_what_runs() {
+        let plan = serde_json::json!({
+            "dry_run": true, "added": ["a"], "updated": [], "removed": ["b"],
+            "launches": {"a": "npx -y pkg  [env: NODE_OPTIONS]"}
+        });
+        assert_eq!(
+            config_import_plan(&plan, "will import:"),
+            [
+                "will import:",
+                "  + a",
+                "  - b",
+                "servers in the file run:",
+                "  a: npx -y pkg  [env: NODE_OPTIONS]",
+            ]
+        );
+    }
 
     #[test]
     fn daemon_side_path_resolves_relative_paths_against_the_cli_cwd() {

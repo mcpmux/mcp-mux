@@ -14,6 +14,8 @@ export interface InputDefinition {
   options?: { value: string; label: string; description?: string }[];
   secret?: boolean;
   placeholder?: string;
+  /** Value used when the user leaves the input empty. */
+  default?: string | null;
   /** URL to obtain credentials/values */
   obtain_url?: string;
   /** Instructions for obtaining credentials/values */

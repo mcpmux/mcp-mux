@@ -235,11 +235,22 @@ describe('registryStore', () => {
         spaceId: 'space-1',
       });
 
-      await useRegistryStore.getState().installServer('1');
+      await useRegistryStore.getState().installServer('1', undefined, server.transport);
 
-      expect(api.installServer).toHaveBeenCalledWith('1', 'space-1');
+      expect(api.installServer).toHaveBeenCalledWith('1', 'space-1', server.transport);
       expect(useRegistryStore.getState().servers[0].is_installed).toBe(true);
       expect(useRegistryStore.getState().displayServers[0].is_installed).toBe(true);
+    });
+
+    it('rejects when the install fails, so the page can say so', async () => {
+      const server = createTestServer('1');
+      vi.mocked(api.installServer).mockRejectedValue(new Error('definition changed'));
+      useRegistryStore.setState({ servers: [server], displayServers: [server], spaceId: 'space-1' });
+
+      await expect(useRegistryStore.getState().installServer('1')).rejects.toThrow(
+        'definition changed'
+      );
+      expect(useRegistryStore.getState().servers[0].is_installed).toBe(false);
     });
 
     it('should update selectedServer if matches', async () => {

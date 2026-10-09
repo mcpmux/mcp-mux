@@ -17,3 +17,25 @@ export async function openRedirectUrl(url: string): Promise<void> {
     await openUrlWithPlugin(url);
   }
 }
+
+/**
+ * Where approving a consent request sends the user back to, in words the user
+ * can check: a loopback callback is "this computer", an https callback is its
+ * host, and an app callback is its `scheme://host`.
+ */
+export function describeRedirectTarget(redirectUri: string): string {
+  let url: URL;
+  try {
+    url = new URL(redirectUri);
+  } catch {
+    return redirectUri;
+  }
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (url.protocol === 'http:' && loopback) {
+    return url.port ? `this computer (port ${url.port})` : 'this computer';
+  }
+  if (url.protocol === 'https:') {
+    return url.host;
+  }
+  return url.host ? `${url.protocol}//${url.host}` : url.protocol;
+}

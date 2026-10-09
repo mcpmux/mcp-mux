@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { openUrl as openUrlWithPlugin } from '@tauri-apps/plugin-opener';
 import { openUrl } from '@/lib/api/gateway';
-import { openRedirectUrl } from '@/lib/oauthRedirect';
+import { describeRedirectTarget, openRedirectUrl } from '@/lib/oauthRedirect';
 
 vi.mock('@/lib/api/gateway', () => ({ openUrl: vi.fn() }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }));
@@ -46,5 +46,19 @@ describe('openRedirectUrl', () => {
       'scheme not allowed'
     );
     expect(window.location.href).toBe(before);
+  });
+});
+
+describe('describeRedirectTarget', () => {
+  it('names where approving returns the user to', () => {
+    expect(describeRedirectTarget('http://127.0.0.1:8765/callback')).toBe(
+      'this computer (port 8765)'
+    );
+    expect(describeRedirectTarget('http://localhost/cb')).toBe('this computer');
+    expect(describeRedirectTarget('https://chatgpt.com/connector/oauth/abc')).toBe('chatgpt.com');
+    expect(describeRedirectTarget('cursor://anysphere.cursor-mcp/oauth/callback')).toBe(
+      'cursor://anysphere.cursor-mcp'
+    );
+    expect(describeRedirectTarget('com.example.app:/oauth2redirect')).toBe('com.example.app:');
   });
 });

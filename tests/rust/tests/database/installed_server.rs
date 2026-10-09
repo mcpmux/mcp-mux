@@ -719,6 +719,229 @@ async fn test_installed_server_special_characters_persist() {
     );
 }
 
+/// The raw row for a server, as stored.
+async fn raw_settings(db: &Arc<Mutex<mcpmux_storage::Database>>, id: &uuid::Uuid) -> String {
+    let db = db.lock().await;
+    db.connection()
+        .query_row(
+            "SELECT input_values || env_overrides || args_append || extra_headers
+             FROM installed_servers WHERE id = ?1",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn server_settings_are_encrypted_at_rest() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+
+    let mut server = fixtures::test_installed_server(&space.id.to_string(), "secret-server");
+    server
+        .extra_headers
+        .insert("Authorization".into(), "Bearer header-secret".into());
+    server
+        .env_overrides
+        .insert("TOKEN".into(), "env-secret".into());
+    server.args_append.push("--api-key=arg-secret".into());
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    let raw = raw_settings(&db, &server.id).await;
+    for secret in [
+        "header-secret",
+        "env-secret",
+        "arg-secret",
+        "Authorization",
+        "TOKEN",
+    ] {
+        assert!(!raw.contains(secret), "{secret} stored in plaintext: {raw}");
+    }
+    let loaded = InstalledServerRepository::get(&server_repo, &server.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.extra_headers, server.extra_headers);
+    assert_eq!(loaded.env_overrides, server.env_overrides);
+    assert_eq!(loaded.args_append, server.args_append);
+}
+
+#[tokio::test]
+async fn plaintext_settings_from_older_versions_are_read_and_then_encrypted() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let server = fixtures::test_installed_server(&space.id.to_string(), "legacy-server");
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+    // What an older version left behind: every settings column as JSON.
+    db.lock()
+        .await
+        .connection()
+        .execute(
+            r#"UPDATE installed_servers
+               SET input_values = '{"KEY":"input-secret"}', env_overrides = '{"TOKEN":"env-secret"}',
+                   args_append = '["--api-key=arg-secret"]',
+                   extra_headers = '{"Authorization":"Bearer header-secret"}'
+               WHERE id = ?1"#,
+            [server.id.to_string()],
+        )
+        .unwrap();
+
+    let loaded = InstalledServerRepository::get(&server_repo, &server.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.env_overrides["TOKEN"], "env-secret");
+    assert_eq!(loaded.args_append, vec!["--api-key=arg-secret".to_string()]);
+
+    assert_eq!(server_repo.encrypt_plaintext_rows().await.unwrap(), 1);
+    let raw = raw_settings(&db, &server.id).await;
+    for secret in ["input-secret", "env-secret", "arg-secret", "header-secret"] {
+        assert!(!raw.contains(secret), "{secret} still plaintext: {raw}");
+    }
+    let reloaded = InstalledServerRepository::get(&server_repo, &server.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reloaded.input_values["KEY"], "input-secret");
+    assert_eq!(
+        reloaded.extra_headers["Authorization"],
+        "Bearer header-secret"
+    );
+    // Nothing left to do on the next start.
+    assert_eq!(server_repo.encrypt_plaintext_rows().await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn undecryptable_settings_are_an_error_not_empty() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let server = fixtures::test_installed_server(&space.id.to_string(), "other-key");
+    InstalledServerRepository::install(&server_repo, &server)
+        .await
+        .unwrap();
+
+    // The same rows read with a different master key.
+    let other = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    assert!(InstalledServerRepository::get(&other, &server.id)
+        .await
+        .is_err());
+}
+
+/// One server whose settings can't be read (garbage, or another key) is left
+/// out of listings instead of failing them: the other servers still load
+/// and connect.
+#[tokio::test]
+async fn one_unreadable_server_does_not_hide_the_others() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let good = fixtures::test_installed_server(&space.id.to_string(), "good");
+    let bad = fixtures::test_installed_server(&space.id.to_string(), "bad");
+    for server in [&good, &bad] {
+        InstalledServerRepository::install(&server_repo, server)
+            .await
+            .unwrap();
+    }
+    db.lock()
+        .await
+        .connection()
+        .execute(
+            "UPDATE installed_servers SET env_overrides = 'not json, not ciphertext' WHERE id = ?1",
+            [bad.id.to_string()],
+        )
+        .unwrap();
+
+    let space_id = space.id.to_string();
+    let listings = [
+        InstalledServerRepository::list(&server_repo).await.unwrap(),
+        InstalledServerRepository::list_for_space(&server_repo, &space_id)
+            .await
+            .unwrap(),
+        InstalledServerRepository::list_enabled(&server_repo, &space_id)
+            .await
+            .unwrap(),
+        InstalledServerRepository::list_enabled_all(&server_repo)
+            .await
+            .unwrap(),
+    ];
+    for listed in listings {
+        let ids: Vec<&str> = listed.iter().map(|s| s.server_id.as_str()).collect();
+        assert_eq!(ids, ["good"]);
+    }
+    // Asking for the bad one directly still reports the problem.
+    assert!(InstalledServerRepository::get(&server_repo, &bad.id)
+        .await
+        .is_err());
+}
+
+/// The startup pass only encrypts readable plaintext JSON: values it can't
+/// read (another key's ciphertext, garbage) are left as they are, and the
+/// pass carries on.
+#[tokio::test]
+async fn the_encryption_pass_leaves_unreadable_values_alone() {
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    let space_repo = SqliteSpaceRepository::new(Arc::clone(&db));
+    let space = fixtures::test_space("Test Space");
+    SpaceRepository::create(&space_repo, &space).await.unwrap();
+    let foreign = fixtures::test_installed_server(&space.id.to_string(), "foreign");
+    let garbage = fixtures::test_installed_server(&space.id.to_string(), "garbage");
+    let legacy = fixtures::test_installed_server(&space.id.to_string(), "legacy");
+    // `foreign` is written with another key.
+    let other_key = SqliteInstalledServerRepository::new(Arc::clone(&db), test_encryptor());
+    InstalledServerRepository::install(&other_key, &foreign)
+        .await
+        .unwrap();
+    for server in [&garbage, &legacy] {
+        InstalledServerRepository::install(&server_repo, server)
+            .await
+            .unwrap();
+    }
+    {
+        let db = db.lock().await;
+        let conn = db.connection();
+        conn.execute(
+            "UPDATE installed_servers SET env_overrides = 'garbage' WHERE id = ?1",
+            [garbage.id.to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            r#"UPDATE installed_servers SET env_overrides = '{"TOKEN":"legacy-secret"}' WHERE id = ?1"#,
+            [legacy.id.to_string()],
+        )
+        .unwrap();
+    }
+    let before_foreign = raw_settings(&db, &foreign.id).await;
+    let before_garbage = raw_settings(&db, &garbage.id).await;
+
+    assert_eq!(server_repo.encrypt_plaintext_rows().await.unwrap(), 1);
+    assert_eq!(raw_settings(&db, &foreign.id).await, before_foreign);
+    assert_eq!(raw_settings(&db, &garbage.id).await, before_garbage);
+    assert!(!raw_settings(&db, &legacy.id)
+        .await
+        .contains("legacy-secret"));
+}
+
 /// A server an older file watcher installed from `spaces/<B>.json` into
 /// another Space is moved to Space B by the next sync of that file.
 #[tokio::test]

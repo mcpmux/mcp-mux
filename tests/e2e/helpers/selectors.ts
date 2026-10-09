@@ -56,3 +56,26 @@ export async function safeClick(element: WebdriverIO.Element, timeout = TIMEOUT.
   await element.waitForClickable({ timeout });
   await element.click();
 }
+
+/**
+ * Install a registry server from its card. The card's Install button opens
+ * the server's details (which show what it runs); installing from there
+ * closes them. Does nothing when the card shows no Install button (already
+ * installed). Returns whether an install was started.
+ */
+export async function installFromRegistryCard(serverId: string): Promise<boolean> {
+  const cardInstall = await byTestId(`install-btn-${serverId}`);
+  if (!(await cardInstall.isDisplayed().catch(() => false))) {
+    return false;
+  }
+  await cardInstall.waitForClickable({ timeout: TIMEOUT.medium });
+  await safeClick(cardInstall);
+  // A plain click: safeClick would first dismiss the open details modal.
+  const confirmInstall = await byTestId('detail-install-btn');
+  await confirmInstall.waitForClickable({ timeout: TIMEOUT.medium });
+  await confirmInstall.click();
+  await browser.pause(3000);
+  await waitForModalClose();
+  return true;
+}
+

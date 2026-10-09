@@ -59,6 +59,19 @@ where
     Ok(items)
 }
 
+/// Cut a description longer than [`MAX_DESCRIPTION_LEN`] on a char boundary
+/// and mark it with "…".
+fn shorten_description(desc: &mut String) {
+    if desc.len() > MAX_DESCRIPTION_LEN {
+        let mut cut = MAX_DESCRIPTION_LEN;
+        while !desc.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        desc.truncate(cut);
+        desc.push('…');
+    }
+}
+
 /// Keep a discovered feature only within the size limits: names and whole
 /// definitions above their caps are dropped, long descriptions shortened.
 fn within_limits(mut feature: ServerFeature) -> Option<ServerFeature> {
@@ -71,14 +84,20 @@ fn within_limits(mut feature: ServerFeature) -> Option<ServerFeature> {
         return None;
     }
     if let Some(desc) = feature.description.as_mut() {
-        if desc.len() > MAX_DESCRIPTION_LEN {
-            let mut cut = MAX_DESCRIPTION_LEN;
-            while !desc.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            desc.truncate(cut);
-            desc.push('…');
-        }
+        shorten_description(desc);
+    }
+    // Clients are served the stored definition, not the description field:
+    // shorten it there too.
+    if let Some(desc) = feature
+        .raw_json
+        .as_mut()
+        .and_then(|json| json.get_mut("description"))
+        .and_then(|d| match d {
+            serde_json::Value::String(s) => Some(s),
+            _ => None,
+        })
+    {
+        shorten_description(desc);
     }
     let definition_len = feature
         .raw_json
@@ -310,10 +329,19 @@ mod tests {
         let long_name = ServerFeature::tool("s", "srv", &"n".repeat(super::MAX_NAME_LEN + 1));
         assert!(super::within_limits(long_name).is_none());
 
+        let long = "é".repeat(super::MAX_DESCRIPTION_LEN);
         let long_desc = ServerFeature::tool("s", "srv", "t")
-            .with_description("é".repeat(super::MAX_DESCRIPTION_LEN));
+            .with_description(long.clone())
+            .with_raw_json(serde_json::json!({"name": "t", "description": long}));
         let kept = super::within_limits(long_desc).unwrap();
         assert!(kept.description.unwrap().len() <= super::MAX_DESCRIPTION_LEN + '…'.len_utf8());
+        // What tools/list serves is shortened too.
+        let served = kept.raw_json.unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(served.len() <= super::MAX_DESCRIPTION_LEN + '…'.len_utf8());
+        assert!(served.ends_with('…'));
 
         let big_schema = ServerFeature::tool("s", "srv", "t").with_raw_json(serde_json::json!({
             "inputSchema": {"description": "x".repeat(super::MAX_DEFINITION_BYTES)}

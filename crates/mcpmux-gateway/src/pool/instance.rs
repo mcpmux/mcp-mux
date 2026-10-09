@@ -49,7 +49,7 @@ pub struct McpClientHandler {
 /// event bus (whose lagging subscribers would then drop other events).
 pub const LIST_CHANGED_COALESCE: Duration = Duration::from_millis(500);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ListKind {
     Tools = 0,
     Prompts = 1,
@@ -112,6 +112,11 @@ impl McpClientHandler {
         tokio::spawn(async move {
             tokio::time::sleep(LIST_CHANGED_COALESCE).await;
             pending.store(false, Ordering::Release);
+            info!(
+                server_id = %server_id,
+                kind = ?kind,
+                "[McpClientHandler] Forwarding backend list_changed"
+            );
             if let Err(e) = tx.send(event) {
                 warn!(
                     server_id = %server_id,
@@ -147,7 +152,7 @@ impl rmcp::ClientHandler for McpClientHandler {
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        info!(
+        debug!(
             server_id = %self.server_id,
             space_id = %self.space_id,
             "[McpClientHandler] 🔔 Backend server sent tools/list_changed notification"
@@ -166,7 +171,7 @@ impl rmcp::ClientHandler for McpClientHandler {
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        info!(
+        debug!(
             server_id = %self.server_id,
             space_id = %self.space_id,
             "[McpClientHandler] 🔔 Backend server sent prompts/list_changed notification"
@@ -185,7 +190,7 @@ impl rmcp::ClientHandler for McpClientHandler {
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        info!(
+        debug!(
             server_id = %self.server_id,
             space_id = %self.space_id,
             "[McpClientHandler] 🔔 Backend server sent resources/list_changed notification"

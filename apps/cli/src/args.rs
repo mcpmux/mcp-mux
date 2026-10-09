@@ -373,6 +373,11 @@ pub enum ConfigCommand {
         server: String,
         #[arg(long, value_name = "SPACE")]
         space: Option<String>,
+        /// Resolve stored inputs and include env/header/argument overrides.
+        /// Without it, `${input:…}` placeholders stay and overrides show as
+        /// `<redacted>`.
+        #[arg(long)]
+        include_secrets: bool,
     },
     /// Export every server in a Space as a portable mcpServers document.
     #[command(name = "export-space")]

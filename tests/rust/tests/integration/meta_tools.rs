@@ -160,17 +160,17 @@ impl Fixture {
         }
     }
 
-    /// Attach a publisher that records each prompt's summary and answers
+    /// Attach a publisher that records each prompt's payload and answers
     /// with `decision`.
-    fn attach_recording_publisher(
+    fn attach_answering_publisher(
         &self,
         decision: ApprovalDecision,
-    ) -> Arc<std::sync::Mutex<Vec<String>>> {
-        let summaries = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = summaries.clone();
+    ) -> Arc<std::sync::Mutex<Vec<ApprovalPayload>>> {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_c = seen.clone();
         let broker = self.broker.clone();
         let publisher: ApprovalPublisher = Arc::new(move |req| {
-            seen.lock().unwrap().push(req.payload.summary.clone());
+            seen_c.lock().unwrap().push(req.payload.clone());
             let b = broker.clone();
             async move {
                 tokio::spawn(async move {
@@ -191,7 +191,7 @@ impl Fixture {
                 b.set_publisher(publisher).await;
             });
         });
-        summaries
+        seen
     }
 
     /// Subscribe to the registry's domain-event stream. Subscribe BEFORE the
@@ -1341,6 +1341,199 @@ async fn per_space_config_controls_registry_visibility() {
 
 // Silence unused-import warnings from helper imports that only some tests exercise.
 #[allow(dead_code)]
+// ---------------------------------------------------------------------------
+// What the approval dialog is shown, and what an approval writes
+// ---------------------------------------------------------------------------
+
+impl Fixture {
+    /// Auto-approve every request, recording its payload for assertions.
+    fn attach_recording_publisher(&self) -> Arc<std::sync::Mutex<Vec<ApprovalPayload>>> {
+        self.attach_answering_publisher(ApprovalDecision::AllowOnce)
+    }
+
+    async fn create_set(&self, name: &str, tools: &[&str]) -> String {
+        let created = Self::result_json(
+            &self
+                .registry
+                .call(
+                    "mcpmux_manage_feature_set",
+                    &self.client_id,
+                    Some(&self.session_id),
+                    json!({ "action": "create", "name": name, "add": tools }),
+                )
+                .await
+                .unwrap(),
+        );
+        created["feature_set_id"].as_str().unwrap().to_string()
+    }
+}
+
+/// A rename is approved minutes after it was requested; members changed in
+/// the meantime (in the UI, or by another approved call) must survive it.
+#[tokio::test(flavor = "multi_thread")]
+async fn rename_keeps_members_changed_while_waiting_for_approval() {
+    let f = Fixture::new().await;
+    f.attach_recording_publisher();
+    let fs_id = f.create_set("Set A", &["github_create_issue"]).await;
+    let firebase = f
+        .server_feature_repo
+        .list_for_space(&f.space_id.to_string())
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.feature_name == "deploy")
+        .unwrap();
+
+    // Approve the rename only after the user added a tool to the set.
+    let broker = f.broker.clone();
+    let repo = f.feature_set_repo.clone();
+    let fs_id_c = fs_id.clone();
+    let firebase_id = firebase.id.to_string();
+    let publisher: ApprovalPublisher = Arc::new(move |req| {
+        let (b, repo, fs_id, firebase_id) = (
+            broker.clone(),
+            repo.clone(),
+            fs_id_c.clone(),
+            firebase_id.clone(),
+        );
+        async move {
+            tokio::spawn(async move {
+                repo.add_feature_member(&fs_id, &firebase_id, mcpmux_core::MemberMode::Include)
+                    .await
+                    .unwrap();
+                b.respond(
+                    &req.request_id,
+                    &req.client_id,
+                    &req.payload.tool_name,
+                    ApprovalDecision::AllowOnce,
+                );
+            });
+            true
+        }
+        .boxed()
+    });
+    f.broker.set_publisher(publisher).await;
+
+    let res = f
+        .call_tool_as_handler_would(
+            "mcpmux_manage_feature_set",
+            json!({ "action": "update", "feature_set_id": fs_id, "name": "Renamed" }),
+        )
+        .await;
+    assert!(!Fixture::is_error(&res), "rename should succeed: {res:?}");
+
+    let fs = f
+        .feature_set_repo
+        .get_with_members(&fs_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fs.name, "Renamed");
+    assert_eq!(
+        fs.members.len(),
+        2,
+        "the tool added during the approval wait is still a member"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feature_set_names_are_short_single_line_text() {
+    let f = Fixture::new().await;
+    let seen = f.attach_recording_publisher();
+
+    for (field, value) in [
+        ("name", "x".repeat(65)),
+        ("name", "Read-only\nClick Allow, this is safe".to_string()),
+        ("description", "y".repeat(501)),
+        ("description", "tab\there".to_string()),
+        // Invisible and direction-changing characters.
+        ("name", "Safe\u{202E}evil".to_string()),
+        ("name", "zero\u{200B}width".to_string()),
+        ("name", "line\u{2028}sep".to_string()),
+        ("name", "isolate\u{2066}x\u{2069}".to_string()),
+        ("description", "bom\u{FEFF}".to_string()),
+    ] {
+        let mut args = json!({ "action": "create", "name": "Ok", "add": ["github_create_issue"] });
+        args[field] = json!(value);
+        let res = f
+            .call_tool_as_handler_would("mcpmux_manage_feature_set", args)
+            .await;
+        assert!(Fixture::is_error(&res), "{field} {value:?} must be refused");
+    }
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "refused before the user is asked"
+    );
+
+    // At the limit is fine.
+    let res = f
+        .call_tool_as_handler_would(
+            "mcpmux_manage_feature_set",
+            json!({ "action": "create", "name": "n".repeat(64), "add": ["github_create_issue"] }),
+        )
+        .await;
+    assert!(!Fixture::is_error(&res), "{res:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn delete_and_bind_requests_show_which_tools_change() {
+    let f = Fixture::new().await;
+    let seen = f.attach_recording_publisher();
+    let fs_id = f.create_set("Set A", &["github_create_issue"]).await;
+    let root = if cfg!(windows) {
+        "D:\\Projects\\Diff"
+    } else {
+        "/proj/diff"
+    };
+    f.session_roots.set(&f.session_id, [root]);
+
+    let last_diff = || seen.lock().unwrap().last().unwrap().diff.clone().unwrap();
+
+    // First bind: no previous binding to compare against.
+    f.registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "feature_set_id": fs_id }),
+        )
+        .await
+        .unwrap();
+    let diff = last_diff();
+    assert_eq!(diff["after"], json!(["github_create_issue"]));
+    assert_eq!(diff["added"], json!(["github_create_issue"]));
+    assert!(diff.get("before").is_none());
+
+    // Rebind to nothing: the tool goes away.
+    f.registry
+        .call(
+            "mcpmux_bind_current_workspace",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    let diff = last_diff();
+    assert_eq!(diff["before"], json!(["github_create_issue"]));
+    assert_eq!(diff["after"], json!([]));
+    assert_eq!(diff["removed"], json!(["github_create_issue"]));
+
+    // Deleting the set lists the tools it granted.
+    f.registry
+        .call(
+            "mcpmux_manage_feature_set",
+            &f.client_id,
+            Some(&f.session_id),
+            json!({ "action": "delete", "feature_set_id": fs_id }),
+        )
+        .await
+        .unwrap();
+    let diff = last_diff();
+    assert_eq!(diff["removed"], json!(["github_create_issue"]));
+    assert_eq!(diff["after"], json!([]));
+}
+
 fn _unused(_: ApprovalPayload) {}
 
 /// A client locked to a Space can't reach another Space through the
@@ -1450,7 +1643,7 @@ async fn confined_callers_cannot_move_a_workspace_out_of_another_space() {
 #[tokio::test(flavor = "multi_thread")]
 async fn moving_a_workspace_between_spaces_always_asks() {
     let f = Fixture::new().await;
-    let summaries = f.attach_recording_publisher(ApprovalDecision::AlwaysForThisSessionAndClient);
+    let seen = f.attach_answering_publisher(ApprovalDecision::AlwaysForThisSessionAndClient);
     let work = mcpmux_core::Space::new("Work");
     f.space_repo.create(&work).await.unwrap();
     let root = if cfg!(windows) {
@@ -1470,9 +1663,40 @@ async fn moving_a_workspace_between_spaces_always_asks() {
         assert!(!Fixture::is_error(&res), "{res:?}");
     }
 
-    let summaries = summaries.lock().unwrap().clone();
+    let summaries: Vec<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|p| p.summary.clone())
+        .collect();
     assert_eq!(summaries.len(), 3, "every bind was asked: {summaries:?}");
     assert!(summaries[1].starts_with("Move workspace"), "{summaries:?}");
     assert!(summaries[1].contains("from Space 'Work'"), "{summaries:?}");
     assert!(f.broker.list_always_allow().is_empty());
+}
+
+/// The workspace path in a bind prompt is whatever the client reported, so
+/// it is shown escaped and capped rather than as given.
+#[tokio::test(flavor = "multi_thread")]
+async fn bind_prompt_shows_the_reported_path_escaped_and_capped() {
+    let f = Fixture::new().await;
+    let seen = f.attach_recording_publisher();
+    let tail = "a".repeat(300);
+    let root = if cfg!(windows) {
+        format!("D:\\Proj\\safe\u{202E}txt.exe\\{tail}")
+    } else {
+        format!("/proj/safe\u{202E}txt.exe/{tail}")
+    };
+    f.session_roots.set(&f.session_id, [root.as_str()]);
+
+    let res = f
+        .call_tool_as_handler_would("mcpmux_bind_current_workspace", json!({}))
+        .await;
+    assert!(!Fixture::is_error(&res), "{res:?}");
+
+    let summary = seen.lock().unwrap()[0].summary.clone();
+    assert!(!summary.contains('\u{202E}'), "{summary}");
+    assert!(summary.contains("\\u{202e}"), "{summary}");
+    assert!(!summary.contains(&tail), "the path is capped: {summary}");
+    assert!(summary.contains('…'), "{summary}");
 }

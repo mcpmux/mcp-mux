@@ -310,6 +310,7 @@ jobs:
       # member asks for.
       - name: Release build has no test-only routes
         run: |
+          test -f target/release/mcpmux || { echo "::error::release binary not found"; exit 1; }
           if grep -q "/oauth/consent/approve" target/release/mcpmux; then
             echo "::error::the release build contains the e2e consent route"
             exit 1

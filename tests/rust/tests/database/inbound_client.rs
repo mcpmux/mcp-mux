@@ -591,3 +591,112 @@ async fn test_update_last_seen() {
     let updated = repo.get_client(&client.client_id).await.unwrap().unwrap();
     assert!(updated.last_seen.is_some());
 }
+
+async fn repo_with_client(id: &str) -> InboundClientRepository {
+    let test_db = TestDatabase::new();
+    let repo = InboundClientRepository::new(Arc::new(Mutex::new(test_db.db)));
+    let mut client = create_test_client("Rotation");
+    client.client_id = id.to_string();
+    repo.save_client(&client).await.unwrap();
+    repo
+}
+
+#[tokio::test]
+async fn a_refresh_retry_after_the_grace_window_is_reuse() {
+    use mcpmux_storage::RefreshRotation;
+    let repo = repo_with_client("c-grace").await;
+    repo.create_refresh_family("f1", "c-grace", "t1")
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.rotate_refresh_family("f1", "c-grace", "t1", "t2", chrono::Duration::seconds(60))
+            .await
+            .unwrap(),
+        RefreshRotation::Rotated {
+            token_id: "t2".into()
+        }
+    );
+    // Within the window, the previous token gets the current id back.
+    assert_eq!(
+        repo.rotate_refresh_family("f1", "c-grace", "t1", "t3", chrono::Duration::seconds(60))
+            .await
+            .unwrap(),
+        RefreshRotation::Rotated {
+            token_id: "t2".into()
+        }
+    );
+    // With no window left, it's reuse, and the family is revoked.
+    assert_eq!(
+        repo.rotate_refresh_family("f1", "c-grace", "t1", "t4", chrono::Duration::zero())
+            .await
+            .unwrap(),
+        RefreshRotation::Reused
+    );
+    assert_eq!(
+        repo.rotate_refresh_family("f1", "c-grace", "t2", "t5", chrono::Duration::seconds(60))
+            .await
+            .unwrap(),
+        RefreshRotation::Revoked
+    );
+}
+
+#[tokio::test]
+async fn refresh_families_go_away_with_their_client() {
+    use mcpmux_storage::RefreshRotation;
+    let repo = repo_with_client("c-gone").await;
+    repo.create_refresh_family("f-gone", "c-gone", "t1")
+        .await
+        .unwrap();
+    repo.delete_client("c-gone").await.unwrap();
+    assert_eq!(
+        repo.rotate_refresh_family(
+            "f-gone",
+            "c-gone",
+            "t1",
+            "t2",
+            chrono::Duration::seconds(60)
+        )
+        .await
+        .unwrap(),
+        RefreshRotation::Unknown
+    );
+}
+
+#[tokio::test]
+async fn a_legacy_refresh_token_starts_a_family_once() {
+    use mcpmux_storage::RefreshRotation;
+    let repo = repo_with_client("c-legacy").await;
+    assert!(repo
+        .spend_legacy_refresh_token("hash", "f-legacy", "c-legacy", "t1")
+        .await
+        .unwrap());
+    // Spent: no second family.
+    assert!(!repo
+        .spend_legacy_refresh_token("hash", "f-other", "c-legacy", "t9")
+        .await
+        .unwrap());
+    assert_eq!(
+        repo.rotate_refresh_family(
+            "f-other",
+            "c-legacy",
+            "t9",
+            "t10",
+            chrono::Duration::seconds(60)
+        )
+        .await
+        .unwrap(),
+        RefreshRotation::Unknown
+    );
+    assert!(matches!(
+        repo.rotate_refresh_family(
+            "f-legacy",
+            "c-legacy",
+            "t1",
+            "t2",
+            chrono::Duration::seconds(60)
+        )
+        .await
+        .unwrap(),
+        RefreshRotation::Rotated { .. }
+    ));
+}

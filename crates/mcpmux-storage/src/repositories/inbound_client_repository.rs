@@ -181,12 +181,13 @@ pub struct ApiKeyAuth {
     pub client_id: String,
 }
 
-/// OAuth Repository with database persistence
 /// Outcome of presenting a refresh token of a family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefreshRotation {
-    /// Accepted; the new token id is now current.
-    Rotated,
+    /// Accepted: issue a refresh token with this id. It is the new current
+    /// id, or, for a retry within the grace window, the family's current id
+    /// (so concurrent refreshes all end up holding the current token).
+    Rotated { token_id: String },
     /// An older token of the family was presented; the family is now revoked.
     Reused,
     /// The family was revoked earlier.
@@ -195,6 +196,7 @@ pub enum RefreshRotation {
     Unknown,
 }
 
+/// OAuth Repository with database persistence
 pub struct InboundClientRepository {
     db: Arc<Mutex<Database>>,
 }
@@ -401,8 +403,9 @@ impl InboundClientRepository {
         Ok(result)
     }
 
-    /// Update a client's last_seen timestamp
-    /// Start a refresh-token family for a fresh sign-in.
+    /// Start a refresh-token family for a fresh sign-in. Families are not
+    /// pruned; they go away with their client (cascade). An access token
+    /// issued before a family is revoked stays valid until it expires (1 h).
     pub async fn create_refresh_family(
         &self,
         family_id: &str,
@@ -424,9 +427,11 @@ impl InboundClientRepository {
     }
 
     /// Rotate a refresh-token family: accept `presented` if it is the
-    /// family's current token (or its previous one within `grace` of the
-    /// last rotation, for a client retrying after a lost response) and make
-    /// `next` current. Any other token of the family revokes it.
+    /// family's current token and make `next` current. The previous token is
+    /// also accepted, as often as needed, within `grace` of the last rotation
+    /// (a client retrying after a lost response, or two windows refreshing at
+    /// once); it is answered with the current token id, and nothing changes.
+    /// Any other token of the family revokes it.
     pub async fn rotate_refresh_family(
         &self,
         family_id: &str,
@@ -453,25 +458,27 @@ impl InboundClientRepository {
         }
         let now = chrono::Utc::now();
         if presented == current {
-            conn.execute(
+            let changed = conn.execute(
                 "UPDATE inbound_refresh_families
                  SET previous_jti = current_jti, current_jti = ?2, rotated_at = ?3
-                 WHERE family_id = ?1",
-                params![family_id, next, now.to_rfc3339()],
+                 WHERE family_id = ?1 AND current_jti = ?4 AND revoked = 0",
+                params![family_id, next, now.to_rfc3339(), current],
             )?;
-            return Ok(RefreshRotation::Rotated);
+            if changed == 0 {
+                return Ok(RefreshRotation::Unknown);
+            }
+            return Ok(RefreshRotation::Rotated {
+                token_id: next.to_string(),
+            });
         }
         let within_grace = previous.as_deref() == Some(presented)
             && rotated_at
                 .and_then(|t| chrono::DateTime::parse_from_rfc3339(&t).ok())
                 .is_some_and(|t| now.signed_duration_since(t) <= grace);
         if within_grace {
-            // The retry gets a new token; the window doesn't move.
-            conn.execute(
-                "UPDATE inbound_refresh_families SET current_jti = ?2 WHERE family_id = ?1",
-                params![family_id, next],
-            )?;
-            return Ok(RefreshRotation::Rotated);
+            // The retry gets the current token; nothing changes, so another
+            // concurrent refresh's token stays valid too.
+            return Ok(RefreshRotation::Rotated { token_id: current });
         }
         conn.execute(
             "UPDATE inbound_refresh_families SET revoked = 1 WHERE family_id = ?1",
@@ -480,18 +487,38 @@ impl InboundClientRepository {
         Ok(RefreshRotation::Reused)
     }
 
-    /// Record a pre-rotation refresh token as used. Returns false if it was
-    /// already used.
-    pub async fn spend_legacy_refresh_token(&self, token_hash: &str) -> Result<bool> {
+    /// Record a pre-rotation refresh token as used and start a family for
+    /// the client, in one transaction. Returns false (and starts nothing) if
+    /// the token was already used.
+    pub async fn spend_legacy_refresh_token(
+        &self,
+        token_hash: &str,
+        family_id: &str,
+        client_id: &str,
+        token_id: &str,
+    ) -> Result<bool> {
         let db = self.db.lock().await;
-        let inserted = db.connection().execute(
+        let conn = db.connection();
+        let tx = conn.unchecked_transaction()?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let inserted = tx.execute(
             "INSERT OR IGNORE INTO inbound_spent_legacy_refresh (token_hash, spent_at)
              VALUES (?1, ?2)",
-            params![token_hash, chrono::Utc::now().to_rfc3339()],
+            params![token_hash, now],
         )?;
-        Ok(inserted == 1)
+        if inserted == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO inbound_refresh_families (family_id, client_id, current_jti, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![family_id, client_id, token_id, now],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
+    /// Update a client's last_seen timestamp
     pub async fn update_client_last_seen(&self, client_id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();

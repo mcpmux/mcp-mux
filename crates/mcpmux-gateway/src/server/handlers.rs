@@ -976,7 +976,7 @@ pub async fn oauth_token(
                 ));
             };
             let new_token_id = uuid::Uuid::new_v4().to_string();
-            let family_id = match (&claims.family_id, &claims.token_id) {
+            let (family_id, issued_token_id) = match (&claims.family_id, &claims.token_id) {
                 (Some(family_id), Some(token_id)) => {
                     let outcome = repo
                         .rotate_refresh_family(
@@ -991,7 +991,7 @@ pub async fn oauth_token(
                             warn!("[OAuth] Refresh rotation failed: {}", e);
                             token_error("server_error", "Database error")
                         })?;
-                    if outcome != mcpmux_storage::RefreshRotation::Rotated {
+                    let mcpmux_storage::RefreshRotation::Rotated { token_id } = outcome else {
                         warn!(
                             "[OAuth] Refresh token for {} not accepted: {:?}",
                             claims.client_id, outcome
@@ -1000,8 +1000,8 @@ pub async fn oauth_token(
                             "invalid_grant",
                             "Refresh token is no longer valid; sign in again",
                         ));
-                    }
-                    family_id.clone()
+                    };
+                    (family_id.clone(), token_id)
                 }
                 _ => {
                     // Issued before rotation: honoured once, then the
@@ -1009,24 +1009,28 @@ pub async fn oauth_token(
                     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
                     use sha2::{Digest, Sha256};
                     let hash = URL_SAFE_NO_PAD.encode(Sha256::digest(refresh_token.as_bytes()));
-                    let first_use = repo.spend_legacy_refresh_token(&hash).await.map_err(|e| {
-                        warn!("[OAuth] Failed to record legacy refresh token: {}", e);
-                        token_error("server_error", "Database error")
-                    })?;
+                    // Spending it and starting the family happen together, so
+                    // a failure can't leave the token spent with no family.
+                    let family_id = uuid::Uuid::new_v4().to_string();
+                    let first_use = repo
+                        .spend_legacy_refresh_token(
+                            &hash,
+                            &family_id,
+                            &claims.client_id,
+                            &new_token_id,
+                        )
+                        .await
+                        .map_err(|e| {
+                            warn!("[OAuth] Failed to record legacy refresh token: {}", e);
+                            token_error("server_error", "Database error")
+                        })?;
                     if !first_use {
                         return Err(token_error(
                             "invalid_grant",
                             "Refresh token is no longer valid; sign in again",
                         ));
                     }
-                    let family_id = uuid::Uuid::new_v4().to_string();
-                    repo.create_refresh_family(&family_id, &claims.client_id, &new_token_id)
-                        .await
-                        .map_err(|e| {
-                            warn!("[OAuth] Failed to record refresh token family: {}", e);
-                            token_error("server_error", "Database error")
-                        })?;
-                    family_id
+                    (family_id, new_token_id.clone())
                 }
             };
 
@@ -1036,7 +1040,7 @@ pub async fn oauth_token(
                 &claims.client_id,
                 claims.scope.as_deref(),
                 &family_id,
-                &new_token_id,
+                &issued_token_id,
                 secret,
             );
 

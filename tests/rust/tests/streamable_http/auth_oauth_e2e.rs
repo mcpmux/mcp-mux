@@ -935,7 +935,7 @@ async fn refresh_tokens_rotate_and_reuse_revokes_the_family() {
     assert_ne!(second, first, "each refresh issues a new refresh token");
 
     // A client retrying right after a lost response may present the
-    // previous token once more.
+    // previous token again within the grace window.
     let (status, third) = refresh(first.clone()).await;
     assert_eq!(status, reqwest::StatusCode::OK, "retry window");
     let (status, fourth) = refresh(third.unwrap()).await;
@@ -948,6 +948,41 @@ async fn refresh_tokens_rotate_and_reuse_revokes_the_family() {
     // ...including the newest token.
     let (status, _) = refresh(fourth).await;
     assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+}
+
+/// Two windows of one app refreshing with the same token at once both get
+/// a working token: the later one is answered with the current token instead
+/// of one that would make the other's next refresh look like reuse.
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_refreshes_do_not_revoke_the_family() {
+    let h = Harness::start().await;
+    let http = no_redirect_client();
+    let (_client_id, _access, first) = signed_in_client(&http, &h.base, "two-windows").await;
+    let refresh = |token: String| {
+        let (http, base) = (http.clone(), h.base.clone());
+        async move {
+            let (status, body) = refresh_with(&http, &base, &token).await;
+            (status, body["refresh_token"].as_str().map(str::to_string))
+        }
+    };
+
+    let (status_a, window_a) = refresh(first.clone()).await;
+    let (status_b, window_b) = refresh(first).await;
+    assert_eq!(status_a, reqwest::StatusCode::OK);
+    assert_eq!(status_b, reqwest::StatusCode::OK);
+
+    // Each window keeps refreshing with what it got.
+    let (status, next_a) = refresh(window_a.unwrap()).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let (status, next_b) = refresh(window_b.unwrap()).await;
+    assert_eq!(
+        status,
+        reqwest::StatusCode::OK,
+        "the family was not revoked"
+    );
+    let (status, _) = refresh(next_b.unwrap()).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let _ = next_a;
 }
 
 /// HMAC-SHA256 the way the gateway signs tokens (block size 64).

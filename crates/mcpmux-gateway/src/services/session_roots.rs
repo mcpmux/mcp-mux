@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use mcpmux_core::normalize_workspace_root;
-use tracing::debug;
+use tracing::{debug, warn};
+
+/// Most sessions that can have a pinned `X-Mcpmux-Workspace` root at once.
+const MAX_PINNED_SESSIONS: usize = 4096;
 
 /// Thread-safe registry mapping `mcp-session-id` to the caller's reported
 /// workspace roots, plus the most recently resolved feature-set id so the
@@ -79,6 +82,9 @@ pub struct SessionRootsRegistry {
     /// resolver, the on-demand probe skip, and the prompt-root derivation all
     /// honor the header with no special-casing. Already normalized on insert.
     pinned: DashMap<String, String>,
+    /// Whether the "too many pinned sessions" warning was logged since the
+    /// map was last below its cap (so it's logged once, not per request).
+    pinned_full_warned: std::sync::atomic::AtomicBool,
 }
 
 impl SessionRootsRegistry {
@@ -91,6 +97,7 @@ impl SessionRootsRegistry {
             probe_lock: DashMap::new(),
             first_seen: DashMap::new(),
             pinned: DashMap::new(),
+            pinned_full_warned: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -190,24 +197,51 @@ impl SessionRootsRegistry {
     /// header falls back to the client's reported roots rather than denying.
     /// Cheap to call on the request hot path: redundant writes (same
     /// normalized value already pinned) are skipped to avoid shard churn.
-    pub fn set_pinned(&self, session_id: &str, raw_root: &str) {
+    ///
+    /// Returns whether a pin was added for a session that had none, so a
+    /// caller can take it back if the request turns out not to belong to a
+    /// real session.
+    pub fn set_pinned(&self, session_id: &str, raw_root: &str) -> bool {
+        use std::sync::atomic::Ordering;
         let normalized = normalize_workspace_root(raw_root);
         if normalized.is_empty() {
-            return;
+            return false;
         }
         if self
             .pinned
             .get(session_id)
             .is_some_and(|v| *v == normalized)
         {
-            return;
+            return false;
         }
+        // The header arrives before rmcp has checked the session id, so a
+        // client can present any id. Cap the map instead of letting made-up
+        // ids grow it without bound; live sessions are removed on
+        // disconnect.
+        let is_new = !self.pinned.contains_key(session_id);
+        if is_new && self.pinned.len() >= MAX_PINNED_SESSIONS {
+            if !self.pinned_full_warned.swap(true, Ordering::Relaxed) {
+                warn!(
+                    limit = MAX_PINNED_SESSIONS,
+                    "[SessionRoots] too many pinned sessions; ignoring X-Mcpmux-Workspace"
+                );
+            }
+            return false;
+        }
+        self.pinned_full_warned.store(false, Ordering::Relaxed);
         debug!(
             %session_id,
             workspace_root = %normalized,
             "[SessionRoots] pinned explicit workspace root from X-Mcpmux-Workspace header",
         );
         self.pinned.insert(session_id.to_string(), normalized);
+        is_new
+    }
+
+    /// Take back a pin [`Self::set_pinned`] just added (the request was
+    /// rejected, so the session id may be made up).
+    pub fn unpin(&self, session_id: &str) {
+        self.pinned.remove(session_id);
     }
 
     /// The explicit workspace root pinned for a session via the header, if any
@@ -489,5 +523,27 @@ mod tests {
         // After remove, recording the same value should be considered a
         // change (no prior entry).
         assert!(reg.record_resolution("sess-1", Some("fs-a")));
+    }
+
+    #[test]
+    fn pinned_sessions_are_capped() {
+        let reg = SessionRootsRegistry::new();
+        let root = if cfg!(windows) { "C:\\p" } else { "/p" };
+        for i in 0..MAX_PINNED_SESSIONS {
+            reg.set_pinned(&format!("s{i}"), root);
+        }
+        reg.set_pinned("one-too-many", root);
+        assert!(reg.get_pinned("one-too-many").is_none());
+        // Sessions already pinned can still change their root.
+        let other = if cfg!(windows) { "C:\\q" } else { "/q" };
+        reg.set_pinned("s0", other);
+        assert_eq!(
+            reg.get_pinned("s0").as_deref(),
+            Some(normalize_workspace_root(other).as_str())
+        );
+        // Disconnecting frees a slot.
+        reg.remove("s1");
+        reg.set_pinned("one-too-many", root);
+        assert!(reg.get_pinned("one-too-many").is_some());
     }
 }

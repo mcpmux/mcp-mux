@@ -133,4 +133,7 @@ pub async fn shutdown_gateway_runtime(
         }
     };
     tokio::join!(drain_pool, close_listener);
+    // A server whose graceful close didn't finish in time (or whose handle is
+    // never dropped, as on app exit) would keep its process group running.
+    mcpmux_gateway::pool::transport::kill_all_stdio_groups();
 }

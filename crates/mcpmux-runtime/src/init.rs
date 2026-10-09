@@ -197,6 +197,21 @@ impl RuntimeBuilder {
 
         let repositories = Repositories::new(database.clone(), encryptor.clone());
 
+        // Server settings saved before they were encrypted at rest.
+        match SqliteInstalledServerRepository::new(database.clone(), encryptor.clone())
+            .encrypt_plaintext_rows()
+            .await
+        {
+            Ok(0) => {}
+            Ok(n) => info!(
+                rows = n,
+                "[runtime] encrypted server settings stored as plaintext"
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, "[runtime] could not encrypt plaintext server settings")
+            }
+        }
+
         let app_settings_service =
             Arc::new(AppSettingsService::new(repositories.app_settings.clone()));
         let gateway_port_service =

@@ -14,6 +14,7 @@ import type {
   HomeConfig,
   FilterMatch,
   SortOption,
+  TransportConfig,
 } from '../types/registry';
 import * as api from '../lib/api/registry';
 
@@ -60,7 +61,11 @@ interface RegistryActions {
   /** Clear all filters */
   clearFilters: () => void;
   /** Install server (create DB record) */
-  installServer: (id: string, spaceId?: string) => Promise<void>;
+  installServer: (
+    id: string,
+    spaceId?: string,
+    expectedTransport?: TransportConfig
+  ) => Promise<void>;
   /** Enable/Disable server */
   toggleServer: (id: string, enabled: boolean) => Promise<void>;
   /** Uninstall server */
@@ -159,12 +164,12 @@ export const useRegistryStore = create<RegistryState & RegistryActions>((set, ge
     applyFiltersAndSort(get, set);
   },
 
-  installServer: async (id: string, spaceId?: string) => {
+  installServer: async (id: string, spaceId?: string, expectedTransport?: TransportConfig) => {
     const targetSpaceId = spaceId || get().spaceId;
     if (!targetSpaceId) return;
 
     try {
-      await api.installServer(id, targetSpaceId);
+      await api.installServer(id, targetSpaceId, expectedTransport);
       
       // Update state locally without reloading
       const { servers, displayServers, selectedServer } = get();
@@ -185,6 +190,8 @@ export const useRegistryStore = create<RegistryState & RegistryActions>((set, ge
       });
     } catch (error) {
       set({ error: String(error) });
+      // The caller tells the user; an install must never look successful.
+      throw error;
     }
   },
 

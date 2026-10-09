@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from '@mcpmux/ui';
 import { resolveKnownClientKey } from '@/lib/clientIcons';
+import { openRedirectUrl } from '@/lib/oauthRedirect';
 import cursorIcon from '@/assets/client-icons/cursor.svg';
 import vscodeIcon from '@/assets/client-icons/vscode.png';
 import claudeIcon from '@/assets/client-icons/claude.svg';
@@ -72,22 +73,6 @@ type ModalState =
   | { type: 'loading'; requestId: string }
   | { type: 'error'; requestId: string; error: ConsentError }
   | { type: 'consent'; details: ConsentRequestDetails };
-
-async function openRedirectUrl(url: string): Promise<void> {
-  try {
-    const { openUrl } = await import('@/lib/api/gateway');
-    await openUrl(url);
-  } catch (err) {
-    console.error('[OAuth] openUrl failed:', err);
-    try {
-      const { openUrl: openUrlPlugin } = await import('@tauri-apps/plugin-opener');
-      await openUrlPlugin(url);
-    } catch (pluginErr) {
-      console.error('[OAuth] Plugin opener also failed:', pluginErr);
-      window.location.href = url;
-    }
-  }
-}
 
 function getErrorMessage(error: ConsentError): string {
   switch (error.code) {

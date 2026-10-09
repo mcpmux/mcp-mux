@@ -33,7 +33,6 @@ function makeServer(overrides: Partial<ServerViewModel> = {}): ServerViewModel {
 
 describe('ServerCard', () => {
   const defaultProps = {
-    onInstall: vi.fn(),
     onUninstall: vi.fn(),
     onViewDetails: vi.fn(),
   };
@@ -131,6 +130,14 @@ describe('ServerCard', () => {
       const server = makeServer({ is_installed: true });
       render(<ServerCard server={server} {...defaultProps} />);
       expect(screen.getByText('Uninstall')).toBeInTheDocument();
+    });
+
+    it('opens the details instead of installing straight from the card', () => {
+      const server = makeServer({ is_installed: false });
+      defaultProps.onViewDetails.mockClear();
+      render(<ServerCard server={server} {...defaultProps} />);
+      fireEvent.click(screen.getByTestId(`install-btn-${server.id}`));
+      expect(defaultProps.onViewDetails).toHaveBeenCalledWith(server);
     });
 
     it('should call onViewDetails when card is clicked', () => {

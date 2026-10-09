@@ -244,8 +244,7 @@ impl RegistryApiClient {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let body = response
-            .bytes()
+        let body = read_capped(response, MAX_BUNDLE_BYTES)
             .await
             .context("Failed to read registry bundle response")?;
         let bundle = parse_bundle(&body)?;
@@ -267,6 +266,28 @@ impl RegistryApiClient {
     }
 }
 
+/// Largest registry bundle accepted. The real bundle is far smaller; the
+/// cap keeps a broken or hostile registry from exhausting memory.
+const MAX_BUNDLE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Read a response body, failing once it exceeds `max` bytes.
+async fn read_capped(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > max as u64)
+    {
+        anyhow::bail!("registry bundle is larger than {max} bytes");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > max {
+            anyhow::bail!("registry bundle is larger than {max} bytes");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 /// Parse a `/v1/bundle` response body.
 fn parse_bundle(body: &[u8]) -> Result<RegistryBundle> {
     let api_response: ApiResponse<RegistryBundle> =
@@ -277,6 +298,35 @@ fn parse_bundle(body: &[u8]) -> Result<RegistryBundle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A body without Content-Length is still cut off once it passes the
+    /// cap, chunk by chunk, instead of being read to the end.
+    #[tokio::test]
+    async fn a_body_without_a_length_is_capped_while_reading() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/bundle", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf).await;
+            // No Content-Length: the body runs until the connection closes.
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n")
+                .await;
+            for _ in 0..64 {
+                if stream.write_all(&[b'x'; 1024]).await.is_err() {
+                    break;
+                }
+            }
+            let _ = stream.shutdown().await;
+        });
+
+        let response = reqwest::get(&url).await.unwrap();
+        assert!(response.content_length().is_none());
+        let err = read_capped(response, 4096).await.unwrap_err();
+        assert!(err.to_string().contains("larger than 4096 bytes"), "{err}");
+    }
 
     /// Regression test: one server the client can't parse (here an unknown
     /// auth type) must be skipped, not fail the whole bundle.

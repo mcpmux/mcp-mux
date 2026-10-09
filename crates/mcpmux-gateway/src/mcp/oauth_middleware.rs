@@ -234,10 +234,6 @@ pub async fn mcp_oauth_middleware(
             .map(str::to_owned);
         sid.zip(ws)
     };
-    if let Some((sid, ws)) = pin {
-        services.session_roots.set_pinned(&sid, &ws);
-    }
-
     // Extract MCP method from body if POST
     let mcp_method = if request.method() == axum::http::Method::POST {
         use axum::body::to_bytes;
@@ -285,7 +281,21 @@ pub async fn mcp_oauth_middleware(
         None
     };
 
+    // Pin just before the request goes on, and take a new pin back if the
+    // request fails: rmcp rejects made-up session ids, which must not fill
+    // the pin map.
+    let newly_pinned = match &pin {
+        Some((sid, ws)) => services.session_roots.set_pinned(sid, ws),
+        None => false,
+    };
+
     let response = next.run(request).await;
+
+    if newly_pinned && !response.status().is_success() {
+        if let Some((sid, _)) = &pin {
+            services.session_roots.unpin(sid);
+        }
+    }
 
     // Log errors only
     let status = response.status();

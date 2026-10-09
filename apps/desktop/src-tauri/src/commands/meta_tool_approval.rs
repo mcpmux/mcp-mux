@@ -27,6 +27,8 @@ const REQUIRE_APPROVAL_KEY: &str = "meta_tools.require_approval";
 pub struct MetaToolGrantEntry {
     pub client_id: String,
     pub tool_name: String,
+    /// The tool action the grant covers (e.g. `create`), if the tool has one.
+    pub action: Option<String>,
     /// The Space the grant applies to (`None` for writes with no single Space).
     pub space_id: Option<String>,
 }
@@ -94,21 +96,29 @@ pub async fn list_meta_tool_grants(
     Ok(broker
         .list_always_allow()
         .into_iter()
-        .map(|(client_id, tool_name, space_id)| MetaToolGrantEntry {
-            client_id,
-            tool_name,
-            space_id: space_id.map(|id| id.to_string()),
-        })
+        .map(
+            |(client_id, tool_name, action, space_id)| MetaToolGrantEntry {
+                client_id,
+                tool_name,
+                action,
+                space_id: space_id.map(|id| id.to_string()),
+            },
+        )
         .collect())
 }
 
-/// Revoke an "always allow" entry.
+/// Revoke one "always allow" entry, as listed.
 #[tauri::command]
 pub async fn revoke_meta_tool_grant(
     client_id: String,
     tool_name: String,
+    action: Option<String>,
+    space_id: Option<String>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<bool, String> {
+    let space_id = space_id
+        .map(|id| uuid::Uuid::parse_str(&id).map_err(|e| format!("invalid space id: {e}")))
+        .transpose()?;
     let broker = {
         let state = gateway_state.read().await;
         state.approval_broker.clone()
@@ -116,7 +126,7 @@ pub async fn revoke_meta_tool_grant(
     let Some(broker) = broker else {
         return Ok(false);
     };
-    Ok(broker.revoke_always_allow(&client_id, &tool_name))
+    Ok(broker.revoke_always_allow(&(client_id, tool_name, action, space_id)))
 }
 
 /// Whether write meta-tools currently require approval (default `true`).

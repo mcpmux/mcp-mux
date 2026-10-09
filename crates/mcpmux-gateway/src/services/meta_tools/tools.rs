@@ -434,6 +434,9 @@ where
         space_name,
         space_id,
         diff,
+        action: opt_str_arg(&call.args, "action"),
+        // Decided by the broker.
+        allow_always: false,
         raw_args,
         affects_other_clients,
     };
@@ -913,12 +916,42 @@ impl MetaTool for BindCurrentWorkspaceTool {
             .binding_repo
             .find_exact_for_roots(std::slice::from_ref(&normalized))
             .await?;
-        let verb = if existing.is_some() { "Rebind" } else { "Bind" };
+        // A binding in another Space moves the folder out of that Space. A
+        // caller confined to one Space can't do that; anyone else is always
+        // asked (binding never gets a standing grant), with both Spaces named.
+        let moved_from = match &existing {
+            Some(b) if b.space_id != space_id => {
+                if call
+                    .ctx
+                    .resolver
+                    .confined_space(call.session_id, call.client_id)
+                    .await?
+                    .is_some()
+                {
+                    return Err(MetaToolError::InvalidArgument(
+                        "This folder is mapped in another space; change it from that space \
+                         or the app."
+                            .into(),
+                    ));
+                }
+                Some(space_label(&call, b.space_id).await)
+            }
+            _ => None,
+        };
         let space = space_label(&call, space_id).await;
-        let summary = format!(
-            "{verb} workspace '{normalized}' to FeatureSet '{fs_label}' in Space '{space}'. \
-             Affects every future connection that reports this path."
-        );
+        let summary = match &moved_from {
+            Some(from) => format!(
+                "Move workspace '{normalized}' from Space '{from}' to FeatureSet '{fs_label}' \
+                 in Space '{space}'. Affects every future connection that reports this path."
+            ),
+            None => {
+                let verb = if existing.is_some() { "Rebind" } else { "Bind" };
+                format!(
+                    "{verb} workspace '{normalized}' to FeatureSet '{fs_label}' in Space \
+                     '{space}'. Affects every future connection that reports this path."
+                )
+            }
+        };
 
         let binding_repo = call.ctx.binding_repo.clone();
         let event_tx = call.ctx.domain_event_tx.clone();

@@ -1149,3 +1149,57 @@ async fn confined_space_covers_locked_and_anonymous_callers() {
         None
     );
 }
+
+/// Confinement fails closed: a client locked to a Space id that doesn't
+/// parse is denied rather than routed as an unconfined client, and the
+/// meta-tools treat it as an error rather than "any Space".
+#[tokio::test]
+async fn client_locked_to_an_invalid_space_is_denied() {
+    let f = Fixture::new().await;
+    f.make_client("locked-bad").await;
+    f.client_repo
+        .set_locked_space("locked-bad", Some("not-a-space-id"))
+        .await
+        .unwrap();
+
+    let r = f
+        .resolver
+        .resolve(Some("s-bad"), Some("locked-bad"))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Deny);
+    assert_eq!(r.space_id, None);
+    assert!(r.feature_set_ids.is_empty());
+
+    assert!(f
+        .resolver
+        .confined_space(Some("s-bad"), "locked-bad")
+        .await
+        .is_err());
+}
+
+/// A tokenless caller is confined to the default Space; with no default
+/// Space there is nothing it may use, which is an error, not "any Space".
+#[tokio::test]
+async fn tokenless_caller_without_a_default_space_is_not_unconfined() {
+    use mcpmux_gateway::services::ANONYMOUS_CLIENT_ID;
+
+    let f = Fixture::new().await;
+    assert_eq!(
+        f.resolver
+            .confined_space(None, ANONYMOUS_CLIENT_ID)
+            .await
+            .unwrap(),
+        Some(f.space_id)
+    );
+
+    let mut default = f.space_repo.get(&f.space_id).await.unwrap().unwrap();
+    default.is_default = false;
+    f.space_repo.update(&default).await.unwrap();
+    assert!(f.space_repo.get_default().await.unwrap().is_none());
+    assert!(f
+        .resolver
+        .confined_space(None, ANONYMOUS_CLIENT_ID)
+        .await
+        .is_err());
+}

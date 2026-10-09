@@ -240,6 +240,9 @@ impl RoutingService {
                 e
             })?;
 
+        // Whether the tool says calling it twice is harmless; only then is a
+        // call whose result was an auth error run again after reconnecting.
+        let retry_safe = feature.is_some_and(Self::tool_is_retry_safe);
         let (server_id, actual_tool_name) = match feature {
             Some(f) => (f.server_id.clone(), f.feature_name.clone()),
             None => {
@@ -373,6 +376,17 @@ impl RoutingService {
                             .reconnect_instance(space_id, &server_id)
                             .await
                         {
+                            // The result may come from a call that ran: only
+                            // tools marked read-only or idempotent run again.
+                            // Others return the result; the next call uses the
+                            // fresh connection.
+                            ConnectionResult::Connected { .. } if !retry_safe => {
+                                info!(
+                                    "[RoutingService] Reconnected {}; not re-running {} (not marked read-only or idempotent)",
+                                    server_id, actual_tool_name
+                                );
+                                Ok(result)
+                            }
                             ConnectionResult::Connected { .. } => {
                                 info!(
                                     "[RoutingService] Reconnected {}, retrying tool call: {}",
@@ -495,6 +509,17 @@ impl RoutingService {
                             .reconnect_instance(space_id, &server_id)
                             .await
                         {
+                            // The result may come from a call that ran: only
+                            // tools marked read-only or idempotent run again.
+                            // Others return the result; the next call uses the
+                            // fresh connection.
+                            ConnectionResult::Connected { .. } if !retry_safe => {
+                                info!(
+                                    "[RoutingService] Reconnected {}; not re-running {} (not marked read-only or idempotent)",
+                                    server_id, actual_tool_name
+                                );
+                                Ok(result)
+                            }
                             ConnectionResult::Connected { .. } => {
                                 info!(
                                     "[RoutingService] Reconnected {}, retrying tool call: {}",
@@ -759,12 +784,47 @@ impl RoutingService {
         if text.len() > MAX_ERROR_TEXT {
             return false;
         }
-        if serde_json::from_str::<Value>(text).is_ok_and(|json| Self::json_is_auth_error(&json)) {
-            return true;
+        if let Ok(json) = serde_json::from_str::<Value>(text) {
+            // A "successful" result only counts when it is nothing but an
+            // error envelope, not tool output (e.g. a fetched page's body)
+            // that carries a 401 among other fields.
+            if Self::json_is_auth_error(&json) && (is_error || Self::is_error_envelope(&json)) {
+                return true;
+            }
         }
         // A failed call whose (short) error message names an auth failure, e.g.
         // "401 Unauthorized" or {"message":"Token expired"}.
         is_error && Self::is_auth_error(&text.to_lowercase())
+    }
+
+    /// A JSON object made only of error-envelope fields.
+    fn is_error_envelope(json: &Value) -> bool {
+        const ENVELOPE_KEYS: [&str; 7] = [
+            "code",
+            "status",
+            "statusCode",
+            "status_code",
+            "message",
+            "error",
+            "error_description",
+        ];
+        json.as_object()
+            .is_some_and(|obj| obj.keys().all(|k| ENVELOPE_KEYS.contains(&k.as_str())))
+    }
+
+    /// Whether a tool's MCP annotations say running it again is harmless
+    /// (`readOnlyHint` or `idempotentHint`).
+    fn tool_is_retry_safe(feature: &ServerFeature) -> bool {
+        let hint = |name: &str| {
+            feature
+                .raw_json
+                .as_ref()
+                .and_then(|tool| tool.get("annotations"))
+                .and_then(|a| a.get(name))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        };
+        hint("readOnlyHint") || hint("idempotentHint")
     }
 
     /// A JSON error object carrying a 401 status/code, or an OAuth
@@ -912,6 +972,53 @@ mod auth_failure_tests {
             assert!(RoutingService::result_is_auth_failure(&msg, true));
             assert!(!RoutingService::result_is_auth_failure(&msg, false));
         }
+    }
+
+    #[test]
+    fn a_successful_result_must_be_only_an_error_envelope() {
+        // A fetch tool relaying another service's 401 body, with other fields.
+        for t in [
+            r#"{"url":"https://api.example.com","status":401,"body":"Unauthorized"}"#,
+            r#"{"code":401,"message":"Unauthorized","data":[1,2,3]}"#,
+        ] {
+            assert!(
+                !RoutingService::result_is_auth_failure(&text(t), false),
+                "{t}"
+            );
+            // The same text as a failed call's error still counts.
+            assert!(
+                RoutingService::result_is_auth_failure(&text(t), true),
+                "{t}"
+            );
+        }
+        assert!(RoutingService::result_is_auth_failure(
+            &text(r#"{"error":"invalid_token","error_description":"expired"}"#),
+            false
+        ));
+    }
+
+    #[test]
+    fn only_tools_marked_read_only_or_idempotent_are_re_run() {
+        use mcpmux_core::ServerFeature;
+        let tool = |annotations: Value| {
+            ServerFeature::tool(uuid::Uuid::nil(), "s", "t")
+                .with_raw_json(json!({ "name": "t", "annotations": annotations }))
+        };
+        assert!(RoutingService::tool_is_retry_safe(&tool(
+            json!({ "readOnlyHint": true })
+        )));
+        assert!(RoutingService::tool_is_retry_safe(&tool(
+            json!({ "idempotentHint": true })
+        )));
+        assert!(!RoutingService::tool_is_retry_safe(&tool(
+            json!({ "destructiveHint": true })
+        )));
+        assert!(!RoutingService::tool_is_retry_safe(&tool(json!({}))));
+        assert!(!RoutingService::tool_is_retry_safe(&ServerFeature::tool(
+            uuid::Uuid::nil(),
+            "s",
+            "t"
+        )));
     }
 
     #[test]

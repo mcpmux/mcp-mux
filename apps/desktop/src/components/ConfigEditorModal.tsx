@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Save, Loader2, AlertTriangle, Wand2, Plus } from 'lucide-react';
 import { readSpaceConfig, saveSpaceConfig } from '@/lib/api/spaces';
 import { refreshRegistry } from '@/lib/api/registry';
-import Editor, { type Monaco } from '@monaco-editor/react';
+import { type Monaco } from '@monaco-editor/react';
+import { LocalEditor } from '@/components/LocalEditor';
 import type { editor } from 'monaco-editor';
 import { useToast, ToastContainer } from '@mcpmux/ui';
 import USER_SPACE_CONFIG_SCHEMA from '../../../../schemas/user-space.schema.json';
@@ -309,7 +310,7 @@ export function ConfigEditorModal({
                 <Loader2 className="h-8 w-8 animate-spin text-[rgb(var(--muted))]" />
               </div>
             ) : (
-              <Editor
+              <LocalEditor
                 height="100%"
                 defaultLanguage="json"
                 value={content}

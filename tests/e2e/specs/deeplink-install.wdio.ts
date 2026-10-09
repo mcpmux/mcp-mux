@@ -14,9 +14,47 @@ import {
 
 const GITHUB_SERVER_ID = 'github-server';
 
-/** Simulate a deep link install event (as if mcpmux://install?server=xxx was received) */
+/** Install modal states that mean the app received the request. */
+const MODAL_SHOWN = ['install-modal', 'install-modal-loading', 'install-modal-error'];
+
+async function installModalShown(): Promise<boolean> {
+  for (const id of MODAL_SHOWN) {
+    if (await (await byTestId(id)).isDisplayed().catch(() => false)) return true;
+  }
+  return false;
+}
+
+/**
+ * Simulate a deep link install (as if mcpmux://install?server=xxx was
+ * received) and wait until the install modal has looked the server up.
+ *
+ * An event emitted before the app has registered its listener is lost, so
+ * the event is sent again every 1.5 s until the modal shows any state.
+ * Sending stops as soon as it does, so a late repeat can't reset a modal a
+ * test is already using (a repeat only restarts the same modal's lookup).
+ */
 async function simulateInstallDeepLink(serverId: string) {
   await emitEvent('server-install-request', { serverId });
+  let lastEmit = Date.now();
+  await browser.waitUntil(
+    async () => {
+      if (await installModalShown()) return true;
+      if (Date.now() - lastEmit >= 1500) {
+        lastEmit = Date.now();
+        await emitEvent('server-install-request', { serverId });
+      }
+      return false;
+    },
+    {
+      timeout: TIMEOUT.medium,
+      interval: 250,
+      timeoutMsg: `install modal never showed for ${serverId}`,
+    }
+  );
+  // Registry lookup: loading -> ready or error.
+  await (await byTestId('install-modal-loading'))
+    .waitForDisplayed({ timeout: TIMEOUT.long, reverse: true })
+    .catch(() => {});
 }
 
 describe('Deep Link Install - Valid Server', () => {
@@ -46,7 +84,6 @@ describe('Deep Link Install - Valid Server', () => {
 
   it('TC-DL-001: Deep link shows install modal with server info', async () => {
     await simulateInstallDeepLink(GITHUB_SERVER_ID);
-    await browser.pause(3000); // Wait for server definition lookup
 
     await browser.saveScreenshot(
       './tests/e2e/screenshots/dl-01-install-modal.png'
@@ -135,7 +172,6 @@ describe('Deep Link Install - Valid Server', () => {
   it('TC-DL-004: Deep link for already-installed server shows warning', async () => {
     // GitHub server was installed in TC-DL-003
     await simulateInstallDeepLink(GITHUB_SERVER_ID);
-    await browser.pause(3000);
 
     await browser.saveScreenshot(
       './tests/e2e/screenshots/dl-04-already-installed.png'
@@ -177,7 +213,6 @@ describe('Deep Link Install - Valid Server', () => {
     }
 
     await simulateInstallDeepLink(GITHUB_SERVER_ID);
-    await browser.pause(3000);
 
     const modal = await byTestId('install-modal');
     const isDisplayed = await modal.isDisplayed().catch(() => false);

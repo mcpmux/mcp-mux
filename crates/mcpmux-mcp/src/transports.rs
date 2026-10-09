@@ -119,8 +119,8 @@ mod job_tree {
             let job = unsafe { create_kill_on_close_job()? };
 
             let handle = inner
-                .inner_child()
-                .raw_handle()
+                .try_inner_child()
+                .and_then(|child| child.raw_handle())
                 .ok_or_else(|| io::Error::other("spawned child has no process handle"))?;
 
             let process = HANDLE(handle);

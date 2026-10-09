@@ -59,7 +59,7 @@ url = "2.5"
 urlencoding = "2.1"
 dotenvy = "0.15"
 os_pipe = "1"
-process-wrap = { version = "9", features = ["tokio1"] }
+process-wrap = { version = "10", features = ["tokio1"] }
 
 # Cross-platform file locking (flock on Unix, LockFileEx on Windows)
 fs2 = "0.4"

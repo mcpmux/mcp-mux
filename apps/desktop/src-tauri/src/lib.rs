@@ -69,9 +69,14 @@ fn get_logs_dir() -> std::path::PathBuf {
 /// - File: daily rotation in ~/.local/share/mcpmux/logs/ (Linux)
 ///   or %LOCALAPPDATA%/mcpmux/logs/ (Windows)
 fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    // Load .env file if present (for development)
-    dotenvy::dotenv().ok();
-    dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
+    // Load .env file if present (development builds only). A release build must
+    // not pick up settings from a .env in whatever directory it was launched
+    // from (dotenv also searches every parent directory).
+    #[cfg(debug_assertions)]
+    {
+        dotenvy::dotenv().ok();
+        dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
+    }
 
     let logs_dir = get_logs_dir();
     let sink = mcpmux_runtime::LogSink::DailyRolling {
@@ -889,8 +894,6 @@ pub fn run() {
             commands::set_builtin_server_enabled,
             commands::set_builtin_tool_enabled,
             // Config export commands
-            commands::preview_config_export,
-            commands::export_config_to_file,
             commands::get_config_paths,
             commands::check_config_exists,
             commands::backup_existing_config,

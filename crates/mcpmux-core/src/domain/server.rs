@@ -2,6 +2,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Whether `definition` is still the one the user was shown, by its
+/// transport (what runs, or where it connects). `None` means the caller
+/// showed nothing to compare against. A registry refresh between showing
+/// and installing could otherwise install a different command.
+pub fn transport_matches_shown(
+    definition: &ServerDefinition,
+    shown: Option<&serde_json::Value>,
+) -> bool {
+    let Some(shown) = shown else {
+        return true;
+    };
+    serde_json::to_value(&definition.transport).is_ok_and(|current| &current == shown)
+}
+
+/// Error shown when [`transport_matches_shown`] fails.
+pub const DEFINITION_CHANGED: &str =
+    "This server's definition changed since it was shown; review it again before installing";
+
 /// The canonical internal representation for ALL servers (Unified Runtime Model).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerDefinition {
@@ -266,6 +284,23 @@ pub struct Media {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_definition_that_was_shown_is_installed() {
+        let definition: ServerDefinition = serde_json::from_value(serde_json::json!({
+            "id": "srv",
+            "name": "Server",
+            "transport": {"type": "stdio", "command": "npx", "args": ["-y", "pkg"]}
+        }))
+        .unwrap();
+        let shown = serde_json::to_value(&definition.transport).unwrap();
+        assert!(transport_matches_shown(&definition, Some(&shown)));
+        assert!(transport_matches_shown(&definition, None));
+
+        let mut changed = shown.clone();
+        changed["args"] = serde_json::json!(["-y", "other-pkg"]);
+        assert!(!transport_matches_shown(&definition, Some(&changed)));
+    }
 
     /// Regression test: a registry server with `auth.type = "basic"` (e.g.
     /// Darkmoon) must deserialize instead of failing the entire bundle parse.

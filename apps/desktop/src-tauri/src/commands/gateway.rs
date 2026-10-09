@@ -1817,21 +1817,15 @@ pub async fn connect_all_enabled_servers(
         for installed in installed_servers {
             // Use cached definition from InstalledServer (offline-first approach)
             // No need to hit registry API - everything is stored locally at install time
-            let server_definition = match installed.get_definition() {
-                Some(def) => def,
-                None => {
-                    warn!(
-                        "[Gateway] Skipping {}: no cached definition (installed before offline support)",
-                        installed.server_id
-                    );
-                    // Try to backfill from registry if available
-                    if let Some(def) = app_state.server_discovery.get(&installed.server_id).await {
-                        // Note: This won't persist - server needs to be reinstalled for full offline support
-                        def
-                    } else {
-                        continue;
-                    }
-                }
+            // Auto-connect only ever runs what the user installed: a server
+            // without a stored definition is skipped, never started from
+            // whatever the registry serves today.
+            let Some(server_definition) = installed.get_definition() else {
+                warn!(
+                    "[Gateway] Skipping {}: no stored definition (installed before offline support); reinstall it to connect",
+                    installed.server_id
+                );
+                continue;
             };
 
             // Check if has OAuth credentials (access token)

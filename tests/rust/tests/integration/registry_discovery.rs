@@ -190,3 +190,24 @@ async fn disk_cache_with_unreadable_server_still_loads() {
     assert_eq!(server_ids(&service).await, ["basic-server"]);
     assert!(service.is_offline().await);
 }
+
+#[tokio::test]
+async fn oversized_registry_bundle_is_refused() {
+    let registry = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/bundle"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_bytes(vec![b' '; 33 * 1024 * 1024]),
+        )
+        .mount(&registry)
+        .await;
+
+    let client = mcpmux_core::RegistryApiClient::new(registry.uri());
+    let err = match client.fetch_bundle(None).await {
+        Err(e) => format!("{e:#}"),
+        Ok(_) => panic!("an oversized bundle must be refused"),
+    };
+    assert!(err.contains("larger than"), "{err}");
+}

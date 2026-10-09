@@ -3,7 +3,7 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId, TIMEOUT, waitForModalClose, safeClick } from '../helpers/selectors';
+import { byTestId, TIMEOUT, safeClick, installFromRegistryCard } from '../helpers/selectors';
 
 describe('FeatureSet - Builtin Sets', () => {
   it('TC-FS-001: Navigate to FeatureSets page and verify builtin sets exist', async () => {
@@ -37,15 +37,7 @@ describe('FeatureSet - Server-All Auto Creation', () => {
     await searchInput.setValue('GitHub');
     await browser.pause(1000);
     
-    const installButton = await byTestId('install-btn-github-server');
-    const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
-    
-    if (isInstallDisplayed) {
-      await installButton.waitForClickable({ timeout: TIMEOUT.medium });
-      await safeClick(installButton);
-      await browser.pause(3000);
-      await waitForModalClose();
-    }
+    await installFromRegistryCard('github-server');
     
     const myServersButton = await byTestId('nav-my-servers');
     await safeClick(myServersButton);

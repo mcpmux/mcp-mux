@@ -979,6 +979,28 @@ fn render_config_export_space(value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Lines listing the env and header values an import keeps out of the
+/// Space file (input ids per server, never values).
+fn stored_as_inputs_lines(value: &Value, what: &str) -> Vec<String> {
+    let Some(stored) = value.get("stored_as_inputs").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    if stored.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![format!(
+        "env/header values {what} as server inputs, not in the Space file:"
+    )];
+    for (key, ids) in stored {
+        let ids: Vec<&str> = as_array(ids)
+            .into_iter()
+            .filter_map(Value::as_str)
+            .collect();
+        lines.push(format!("  {key}: {}", ids.join(", ")));
+    }
+    lines
+}
+
 /// The lines describing an import plan (a dry-run response) under `heading`.
 fn config_import_plan(value: &Value, heading: &str) -> Vec<String> {
     let mut lines = vec![heading.to_string()];
@@ -995,6 +1017,7 @@ fn config_import_plan(value: &Value, heading: &str) -> Vec<String> {
             lines.push(format!("  {key}: {}", launch.as_str().unwrap_or_default()));
         }
     }
+    lines.extend(stored_as_inputs_lines(value, "will be stored encrypted"));
     lines
 }
 
@@ -1015,6 +1038,9 @@ fn render_config_import(value: &Value) -> Result<()> {
         as_array(value.get("updated").unwrap_or(&Value::Null)).len(),
         as_array(value.get("removed").unwrap_or(&Value::Null)).len(),
     );
+    for line in stored_as_inputs_lines(value, "stored encrypted") {
+        println!("{line}");
+    }
     let backup = str_at(value, "backup");
     if !backup.is_empty() {
         println!("backup: {backup}");

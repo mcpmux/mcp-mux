@@ -122,6 +122,8 @@ pub struct ConsentRequestDetails {
     /// Must be returned in the approval request to prove the caller is the
     /// legitimate desktop app UI—not an external script or bot.
     pub consent_token: String,
+    /// True when this client has never been approved before.
+    pub first_time: bool,
 }
 
 /// Window within which an identical deep-link URL is treated as a duplicate
@@ -392,6 +394,19 @@ pub async fn get_pending_consent(
         }
     })?;
 
+    let first_time = {
+        let state = gw_state.read().await;
+        match state.inbound_client_repository() {
+            Some(repo) => !repo
+                .get_client(&auth.client_id)
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|c| c.approved),
+            None => true,
+        }
+    };
+
     // Build response with authoritative data from backend
     // The client_name here comes from our database lookup in handlers.rs
     let details = ConsentRequestDetails {
@@ -406,6 +421,7 @@ pub async fn get_pending_consent(
         state: auth.state.clone(),
         expires_at: auth.expires_at,
         consent_token,
+        first_time,
     };
 
     info!(
@@ -502,14 +518,20 @@ pub async fn approve_oauth_consent(
     }
 
     if !request.approved {
-        // User denied - redirect with error
-        // Client registration remains (unapproved) so they can try again later
-        let mut redirect_url = pending.redirect_uri.clone();
-        redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
-        redirect_url.push_str("error=access_denied&error_description=User+denied+the+request");
-        if let Some(ref state_param) = pending.state {
-            redirect_url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
-        }
+        // User denied. The denial goes back to loopback and https callbacks
+        // only: a declined request never launches an OS protocol handler.
+        // Client registration remains (unapproved) so they can try again later.
+        let redirect_url = if is_web_redirect(&pending.redirect_uri) {
+            let mut url = pending.redirect_uri.clone();
+            url.push_str(if url.contains('?') { "&" } else { "?" });
+            url.push_str("error=access_denied&error_description=User+denied+the+request");
+            if let Some(ref state_param) = pending.state {
+                url.push_str(&format!("&state={}", urlencoding::encode(state_param)));
+            }
+            url
+        } else {
+            String::new()
+        };
 
         info!(
             "[OAuth] User denied consent for client: {}",
@@ -1199,6 +1221,10 @@ pub async fn open_url(url: String) -> Result<(), String> {
 
     // Parse the URL to determine how to handle it
     let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
+    if !is_openable_url(&url) {
+        warn!("[OAuth] Refusing to open a URL outside http(s) and the OAuth redirect policy");
+        return Err("This link can't be opened".to_string());
+    }
 
     // Check if this is a localhost callback (VS Code, etc.)
     let is_localhost = matches!(parsed.host_str(), Some("localhost") | Some("127.0.0.1"));
@@ -1209,8 +1235,13 @@ pub async fn open_url(url: String) -> Result<(), String> {
         // This avoids opening a browser window for a cleaner UX
         info!("[OAuth] Delivering callback directly to localhost: {}", url);
 
+        // The URL carries the authorization code: send it only to the app's
+        // loopback listener, not on to wherever that answers with a redirect,
+        // and not through a proxy.
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -1357,9 +1388,52 @@ pub async fn revoke_oauth_client_feature_set(
     Ok(())
 }
 
+/// A redirect delivered over HTTP(S): a loopback callback or an https page.
+fn is_web_redirect(uri: &str) -> bool {
+    Url::parse(uri).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+}
+
+/// What `open_url` may hand to the OS: web links, and OAuth redirects allowed
+/// by the redirect policy (e.g. `cursor://`). Anything else (`file:`,
+/// `search-ms:`, ...) is refused.
+fn is_openable_url(url: &str) -> bool {
+    Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+        || is_valid_registered_redirect_uri(url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_url_only_accepts_web_links_and_allowed_redirects() {
+        for url in [
+            "https://github.com/mcpmux/mcp-mux",
+            "http://127.0.0.1:8765/callback?code=mc_1",
+            "cursor://anysphere.cursor-mcp/oauth/callback?code=mc_1",
+        ] {
+            assert!(is_openable_url(url), "{url}");
+        }
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "search-ms:query=x",
+            "ms-officecmd:{}",
+            "smb://host/share",
+            "not a url",
+        ] {
+            assert!(!is_openable_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn denials_only_go_back_over_http() {
+        assert!(is_web_redirect("http://127.0.0.1:8765/callback"));
+        assert!(is_web_redirect("https://chatgpt.com/connector/oauth/abc"));
+        assert!(!is_web_redirect(
+            "cursor://anysphere.cursor-mcp/oauth/callback"
+        ));
+    }
 
     const W: Duration = Duration::from_secs(3);
     const URL: &str = "mcpmux://authorize?request_id=abc-123";

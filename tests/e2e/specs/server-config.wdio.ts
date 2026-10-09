@@ -3,7 +3,13 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId, TIMEOUT, waitForModalClose, safeClick } from '../helpers/selectors';
+import {
+  byTestId,
+  TIMEOUT,
+  waitForModalClose,
+  safeClick,
+  installFromRegistryCard,
+} from '../helpers/selectors';
 
 describe('Server Configuration - PostgreSQL', () => {
   it('TC-SC-001: Install PostgreSQL Server and click Enable shows config modal', async () => {
@@ -19,15 +25,7 @@ describe('Server Configuration - PostgreSQL', () => {
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-01-search-apikey.png');
     
-    const installButton = await byTestId('install-btn-postgres-server');
-    const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
-    
-    if (isInstallDisplayed) {
-      await installButton.waitForClickable({ timeout: TIMEOUT.medium });
-      await safeClick(installButton);
-      await browser.pause(3000);
-      await waitForModalClose();
-    }
+    await installFromRegistryCard('postgres-server');
     
     const uninstallButton = await byTestId('uninstall-btn-postgres-server');
     await expect(uninstallButton).toBeDisplayed();
@@ -132,15 +130,7 @@ describe('Server Configuration - Filesystem', () => {
     
     await browser.saveScreenshot('./tests/e2e/screenshots/sc-07-search-dir.png');
     
-    const installButton = await byTestId('install-btn-filesystem-server');
-    const isInstallDisplayed = await installButton.isDisplayed().catch(() => false);
-    
-    if (isInstallDisplayed) {
-      await installButton.waitForClickable({ timeout: TIMEOUT.medium });
-      await safeClick(installButton);
-      await browser.pause(3000);
-      await waitForModalClose();
-    }
+    await installFromRegistryCard('filesystem-server');
     
     const uninstallButton = await byTestId('uninstall-btn-filesystem-server');
     await expect(uninstallButton).toBeDisplayed();

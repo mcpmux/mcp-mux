@@ -30,6 +30,7 @@ import {
 import type { ServerDefinition } from '@/types/registry';
 import { useViewSpace } from '@/stores';
 import { ServerIcon } from '@/components/ServerIcon';
+import { TransportSummary } from '@/components/TransportSummary';
 
 /** Deep link payload from backend */
 interface ServerInstallDeepLinkPayload {
@@ -133,7 +134,11 @@ export function ServerInstallModal() {
     setInstallError(null);
 
     try {
-      await installServer(modalState.server.id, selectedSpaceId);
+      await installServer(
+        modalState.server.id,
+        selectedSpaceId,
+        modalState.server.transport
+      );
       console.log('[Install] Server installed:', modalState.server.id);
       setModalState({ type: 'success', serverName: modalState.server.name });
 
@@ -270,6 +275,9 @@ export function ServerInstallModal() {
                       : 'API Key'}
                 </span>
               )}
+            </div>
+            <div className="mt-3">
+              <TransportSummary transport={server.transport} />
             </div>
           </div>
 

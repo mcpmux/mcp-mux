@@ -3,7 +3,12 @@
  * Uses data-testid only (ADR-003).
  */
 
-import { byTestId, TIMEOUT, waitForModalClose } from '../helpers/selectors';
+import {
+  byTestId,
+  TIMEOUT,
+  waitForModalClose,
+  installFromRegistryCard,
+} from '../helpers/selectors';
 
 describe('Server Installation - GitHub Server (No Inputs)', () => {
   it('TC-SD-004: Install GitHub Server from Discover page', async () => {
@@ -32,10 +37,9 @@ describe('Server Installation - GitHub Server (No Inputs)', () => {
     const installButton = await byTestId('install-btn-github-server');
     // Use longer timeout for CI where registry loading can be slow
     await installButton.waitForDisplayed({ timeout: TIMEOUT.long });
-    await installButton.waitForClickable({ timeout: TIMEOUT.medium });
-    await installButton.click();
-    await browser.pause(3000);
-    await waitForModalClose();
+    // The card opens the details, which show what the server runs; install
+    // from there.
+    await installFromRegistryCard('github-server');
     
     await expect(uninstallButton).toBeDisplayed();
     

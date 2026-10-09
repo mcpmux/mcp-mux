@@ -84,3 +84,45 @@ describe('ServerInstallModal auth badge', () => {
     expect(info).not.toHaveTextContent('Username & Password');
   });
 });
+
+describe('ServerInstallModal transport summary', () => {
+  beforeEach(() => {
+    handlers.clear();
+    mockGetServerDefinition.mockReset();
+  });
+
+  it('shows the exact command a local server runs', async () => {
+    const server = serverWithAuth({ type: 'none' });
+    server.transport = {
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@acme/mcp-server', '--token=${input:TOKEN}'],
+      env: {},
+      metadata: { inputs: [] },
+    };
+    mockGetServerDefinition.mockResolvedValue(server);
+    render(<ServerInstallModal />);
+    await openDeepLink();
+
+    const summary = await screen.findByTestId('transport-summary');
+    expect(summary).toHaveTextContent('Runs on this computer');
+    expect(summary).toHaveTextContent("npx -y @acme/mcp-server '--token=${input:TOKEN}'");
+  });
+
+  it('shows the URL a remote server connects to', async () => {
+    const server = serverWithAuth({ type: 'none' });
+    server.transport = {
+      type: 'http',
+      url: 'https://mcp.example.com/mcp',
+      headers: {},
+      metadata: { inputs: [] },
+    };
+    mockGetServerDefinition.mockResolvedValue(server);
+    render(<ServerInstallModal />);
+    await openDeepLink();
+
+    const summary = await screen.findByTestId('transport-summary');
+    expect(summary).toHaveTextContent('Connects to');
+    expect(summary).toHaveTextContent('https://mcp.example.com/mcp');
+  });
+});

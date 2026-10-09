@@ -468,6 +468,10 @@ pub struct ServersAddParams {
     /// Registry definition inputs, e.g. credentials required at install time.
     #[serde(default)]
     pub inputs: std::collections::HashMap<String, String>,
+    /// The definition's transport as shown to the user. When given, the
+    /// install is refused if the current definition differs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_transport: Option<serde_json::Value>,
 }
 
 /// `servers.configure` updates an installed server. Any omitted field is left
@@ -748,6 +752,10 @@ pub struct ConfigImportResponse {
     /// import is confirmed.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub launches: std::collections::BTreeMap<String, String>,
+    /// Env and header values stored encrypted as server inputs instead of
+    /// in the Space file: input ids keyed by the document's server key.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub stored_as_inputs: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// `workspace.config` response. The snippet includes the

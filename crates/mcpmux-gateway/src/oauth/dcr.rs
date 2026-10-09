@@ -231,11 +231,54 @@ fn is_loopback_redirect_uri(uri: &str) -> bool {
     }
 }
 
-/// URI schemes that must never be accepted as a redirect target. They can
-/// execute script or load arbitrary content if a redirect is ever navigated to
-/// one (e.g. the consent flow's `window.location.href` fallback), so they are
-/// rejected even though they are technically non-http "custom" schemes.
-const DANGEROUS_REDIRECT_SCHEMES: &[&str] = &["javascript", "data", "vbscript", "file", "blob"];
+/// URI schemes that must never be accepted as a redirect target, even though
+/// they are technically non-http "custom" schemes. Approving a consent hands
+/// the redirect to the OS, so a redirect must not be able to run script, open
+/// local or network files, or reach an OS or browser handler that can open or
+/// run content (Windows Search, Office, Edge, Safari, ...).
+const DANGEROUS_REDIRECT_SCHEMES: &[&str] = &[
+    "javascript",
+    "data",
+    "vbscript",
+    "file",
+    "blob",
+    "about",
+    "view-source",
+    "jar",
+    "ftp",
+    "sftp",
+    "smb",
+    "cifs",
+    "nfs",
+    "afp",
+    "dav",
+    "webdav",
+    "ldap",
+    "ldaps",
+    "telnet",
+    "ssh",
+    "rdp",
+    "vnc",
+    "search",
+    "search-ms",
+    "shell",
+    "mk",
+    "its",
+    "mhtml",
+    "res",
+    "hcp",
+    "help",
+    "intent",
+    "itms-services",
+    "chrome",
+    "chrome-extension",
+    "edge",
+];
+
+/// Scheme prefixes reserved for OS and browser handlers (`ms-word:`,
+/// `microsoft-edge:`, `x-safari-https:`, ...).
+const DANGEROUS_REDIRECT_SCHEME_PREFIXES: &[&str] =
+    &["ms-", "microsoft-", "x-safari-", "x-apple-", "windows-"];
 
 fn is_custom_scheme_redirect_uri(uri: &str) -> bool {
     let Ok(url) = url::Url::parse(uri) else {
@@ -245,7 +288,14 @@ fn is_custom_scheme_redirect_uri(uri: &str) -> bool {
     // `url` normalizes the scheme to lowercase, so the denylist comparison is
     // case-insensitive (e.g. `JavaScript:` is parsed as `javascript`).
     let scheme = url.scheme();
-    scheme != "http" && scheme != "https" && !DANGEROUS_REDIRECT_SCHEMES.contains(&scheme)
+    scheme != "http"
+        && scheme != "https"
+        // McpMux's own deep links would run app actions with the code attached.
+        && !scheme.eq_ignore_ascii_case(mcpmux_core::branding::DEEP_LINK_SCHEME)
+        && !DANGEROUS_REDIRECT_SCHEMES.contains(&scheme)
+        && !DANGEROUS_REDIRECT_SCHEME_PREFIXES
+            .iter()
+            .any(|prefix| scheme.starts_with(prefix))
 }
 
 fn is_chatgpt_connector_redirect_uri(uri: &str) -> bool {
@@ -597,6 +647,16 @@ mod tests {
             );
         }
 
+        // McpMux's own deep-link scheme, in any case.
+        let own = mcpmux_core::branding::DEEP_LINK_SCHEME;
+        for uri in [
+            format!("{own}://install?server=x"),
+            format!("{}://callback", own.to_ascii_uppercase()),
+        ] {
+            assert!(!is_custom_scheme_redirect_uri(&uri), "{uri}");
+            assert!(validate_redirect_uris(&[uri.clone()]).is_err(), "{uri}");
+        }
+
         // Legitimate native-app schemes still pass, with or without an authority.
         assert!(is_custom_scheme_redirect_uri("cursor://callback"));
         assert!(is_custom_scheme_redirect_uri(
@@ -757,4 +817,35 @@ mod tests {
     // Note: Integration tests for idempotent registration are better handled
     // in tests that use an actual database, since process_dcr_request now
     // persists directly to the database.
+
+    #[test]
+    fn os_handler_schemes_are_not_redirect_targets() {
+        for uri in [
+            "search-ms:query=x&crumb=location:\\\\evil\\share",
+            "ms-officecmd:{}",
+            "ms-word:ofe|u|https://evil.example/doc",
+            "microsoft-edge:https://evil.example/cb",
+            "x-safari-https://evil.example/cb",
+            "smb://evil.example/share",
+            "file:///etc/passwd",
+            "itms-services://?action=download-manifest",
+            "MS-SETTINGS:privacy",
+        ] {
+            assert!(
+                !is_valid_registered_redirect_uri(uri),
+                "{uri} must be refused"
+            );
+        }
+        for uri in [
+            "cursor://anysphere.cursor-mcp/oauth/callback",
+            "vscode://vscode.github-authentication/did-authenticate",
+            "claude://claude.ai/oauth/callback",
+            "com.example.app:/oauth2redirect",
+        ] {
+            assert!(
+                is_valid_registered_redirect_uri(uri),
+                "{uri} must be accepted"
+            );
+        }
+    }
 }

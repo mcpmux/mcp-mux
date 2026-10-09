@@ -6,6 +6,10 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch: # Allow manual trigger
 
+# Reads release download counts only.
+permissions:
+  contents: read
+
 jobs:
   report-downloads:
     runs-on: ubuntu-latest

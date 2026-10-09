@@ -13,6 +13,16 @@ pub const KEY_SIZE: usize = 32;
 /// Size of the nonce (12 bytes for AES-GCM).
 const NONCE_SIZE: usize = 12;
 
+/// One-way fingerprint of a master key: HMAC-SHA256 keyed with the master
+/// key over a fixed label, hex-encoded and truncated to 128 bits. Lets
+/// McpMux remember *which* key its data is encrypted with without storing
+/// anything that helps recover the key.
+pub fn key_fingerprint(master_key: &[u8; KEY_SIZE]) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, master_key);
+    let tag = ring::hmac::sign(&key, b"mcpmux master key fingerprint v1");
+    hex::encode(&tag.as_ref()[..16])
+}
+
 /// Encryptor for sensitive field data.
 pub struct FieldEncryptor {
     key: LessSafeKey,

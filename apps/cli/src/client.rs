@@ -24,11 +24,26 @@ use tokio::net::UnixStream;
 #[cfg(unix)]
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Refuse a socket served by another user than `own_uid`.
+#[cfg(unix)]
+fn check_peer_uid(path: &Path, peer_uid: u32, own_uid: u32) -> Result<()> {
+    if peer_uid != own_uid {
+        bail!(
+            "{} is served by another user (uid {}); refusing to use it",
+            path.display(),
+            peer_uid
+        );
+    }
+    Ok(())
+}
+
 /// Connected control-socket client.
 #[cfg(unix)]
 pub struct ControlClient {
     reader: BufReader<OwnedReadHalf>,
     writer: OwnedWriteHalf,
+    /// Pid of the process serving the socket, when the OS reports it.
+    peer_pid: Option<i32>,
 }
 
 #[cfg(unix)]
@@ -44,11 +59,26 @@ impl ControlClient {
                 path.display()
             )
         })?;
+        // Only talk to a daemon run by this user: a socket elsewhere (a shared
+        // `--socket` path, a planted file) could otherwise collect our
+        // requests and steer `daemon restart` at any pid.
+        let peer = stream
+            .peer_cred()
+            .with_context(|| format!("cannot identify the process behind {}", path.display()))?;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        check_peer_uid(&path, peer.uid(), uid)?;
         let (read_half, write_half) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(read_half),
             writer: write_half,
+            peer_pid: peer.pid(),
         })
+    }
+
+    /// Pid of the process serving the socket, when the OS reports it.
+    pub fn peer_pid(&self) -> Option<i32> {
+        self.peer_pid
     }
 
     /// Send one request and decode the response, mapping daemon errors to
@@ -178,4 +208,18 @@ pub fn resolve_socket_path(_data_dir: Option<&Path>, _socket: Option<&Path>) -> 
 fn next_request_id() -> String {
     let n = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{}-{}", std::process::id(), n)
+}
+
+#[cfg(all(test, unix))]
+mod peer_tests {
+    use super::check_peer_uid;
+    use std::path::Path;
+
+    #[test]
+    fn a_socket_served_by_another_user_is_refused() {
+        let path = Path::new("/run/user/1000/mcpmux/control.sock");
+        assert!(check_peer_uid(path, 1000, 1000).is_ok());
+        let err = check_peer_uid(path, 0, 1000).unwrap_err();
+        assert!(err.to_string().contains("another user"), "{err}");
+    }
 }

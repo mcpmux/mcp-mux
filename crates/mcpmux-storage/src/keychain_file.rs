@@ -71,6 +71,17 @@ impl FileKeyProvider {
     }
 }
 
+impl FileKeyProvider {
+    /// The key in `keys/master.key`, without creating one.
+    pub fn get_existing_key(&self) -> Result<Option<Zeroizing<[u8; KEY_SIZE]>>> {
+        if self.key_path.exists() {
+            self.get_or_create_key().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 impl MasterKeyProvider for FileKeyProvider {
     fn get_or_create_key(&self) -> Result<Zeroizing<[u8; KEY_SIZE]>> {
         if self.key_path.exists() {

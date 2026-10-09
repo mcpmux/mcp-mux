@@ -9,6 +9,7 @@
 //! - FeatureSet repository (builtin types, members)
 //! - Outbound OAuth repository (server credentials)
 
+mod credential_delete;
 mod feature_set;
 mod inbound_client;
 mod installed_server;

@@ -243,6 +243,15 @@ impl UserServerEntry {
             }
         }
 
+        // Scan the URL and headers of HTTP servers
+        if let TransportConfig::Http { url, headers, .. } = &transport {
+            for value in std::iter::once(url).chain(headers.values()) {
+                for cap in INPUT_REGEX.captures_iter(value) {
+                    discovered_ids.insert(cap[1].to_string());
+                }
+            }
+        }
+
         // Create InputDefinitions for discovered IDs (if not already defined)
         for input_id in discovered_ids {
             inputs_map
@@ -281,6 +290,21 @@ impl UserServerEntry {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn http_url_and_header_placeholders_become_inputs() {
+        let entry: UserServerEntry = serde_json::from_str(
+            r#"{"url":"https://example.com/${input:TENANT}/mcp",
+                "headers":{"Authorization":"Bearer ${input:API_TOKEN}"}}"#,
+        )
+        .unwrap();
+        let (_, inputs) = entry.resolve_transport_and_inputs();
+        let mut ids: Vec<&str> = inputs.iter().map(|i| i.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["API_TOKEN", "TENANT"]);
+        assert!(inputs.iter().all(|i| i.secret));
+    }
+
     use super::*;
     use std::path::PathBuf;
 

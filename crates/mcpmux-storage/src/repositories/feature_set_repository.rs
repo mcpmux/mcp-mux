@@ -362,6 +362,30 @@ impl FeatureSetRepository for SqliteFeatureSetRepository {
         Ok(())
     }
 
+    async fn update_details(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<()> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        // Builtin identity is fixed (see `update`); members are never touched.
+        let rows_affected = conn.execute(
+            "UPDATE feature_sets
+             SET name = CASE WHEN is_builtin = 1 THEN name ELSE COALESCE(?2, name) END,
+                 description = CASE WHEN is_builtin = 1 THEN description
+                                    ELSE COALESCE(?3, description) END,
+                 updated_at = ?4
+             WHERE id = ?1 AND is_deleted = 0",
+            params![id, name, description, chrono::Utc::now().to_rfc3339()],
+        )?;
+        if rows_affected == 0 {
+            anyhow::bail!("FeatureSet not found: {}", id);
+        }
+        Ok(())
+    }
+
     async fn delete(&self, id: &str) -> Result<()> {
         let db = self.db.lock().await;
         let conn = db.connection();

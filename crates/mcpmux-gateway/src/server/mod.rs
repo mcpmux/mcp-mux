@@ -102,7 +102,16 @@ impl GatewayConfig {
     /// network rather than being local-only.
     pub fn is_network_bind(&self) -> bool {
         let host = self.host.trim();
-        !(host.is_empty() || host == "127.0.0.1" || host == "::1" || host == "localhost")
+        let host = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+        let loopback = host.is_empty()
+            || host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        !loopback
     }
 
     /// Host values accepted by rmcp's DNS rebinding protection.
@@ -808,10 +817,18 @@ mod config_tests {
 
     #[test]
     fn is_network_bind_distinguishes_loopback_from_exposed() {
-        for h in ["127.0.0.1", "::1", "localhost", ""] {
+        for h in [
+            "127.0.0.1",
+            "127.0.0.2",
+            "::1",
+            "[::1]",
+            "localhost",
+            "LocalHost",
+            "",
+        ] {
             assert!(!config_on_host(h).is_network_bind(), "{h:?} is loopback");
         }
-        for h in ["0.0.0.0", "::", "192.168.1.50"] {
+        for h in ["0.0.0.0", "::", "192.168.1.50", "fe80::1", "myhost.lan"] {
             assert!(
                 config_on_host(h).is_network_bind(),
                 "{h:?} is a network bind"

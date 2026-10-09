@@ -431,7 +431,10 @@ export function WorkspaceSetupWizard({
               </div>
             ) : (
               <>
-                <WorkspaceInstallPanel workspaceRoot={folder} />
+                <WorkspaceInstallPanel
+                  workspaceRoot={folder}
+                  inDefaultSpace={spaces.find((s) => s.id === spaceId)?.is_default !== false}
+                />
                 <p className="text-center text-xs text-[rgb(var(--muted))]">
                   Optional — you can connect apps later from this folder&apos;s mapping.
                 </p>

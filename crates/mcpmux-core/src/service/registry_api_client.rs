@@ -622,6 +622,35 @@ mod tests {
         assert!(verify_bundle_signature(body.as_bytes(), Some(&signature), &[public]).is_err());
     }
 
+    /// A body without Content-Length is still cut off once it passes the
+    /// cap, chunk by chunk, instead of being read to the end.
+    #[tokio::test]
+    async fn a_body_without_a_length_is_capped_while_reading() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/bundle", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf).await;
+            // No Content-Length: the body runs until the connection closes.
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n")
+                .await;
+            for _ in 0..64 {
+                if stream.write_all(&[b'x'; 1024]).await.is_err() {
+                    break;
+                }
+            }
+            let _ = stream.shutdown().await;
+        });
+
+        let response = reqwest::get(&url).await.unwrap();
+        assert!(response.content_length().is_none());
+        let err = read_capped(response, 4096).await.unwrap_err();
+        assert!(err.to_string().contains("larger than 4096 bytes"), "{err}");
+    }
+
     /// Regression test: one server the client can't parse (here an unknown
     /// auth type) must be skipped, not fail the whole bundle.
     #[test]

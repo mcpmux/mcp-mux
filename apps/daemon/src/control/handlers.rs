@@ -1123,6 +1123,9 @@ async fn servers_add(
                 p.server_id
             ))
         })?;
+    if !mcpmux_core::transport_matches_shown(&definition, p.expected_transport.as_ref()) {
+        return Err(ApiError::conflict(mcpmux_core::DEFINITION_CHANGED));
+    }
 
     let installed = state
         .server_app_service()

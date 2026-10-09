@@ -12,7 +12,7 @@ import { TransportSummary } from '../../components/TransportSummary';
 interface ServerDetailModalProps {
   server: ServerViewModel;
   onClose: () => void;
-  onInstall: (id: string) => void;
+  onInstall: (server: ServerViewModel) => void;
   onUninstall: (id: string) => void;
   isLoading?: boolean;
 }
@@ -396,8 +396,9 @@ export function ServerDetailModal({
             </button>
           ) : (
             <button
-              onClick={() => onInstall(server.id)}
+              onClick={() => onInstall(server)}
               disabled={isLoading}
+              data-testid="detail-install-btn"
               className="px-4 py-2 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))] hover:bg-[rgb(var(--primary-hover))] transition-colors disabled:opacity-50"
             >
               Install

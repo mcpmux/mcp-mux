@@ -33,7 +33,12 @@ describe('Server Installation - GitHub Server (No Inputs)', () => {
     // Use longer timeout for CI where registry loading can be slow
     await installButton.waitForDisplayed({ timeout: TIMEOUT.long });
     await installButton.waitForClickable({ timeout: TIMEOUT.medium });
+    // The card opens the details, which show what the server runs; install
+    // from there.
     await installButton.click();
+    const confirmInstall = await byTestId('detail-install-btn');
+    await confirmInstall.waitForClickable({ timeout: TIMEOUT.medium });
+    await confirmInstall.click();
     await browser.pause(3000);
     await waitForModalClose();
     

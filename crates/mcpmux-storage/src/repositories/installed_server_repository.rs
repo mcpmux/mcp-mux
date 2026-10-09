@@ -447,6 +447,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             "DELETE FROM installed_servers WHERE id = ?1",
             [id.to_string()],
         )?;
+        db.checkpoint_wal();
         Ok(())
     }
 

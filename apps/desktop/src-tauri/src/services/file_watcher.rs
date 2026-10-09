@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use mcpmux_core::application::{SyncResult, UserSpaceSyncService};
-use mcpmux_core::InstalledServerRepository;
+use mcpmux_core::{InstalledServerRepository, SpaceRepository};
 
 /// File watcher for user space configuration files
 ///
@@ -35,11 +35,14 @@ impl SpaceFileWatcher {
     /// * `spaces_dir` - Directory containing space JSON config files
     /// * `sync_service` - Service to sync changes
     /// * `default_space_id` - Default space ID to use for synced servers
+    /// * `space_repo` - Used to skip `<space-id>.json` files of Spaces that
+    ///   don't exist
     /// * `event_emitter` - Optional callback to emit UI events after sync
     pub fn new<F>(
         spaces_dir: PathBuf,
         sync_service: Arc<UserSpaceSyncService>,
         default_space_id: String,
+        space_repo: Arc<dyn SpaceRepository>,
         event_emitter: Option<F>,
     ) -> Result<Self>
     where
@@ -59,7 +62,7 @@ impl SpaceFileWatcher {
         let emitter = event_emitter.map(Arc::new);
 
         tokio::spawn(async move {
-            Self::debounced_handler(rx, sync_clone, space_id, emitter).await;
+            Self::debounced_handler(rx, sync_clone, space_id, space_repo, emitter).await;
         });
 
         // Create file watcher
@@ -104,6 +107,7 @@ impl SpaceFileWatcher {
         mut rx: mpsc::Receiver<PathBuf>,
         sync_service: Arc<UserSpaceSyncService>,
         default_space_id: String,
+        space_repo: Arc<dyn SpaceRepository>,
         event_emitter: Option<Arc<F>>,
     ) where
         F: Fn(&str, &SyncResult) + Send + Sync + 'static,
@@ -129,9 +133,29 @@ impl SpaceFileWatcher {
                     for path in ready {
                         pending.remove(&path);
 
-                        // Extract space_id from filename (e.g., "default.json" -> use default_space_id)
-                        // For now, use the default space for all config files
-                        let space_id = &default_space_id;
+                        // Each Space's config lives in `<space-id>.json`, so a
+                        // change syncs into that Space. Other names (legacy
+                        // files) keep going to the default Space.
+                        let space_id = match space_id_for_config_file(&path) {
+                            Some(id) => {
+                                // A file named after a Space that doesn't exist
+                                // would install servers into no Space.
+                                let exists = match uuid::Uuid::parse_str(&id) {
+                                    Ok(uuid) => matches!(space_repo.get(&uuid).await, Ok(Some(_))),
+                                    Err(_) => false,
+                                };
+                                if !exists {
+                                    warn!(
+                                        "Ignoring {:?}: no Space with that id exists",
+                                        path
+                                    );
+                                    continue;
+                                }
+                                id
+                            }
+                            None => default_space_id.clone(),
+                        };
+                        let space_id = &space_id;
 
                         info!("Syncing changes from: {:?}", path);
 
@@ -175,16 +199,22 @@ impl SpaceFileWatcher {
 pub struct SpaceFileWatcherBuilder {
     spaces_dir: PathBuf,
     installed_repo: Arc<dyn InstalledServerRepository>,
+    space_repo: Arc<dyn SpaceRepository>,
     default_space_id: String,
 }
 
 #[allow(dead_code)]
 impl SpaceFileWatcherBuilder {
     /// Create a new builder
-    pub fn new(spaces_dir: PathBuf, installed_repo: Arc<dyn InstalledServerRepository>) -> Self {
+    pub fn new(
+        spaces_dir: PathBuf,
+        installed_repo: Arc<dyn InstalledServerRepository>,
+        space_repo: Arc<dyn SpaceRepository>,
+    ) -> Self {
         Self {
             spaces_dir,
             installed_repo,
+            space_repo,
             default_space_id: "default".to_string(),
         }
     }
@@ -202,6 +232,7 @@ impl SpaceFileWatcherBuilder {
             self.spaces_dir,
             sync_service,
             self.default_space_id,
+            self.space_repo,
             None,
         )
     }
@@ -216,6 +247,7 @@ impl SpaceFileWatcherBuilder {
             self.spaces_dir,
             sync_service,
             self.default_space_id,
+            self.space_repo,
             Some(emitter),
         )
     }
@@ -228,5 +260,30 @@ mod tests {
     fn test_builder_default_space_id() {
         // Just test the builder pattern compiles
         // Actual functionality tested via integration tests
+    }
+}
+
+/// The Space a config file belongs to: its file stem when that is a Space id.
+fn space_id_for_config_file(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    uuid::Uuid::parse_str(stem).ok().map(|id| id.to_string())
+}
+
+#[cfg(test)]
+mod space_file_tests {
+    use super::space_id_for_config_file;
+    use std::path::Path;
+
+    #[test]
+    fn config_files_map_to_their_space() {
+        let id = "6f2b1c9e-6a0e-4c1d-9a3e-1f2d3c4b5a69";
+        assert_eq!(
+            space_id_for_config_file(Path::new(&format!("/data/spaces/{id}.json"))).as_deref(),
+            Some(id)
+        );
+        assert_eq!(
+            space_id_for_config_file(Path::new("/data/spaces/default.json")),
+            None
+        );
     }
 }

@@ -19,17 +19,22 @@ use mcpmux_core::{
 };
 use mcpmux_gateway::{DependenciesBuilder, GatewayConfig, GatewayDependencies, GatewayServer};
 use mcpmux_storage::{
-    create_jwt_secret_provider, create_key_provider, Database, FieldEncryptor,
-    InboundClientRepository, JwtSecretProvider, KeychainJwtSecretProvider, KeychainKeyProvider,
-    MasterKeyProvider, SqliteAppSettingsRepository, SqliteCredentialRepository,
-    SqliteFeatureSetRepository, SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
-    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository, SqliteSpaceBaseDirRepository,
-    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
-    DATABASE_FILE, JWT_SECRET_SIZE,
+    create_jwt_secret_provider, Database, FieldEncryptor, InboundClientRepository,
+    JwtSecretProvider, KeychainJwtSecretProvider, SqliteAppSettingsRepository,
+    SqliteCredentialRepository, SqliteFeatureSetRepository, SqliteInboundMcpClientRepository,
+    SqliteInstalledServerRepository, SqliteOutboundOAuthRepository, SqliteServerFeatureRepository,
+    SqliteSpaceBaseDirRepository, SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository,
+    SqliteWorkspaceBindingRepository, DATABASE_FILE, JWT_SECRET_SIZE, KEY_SIZE,
 };
+
+#[cfg(windows)]
+use mcpmux_storage::{create_key_provider, KeychainKeyProvider, MasterKeyProvider};
 
 use crate::error::RuntimeError;
 use crate::lock::DataDirLock;
+use crate::master_key::KeySource;
+#[cfg(not(windows))]
+use crate::master_key::OsKeychain;
 use crate::paths::resolve_data_dir;
 
 /// Default registry API URL. Matches the desktop's hard-coded default and
@@ -175,8 +180,7 @@ impl RuntimeBuilder {
         // keychain on a headless host is exactly the kind of problem the
         // user needs to know about, not a silent fallback to a plaintext
         // secret (which the roadmap forbids — see Phase 2 acceptance).
-        let master_key = key_provider(&data_dir, config.key_provider_policy)
-            .and_then(|provider| provider.get_or_create_key())
+        let (master_key, key_source) = master_key(&data_dir, config.key_provider_policy)
             .map_err(|e| RuntimeError::KeyProvider(e.to_string()))?;
         let encryptor = Arc::new(
             FieldEncryptor::new(&master_key)
@@ -248,7 +252,7 @@ impl RuntimeBuilder {
         );
 
         let jwt_secret = if config.load_jwt_secret {
-            match load_jwt_secret(&data_dir, config.key_provider_policy) {
+            match load_jwt_secret(&data_dir, config.key_provider_policy, key_source) {
                 Ok(secret) => {
                     info!("[runtime] JWT signing secret loaded");
                     Some(secret)
@@ -448,20 +452,48 @@ impl Runtime {
     }
 }
 
-fn key_provider(
+/// The master key and where it came from (`None` on Windows, where DPAPI
+/// keeps it next to the data and there is nothing to choose between).
+#[cfg(not(windows))]
+fn master_key(
     data_dir: &Path,
     policy: KeyProviderPolicy,
-) -> anyhow::Result<Box<dyn MasterKeyProvider>> {
-    match policy {
-        KeyProviderPolicy::Auto => create_key_provider(data_dir),
-        KeyProviderPolicy::Keychain => Ok(Box::new(KeychainKeyProvider::new()?)),
-        KeyProviderPolicy::File => file_key_provider(data_dir),
-    }
+) -> anyhow::Result<(Zeroizing<[u8; KEY_SIZE]>, Option<KeySource>)> {
+    let allowed: &[KeySource] = match policy {
+        KeyProviderPolicy::Auto => &[KeySource::Keychain, KeySource::File],
+        KeyProviderPolicy::Keychain => &[KeySource::Keychain],
+        KeyProviderPolicy::File => &[KeySource::File],
+    };
+    // A short-lived handle: deciding needs the stored ciphertexts before the
+    // repositories (which need the key) exist.
+    let database = Database::open(&data_dir.join(DATABASE_FILE))?;
+    let (key, source) =
+        crate::master_key::resolve_master_key(data_dir, &database, allowed, &OsKeychain)?;
+    Ok((key, Some(source)))
 }
 
-#[cfg(not(windows))]
-fn file_key_provider(data_dir: &Path) -> anyhow::Result<Box<dyn MasterKeyProvider>> {
-    Ok(Box::new(mcpmux_storage::FileKeyProvider::new(data_dir)?))
+#[cfg(windows)]
+fn master_key(
+    data_dir: &Path,
+    policy: KeyProviderPolicy,
+) -> anyhow::Result<(Zeroizing<[u8; KEY_SIZE]>, Option<KeySource>)> {
+    let provider: Box<dyn MasterKeyProvider> = match policy {
+        KeyProviderPolicy::Auto => create_key_provider(data_dir)?,
+        KeyProviderPolicy::Keychain => Box::new(KeychainKeyProvider::new()?),
+        KeyProviderPolicy::File => file_key_provider(data_dir)?,
+    };
+    // Never create a new key while stored data needs the old one.
+    let database = Database::open(&data_dir.join(DATABASE_FILE))?;
+    let samples = database.encrypted_samples(crate::master_key::SAMPLE_LIMIT)?;
+    let existing = if provider.key_exists() {
+        Some(provider.get_or_create_key()?)
+    } else {
+        None
+    };
+    let key =
+        crate::master_key::guard_single_key(existing, &samples, || provider.get_or_create_key())?;
+    crate::master_key::warn_if_partly_unreadable(&key, &samples);
+    Ok((key, None))
 }
 
 #[cfg(windows)]
@@ -469,14 +501,19 @@ fn file_key_provider(_data_dir: &Path) -> anyhow::Result<Box<dyn MasterKeyProvid
     anyhow::bail!("the file key provider is not supported on Windows; use auto or keychain")
 }
 
+/// The JWT signing secret lives wherever the master key does, so a keychain
+/// hiccup can't silently switch it to a new file-based secret either.
 fn load_jwt_secret(
     data_dir: &Path,
     policy: KeyProviderPolicy,
+    master_key_source: Option<KeySource>,
 ) -> anyhow::Result<Zeroizing<[u8; JWT_SECRET_SIZE]>> {
-    let provider: Box<dyn JwtSecretProvider> = match policy {
-        KeyProviderPolicy::Auto => create_jwt_secret_provider(data_dir)?,
-        KeyProviderPolicy::Keychain => Box::new(KeychainJwtSecretProvider::new()?),
-        KeyProviderPolicy::File => file_jwt_secret_provider(data_dir)?,
+    let provider: Box<dyn JwtSecretProvider> = match (master_key_source, policy) {
+        (Some(KeySource::Keychain), _) => Box::new(KeychainJwtSecretProvider::new()?),
+        (Some(KeySource::File), _) => file_jwt_secret_provider(data_dir)?,
+        (None, KeyProviderPolicy::Auto) => create_jwt_secret_provider(data_dir)?,
+        (None, KeyProviderPolicy::Keychain) => Box::new(KeychainJwtSecretProvider::new()?),
+        (None, KeyProviderPolicy::File) => file_jwt_secret_provider(data_dir)?,
     };
     provider
         .get_or_create_secret()

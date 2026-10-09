@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, KeyRound, Loader2, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button, Card, CardContent, CardHeader, CardTitle, Switch } from '@mcpmux/ui';
+import { useSpaces } from '@/stores/selectors';
 import {
   getMetaToolsRequireApproval,
   listMetaToolGrants,
@@ -25,6 +26,10 @@ export function MetaToolGrantsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [requireApproval, setRequireApproval] = useState<boolean | null>(null);
+  const spaces = useSpaces();
+  const grantKey = (g: MetaToolGrantEntry) =>
+    `${g.client_id}:${g.tool_name}:${g.action ?? ''}:${g.space_id ?? ''}`;
+  const spaceName = (id: string) => spaces.find((s) => s.id === id)?.name ?? `${id.slice(0, 8)}…`;
 
   const load = useCallback(async () => {
     try {
@@ -60,10 +65,9 @@ export function MetaToolGrantsPanel() {
   };
 
   const handleRevoke = async (g: MetaToolGrantEntry) => {
-    const key = `${g.client_id}:${g.tool_name}`;
-    setRevoking(key);
+    setRevoking(grantKey(g));
     try {
-      await revokeMetaToolGrant(g.client_id, g.tool_name);
+      await revokeMetaToolGrant(g);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -144,7 +148,7 @@ export function MetaToolGrantsPanel() {
         ) : (
           <ul className="max-h-64 divide-y divide-[rgb(var(--border-subtle))] overflow-y-auto">
             {grants.map((g) => {
-              const key = `${g.client_id}:${g.tool_name}`;
+              const key = grantKey(g);
               return (
                 <li
                   key={key}
@@ -152,9 +156,13 @@ export function MetaToolGrantsPanel() {
                   data-testid={`meta-tool-grant-${g.tool_name}`}
                 >
                   <div className="mr-3 flex min-w-0 flex-col">
-                    <span className="truncate font-mono text-xs">{g.tool_name}</span>
+                    <span className="truncate font-mono text-xs">
+                      {g.tool_name}
+                      {g.action ? ` · ${g.action}` : ''}
+                    </span>
                     <span className="truncate text-[11px] text-[rgb(var(--muted))]">
                       client {g.client_id.slice(0, 8)}…
+                      {g.space_id ? ` · space ${spaceName(g.space_id)}` : ''}
                     </span>
                   </div>
                   <Button

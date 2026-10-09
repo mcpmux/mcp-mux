@@ -368,7 +368,8 @@ impl ServerHandler for McpMuxGatewayHandler {
     /// Answers `server/discover` as a server from before 2026-07-28 does, so
     /// clients that probe with it fall back to `initialize` and a session.
     /// Answering it would let a client pick an older version and still send
-    /// sessionless requests.
+    /// sessionless requests. Over HTTP `discover_guard` answers first; this
+    /// covers the requests rmcp lets through its version check.
     async fn discover(
         &self,
         _context: RequestContext<RoleServer>,

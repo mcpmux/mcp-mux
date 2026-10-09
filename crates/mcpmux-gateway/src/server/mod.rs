@@ -44,7 +44,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
 
 use crate::consumers::MCPNotifier;
-use crate::mcp::{mcp_oauth_middleware, McpMuxGatewayHandler};
+use crate::mcp::{mcp_oauth_middleware, reject_server_discover, McpMuxGatewayHandler};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
@@ -416,14 +416,15 @@ impl GatewayServer {
             http_cfg,
         );
 
-        // Wrap MCP service with OAuth middleware
-        let mcp_routes =
-            Router::new()
-                .nest_service("/mcp", mcp_service)
-                .layer(middleware::from_fn_with_state(
-                    Arc::new(self.services.clone()),
-                    mcp_oauth_middleware,
-                ));
+        // Wrap MCP service with OAuth middleware. server/discover is answered
+        // inside it, so unauthenticated requests still get the 401 first.
+        let mcp_routes = Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(middleware::from_fn(reject_server_discover))
+            .layer(middleware::from_fn_with_state(
+                Arc::new(self.services.clone()),
+                mcp_oauth_middleware,
+            ));
 
         // Client features endpoint (needs services, public)
         // Supports both DCR (simple IDs) and CIMD (URL-encoded IDs)

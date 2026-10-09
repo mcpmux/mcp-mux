@@ -13,7 +13,7 @@ use axum::{body::Body, http::Request, middleware, middleware::Next, response::Re
 use mcpmux_core::{DomainEvent, ServerDiscoveryService, ServerFeatureRepository, ServerLogManager};
 use mcpmux_gateway::{
     consumers::MCPNotifier,
-    mcp::{mcp_oauth_middleware, McpMuxGatewayHandler},
+    mcp::{mcp_oauth_middleware, reject_server_discover, McpMuxGatewayHandler},
     server::{DependenciesBuilder, GatewayState, ServiceContainer},
 };
 use mcpmux_storage::{InboundClient, InboundClientRepository, RegistrationType};
@@ -235,25 +235,32 @@ impl TestGateway {
             http_cfg,
         );
 
-        // Build the router. Normal tests bypass auth with a test middleware that
+        // Build the router as the gateway does. Normal tests bypass auth with a test middleware that
         // injects a fixed identity; the authless variant exercises the REAL
         // middleware with inbound auth disabled, so the gateway must mint an
         // anonymous identity itself and the handshake must still succeed.
-        let router =
-            if authless {
-                services.gateway_state.write().await.set_auth_disabled(true);
-                Router::new().nest_service("/mcp", mcp_service).layer(
-                    middleware::from_fn_with_state(services.clone(), mcp_oauth_middleware),
-                )
-            } else {
-                let test_ctx = Arc::new(TestOAuthContext {
-                    client_id: client_id.to_string(),
-                    space_id,
-                });
-                Router::new().nest_service("/mcp", mcp_service).layer(
-                    middleware::from_fn_with_state(test_ctx, test_oauth_middleware),
-                )
-            };
+        let router = if authless {
+            services.gateway_state.write().await.set_auth_disabled(true);
+            Router::new()
+                .nest_service("/mcp", mcp_service)
+                .layer(middleware::from_fn(reject_server_discover))
+                .layer(middleware::from_fn_with_state(
+                    services.clone(),
+                    mcp_oauth_middleware,
+                ))
+        } else {
+            let test_ctx = Arc::new(TestOAuthContext {
+                client_id: client_id.to_string(),
+                space_id,
+            });
+            Router::new()
+                .nest_service("/mcp", mcp_service)
+                .layer(middleware::from_fn(reject_server_discover))
+                .layer(middleware::from_fn_with_state(
+                    test_ctx,
+                    test_oauth_middleware,
+                ))
+        };
 
         // Bind to random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -507,12 +514,9 @@ async fn test_gateway_forwards_tools_changed_to_client() {
 // B2b: A client that prefers the 2026-07-28 protocol still gets a session
 // ============================================================================
 
-#[tokio::test(flavor = "multi_thread")]
-async fn client_preferring_sessionless_protocol_falls_back_to_a_session() {
-    // From 2026-07-28 the protocol has no sessions, so list_changed couldn't
-    // reach the client. The gateway doesn't offer that version: a client that
-    // probes with server/discover, and also speaks 2025-11-25, must fall back
-    // to initialize, open a session and get notifications as before.
+/// Connects with `lifecycle` and checks that the client ends up on 2025-11-25
+/// with a session that list_changed reaches.
+async fn assert_falls_back_to_a_session(lifecycle: ClientLifecycleMode) {
     let space_id = Uuid::new_v4();
     let client_id = Uuid::new_v4().to_string();
     let gw = TestGateway::start(&client_id, space_id).await;
@@ -524,16 +528,7 @@ async fn client_preferring_sessionless_protocol_falls_back_to_a_session() {
     let tools_changed = client_handler.tools_changed.clone();
     let transport = StreamableHttpClientTransport::from_uri(gw.url.clone());
     let client = client_handler
-        .serve_with_lifecycle(
-            transport,
-            ClientLifecycleMode::Auto {
-                preferred_versions: vec![
-                    ProtocolVersion::V_2026_07_28,
-                    ProtocolVersion::V_2025_11_25,
-                ],
-                legacy_version: None,
-            },
-        )
+        .serve_with_lifecycle(transport, lifecycle)
         .await
         .expect("client should connect to gateway");
 
@@ -562,6 +557,28 @@ async fn client_preferring_sessionless_protocol_falls_back_to_a_session() {
 
     client.cancel().await.ok();
     gw.shutdown();
+}
+
+// From 2026-07-28 the protocol has no sessions, so list_changed couldn't reach
+// the client. The gateway doesn't offer that version: a client that probes with
+// server/discover must fall back to initialize and a session, as it did before.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn client_preferring_sessionless_protocol_falls_back_to_a_session() {
+    assert_falls_back_to_a_session(ClientLifecycleMode::Auto {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+        legacy_version: Some(ProtocolVersion::V_2025_11_25),
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn client_also_offering_an_older_version_falls_back_to_a_session() {
+    assert_falls_back_to_a_session(ClientLifecycleMode::Auto {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28, ProtocolVersion::V_2025_11_25],
+        legacy_version: None,
+    })
+    .await;
 }
 
 // ============================================================================

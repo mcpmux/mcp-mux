@@ -1397,3 +1397,28 @@ async fn callback_from_another_issuer_is_rejected() {
     );
     assert!(!flow.has_tokens().await);
 }
+
+/// rmcp 3 rejects authorization server metadata without an `issuer`. McpMux
+/// accepts it as before: for the sign-in, and for the refresh after a restart,
+/// which discovers the metadata again.
+#[tokio::test]
+async fn server_without_an_issuer_signs_in_and_refreshes() {
+    let mock_server = MockServer::start().await;
+    mount_dcr_metadata_with(&mock_server, serde_json::json!({ "issuer": null })).await;
+    Mock::given(method("POST"))
+        .and(path("/register"))
+        .respond_with(registration_response(Some(CLIENT_SECRET)))
+        .mount(&mock_server)
+        .await;
+    mount_token_endpoint(&mock_server, ClientAuth::Basic).await;
+
+    let flow = Flow::new(&mock_server);
+    let event = flow.sign_in().await;
+    assert!(event.success, "sign-in failed: {:?}", event.error);
+
+    let access_token = flow
+        .access_token_after_restart()
+        .await
+        .expect("refresh should succeed without an issuer");
+    assert_eq!(access_token, "access-2");
+}

@@ -146,11 +146,15 @@ fn secret_values(
 
     fn looks_secret(name: &str) -> bool {
         let name = name.to_ascii_lowercase();
-        [
-            "key", "token", "secret", "pass", "auth", "cred", "cookie", "session", "pat",
-        ]
-        .iter()
-        .any(|word| name.contains(word))
+        let words = [
+            "key", "token", "secret", "pass", "auth", "cred", "cookie", "session",
+        ];
+        // "pat" (personal access token) only as a whole word: PATH and
+        // PATTERN aren't secrets.
+        words.iter().any(|word| name.contains(word))
+            || name
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|part| part == "pat")
     }
 
     fn add(values: &mut Vec<String>, value: &str, min: usize) {
@@ -286,6 +290,13 @@ mod tests {
             .insert("DEBUG".to_string(), "1".to_string());
         installed
             .env_overrides
+            .insert("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string());
+        installed.env_overrides.insert(
+            "GITHUB_PAT".to_string(),
+            "github_pat_0123456789".to_string(),
+        );
+        installed
+            .env_overrides
             .insert("NODE_ENV".to_string(), "production".to_string());
         installed.env_overrides.insert(
             "TLS_KEY".to_string(),
@@ -310,6 +321,7 @@ mod tests {
             // The value alone, so a server printing just the value is caught.
             "hunter2hunter2",
             "separate-token-value",
+            "github_pat_0123456789",
             // Each line of a multi-line key.
             "MIIEvQIBADANBgkqhkiG9w0B",
         ] {
@@ -323,6 +335,7 @@ mod tests {
             "eu-central-1",
             "1",
             "production",
+            "/usr/local/bin:/usr/bin",
             "--verbose",
             "/home/me/projects",
         ] {

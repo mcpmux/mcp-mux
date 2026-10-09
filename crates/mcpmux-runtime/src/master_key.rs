@@ -32,8 +32,7 @@ pub type Key = Zeroizing<[u8; KEY_SIZE]>;
 pub const KEY_RECORD_FILE: &str = "master-key.json";
 
 /// How many stored ciphertexts to try candidate keys against.
-#[cfg(not(windows))]
-const SAMPLE_LIMIT: usize = 64;
+pub(crate) const SAMPLE_LIMIT: usize = 64;
 
 /// Where a master key is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +98,67 @@ pub enum KeyChoiceError {
          aside to start over"
     )]
     NoMatchingKey { available: String },
+    #[error(
+        "the master key file (keys/master.key in the data directory) is missing, but \
+         McpMux's data is encrypted with it. Restore it from a backup and try again. \
+         McpMux will not create a new key: that would make the stored credentials \
+         unreadable. To start over on purpose, move the data directory aside"
+    )]
+    KeyFileMissing,
+}
+
+/// How many of `samples` `key` decrypts.
+fn decrypt_count(key: &Key, samples: &[String]) -> usize {
+    match FieldEncryptor::new(key) {
+        Ok(encryptor) => samples
+            .iter()
+            .filter(|s| encryptor.decrypt(s).is_ok())
+            .count(),
+        Err(_) => 0,
+    }
+}
+
+/// How many of `samples` `key` can't decrypt: stored secrets written with
+/// another key, which stay unreadable.
+pub fn unreadable_samples(key: &Key, samples: &[String]) -> usize {
+    samples.len() - decrypt_count(key, samples)
+}
+
+/// Warn when some stored secrets are encrypted with a different key than
+/// the one in use (e.g. a key was replaced at some point).
+pub(crate) fn warn_if_partly_unreadable(key: &Key, samples: &[String]) {
+    let unreadable = unreadable_samples(key, samples);
+    if unreadable > 0 {
+        tracing::warn!(
+            decrypted = samples.len() - unreadable,
+            total = samples.len(),
+            "some stored secrets are encrypted with a different key and can't be read; \
+             sign in to or reconfigure the affected servers"
+        );
+    }
+}
+
+/// Where there is a single key and nothing to choose between (DPAPI on
+/// Windows): use the key when it reads the stored data, and create one only
+/// when nothing encrypted is stored yet. `existing` is the key already
+/// kept, `create` makes a new one.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn guard_single_key(
+    existing: Option<Key>,
+    samples: &[String],
+    create: impl FnOnce() -> anyhow::Result<Key>,
+) -> anyhow::Result<Key> {
+    match existing {
+        Some(key) if !samples.is_empty() && decrypt_count(&key, samples) == 0 => {
+            Err(KeyChoiceError::NoMatchingKey {
+                available: "the DPAPI key file".to_string(),
+            }
+            .into())
+        }
+        Some(key) => Ok(key),
+        None if !samples.is_empty() => Err(KeyChoiceError::KeyFileMissing.into()),
+        None => create(),
+    }
 }
 
 /// Decide which master key to use. Pure: every input is passed in, so it
@@ -159,16 +219,9 @@ pub fn choose_master_key(
 
     // 2. No record: the key that decrypts the stored data.
     if !samples.is_empty() {
-        let decrypts = |key: &Key| match FieldEncryptor::new(key) {
-            Ok(encryptor) => samples
-                .iter()
-                .filter(|s| encryptor.decrypt(s).is_ok())
-                .count(),
-            Err(_) => 0,
-        };
         let mut best: Option<(KeySource, usize)> = None;
         for (source, key) in &candidates {
-            let count = decrypts(key);
+            let count = decrypt_count(key, samples);
             if count > 0 && best.is_none_or(|(_, b)| count > b) {
                 best = Some((*source, count));
             }
@@ -232,7 +285,8 @@ pub fn read_key_record(data_dir: &Path) -> anyhow::Result<Option<KeyRecord>> {
     match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| {
             anyhow::anyhow!(
-                "{} is unreadable ({e}); fix or remove it to continue",
+                "{} is unreadable ({e}). Restore it from a backup; removing it makes \
+                 McpMux re-detect the key from the stored data",
                 path.display()
             )
         }),
@@ -243,9 +297,15 @@ pub fn read_key_record(data_dir: &Path) -> anyhow::Result<Option<KeyRecord>> {
 
 #[cfg_attr(windows, allow(dead_code))]
 fn write_key_record(data_dir: &Path, record: &KeyRecord) -> anyhow::Result<()> {
+    use std::io::Write;
     let path = record_path(data_dir);
     let tmp = data_dir.join(format!(".{KEY_RECORD_FILE}.tmp"));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(record)?)?;
+    // On disk before the rename: a crash must not leave an empty record,
+    // which would stop McpMux from starting.
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(&serde_json::to_vec_pretty(record)?)?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&tmp, &path)?;
     Ok(())
 }
@@ -270,7 +330,18 @@ pub fn resolve_master_key(
     let file_key = if allowed.contains(&KeySource::File)
         && data_dir.join("keys").join("master.key").exists()
     {
-        mcpmux_storage::FileKeyProvider::new(data_dir)?.get_existing_key()?
+        match mcpmux_storage::FileKeyProvider::new(data_dir)
+            .and_then(|provider| provider.get_existing_key())
+        {
+            Ok(key) => key,
+            // The data uses the keychain key; a leftover key file that
+            // can't be read doesn't matter.
+            Err(e) if record.as_ref().map(|r| r.source) == Some(KeySource::Keychain) => {
+                tracing::warn!("ignoring an unreadable stale keys/master.key: {e}");
+                None
+            }
+            Err(e) => return Err(e),
+        }
     } else {
         None
     };
@@ -307,6 +378,7 @@ pub fn resolve_master_key(
         KeyChoice::Create(KeySource::File) => (create_file_key(data_dir)?, KeySource::File),
     };
 
+    warn_if_partly_unreadable(&key, &samples);
     let current = KeyRecord {
         source,
         fingerprint: key_fingerprint(&key),
@@ -536,6 +608,79 @@ mod tests {
             "{err}"
         );
         assert!(!tmp.path().join("keys/master.key").exists());
+    }
+
+    #[test]
+    fn a_single_key_is_only_created_when_nothing_is_encrypted() {
+        let kept = key(1);
+        let samples = ciphertexts(&kept, 3);
+        let created = Cell::new(false);
+        let create = || {
+            created.set(true);
+            Ok(key(9))
+        };
+
+        // No key file, but data encrypted with one: refuse.
+        let err = guard_single_key(None, &samples, create).unwrap_err();
+        assert!(err.to_string().contains("is missing"), "{err}");
+        assert!(!created.get());
+
+        // A key file that reads none of the data: refuse.
+        let err = guard_single_key(Some(key(2)), &samples, || Ok(key(9))).unwrap_err();
+        assert!(err.to_string().contains("none of the available"), "{err}");
+
+        // The right key, or a fresh install.
+        assert_eq!(
+            *guard_single_key(Some(key(1)), &samples, || Ok(key(9))).unwrap(),
+            *kept
+        );
+        let created = Cell::new(false);
+        let fresh = guard_single_key(None, &[], || {
+            created.set(true);
+            Ok(key(9))
+        })
+        .unwrap();
+        assert!(created.get());
+        assert_eq!(*fresh, *key(9));
+    }
+
+    #[test]
+    fn secrets_written_with_another_key_are_counted() {
+        let (kept, other) = (key(1), key(2));
+        let mut samples = ciphertexts(&kept, 4);
+        samples.extend(ciphertexts(&other, 2));
+        assert_eq!(unreadable_samples(&kept, &samples), 2);
+        assert_eq!(unreadable_samples(&kept, &ciphertexts(&kept, 3)), 0);
+    }
+
+    #[test]
+    fn an_unreadable_leftover_key_file_is_ignored_when_the_keychain_key_is_recorded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kc = key(1);
+        let db = database_with_ciphertext(tmp.path(), &kc);
+        write_key_record(tmp.path(), &record(KeySource::Keychain, &kc)).unwrap();
+        std::fs::create_dir_all(tmp.path().join("keys")).unwrap();
+        std::fs::write(tmp.path().join("keys/master.key"), b"corrupt").unwrap();
+        let keychain = FakeKeychain {
+            lookup: || KeychainLookup::Found(key(1)),
+            created: Cell::new(false),
+        };
+
+        let (k, source) = resolve_master_key(tmp.path(), &db, AUTO, &keychain).unwrap();
+        assert_eq!(source, KeySource::Keychain);
+        assert_eq!(*k, *kc);
+    }
+
+    #[test]
+    fn the_record_is_replaced_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_key_record(tmp.path(), &record(KeySource::File, &key(1))).unwrap();
+        write_key_record(tmp.path(), &record(KeySource::Keychain, &key(2))).unwrap();
+        assert_eq!(
+            read_key_record(tmp.path()).unwrap(),
+            Some(record(KeySource::Keychain, &key(2)))
+        );
+        assert!(!tmp.path().join(format!(".{KEY_RECORD_FILE}.tmp")).exists());
     }
 
     #[test]

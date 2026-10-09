@@ -31,3 +31,16 @@ updates:
       cargo-security:
         applies-to: security-updates
         patterns: ['*']
+
+  # Keeps the SHA-pinned actions (e.g. in claude.yml) on current releases.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: ci
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns: ['*']

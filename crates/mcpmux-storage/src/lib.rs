@@ -35,7 +35,7 @@
 //! use std::sync::Arc;
 //! use tokio::sync::Mutex;
 //!
-//! // Get master key (DPAPI on Windows, OS Keychain elsewhere)
+//! // Get master key (DPAPI on Windows; elsewhere the runtime picks it)
 //! let key_provider = mcpmux_storage::create_key_provider(&data_dir)?;
 //! let master_key = key_provider.get_or_create_key()?;
 //!
@@ -80,40 +80,22 @@ pub fn default_database_path() -> Option<std::path::PathBuf> {
     dirs::data_local_dir().map(|p| p.join("mcpmux").join(DATABASE_FILE))
 }
 
-/// Create the platform-appropriate master key provider.
+/// Create the Windows master key provider: DPAPI file-based storage (key
+/// not visible in Credential Manager UI). Also migrates existing keys from
+/// Credential Manager on first use.
 ///
-/// - **Windows**: Uses DPAPI file-based storage (key not visible in Credential Manager UI).
-///   Also migrates existing keys from Credential Manager on first use.
-/// - **macOS/Linux**: Uses the OS keychain (Keychain / Secret Service).
+/// Windows only. On macOS and Linux the runtime chooses between the OS
+/// keychain and the key file itself (`mcpmux_runtime::master_key`), so a
+/// keychain failure can't silently switch the data to a new key.
+#[cfg(windows)]
 pub fn create_key_provider(
     data_dir: &std::path::Path,
 ) -> anyhow::Result<Box<dyn MasterKeyProvider>> {
-    #[cfg(windows)]
-    {
-        // Migrate any existing keys from Credential Manager to DPAPI files
-        if let Err(e) = keychain_dpapi::migrate_from_credential_manager(data_dir) {
-            tracing::warn!("Credential Manager migration encountered an error: {}", e);
-        }
-        Ok(Box::new(DpapiKeyProvider::new(data_dir)?))
+    // Migrate any existing keys from Credential Manager to DPAPI files
+    if let Err(e) = keychain_dpapi::migrate_from_credential_manager(data_dir) {
+        tracing::warn!("Credential Manager migration encountered an error: {}", e);
     }
-
-    #[cfg(not(windows))]
-    {
-        // Try OS keychain first, fall back to file-based storage if unavailable
-        match KeychainKeyProvider::new() {
-            Ok(provider) => match provider.get_or_create_key() {
-                Ok(_) => return Ok(Box::new(provider)),
-                Err(e) => tracing::warn!(
-                    "OS keychain unavailable ({e}), using file-based key storage. \
-                     For better security, install gnome-keyring or another Secret Service provider."
-                ),
-            },
-            Err(e) => {
-                tracing::warn!("OS keychain unavailable ({e}), using file-based key storage.")
-            }
-        }
-        Ok(Box::new(FileKeyProvider::new(data_dir)?))
-    }
+    Ok(Box::new(DpapiKeyProvider::new(data_dir)?))
 }
 
 /// Create the platform-appropriate JWT secret provider.

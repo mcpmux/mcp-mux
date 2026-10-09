@@ -573,6 +573,11 @@ pub struct ConfigExportParams {
     pub server_id: String,
     #[serde(default)]
     pub space_id: Option<String>,
+    /// Resolve `${input:…}` values and include env/header/argument
+    /// overrides verbatim. Off by default: the export then keeps the
+    /// placeholders and shows overrides as `<redacted>`.
+    #[serde(default)]
+    pub include_secrets: bool,
 }
 
 /// `port.set` persists a custom gateway port. The daemon must be restarted for
@@ -742,6 +747,11 @@ pub struct ConfigImportResponse {
     /// Backup path written before a non-dry-run import.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<String>,
+    /// What each server in the document runs: its command line (stdio) or
+    /// URL (HTTP), keyed by the document's server key. Shown before an
+    /// import is confirmed.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub launches: std::collections::BTreeMap<String, String>,
 }
 
 /// `workspace.config` response. The snippet includes the

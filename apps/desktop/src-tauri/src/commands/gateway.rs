@@ -184,29 +184,54 @@ pub(crate) async fn load_network_access(app_state: &AppState) -> bool {
     load_network_access_from_repo(&app_state.settings_repository).await
 }
 
-/// Whether inbound auth is off. An explicit choice in Settings wins. With no
-/// choice stored, auth is off while only this machine can reach the gateway
-/// (loopback bind, no public URL) — a new user connects an app and it just
-/// works — and back on as soon as the gateway is opened to a network or a
-/// public URL, so the easy default never exposes tools beyond this computer.
-/// (Web pages on this machine are kept out by the gateway's Origin guard.)
+/// Whether the gateway is configured to be reachable from other machines:
+/// bound to all interfaces, or published at a public URL.
+pub(crate) async fn gateway_exposure_configured(
+    settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
+) -> bool {
+    load_network_access_from_repo(settings_repository).await
+        || load_public_base_url_from_repo(settings_repository)
+            .await
+            .is_some()
+}
+
+/// Why inbound auth can't be turned off, if it can't: the settings expose the
+/// gateway, or the running gateway is still exposed (exposure changes only
+/// apply on restart).
+fn auth_off_refusal(exposure_configured: bool, running_exposed: bool) -> Option<&'static str> {
+    if exposure_configured {
+        Some(
+            "Authentication can't be turned off while the gateway is reachable from other \
+             machines. Turn off network access and remove the public URL first.",
+        )
+    } else if running_exposed {
+        Some(
+            "Authentication can't be turned off yet: the running gateway is still reachable \
+             from other machines. Restart the gateway first.",
+        )
+    } else {
+        None
+    }
+}
+
+/// Whether inbound auth is off. Auth is always on while the gateway is
+/// reachable from other machines (network bind or public URL), whatever was
+/// chosen earlier. While only this machine can reach it, an explicit choice in
+/// Settings wins, and with no choice stored auth is off — a new user connects
+/// an app and it just works. (Web pages on this machine are kept out by the
+/// gateway's Origin guard.)
 pub(crate) async fn load_gateway_auth_disabled_from_repo(
     settings_repository: &Arc<dyn mcpmux_core::AppSettingsRepository>,
 ) -> bool {
-    let stored = settings_repository
+    if gateway_exposure_configured(settings_repository).await {
+        return false;
+    }
+    settings_repository
         .get(GATEWAY_AUTH_DISABLED_KEY)
         .await
         .ok()
-        .flatten();
-    match stored {
-        Some(value) => value == "true",
-        None => {
-            !load_network_access_from_repo(settings_repository).await
-                && load_public_base_url_from_repo(settings_repository)
-                    .await
-                    .is_none()
-        }
-    }
+        .flatten()
+        .is_none_or(|value| value == "true")
 }
 
 pub(crate) async fn load_gateway_auth_disabled(app_state: &AppState) -> bool {
@@ -1221,6 +1246,19 @@ pub async fn set_gateway_auth_disabled(
     app_state: State<'_, AppState>,
     gateway_state: State<'_, Arc<RwLock<GatewayAppState>>>,
 ) -> Result<bool, String> {
+    if disabled {
+        let configured = gateway_exposure_configured(&app_state.settings_repository).await;
+        let running = {
+            let state = gateway_state.read().await;
+            match state.gateway_state {
+                Some(ref gw) => gw.read().await.exposed(),
+                None => false,
+            }
+        };
+        if let Some(reason) = auth_off_refusal(configured, running) {
+            return Err(reason.to_string());
+        }
+    }
     app_state
         .settings_repository
         .set(GATEWAY_AUTH_DISABLED_KEY, &disabled.to_string())
@@ -1991,7 +2029,19 @@ mod public_base_url_tests {
 
 #[cfg(test)]
 mod gateway_auth_settings_tests {
-    use super::{load_gateway_auth_disabled_from_repo, GATEWAY_AUTH_DISABLED_KEY};
+    use super::{
+        auth_off_refusal, load_gateway_auth_disabled_from_repo, GATEWAY_AUTH_DISABLED_KEY,
+    };
+
+    #[test]
+    fn auth_can_only_be_turned_off_on_a_gateway_that_is_and_will_stay_local() {
+        assert!(auth_off_refusal(false, false).is_none());
+        assert!(auth_off_refusal(true, false).is_some());
+        // Exposure turned off in settings, gateway not restarted yet.
+        assert!(auth_off_refusal(false, true)
+            .is_some_and(|reason| reason.contains("Restart the gateway")));
+        assert!(auth_off_refusal(true, true).is_some());
+    }
     use mcpmux_core::AppSettingsRepository;
     use mcpmux_storage::{Database, SqliteAppSettingsRepository};
     use std::sync::Arc;
@@ -2037,7 +2087,7 @@ mod gateway_auth_settings_tests {
     }
 
     #[tokio::test]
-    async fn explicit_choice_wins_over_the_default() {
+    async fn explicit_choice_wins_over_the_default_while_local() {
         let repository = settings_repo();
         repository
             .set(GATEWAY_AUTH_DISABLED_KEY, "false")
@@ -2045,17 +2095,41 @@ mod gateway_auth_settings_tests {
             .unwrap();
         assert!(!load_gateway_auth_disabled_from_repo(&repository).await);
 
-        // An explicit "off" is honored even on a network-exposed gateway: the
-        // user chose it and Settings shows a warning.
-        repository
-            .set(super::GATEWAY_NETWORK_ACCESS_KEY, "true")
-            .await
-            .unwrap();
         repository
             .set(GATEWAY_AUTH_DISABLED_KEY, "true")
             .await
             .unwrap();
         assert!(load_gateway_auth_disabled_from_repo(&repository).await);
+    }
+
+    #[tokio::test]
+    async fn auth_is_always_on_while_the_gateway_is_exposed() {
+        let repository = settings_repo();
+        repository
+            .set(GATEWAY_AUTH_DISABLED_KEY, "true")
+            .await
+            .unwrap();
+
+        // An earlier explicit "off" does not survive opening the gateway up.
+        repository
+            .set(super::GATEWAY_NETWORK_ACCESS_KEY, "true")
+            .await
+            .unwrap();
+        assert!(!load_gateway_auth_disabled_from_repo(&repository).await);
+
+        repository
+            .set(super::GATEWAY_NETWORK_ACCESS_KEY, "false")
+            .await
+            .unwrap();
+        repository
+            .set(
+                super::GATEWAY_PUBLIC_BASE_URL_KEY,
+                "https://mux.example.com",
+            )
+            .await
+            .unwrap();
+        assert!(!load_gateway_auth_disabled_from_repo(&repository).await);
+        assert!(super::gateway_exposure_configured(&repository).await);
     }
 
     #[tokio::test]

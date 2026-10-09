@@ -65,6 +65,14 @@ The generated unit uses the exact executable that ran service install and
 preserves supplied options such as --data-dir, --port, --registry-url,
 --log-dir, --log-filter, and --public-base-url.
 
+The data directory's master-key.json records which key (OS keychain or key
+file) the stored credentials are encrypted with, as a one-way fingerprint. If
+that key can't be loaded, for example because the keyring is locked or the key
+file was deleted, McpMux refuses to start instead of creating a new key that
+would make the stored credentials unreadable. Unlock the keyring or restore the
+key file and start again; to start over on purpose, move the data directory
+aside.
+
 Use --key-provider file on a headless Linux host. It keeps master and JWT keys
 under the selected data directory with owner-only file permissions.
 
@@ -102,8 +110,15 @@ Confirm that the socket remains loopback-only:
 
     ss -ltnp '( sport = :45818 )'
 
-The listening address must be 127.0.0.1:45818. Do not use
---auth-disabled in a persistent deployment.
+The listening address must be 127.0.0.1:45818. `--auth-disabled` is for
+one-off local runs only: `mcpmuxd service install` refuses it, and the daemon
+refuses to start with both `--auth-disabled` and `--public-base-url`.
+
+A unit installed by an older version may still pass `--auth-disabled`. If it
+also passes `--public-base-url`, the daemon now exits at start and systemd
+restarts it in a loop. Re-run `mcpmuxd service install` (without
+`--auth-disabled`) to regenerate the unit, then
+`systemctl --user daemon-reload && systemctl --user restart mcpmux.service`.
 
 ## Remote operator access
 
@@ -242,13 +257,19 @@ Supported snippet clients are `cursor`, `claude-code`, `vscode`, `opencode`,
 Codex only loads a project's `.codex/` config once that project is trusted in
 Codex. Client config export and validation are also available:
 
-    mcpmux-cli config export --format cursor --server <registry-server-id>
+    mcpmux-cli config export --format cursor --server <registry-server-id> [--include-secrets]
     mcpmux-cli config export-space --space <space-id> --out space.json
     mcpmux-cli config import space.json --space <space-id> [--dry-run]
     mcpmux-cli config validate /path/to/mcp.json
 
+`config export` leaves `${input:…}` placeholders unresolved and shows env,
+header and argument overrides as `<redacted>`; pass --include-secrets to get a
+config with the stored values filled in.
+
 Move a whole Space's server set between profiles or hosts with a portable
-`mcpServers` document (transport only — no credentials):
+`mcpServers` document (transport only — no credentials; literal env and header
+values are exported as `${input:…}` placeholders; after importing, set them
+with `mcpmux-cli servers configure`):
 
     # Export every server installed in a Space.
     mcpmux-cli config export-space --space <space-id> --out space.json
@@ -257,9 +278,13 @@ Move a whole Space's server set between profiles or hosts with a portable
     mcpmux-cli config import space.json --space <space-id> --dry-run
     mcpmux-cli config import space.json --space <space-id>
 
-`config import` rejects malformed input before touching storage, backs up the
-target Space's config file to `<space>.json.mcpmux-bak`, and applies a 3-way
-diff (added / updated / removed) — new servers are enabled automatically. Point
+`config import` rejects malformed input before touching storage, shows what it
+will add, change and remove and the command or URL each server runs (with the
+names of the env vars it sets), and asks
+for confirmation (--yes skips the question). It then backs up the target
+Space's config file to `<space>.json.mcpmux-bak` and applies the 3-way diff;
+new servers are enabled automatically. Files written with --out are
+owner-only (0600). Point
 Desktop and mcpmuxd at the same data directory only one at a time; the
 exclusive lock refuses the second process.
 

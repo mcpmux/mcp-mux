@@ -30,6 +30,7 @@ vi.mock('@/stores', () => ({ useNavigateTo: () => navigateToSpy }));
 
 import { invoke } from '@tauri-apps/api/core';
 import { MetaToolApprovalDialog } from '@/features/metaTools/MetaToolApprovalDialog';
+import { formatRawArgs } from '@/lib/approvalArgs';
 
 async function emitRequest(payload: Record<string, unknown>) {
   await act(async () => {
@@ -49,7 +50,7 @@ describe('MetaToolApprovalDialog', () => {
   beforeEach(() => {
     handlers.clear();
     navigateToSpy.mockClear();
-    vi.mocked(invoke).mockClear();
+    vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
   });
 
   it('names the target Space when present', async () => {
@@ -77,6 +78,73 @@ describe('MetaToolApprovalDialog', () => {
     });
     expect(screen.getByTestId('meta-tool-approval-dialog')).toBeInTheDocument();
     expect(screen.queryByTestId('meta-tool-approval-space')).toBeNull();
+  });
+
+  it('offers "Always" only when the gateway allows a standing grant', async () => {
+    const { unmount } = render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_manage_feature_set',
+      summary: 'Create FeatureSet',
+      diff: null,
+      raw_args: {},
+      affects_other_clients: false,
+      action: 'create',
+      allow_always: true,
+    });
+    expect(screen.getByTestId('meta-tool-approval-always')).toHaveTextContent(
+      'Always (until restart)'
+    );
+    unmount();
+    handlers.clear();
+
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_bind_current_workspace',
+      summary: 'Move workspace',
+      diff: null,
+      raw_args: {},
+      affects_other_clients: true,
+      allow_always: false,
+    });
+    expect(screen.getByTestId('meta-tool-approval-dialog')).toBeInTheDocument();
+    expect(screen.queryByTestId('meta-tool-approval-always')).toBeNull();
+  });
+
+  it('names a tokenless caller as such', async () => {
+    render(<MetaToolApprovalDialog />);
+    await act(async () => {
+      handlers.get('meta-tool-approval-request')?.({
+        payload: {
+          request_id: 'req-anon',
+          client_id: 'mcpmux-anonymous',
+          payload: {
+            tool_name: 'mcpmux_manage_feature_set',
+            summary: 'Create FeatureSet',
+            diff: null,
+            raw_args: {},
+            affects_other_clients: false,
+          },
+          expires_at_unix_secs: 9_999_999_999,
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('meta-tool-approval-client')).toHaveTextContent(
+      'a tokenless local connection'
+    );
+  });
+
+  it('shows a deleted set as deleted, not as zero tools', async () => {
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_manage_feature_set',
+      summary: "Delete FeatureSet 'X'",
+      diff: { before: ['a_one', 'b_two'], after: [], added: [], removed: ['a_one', 'b_two'] },
+      raw_args: {},
+      affects_other_clients: true,
+      action: 'delete',
+    });
+    expect(screen.getByText('deleted')).toBeInTheDocument();
   });
 
   it('renders a freeform { added_tools } diff without crashing', async () => {
@@ -113,5 +181,75 @@ describe('MetaToolApprovalDialog', () => {
     );
     // ...and the user lands on the tab that hosts the approval toggle.
     expect(navigateToSpy).toHaveBeenCalledWith('builtin-servers');
+  });
+
+  it('names the requesting client from McpMux’s own client list', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) =>
+      cmd === 'get_oauth_clients'
+        ? [
+            { client_id: 'other', client_name: 'Other', client_alias: null },
+            { client_id: 'client-1', client_name: 'Cursor', client_alias: 'Work laptop' },
+          ]
+        : undefined
+    );
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_manage_feature_set',
+      summary: 'Create FeatureSet',
+      diff: null,
+      raw_args: {},
+      affects_other_clients: false,
+    });
+    const line = await screen.findByTestId('meta-tool-approval-client');
+    await vi.waitFor(() => expect(line).toHaveTextContent('Requested by Work laptop (client-1)'));
+  });
+
+  it('says so when the requesting client is not in the list', async () => {
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_manage_feature_set',
+      summary: 'Create FeatureSet',
+      diff: null,
+      raw_args: {},
+      affects_other_clients: false,
+    });
+    expect(screen.getByTestId('meta-tool-approval-client')).toHaveTextContent(
+      'Requested by an unknown client (client-1)'
+    );
+  });
+
+  it('shows the raw arguments as text', async () => {
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_manage_feature_set',
+      summary: 'Update FeatureSet',
+      diff: null,
+      raw_args: { action: 'update', name: '<img src=x onerror=alert(1)>' },
+      affects_other_clients: true,
+    });
+    const args = screen.getByTestId('meta-tool-approval-args');
+    expect(args).toHaveTextContent('"name": "<img src=x onerror=alert(1)>"');
+    expect(args.querySelector('img')).toBeNull();
+  });
+
+  it('caps long argument dumps', () => {
+    const text = formatRawArgs({ blob: 'x'.repeat(10_000) });
+    expect(text.length).toBeLessThanOrEqual(4002);
+    expect(text.endsWith('…')).toBe(true);
+    expect(formatRawArgs(undefined)).toBe('null');
+  });
+
+  it('shows no "before" count for a first-time bind', async () => {
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_bind_current_workspace',
+      summary: 'Bind this folder',
+      diff: { after: ['gh_create_issue'], added: ['gh_create_issue'], removed: [] },
+      raw_args: {},
+      affects_other_clients: true,
+    });
+    expect(screen.getByText('Before').nextSibling).toHaveTextContent('—');
+    expect(screen.getByText('After').nextSibling).toHaveTextContent('1');
+    expect(screen.getByText(/\+ gh_create_issue/)).toBeInTheDocument();
   });
 });

@@ -8,8 +8,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -57,8 +58,12 @@ pub struct GatewayState {
     pub access_keys: HashMap<String, Uuid>,
     /// OAuth tokens per server (in-memory cache)
     pub oauth_tokens: HashMap<String, super::super::oauth::OAuthToken>,
-    /// Pending authorization codes (code -> PendingAuthorization)
-    pub pending_authorizations: HashMap<String, PendingAuthorization>,
+    /// Consent requests waiting for the user (request_id -> request). Kept
+    /// apart from `authorization_codes` so a request_id can never be redeemed
+    /// at the token endpoint.
+    pending_consents: HashMap<String, PendingAuthorization>,
+    /// Authorization codes issued after the user approved (code -> request).
+    authorization_codes: HashMap<String, PendingAuthorization>,
     /// JWT signing secret (for issuing access tokens)
     pub jwt_signing_secret: Option<Zeroizing<[u8; JWT_SECRET_SIZE]>>,
     /// Database connection (for persistent OAuth storage)
@@ -76,6 +81,27 @@ pub struct GatewayState {
     auth_disabled: bool,
 }
 
+/// How long an issued authorization code can be redeemed, in seconds.
+pub const AUTHORIZATION_CODE_TTL_SECS: i64 = 600;
+
+/// Why a consent request could not be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsentLookupError {
+    /// No consent request with that id (never existed, or already answered).
+    NotFound,
+    /// The consent request is past its expiry.
+    Expired,
+    /// The consent token does not match the one issued for the request.
+    TokenMismatch,
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 impl GatewayState {
     /// Create new gateway state with provided event sender
     pub fn new(domain_event_tx: broadcast::Sender<DomainEvent>) -> Self {
@@ -86,7 +112,8 @@ impl GatewayState {
             sessions: HashMap::new(),
             access_keys: HashMap::new(),
             oauth_tokens: HashMap::new(),
-            pending_authorizations: HashMap::new(),
+            pending_consents: HashMap::new(),
+            authorization_codes: HashMap::new(),
             jwt_signing_secret: None,
             db: None,
             inbound_client_repository: None,
@@ -112,20 +139,40 @@ impl GatewayState {
         self.network_bind = network_bind;
     }
 
+    /// Whether this gateway is reachable from other machines: bound to a
+    /// non-loopback address, or advertised under a public URL (a tunnel).
+    /// Fixed for the gateway's lifetime: both take effect only on restart.
+    pub fn exposed(&self) -> bool {
+        self.network_bind
+            || self
+                .public_base_url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty())
+    }
+
     /// Whether inbound MCP auth is disabled — connections may be accepted
-    /// without a Bearer token. See [`Self::auth_disabled`] field docs.
+    /// without a Bearer token. Never true on an exposed gateway, whatever the
+    /// setting says (e.g. exposure was turned off in settings but the running
+    /// gateway hasn't restarted yet). See [`Self::auth_disabled`] field docs.
     pub fn auth_disabled(&self) -> bool {
-        self.auth_disabled
+        self.auth_disabled && !self.exposed()
     }
 
     /// Enable/disable system-wide inbound auth. Called at startup (seed from
     /// settings) and live from the desktop toggle.
     pub fn set_auth_disabled(&mut self, disabled: bool) {
         if self.auth_disabled != disabled {
-            info!(
-                "[State] Inbound auth {}",
-                if disabled { "DISABLED" } else { "enabled" }
-            );
+            if disabled && self.exposed() {
+                warn!(
+                    "[State] Inbound auth stays required: this gateway is reachable \
+                     from the network until it restarts"
+                );
+            } else {
+                info!(
+                    "[State] Inbound auth {}",
+                    if disabled { "DISABLED" } else { "enabled" }
+                );
+            }
         }
         self.auth_disabled = disabled;
     }
@@ -203,25 +250,105 @@ impl GatewayState {
         self.jwt_signing_secret.is_some()
     }
 
-    /// Store a pending authorization (for code -> token exchange)
-    pub fn store_pending_authorization(&mut self, code: &str, auth: PendingAuthorization) {
-        debug!(
-            "[State] Storing pending authorization for code: {}...",
-            &code[..code.len().min(16)]
-        );
-        self.pending_authorizations.insert(code.to_string(), auth);
+    /// Store a consent request until the user approves or denies it in the
+    /// desktop app. Expired requests and codes are dropped first.
+    pub fn store_pending_consent(&mut self, request_id: &str, request: PendingAuthorization) {
+        self.prune_expired_oauth_entries();
+        self.pending_consents
+            .insert(request_id.to_string(), request);
     }
 
-    /// Consume a pending authorization (one-time use)
-    pub fn consume_pending_authorization(&mut self, code: &str) -> Option<PendingAuthorization> {
-        let result = self.pending_authorizations.remove(code);
-        if result.is_some() {
-            debug!(
-                "[State] Consumed pending authorization for code: {}...",
-                &code[..code.len().min(16)]
-            );
+    /// Look up a consent request without consuming it (for showing the
+    /// consent dialog). An expired request is removed and reported as such.
+    pub fn lookup_pending_consent(
+        &mut self,
+        request_id: &str,
+    ) -> Result<PendingAuthorization, ConsentLookupError> {
+        let request = self
+            .pending_consents
+            .get(request_id)
+            .ok_or(ConsentLookupError::NotFound)?;
+        if request.expires_at < unix_now() {
+            self.pending_consents.remove(request_id);
+            return Err(ConsentLookupError::Expired);
         }
-        result
+        Ok(request.clone())
+    }
+
+    /// Atomically check the consent token and remove the consent request, so
+    /// it can be answered exactly once. A wrong token leaves the request in
+    /// place.
+    pub fn take_pending_consent(
+        &mut self,
+        request_id: &str,
+        consent_token: &str,
+    ) -> Result<PendingAuthorization, ConsentLookupError> {
+        let request = self
+            .pending_consents
+            .get(request_id)
+            .ok_or(ConsentLookupError::NotFound)?;
+        let token_matches = request.consent_token.as_deref().is_some_and(|expected| {
+            bool::from(expected.as_bytes().ct_eq(consent_token.as_bytes()))
+        });
+        if !token_matches {
+            return Err(ConsentLookupError::TokenMismatch);
+        }
+        let request = self
+            .pending_consents
+            .remove(request_id)
+            .ok_or(ConsentLookupError::NotFound)?;
+        if request.expires_at < unix_now() {
+            return Err(ConsentLookupError::Expired);
+        }
+        Ok(request)
+    }
+
+    /// Remove a consent request without a consent token. Only for the
+    /// test-mode HTTP approval endpoint, which has no access to the token.
+    pub fn take_pending_consent_without_token(
+        &mut self,
+        request_id: &str,
+    ) -> Result<PendingAuthorization, ConsentLookupError> {
+        let request = self
+            .pending_consents
+            .remove(request_id)
+            .ok_or(ConsentLookupError::NotFound)?;
+        if request.expires_at < unix_now() {
+            return Err(ConsentLookupError::Expired);
+        }
+        Ok(request)
+    }
+
+    /// Issue a one-time authorization code for an approved consent request.
+    pub fn issue_authorization_code(&mut self, approved: &PendingAuthorization) -> String {
+        self.prune_expired_oauth_entries();
+        let code = format!("mc_{}", Uuid::new_v4().simple());
+        self.authorization_codes.insert(
+            code.clone(),
+            PendingAuthorization {
+                expires_at: unix_now() + AUTHORIZATION_CODE_TTL_SECS,
+                consent_token: None,
+                ..approved.clone()
+            },
+        );
+        code
+    }
+
+    /// Consume an authorization code (one-time use). Returns `None` for an
+    /// unknown or expired code; consent request ids are never accepted.
+    pub fn consume_authorization_code(&mut self, code: &str) -> Option<PendingAuthorization> {
+        let entry = self.authorization_codes.remove(code)?;
+        if entry.expires_at < unix_now() {
+            debug!("[State] Rejected expired authorization code");
+            return None;
+        }
+        Some(entry)
+    }
+
+    fn prune_expired_oauth_entries(&mut self) {
+        let now = unix_now();
+        self.pending_consents.retain(|_, r| r.expires_at >= now);
+        self.authorization_codes.retain(|_, r| r.expires_at >= now);
     }
 
     /// Register an access key for a client
@@ -313,6 +440,141 @@ impl Default for GatewayState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn consent_request(expires_at: i64) -> PendingAuthorization {
+        PendingAuthorization {
+            client_id: "mcp_client".to_string(),
+            client_name: Some("Client".to_string()),
+            redirect_uri: "http://127.0.0.1:8765/callback".to_string(),
+            scope: None,
+            state: Some("st".to_string()),
+            code_challenge: Some("c".repeat(43)),
+            code_challenge_method: Some("S256".to_string()),
+            expires_at,
+            consent_token: Some("consent-token".to_string()),
+        }
+    }
+
+    #[test]
+    fn consent_request_id_is_not_an_authorization_code() {
+        let mut state = GatewayState::default();
+        state.store_pending_consent("req-1", consent_request(unix_now() + 300));
+
+        assert!(state.consume_authorization_code("req-1").is_none());
+        // The consent request itself is still there for the desktop app.
+        assert!(state.lookup_pending_consent("req-1").is_ok());
+    }
+
+    #[test]
+    fn approved_consent_yields_a_single_use_code() {
+        let mut state = GatewayState::default();
+        state.store_pending_consent("req-1", consent_request(unix_now() + 300));
+
+        let approved = state
+            .take_pending_consent("req-1", "consent-token")
+            .expect("token matches");
+        let code = state.issue_authorization_code(&approved);
+
+        let redeemed = state
+            .consume_authorization_code(&code)
+            .expect("code redeems");
+        assert_eq!(redeemed.client_id, "mcp_client");
+        assert!(redeemed.consent_token.is_none());
+        assert!(
+            state.consume_authorization_code(&code).is_none(),
+            "codes are single-use"
+        );
+        assert_eq!(
+            state.lookup_pending_consent("req-1").err(),
+            Some(ConsentLookupError::NotFound),
+            "an answered consent request is gone"
+        );
+    }
+
+    #[test]
+    fn wrong_consent_token_leaves_the_request_in_place() {
+        let mut state = GatewayState::default();
+        state.store_pending_consent("req-1", consent_request(unix_now() + 300));
+
+        assert_eq!(
+            state.take_pending_consent("req-1", "forged").err(),
+            Some(ConsentLookupError::TokenMismatch)
+        );
+        assert!(state.take_pending_consent("req-1", "consent-token").is_ok());
+    }
+
+    #[test]
+    fn expired_consent_requests_are_rejected() {
+        let mut state = GatewayState::default();
+        state
+            .pending_consents
+            .insert("old".to_string(), consent_request(unix_now() - 1));
+
+        assert_eq!(
+            state.lookup_pending_consent("old").err(),
+            Some(ConsentLookupError::Expired)
+        );
+        assert_eq!(
+            state.lookup_pending_consent("old").err(),
+            Some(ConsentLookupError::NotFound),
+            "an expired request is dropped on lookup"
+        );
+    }
+
+    #[test]
+    fn expired_authorization_codes_are_rejected() {
+        let mut state = GatewayState::default();
+        let mut entry = consent_request(unix_now() - 1);
+        entry.consent_token = None;
+        state
+            .authorization_codes
+            .insert("mc_old".to_string(), entry);
+
+        assert!(state.consume_authorization_code("mc_old").is_none());
+    }
+
+    #[test]
+    fn storing_prunes_expired_entries() {
+        let mut state = GatewayState::default();
+        state
+            .pending_consents
+            .insert("old".to_string(), consent_request(unix_now() - 1));
+        state
+            .authorization_codes
+            .insert("mc_old".to_string(), consent_request(unix_now() - 1));
+
+        state.store_pending_consent("new", consent_request(unix_now() + 300));
+
+        assert!(!state.pending_consents.contains_key("old"));
+        assert!(!state.authorization_codes.contains_key("mc_old"));
+        assert!(state.pending_consents.contains_key("new"));
+    }
+
+    #[test]
+    fn auth_stays_required_on_an_exposed_gateway() {
+        for expose in [
+            |s: &mut GatewayState| s.set_network_bind(true),
+            |s: &mut GatewayState| s.set_public_base_url(Some("https://mcp.example.com".into())),
+        ] {
+            let (tx, _) = broadcast::channel(4);
+            let mut state = GatewayState::new(tx);
+            expose(&mut state);
+            assert!(state.exposed());
+            state.set_auth_disabled(true);
+            assert!(
+                !state.auth_disabled(),
+                "exposed gateways always require auth"
+            );
+        }
+
+        // An empty public URL setting is not exposure.
+        let (tx, _) = broadcast::channel(4);
+        let mut state = GatewayState::new(tx);
+        state.set_public_base_url(Some("  ".into()));
+        assert!(!state.exposed());
+        state.set_auth_disabled(true);
+        assert!(state.auth_disabled());
+    }
 
     #[test]
     fn auth_disabled_defaults_off_and_toggles() {

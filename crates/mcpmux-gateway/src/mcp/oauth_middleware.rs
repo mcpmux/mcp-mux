@@ -19,11 +19,13 @@ use crate::auth::validate_token;
 use crate::logging::TraceContext;
 use crate::server::ServiceContainer;
 
+/// Largest `/mcp` request body read into memory (tool arguments included).
+pub const MAX_MCP_REQUEST_BODY: usize = 32 * 1024 * 1024;
+
 /// Synthetic client identity used when system-wide inbound auth is disabled and
-/// a connection arrives without a (valid) Bearer token. Routing still prefers
-/// the `X-Mcpmux-Workspace` header → binding; this id only feeds the rootless
-/// `client_grants` fallback (which finds none) → Space default.
-const ANONYMOUS_CLIENT_ID: &str = "mcpmux-anonymous";
+/// a connection arrives without a (valid) Bearer token. The resolver confines it
+/// to the default Space.
+use crate::services::ANONYMOUS_CLIENT_ID;
 
 /// OAuth middleware for MCP endpoints using rmcp
 ///
@@ -232,17 +234,13 @@ pub async fn mcp_oauth_middleware(
             .map(str::to_owned);
         sid.zip(ws)
     };
-    if let Some((sid, ws)) = pin {
-        services.session_roots.set_pinned(&sid, &ws);
-    }
-
     // Extract MCP method from body if POST
     let mcp_method = if request.method() == axum::http::Method::POST {
         use axum::body::to_bytes;
 
         let (parts, body) = request.into_parts();
 
-        match to_bytes(body, usize::MAX).await {
+        match to_bytes(body, MAX_MCP_REQUEST_BODY).await {
             Ok(body_bytes) => {
                 let method = crate::server::logging_middleware::extract_mcp_method(&body_bytes);
 
@@ -261,6 +259,15 @@ pub async fn mcp_oauth_middleware(
             }
             Err(e) => {
                 warn!(trace_id = %trace_id, "Failed to read body: {}", e);
+                let too_large = std::error::Error::source(&e)
+                    .is_some_and(|s| s.is::<http_body_util::LengthLimitError>());
+                if too_large {
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        format!("MCP request body exceeds {MAX_MCP_REQUEST_BODY} bytes"),
+                    )
+                        .into_response();
+                }
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Failed to read request body: {}", e),
@@ -274,7 +281,21 @@ pub async fn mcp_oauth_middleware(
         None
     };
 
+    // Pin just before the request goes on, and take a new pin back if the
+    // request fails: rmcp rejects made-up session ids, which must not fill
+    // the pin map.
+    let newly_pinned = match &pin {
+        Some((sid, ws)) => services.session_roots.set_pinned(sid, ws),
+        None => false,
+    };
+
     let response = next.run(request).await;
+
+    if newly_pinned && !response.status().is_success() {
+        if let Some((sid, _)) = &pin {
+            services.session_roots.unpin(sid);
+        }
+    }
 
     // Log errors only
     let status = response.status();

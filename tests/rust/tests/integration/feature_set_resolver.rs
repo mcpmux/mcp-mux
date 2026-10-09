@@ -1047,3 +1047,159 @@ async fn locked_client_ignores_out_of_space_client_id_mapping() {
     assert_eq!(r.source, ResolutionSource::SpaceDefault);
     assert_eq!(r.feature_set_ids, vec![f.starter_fs_id]);
 }
+
+// ---------------------------------------------------------------------------
+// Tokenless (anonymous) connections are confined to the default Space
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn anonymous_connection_cannot_route_into_another_space() {
+    use mcpmux_gateway::services::ANONYMOUS_CLIENT_ID;
+
+    let f = Fixture::new().await;
+    let other_base = if cfg!(windows) { "d:\\other" } else { "/other" };
+    let (other_space, other_starter) = f.make_space_with_base_dir("Other", other_base).await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "other-ws",
+            other_space,
+            vec![other_starter],
+        ))
+        .await
+        .unwrap();
+
+    // Header naming the other Space's binding.
+    f.session_roots.set_pinned("anon-1", "other-ws");
+    let r = f
+        .resolver
+        .resolve(Some("anon-1"), Some(ANONYMOUS_CLIENT_ID))
+        .await
+        .unwrap();
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.starter_fs_id.clone()]);
+
+    // Roots under the other Space's base directory.
+    let inside_other = if cfg!(windows) {
+        "d:\\other\\proj"
+    } else {
+        "/other/proj"
+    };
+    f.session_roots
+        .set("anon-2", vec![normalize_workspace_root(inside_other)]);
+    let r = f
+        .resolver
+        .resolve(Some("anon-2"), Some(ANONYMOUS_CLIENT_ID))
+        .await
+        .unwrap();
+    assert_eq!(r.space_id, Some(f.space_id));
+}
+
+#[tokio::test]
+async fn anonymous_connection_still_uses_default_space_bindings() {
+    use mcpmux_gateway::services::ANONYMOUS_CLIENT_ID;
+
+    let f = Fixture::new().await;
+    f.binding_repo
+        .create(&WorkspaceBinding::new_id(
+            "home-ws",
+            f.space_id,
+            vec![f.fs_a_id.clone()],
+        ))
+        .await
+        .unwrap();
+    f.session_roots.set_pinned("anon", "home-ws");
+    let r = f
+        .resolver
+        .resolve(Some("anon"), Some(ANONYMOUS_CLIENT_ID))
+        .await
+        .unwrap();
+    assert_eq!(r.space_id, Some(f.space_id));
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id.clone()]);
+}
+
+#[tokio::test]
+async fn confined_space_covers_locked_and_anonymous_callers() {
+    use mcpmux_gateway::services::ANONYMOUS_CLIENT_ID;
+
+    let f = Fixture::new().await;
+    let other_base = if cfg!(windows) { "d:\\other" } else { "/other" };
+    let (other_space, _) = f.make_space_with_base_dir("Other", other_base).await;
+
+    assert_eq!(
+        f.resolver
+            .confined_space(None, ANONYMOUS_CLIENT_ID)
+            .await
+            .unwrap(),
+        Some(f.space_id)
+    );
+
+    f.make_client("locked-x").await;
+    f.client_repo
+        .set_locked_space("locked-x", Some(&other_space.to_string()))
+        .await
+        .unwrap();
+    assert_eq!(
+        f.resolver.confined_space(None, "locked-x").await.unwrap(),
+        Some(other_space)
+    );
+
+    f.make_client("free-x").await;
+    assert_eq!(
+        f.resolver.confined_space(None, "free-x").await.unwrap(),
+        None
+    );
+}
+
+/// Confinement fails closed: a client locked to a Space id that doesn't
+/// parse is denied rather than routed as an unconfined client, and the
+/// meta-tools treat it as an error rather than "any Space".
+#[tokio::test]
+async fn client_locked_to_an_invalid_space_is_denied() {
+    let f = Fixture::new().await;
+    f.make_client("locked-bad").await;
+    f.client_repo
+        .set_locked_space("locked-bad", Some("not-a-space-id"))
+        .await
+        .unwrap();
+
+    let r = f
+        .resolver
+        .resolve(Some("s-bad"), Some("locked-bad"))
+        .await
+        .unwrap();
+    assert_eq!(r.source, ResolutionSource::Deny);
+    assert_eq!(r.space_id, None);
+    assert!(r.feature_set_ids.is_empty());
+
+    assert!(f
+        .resolver
+        .confined_space(Some("s-bad"), "locked-bad")
+        .await
+        .is_err());
+}
+
+/// A tokenless caller is confined to the default Space; with no default
+/// Space there is nothing it may use, which is an error, not "any Space".
+#[tokio::test]
+async fn tokenless_caller_without_a_default_space_is_not_unconfined() {
+    use mcpmux_gateway::services::ANONYMOUS_CLIENT_ID;
+
+    let f = Fixture::new().await;
+    assert_eq!(
+        f.resolver
+            .confined_space(None, ANONYMOUS_CLIENT_ID)
+            .await
+            .unwrap(),
+        Some(f.space_id)
+    );
+
+    let mut default = f.space_repo.get(&f.space_id).await.unwrap().unwrap();
+    default.is_default = false;
+    f.space_repo.update(&default).await.unwrap();
+    assert!(f.space_repo.get_default().await.unwrap().is_none());
+    assert!(f
+        .resolver
+        .confined_space(None, ANONYMOUS_CLIENT_ID)
+        .await
+        .is_err());
+}

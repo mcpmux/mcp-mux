@@ -43,13 +43,16 @@ pub use oauth::{
 // SOLID Services
 pub use connection::{ConnectionResult, ConnectionService};
 pub use features::{CachedFeatures, FeatureService};
+pub(crate) use routing::match_feature;
 pub use routing::{RoutedPrompt, RoutedResource, RoutedTool, RoutingService};
 pub use service::{InstalledServerInfo, PoolService, PoolStats, ReconnectResult};
 pub use token::TokenService;
 pub use transport::{ResolvedTransport, Transport, TransportConnectResult, TransportFactory};
 
 // Server Manager (Event-driven orchestrator)
-pub use server_manager::{ConnectResult, ConnectionStatus, ServerKey, ServerManager, ServerState};
+pub use server_manager::{
+    ConnectResult, ConnectionStatus, ServerKey, ServerManager, ServerState, REFUSED_AUTH_URL,
+};
 
 // Service Factory (DRY initialization)
 pub use service_factory::{PoolServices, ServiceFactory};

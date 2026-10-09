@@ -70,14 +70,15 @@ async fn caller_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
 /// `mcpmux_list_spaces` — writes stay gated by the approval dialog, which names
 /// the target Space so cross-Space changes are a conscious user choice.
 async fn target_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError> {
-    // When the caller's workspace is scoped to a Space by base directory, that
+    // When the caller is confined to one Space (a client locked to a Space, a
+    // tokenless connection, or a workspace scoped by base directory), that
     // Space is authoritative: the meta-tools see ONLY it (no cross-Space
     // targeting). An explicit `space_id` that names a different Space is
-    // rejected; omitting it (or naming the scoped Space) resolves to it.
+    // rejected; omitting it (or naming the confined Space) resolves to it.
     if let Some(scoped) = call
         .ctx
         .resolver
-        .scoped_space_for_session(call.session_id)
+        .confined_space(call.session_id, call.client_id)
         .await?
     {
         if let Some(s) = opt_str_arg(&call.args, "space_id") {
@@ -86,7 +87,7 @@ async fn target_space_id(call: &MetaToolCall<'_>) -> Result<Uuid, MetaToolError>
             })?;
             if id != scoped {
                 return Err(MetaToolError::InvalidArgument(format!(
-                    "This workspace is scoped to space '{scoped}' by its base directory; \
+                    "This connection is limited to space '{scoped}'; \
                      it can't target another space ('{id}')."
                 )));
             }
@@ -315,13 +316,13 @@ impl MetaTool for ListSpacesTool {
 
     async fn call(&self, call: MetaToolCall<'_>) -> Result<CallToolResult, MetaToolError> {
         let mut spaces = call.ctx.space_repo.list().await?;
-        // When the caller's workspace is scoped to a Space by base directory,
-        // expose ONLY that Space — self-optimization must not reach across into
-        // other Spaces' tools.
+        // When the caller is confined to one Space (locked client, tokenless
+        // connection, or base-dir-scoped workspace), expose ONLY that Space —
+        // self-optimization must not reach across into other Spaces' tools.
         if let Some(scoped) = call
             .ctx
             .resolver
-            .scoped_space_for_session(call.session_id)
+            .confined_space(call.session_id, call.client_id)
             .await?
         {
             spaces.retain(|s| s.id == scoped);
@@ -417,6 +418,7 @@ async fn with_approval<F, Fut, T>(
     tool_name: &'static str,
     summary: String,
     space_name: Option<String>,
+    space_id: Option<Uuid>,
     diff: Option<Value>,
     affects_other_clients: bool,
     raw_args: Value,
@@ -430,7 +432,11 @@ where
         tool_name: tool_name.to_string(),
         summary,
         space_name,
+        space_id,
         diff,
+        action: opt_str_arg(&call.args, "action"),
+        // Decided by the broker.
+        allow_always: false,
         raw_args,
         affects_other_clients,
     };
@@ -456,6 +462,110 @@ fn opt_str_arg(args: &Value, field: &str) -> Option<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Longest FeatureSet name a client may set. Names appear in the approval
+/// dialog and in every FeatureSet picker, so they stay short and single-line.
+const MAX_NAME_CHARS: usize = 64;
+/// Longest FeatureSet description a client may set.
+const MAX_DESCRIPTION_CHARS: usize = 500;
+
+/// Longest client-reported workspace path shown in an approval summary.
+const MAX_SHOWN_ROOT_CHARS: usize = 200;
+
+/// Characters that change how text reads without being visible: control
+/// characters, zero-width and bidi marks, line/paragraph separators, BOM.
+fn is_hidden_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
+}
+
+/// `text` as shown in an approval summary: hidden characters written out as
+/// `\u{..}` and at most `max_chars` characters, cut with "…".
+fn shown(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if is_hidden_char(c) {
+            out.push_str(&format!("\\u{{{:x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    if out.chars().count() > max_chars {
+        out = out.chars().take(max_chars.saturating_sub(1)).collect();
+        out.push('…');
+    }
+    out
+}
+
+/// Like [`opt_str_arg`], for text the user will read in the approval dialog
+/// and the UI: at most `max_chars` characters and no control, invisible or
+/// direction-changing characters, so a client can't pad, hide or reorder
+/// what the dialog shows.
+fn opt_label_arg(
+    args: &Value,
+    field: &str,
+    max_chars: usize,
+) -> Result<Option<String>, MetaToolError> {
+    let Some(value) = opt_str_arg(args, field) else {
+        return Ok(None);
+    };
+    if value.chars().count() > max_chars {
+        return Err(MetaToolError::InvalidArgument(format!(
+            "`{field}` is longer than {max_chars} characters"
+        )));
+    }
+    if value.chars().any(is_hidden_char) {
+        return Err(MetaToolError::InvalidArgument(format!(
+            "`{field}` must not contain control, invisible or direction-changing characters"
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// Qualified names of the tools a set of FeatureSets grants in a Space,
+/// sorted — what the approval dialog lists as before/after.
+async fn feature_set_tool_names(
+    call: &MetaToolCall<'_>,
+    space_id: Uuid,
+    feature_set_ids: &[String],
+) -> Result<Vec<String>, MetaToolError> {
+    if feature_set_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let features = call
+        .ctx
+        .feature_service
+        .resolve_feature_sets(&space_id.to_string(), feature_set_ids)
+        .await
+        .map_err(|e| MetaToolError::Internal(e.to_string()))?;
+    let mut names: Vec<String> = features
+        .iter()
+        .filter(|f| f.feature_type == FeatureType::Tool && f.is_available)
+        .map(|f| f.qualified_name())
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// `{ before?, after, added, removed }` for the approval dialog. `before` is
+/// omitted when there was no previous state to compare against.
+fn tool_diff(before: Option<&[String]>, after: &[String]) -> Value {
+    let previous = before.unwrap_or_default();
+    let added: Vec<&String> = after.iter().filter(|t| !previous.contains(t)).collect();
+    let removed: Vec<&String> = previous.iter().filter(|t| !after.contains(t)).collect();
+    let mut diff = json!({ "after": after, "added": added, "removed": removed });
+    if let Some(before) = before {
+        diff["before"] = json!(before);
+    }
+    diff
 }
 
 /// String-array arg (e.g. a list of qualified tool names); empty when absent.
@@ -531,10 +641,10 @@ impl ManageFeatureSetTool {
         call: &MetaToolCall<'_>,
         space_id: Uuid,
     ) -> Result<CallToolResult, MetaToolError> {
-        let name = opt_str_arg(&call.args, "name").ok_or_else(|| {
+        let name = opt_label_arg(&call.args, "name", MAX_NAME_CHARS)?.ok_or_else(|| {
             MetaToolError::InvalidArgument("create requires a non-empty `name`".into())
         })?;
-        let description = opt_str_arg(&call.args, "description");
+        let description = opt_label_arg(&call.args, "description", MAX_DESCRIPTION_CHARS)?;
         let add = str_array_arg(&call.args, "add");
         if add.is_empty() {
             return Err(MetaToolError::InvalidArgument(
@@ -566,6 +676,7 @@ impl ManageFeatureSetTool {
             "mcpmux_manage_feature_set",
             summary,
             Some(space),
+            Some(space_id),
             Some(diff),
             false,
             call.args.clone(),
@@ -607,8 +718,8 @@ impl ManageFeatureSetTool {
             })?;
         ensure_custom_in_space(&fs, space_id, fs_id)?;
 
-        let new_name = opt_str_arg(&call.args, "name");
-        let new_description = opt_str_arg(&call.args, "description");
+        let new_name = opt_label_arg(&call.args, "name", MAX_NAME_CHARS)?;
+        let new_description = opt_label_arg(&call.args, "description", MAX_DESCRIPTION_CHARS)?;
         let add = str_array_arg(&call.args, "add");
         let remove = str_array_arg(&call.args, "remove");
         if new_name.is_none() && new_description.is_none() && add.is_empty() && remove.is_empty() {
@@ -654,22 +765,19 @@ impl ManageFeatureSetTool {
             "mcpmux_manage_feature_set",
             summary,
             Some(space),
+            Some(space_id),
             Some(diff),
             true,
             call.args.clone(),
             || async move {
-                // Rename / description first — `update` rewrites the row from
-                // `fs.members` (the set we loaded, unchanged here), so the
-                // member deltas below still land on top.
+                // Rename / description only touch those columns: the members
+                // loaded before the (possibly minutes-long) approval wait may
+                // be stale by now, and must not be written back over edits
+                // made in the meantime.
                 if new_name.is_some() || new_description.is_some() {
-                    let mut updated = fs.clone();
-                    if let Some(n) = new_name {
-                        updated.name = n;
-                    }
-                    if let Some(d) = new_description {
-                        updated.description = Some(d);
-                    }
-                    fs_repo.update(&updated).await?;
+                    fs_repo
+                        .update_details(&fs_id_s, new_name.as_deref(), new_description.as_deref())
+                        .await?;
                 }
                 for feature in &remove_features {
                     fs_repo
@@ -713,6 +821,8 @@ impl ManageFeatureSetTool {
 
         let space = space_label(call, space_id).await;
         let summary = format!("Delete FeatureSet '{}' in Space '{space}'", fs.name);
+        let granted = feature_set_tool_names(call, space_id, &[fs_id.to_string()]).await?;
+        let diff = tool_diff(Some(&granted), &[]);
         let fs_repo = call.ctx.feature_set_repo.clone();
         let event_tx = call.ctx.domain_event_tx.clone();
         let fs_id_s = fs_id.to_string();
@@ -721,7 +831,8 @@ impl ManageFeatureSetTool {
             "mcpmux_manage_feature_set",
             summary,
             Some(space),
-            None,
+            Some(space_id),
+            Some(diff),
             true,
             call.args.clone(),
             || async move {
@@ -907,12 +1018,50 @@ impl MetaTool for BindCurrentWorkspaceTool {
             .binding_repo
             .find_exact_for_roots(std::slice::from_ref(&normalized))
             .await?;
-        let verb = if existing.is_some() { "Rebind" } else { "Bind" };
+        // A binding in another Space moves the folder out of that Space. A
+        // caller confined to one Space can't do that; anyone else is always
+        // asked (binding never gets a standing grant), with both Spaces named.
+        let moved_from = match &existing {
+            Some(b) if b.space_id != space_id => {
+                if call
+                    .ctx
+                    .resolver
+                    .confined_space(call.session_id, call.client_id)
+                    .await?
+                    .is_some()
+                {
+                    return Err(MetaToolError::InvalidArgument(
+                        "This folder is mapped in another space; change it from that space \
+                         or the app."
+                            .into(),
+                    ));
+                }
+                Some(space_label(&call, b.space_id).await)
+            }
+            _ => None,
+        };
         let space = space_label(&call, space_id).await;
-        let summary = format!(
-            "{verb} workspace '{normalized}' to FeatureSet '{fs_label}' in Space '{space}'. \
-             Affects every future connection that reports this path."
-        );
+        // The root is whatever the client reported: shown escaped and capped.
+        let root = shown(&normalized, MAX_SHOWN_ROOT_CHARS);
+        let after = feature_set_tool_names(&call, space_id, &fs_ids).await?;
+        let before = match &existing {
+            Some(b) => Some(feature_set_tool_names(&call, b.space_id, &b.feature_set_ids).await?),
+            None => None,
+        };
+        let diff = tool_diff(before.as_deref(), &after);
+        let summary = match &moved_from {
+            Some(from) => format!(
+                "Move workspace '{root}' from Space '{from}' to FeatureSet '{fs_label}' \
+                 in Space '{space}'. Affects every future connection that reports this path."
+            ),
+            None => {
+                let verb = if existing.is_some() { "Rebind" } else { "Bind" };
+                format!(
+                    "{verb} workspace '{root}' to FeatureSet '{fs_label}' in Space \
+                     '{space}'. Affects every future connection that reports this path."
+                )
+            }
+        };
 
         let binding_repo = call.ctx.binding_repo.clone();
         let event_tx = call.ctx.domain_event_tx.clone();
@@ -921,7 +1070,8 @@ impl MetaTool for BindCurrentWorkspaceTool {
             "mcpmux_bind_current_workspace",
             summary,
             Some(space),
-            None,
+            Some(space_id),
+            Some(diff),
             true,
             call.args.clone(),
             || async move {

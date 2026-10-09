@@ -45,6 +45,7 @@ parking_lot = "0.12"
 base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
+subtle = "2.6"
 rand = "0.8"
 url = "2.5"
 urlencoding = "2.1"
@@ -67,6 +68,10 @@ mcpmux-storage.workspace = true
 # Must stay after every shared dependency: in TOML, keys below a table
 # header belong to that table, so placing this earlier would silently make
 # oauth2 / mcpmux-core / mcpmux-storage Windows-only and break Linux CI.
+[target.'cfg(unix)'.dependencies]
+process-wrap.workspace = true
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 process-wrap.workspace = true
 windows = { version = "0.62.2", features = [

@@ -16,4 +16,4 @@ pub mod oauth_middleware;
 pub mod origin_guard;
 
 pub use handler::McpMuxGatewayHandler;
-pub use oauth_middleware::mcp_oauth_middleware;
+pub use oauth_middleware::{mcp_oauth_middleware, MAX_MCP_REQUEST_BODY};

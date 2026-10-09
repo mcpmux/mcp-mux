@@ -16,6 +16,12 @@ pub fn install(args: &Args) -> anyhow::Result<()> {
     if !cfg!(target_os = "linux") {
         bail!("mcpmuxd service install is currently supported only on Linux");
     }
+    if args.auth_disabled {
+        bail!(
+            "--auth-disabled is for a one-off local run and is never installed as a service; \
+             install without it (create an API-key client for headless clients instead)"
+        );
+    }
 
     let executable =
         env::current_exe().context("could not determine the mcpmuxd executable path")?;
@@ -50,7 +56,6 @@ struct ServiceConfig {
     log_dir: Option<PathBuf>,
     log_filter: String,
     public_base_url: Option<String>,
-    auth_disabled: bool,
 }
 
 impl ServiceConfig {
@@ -67,7 +72,6 @@ impl ServiceConfig {
             log_dir: args.log_dir.clone(),
             log_filter: args.log_filter.clone(),
             public_base_url: args.public_base_url.clone(),
-            auth_disabled: args.auth_disabled,
         }
     }
 }
@@ -109,10 +113,6 @@ fn render_unit(config: &ServiceConfig) -> String {
             quote_systemd_arg(public_base_url),
         ]);
     }
-    if config.auth_disabled {
-        command.push("--auth-disabled".to_string());
-    }
-
     format!(
         "[Unit]\nDescription=McpMux local MCP gateway\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart={}\nRestart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=default.target\n",
         command.join(" ")
@@ -125,6 +125,13 @@ fn quote_systemd_arg(value: impl AsRef<std::ffi::OsStr>) -> String {
         if matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'/' | b'.' | b'_' | b'-' | b':' | b'=')
         {
             escaped.push(*byte as char);
+        } else if *byte == b'%' {
+            // systemd decodes `\x25` back to `%` before expanding specifiers;
+            // `%%` is the only literal percent.
+            escaped.push_str("%%");
+        } else if *byte == b'$' {
+            // Likewise `$$` is the only literal dollar (no variable expansion).
+            escaped.push_str("$$");
         } else {
             escaped.push_str(&format!("\\x{byte:02x}"));
         }
@@ -169,7 +176,6 @@ mod tests {
             log_dir: Some(PathBuf::from("/var/log/mcpmux")),
             log_filter: "info,mcpmux_gateway=debug".to_string(),
             public_base_url: Some("https://mcp.example.test".to_string()),
-            auth_disabled: false,
         });
 
         assert!(unit.contains("ExecStart=\"/opt/mcpmux/bin/mcpmuxd\""));
@@ -183,9 +189,7 @@ mod tests {
 
     #[test]
     fn escapes_systemd_special_characters() {
-        assert_eq!(
-            quote_systemd_arg("a b%\"\\c"),
-            "\"a\\x20b\\x25\\x22\\x5cc\""
-        );
+        assert_eq!(quote_systemd_arg("a b%\"\\c"), "\"a\\x20b%%\\x22\\x5cc\"");
+        assert_eq!(quote_systemd_arg("/data/%h/$HOME"), "\"/data/%%h/$$HOME\"");
     }
 }

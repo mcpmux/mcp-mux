@@ -6,6 +6,7 @@
 //! - Persistence (InboundClientRepository from mcpmux-storage)
 //! - Business logic (this service)
 
+use crate::oauth::filter_valid_redirect_uris;
 use anyhow::Result;
 use mcpmux_core::CimdMetadataFetcher;
 use mcpmux_storage::{InboundClient, InboundClientRepository, RegistrationType};
@@ -70,7 +71,17 @@ impl ClientMetadataService {
         }
 
         // Fetch fresh metadata
-        let metadata = self.cimd_fetcher.fetch(client_id_url).await?;
+        let mut metadata = self.cimd_fetcher.fetch(client_id_url).await?;
+
+        // A metadata document is attacker-controllable input: apply the same
+        // redirect policy as Dynamic Client Registration before storing it.
+        metadata.redirect_uris = filter_valid_redirect_uris(&metadata.redirect_uris);
+        if metadata.redirect_uris.is_empty() {
+            anyhow::bail!(
+                "CIMD document for {} lists no acceptable redirect_uris",
+                client_id_url
+            );
+        }
 
         // Convert to InboundClient
         let client = self.cimd_metadata_to_client(metadata);

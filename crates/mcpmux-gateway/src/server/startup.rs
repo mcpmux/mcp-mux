@@ -211,27 +211,15 @@ impl StartupOrchestrator {
 
     /// Connect a single server
     async fn connect_server(&self, server: &InstalledServer) -> Result<ConnectOutcome> {
-        // Get server definition: prefer cached definition, fallback to registry for legacy
-        let definition = match server.get_definition() {
-            Some(def) => def,
-            None => {
-                // Fallback: try registry for servers installed before caching was added
-                self.dependencies
-                    .server_discovery
-                    .refresh_if_needed()
-                    .await?;
-                self.dependencies
-                    .server_discovery
-                    .get(&server.server_id)
-                    .await
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "No cached definition and not found in registry: {}",
-                            server.server_id
-                        )
-                    })?
-            }
-        };
+        // Only ever run what the user installed: a server without a stored
+        // definition (installed before definitions were stored) is not
+        // started from whatever the registry serves today.
+        let definition = server.get_definition().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} has no stored definition (installed before offline support); reinstall it to connect",
+                server.server_id
+            )
+        })?;
 
         // Parse space_id to UUID
         let space_id = uuid::Uuid::parse_str(&server.space_id)

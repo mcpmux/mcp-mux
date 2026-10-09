@@ -15,7 +15,8 @@ use tracing::{debug, error, info, warn};
 use super::{GatewayState, ServiceContainer};
 use crate::auth::{create_access_token, create_refresh_token};
 use crate::oauth::{
-    is_redirect_uri_allowed, process_dcr_request, DcrError, DcrRequest, DcrResponse,
+    is_redirect_uri_allowed, is_valid_registered_redirect_uri, process_dcr_request, DcrError,
+    DcrRequest, DcrResponse,
 };
 
 /// App State structure holding both GatewayState and ServiceContainer
@@ -374,6 +375,20 @@ pub async fn oauth_authorize(
                     params.state.as_deref(),
                 );
             }
+            // Re-check the scheme policy at use time: rows saved before the
+            // policy existed (or a CIMD document cached earlier) may still list
+            // a redirect target we no longer accept. Never redirect to it.
+            if !is_valid_registered_redirect_uri(&params.redirect_uri) {
+                warn!(
+                    "[OAuth] Refusing redirect_uri outside the allowed redirect policy for client: {}",
+                    params.client_id
+                );
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "This redirect_uri is not an allowed OAuth redirect target.",
+                )
+                    .into_response();
+            }
             client.client_name
         }
         Ok(None) => {
@@ -396,13 +411,35 @@ pub async fn oauth_authorize(
         }
     };
 
-    // PKCE is required for public clients
-    if params.code_challenge.is_none() {
+    // PKCE is required for public clients, and only S256 is accepted (the
+    // metadata advertises S256 only). A missing method is read as S256.
+    let Some(code_challenge) = params.code_challenge.as_deref() else {
         warn!("[OAuth] PKCE required but code_challenge missing");
         return oauth_error_redirect(
             &params.redirect_uri,
             "invalid_request",
             "PKCE code_challenge is required",
+            params.state.as_deref(),
+        );
+    };
+    if !matches!(params.code_challenge_method.as_deref(), None | Some("S256")) {
+        warn!(
+            "[OAuth] Unsupported code_challenge_method: {:?}",
+            params.code_challenge_method
+        );
+        return oauth_error_redirect(
+            &params.redirect_uri,
+            "invalid_request",
+            "code_challenge_method must be S256",
+            params.state.as_deref(),
+        );
+    }
+    if !is_s256_code_challenge(code_challenge) {
+        warn!("[OAuth] Malformed S256 code_challenge");
+        return oauth_error_redirect(
+            &params.redirect_uri,
+            "invalid_request",
+            "code_challenge must be a base64url-encoded SHA-256 digest",
             params.state.as_deref(),
         );
     }
@@ -445,7 +482,7 @@ pub async fn oauth_authorize(
 
     {
         let mut gateway_state = state.write().await;
-        gateway_state.store_pending_authorization(
+        gateway_state.store_pending_consent(
             &request_id,
             PendingAuthorization {
                 client_id: params.client_id.clone(),
@@ -453,8 +490,8 @@ pub async fn oauth_authorize(
                 redirect_uri: params.redirect_uri.clone(),
                 scope: params.scope.clone(),
                 state: params.state.clone(),
-                code_challenge: params.code_challenge.clone(),
-                code_challenge_method: params.code_challenge_method.clone(),
+                code_challenge: Some(code_challenge.to_string()),
+                code_challenge_method: Some("S256".to_string()),
                 expires_at,
                 consent_token: Some(consent_token),
             },
@@ -733,11 +770,24 @@ pub async fn oauth_token(
                 warn!("[OAuth] Missing code_verifier (PKCE required)");
                 return Err(token_error("invalid_request", "Missing code_verifier"));
             };
+            if !is_valid_code_verifier(code_verifier) {
+                warn!("[OAuth] Malformed code_verifier");
+                return Err(token_error(
+                    "invalid_request",
+                    "code_verifier must be 43-128 unreserved characters",
+                ));
+            }
 
-            // Look up and consume the authorization code
+            let Some(client_id) = request.client_id.as_ref() else {
+                warn!("[OAuth] Missing client_id in token request");
+                return Err(token_error("invalid_request", "Missing client_id"));
+            };
+
+            // Look up and consume the authorization code. Only codes issued
+            // after the user approved are redeemable here.
             let pending = {
                 let mut gateway_state = state.write().await;
-                gateway_state.consume_pending_authorization(code)
+                gateway_state.consume_authorization_code(code)
             };
 
             let Some(pending) = pending else {
@@ -748,12 +798,9 @@ pub async fn oauth_token(
                 ));
             };
 
-            // Validate client_id matches
-            if let Some(ref client_id) = request.client_id {
-                if client_id != &pending.client_id {
-                    warn!("[OAuth] client_id mismatch");
-                    return Err(token_error("invalid_grant", "Client ID mismatch"));
-                }
+            if client_id != &pending.client_id {
+                warn!("[OAuth] client_id mismatch");
+                return Err(token_error("invalid_grant", "Client ID mismatch"));
             }
 
             // Validate redirect_uri matches
@@ -764,16 +811,14 @@ pub async fn oauth_token(
                 }
             }
 
-            // Validate PKCE
-            if let Some(ref code_challenge) = pending.code_challenge {
-                if !verify_pkce(
-                    code_verifier,
-                    code_challenge,
-                    pending.code_challenge_method.as_deref(),
-                ) {
-                    warn!("[OAuth] PKCE verification failed");
-                    return Err(token_error("invalid_grant", "PKCE verification failed"));
-                }
+            // Validate PKCE (every code carries an S256 challenge)
+            let pkce_ok = pending
+                .code_challenge
+                .as_deref()
+                .is_some_and(|challenge| verify_pkce_s256(code_verifier, challenge));
+            if !pkce_ok {
+                warn!("[OAuth] PKCE verification failed");
+                return Err(token_error("invalid_grant", "PKCE verification failed"));
             }
 
             // Get JWT secret
@@ -916,23 +961,30 @@ fn token_error(error: &str, description: &str) -> (StatusCode, Json<TokenErrorRe
     )
 }
 
-/// Verify PKCE code_verifier against code_challenge
-fn verify_pkce(code_verifier: &str, code_challenge: &str, method: Option<&str>) -> bool {
-    match method.unwrap_or("S256") {
-        "S256" => {
-            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-            use sha2::{Digest, Sha256};
+/// RFC 7636: a `code_verifier` is 43 to 128 characters from
+/// `[A-Za-z0-9-._~]`.
+fn is_valid_code_verifier(verifier: &str) -> bool {
+    (43..=128).contains(&verifier.len())
+        && verifier
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
+}
 
-            let mut hasher = Sha256::new();
-            hasher.update(code_verifier.as_bytes());
-            let hash = hasher.finalize();
-            let computed_challenge = URL_SAFE_NO_PAD.encode(hash);
+/// Verify a PKCE `code_verifier` against an S256 `code_challenge`.
+fn verify_pkce_s256(code_verifier: &str, code_challenge: &str) -> bool {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use sha2::{Digest, Sha256};
 
-            computed_challenge == code_challenge
-        }
-        "plain" => code_verifier == code_challenge,
-        _ => false,
-    }
+    let computed_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
+    computed_challenge == code_challenge
+}
+
+/// An S256 challenge is an unpadded base64url SHA-256 digest: 43 characters.
+fn is_s256_code_challenge(challenge: &str) -> bool {
+    challenge.len() == 43
+        && challenge
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 // ============================================================================
@@ -987,31 +1039,21 @@ pub async fn oauth_consent_approve(
         request.request_id
     );
 
-    // Look up the pending authorization
-    let pending = {
-        let gateway_state = state.read().await;
-        gateway_state
-            .pending_authorizations
-            .get(&request.request_id)
-            .cloned()
+    // Take the consent request (one-time). This test-mode endpoint has no
+    // consent token, so it uses the token-less variant.
+    let taken = {
+        let mut gateway_state = state.write().await;
+        gateway_state.take_pending_consent_without_token(&request.request_id)
     };
 
-    let Some(pending) = pending else {
-        warn!("[OAuth] Consent approval failed: request_id not found");
+    let Ok(pending) = taken else {
+        warn!("[OAuth] Consent approval failed: request_id not found or expired");
         return Json(ConsentApprovalResponse {
             success: false,
             redirect_url: String::new(),
             error: Some("Authorization request not found or expired".to_string()),
         });
     };
-
-    // Remove the pending authorization (it's been processed)
-    {
-        let mut gateway_state = state.write().await;
-        gateway_state
-            .pending_authorizations
-            .remove(&request.request_id);
-    }
 
     if !request.approved {
         // User denied - redirect with error
@@ -1033,32 +1075,10 @@ pub async fn oauth_consent_approve(
         });
     }
 
-    // User approved - generate authorization code
-    let code = format!("mc_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-
-    // Auth codes expire in 10 minutes (standard OAuth)
-    let code_expires_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64 + 600) // 10 minutes
-        .unwrap_or(i64::MAX);
-
-    // Store the authorization with the new code
-    {
+    // User approved - issue a one-time authorization code
+    let code = {
         let mut gateway_state = state.write().await;
-        gateway_state.store_pending_authorization(
-            &code,
-            PendingAuthorization {
-                client_id: pending.client_id.clone(),
-                client_name: pending.client_name.clone(),
-                redirect_uri: pending.redirect_uri.clone(),
-                scope: pending.scope.clone(),
-                state: pending.state.clone(),
-                code_challenge: pending.code_challenge.clone(),
-                code_challenge_method: pending.code_challenge_method.clone(),
-                expires_at: code_expires_at,
-                consent_token: None, // Auth code entries don't need consent tokens
-            },
-        );
+        let code = gateway_state.issue_authorization_code(&pending);
 
         // Store client alias in database if provided
         if let Some(alias) = &request.client_alias {
@@ -1077,7 +1097,8 @@ pub async fn oauth_consent_approve(
                 }
             }
         }
-    }
+        code
+    };
 
     // Build redirect URL with authorization code
     let mut redirect_url = pending.redirect_uri.clone();
@@ -1476,5 +1497,54 @@ pub async fn oauth_register(
             );
             Err((StatusCode::BAD_REQUEST, Json(error)))
         }
+    }
+}
+
+#[cfg(test)]
+mod pkce_tests {
+
+    #[test]
+    fn code_verifiers_follow_rfc_7636() {
+        assert!(super::is_valid_code_verifier(&"a".repeat(43)));
+        assert!(super::is_valid_code_verifier(&format!(
+            "{}-._~",
+            "Z9".repeat(62)
+        )));
+        assert!(!super::is_valid_code_verifier(&"a".repeat(42)));
+        assert!(!super::is_valid_code_verifier(&"a".repeat(129)));
+        assert!(!super::is_valid_code_verifier(&format!(
+            "{} ",
+            "a".repeat(43)
+        )));
+        assert!(!super::is_valid_code_verifier(&format!(
+            "{}+",
+            "a".repeat(43)
+        )));
+    }
+
+    use super::{is_s256_code_challenge, verify_pkce_s256};
+
+    // Known-answer pair: base64url(SHA-256(VERIFIER)), computed independently.
+    const VERIFIER: &str = "dBjftJeZ4CVP-mJ92K9h4E6bbV0dHsaFpS9CqspRzXg";
+    const CHALLENGE: &str = "PORy543f16cCHDwmG3mG42rVZlw-nACpkddZ_lvbghw";
+
+    #[test]
+    fn s256_verifies_a_known_answer_pair() {
+        assert!(verify_pkce_s256(VERIFIER, CHALLENGE));
+        assert!(!verify_pkce_s256("wrong-verifier", CHALLENGE));
+    }
+
+    #[test]
+    fn plain_challenges_never_verify() {
+        // With `plain`, the verifier equals the challenge; S256 must not accept it.
+        assert!(!verify_pkce_s256(CHALLENGE, CHALLENGE));
+    }
+
+    #[test]
+    fn challenge_shape_is_checked() {
+        assert!(is_s256_code_challenge(CHALLENGE));
+        assert!(!is_s256_code_challenge("v"));
+        assert!(!is_s256_code_challenge(&format!("{CHALLENGE}=")));
+        assert!(!is_s256_code_challenge(&"+".repeat(43)));
     }
 }

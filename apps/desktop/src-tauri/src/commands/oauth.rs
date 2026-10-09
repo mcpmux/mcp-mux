@@ -30,6 +30,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use mcpmux_core::branding;
+use mcpmux_gateway::oauth::is_valid_registered_redirect_uri;
+use mcpmux_gateway::ConsentLookupError;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::RwLock;
@@ -433,27 +435,19 @@ pub async fn get_pending_consent(
         .as_ref()
         .ok_or_else(ConsentError::gateway_unavailable)?;
 
-    // Look up the pending authorization
-    let auth = {
-        let state = gw_state.read().await;
-        state.pending_authorizations.get(&request_id).cloned()
-    };
-
-    let auth = auth.ok_or_else(|| ConsentError::not_found(&request_id))?;
-
-    // Check if expired
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    if auth.expires_at < now {
-        warn!("[OAuth] Request '{}' has expired", request_id);
-        // Remove expired entry
+    // Look up the consent request (expired requests are dropped)
+    let lookup = {
         let mut state = gw_state.write().await;
-        state.pending_authorizations.remove(&request_id);
-        return Err(ConsentError::expired(&request_id));
-    }
+        state.lookup_pending_consent(&request_id)
+    };
+    let auth = match lookup {
+        Ok(auth) => auth,
+        Err(ConsentLookupError::Expired) => {
+            warn!("[OAuth] Consent request has expired");
+            return Err(ConsentError::expired(&request_id));
+        }
+        Err(_) => return Err(ConsentError::not_found(&request_id)),
+    };
 
     // Extract consent_token (required for security—ensures only the desktop
     // app that retrieved this token via IPC can approve the request)
@@ -540,49 +534,38 @@ pub async fn approve_oauth_consent(
         return Err("Gateway not running".to_string());
     };
 
-    // Look up the pending authorization
-    let pending = {
-        let state = gw_state.read().await;
-        state
-            .pending_authorizations
-            .get(&request.request_id)
-            .cloned()
+    // Take the consent request: checks the consent_token (which proves the
+    // caller obtained it via Tauri IPC, not by scraping the HTTP authorization
+    // page), the expiry, and removes it in one step so it is answered once.
+    let taken = {
+        let mut state = gw_state.write().await;
+        state.take_pending_consent(&request.request_id, &request.consent_token)
+    };
+    let pending = match taken {
+        Ok(pending) => pending,
+        Err(ConsentLookupError::TokenMismatch) => {
+            error!("[OAuth] Consent token mismatch — possible unauthorized approval attempt");
+            return Err("Invalid consent token".to_string());
+        }
+        Err(_) => {
+            error!("[OAuth] Consent approval failed: request not found or expired");
+            return Ok(ConsentApprovalResponse {
+                success: false,
+                redirect_url: String::new(),
+                error: Some("Authorization request not found or expired".to_string()),
+            });
+        }
     };
 
-    let Some(pending) = pending else {
-        error!("[OAuth] Consent approval failed: request_id not found");
+    // Never hand the UI a redirect outside the redirect policy, whatever was
+    // stored for the client.
+    if !is_valid_registered_redirect_uri(&pending.redirect_uri) {
+        error!("[OAuth] Refusing to redirect: redirect_uri is outside the redirect policy");
         return Ok(ConsentApprovalResponse {
             success: false,
             redirect_url: String::new(),
-            error: Some("Authorization request not found or expired".to_string()),
+            error: Some("This app's redirect address is not allowed".to_string()),
         });
-    };
-
-    // Validate consent_token: proves the caller obtained this token via Tauri
-    // IPC (get_pending_consent), not by scraping the HTTP authorization page.
-    match &pending.consent_token {
-        Some(expected_token) => {
-            if request.consent_token != *expected_token {
-                error!(
-                    "[OAuth] Consent token mismatch for request_id: {} — possible unauthorized approval attempt",
-                    request.request_id
-                );
-                return Err("Invalid consent token".to_string());
-            }
-        }
-        None => {
-            error!(
-                "[OAuth] Pending authorization missing consent_token for request_id: {}",
-                request.request_id
-            );
-            return Err("Consent token not available".to_string());
-        }
-    }
-
-    // Remove the pending authorization (it's been processed)
-    {
-        let mut state = gw_state.write().await;
-        state.pending_authorizations.remove(&request.request_id);
     }
 
     if !request.approved {
@@ -606,43 +589,27 @@ pub async fn approve_oauth_consent(
         });
     }
 
-    // User approved - generate authorization code
-    use uuid::Uuid;
-    let code = format!("mc_{}", Uuid::new_v4().to_string().replace("-", ""));
-
-    // Auth codes expire in 10 minutes (standard OAuth)
-    let code_expires_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64 + 600) // 10 minutes
-        .unwrap_or(i64::MAX);
-
-    // Store the authorization with the new code and update client alias if provided
-    {
+    // User approved - record the approval, then issue a one-time
+    // authorization code and update the client alias if provided. The
+    // approval comes first: tokens are only honored for approved clients, so
+    // a code issued without it would give the client tokens that don't work.
+    let code = {
         let mut state = gw_state.write().await;
 
-        // Clone pending fields for new authorization
-        let new_pending = mcpmux_gateway::PendingAuthorization {
-            client_id: pending.client_id.clone(),
-            client_name: pending.client_name.clone(),
-            redirect_uri: pending.redirect_uri.clone(),
-            scope: pending.scope.clone(),
-            state: pending.state.clone(),
-            code_challenge: pending.code_challenge.clone(),
-            code_challenge_method: pending.code_challenge_method.clone(),
-            expires_at: code_expires_at,
-            consent_token: None, // Auth code entries don't need consent tokens
-        };
-
-        state.store_pending_authorization(&code, new_pending);
-
-        // Mark client as approved and store any alias override.
         if let Some(repo) = state.inbound_client_repository() {
             if let Err(e) = repo.approve_client(&pending.client_id).await {
                 error!("[OAuth] Failed to approve client: {}", e);
-            } else {
-                info!("[OAuth] Client approved: {}", pending.client_id);
+                return Ok(ConsentApprovalResponse {
+                    success: false,
+                    redirect_url: String::new(),
+                    error: Some("Could not save the approval".to_string()),
+                });
             }
+            info!("[OAuth] Client approved: {}", pending.client_id);
+        }
+        let code = state.issue_authorization_code(&pending);
 
+        if let Some(repo) = state.inbound_client_repository() {
             if let Some(alias) = request
                 .client_alias
                 .as_deref()
@@ -669,7 +636,8 @@ pub async fn approve_oauth_consent(
             client_name: pending.client_id.clone(), // Use client_name field
             registration_type: Some("unknown".to_string()), // Will be updated when client metadata is fetched
         });
-    }
+        code
+    };
 
     // Build redirect URL with authorization code
     let mut redirect_url = pending.redirect_uri.clone();
@@ -683,7 +651,6 @@ pub async fn approve_oauth_consent(
         "[OAuth] Authorization approved for client: {}, issuing code",
         pending.client_id
     );
-    info!("[OAuth] Redirect URL: {}", redirect_url);
 
     Ok(ConsentApprovalResponse {
         success: true,

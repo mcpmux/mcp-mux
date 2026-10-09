@@ -321,3 +321,113 @@ async fn origin_guard_applies_when_auth_is_required_too() {
         reqwest::StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn oversized_mcp_bodies_are_refused() {
+    let h = Harness::start(true).await;
+    let body = vec![b' '; mcpmux_gateway::mcp::MAX_MCP_REQUEST_BODY + 1];
+    let status = reqwest::Client::new()
+        .post(&h.url)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("request")
+        .status();
+    assert_eq!(status, reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    // Ordinary requests are unaffected.
+    assert_eq!(post_tools_list(&h, None).await, reqwest::StatusCode::OK);
+}
+
+/// The `/mcp` cap also holds for a chunked body (no Content-Length).
+#[tokio::test]
+async fn oversized_chunked_mcp_bodies_are_refused() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let h = Harness::start(true).await;
+    let addr = h.base.trim_start_matches("http://").to_string();
+    let stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    // Read the answer while still sending: the server answers 413 as soon as
+    // the cap is passed and closes, and on Windows that close can turn into a
+    // reset that discards a response nobody had read yet.
+    let read = tokio::spawn(async move {
+        let mut response = vec![0u8; 64];
+        reader
+            .read(&mut response)
+            .await
+            .map(|n| String::from_utf8_lossy(&response[..n]).into_owned())
+    });
+
+    let mut write_failed = writer
+        .write_all(
+            format!(
+                "POST /mcp HTTP/1.1\r\nhost: {addr}\r\ncontent-type: application/json\r\n\
+                 transfer-encoding: chunked\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .is_err();
+    let chunk = vec![b' '; 1024 * 1024];
+    let header = format!("{:x}\r\n", chunk.len());
+    for _ in 0..(mcpmux_gateway::mcp::MAX_MCP_REQUEST_BODY / chunk.len() + 1) {
+        if write_failed {
+            break; // the server already answered and closed
+        }
+        write_failed = writer.write_all(header.as_bytes()).await.is_err()
+            || writer.write_all(&chunk).await.is_err()
+            || writer.write_all(b"\r\n").await.is_err();
+    }
+    if !write_failed {
+        let _ = writer.write_all(b"0\r\n\r\n").await;
+    }
+
+    match read.await.unwrap() {
+        Ok(status_line) => assert!(status_line.starts_with("HTTP/1.1 413"), "{status_line}"),
+        // The reset beat the status line: only acceptable when the server cut
+        // the upload off, which it does only after refusing it.
+        Err(e) => assert!(
+            write_failed
+                && matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ),
+            "{e} (write failed: {write_failed})"
+        ),
+    }
+}
+
+/// Routes other than `/mcp` read their bodies before any auth, so the logging
+/// middleware caps them.
+#[tokio::test]
+async fn oversized_bodies_on_other_routes_are_refused() {
+    use axum::routing::post;
+    let router = Router::new()
+        .route("/oauth/token", post(|| async { "ok" }))
+        .layer(axum::middleware::from_fn(
+            mcpmux_gateway::server::logging_middleware::http_logging_middleware,
+        ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/oauth/token", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let big = vec![b'a'; mcpmux_gateway::server::logging_middleware::MAX_NON_MCP_REQUEST_BODY + 1];
+    let status = reqwest::Client::new()
+        .post(&url)
+        .body(big)
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    let status = reqwest::Client::new()
+        .post(&url)
+        .body("grant_type=x")
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, reqwest::StatusCode::OK);
+}

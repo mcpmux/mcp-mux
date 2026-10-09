@@ -16,17 +16,151 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use mcpmux_core::{LogLevel, LogSource, ServerLog, ServerLogManager};
-#[cfg(not(windows))]
+#[cfg(not(any(unix, windows)))]
 use rmcp::transport::ConfigureCommandExt;
 use rmcp::transport::TokioChildProcess;
 use rmcp::ServiceExt;
-use tokio::io::AsyncBufReadExt;
 use tokio::process::{ChildStderr, Command};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 #[cfg(windows)]
 use process_wrap::tokio::{CommandWrap, KillOnDrop};
+#[cfg(unix)]
+use process_wrap::tokio::{CommandWrap, KillOnDrop, ProcessGroup};
+
+/// Longest stderr line kept from a stdio server; the rest of the line is
+/// dropped. Without a cap a server writing without newlines grows memory
+/// without bound.
+const MAX_STDERR_LINE: usize = 16 * 1024;
+
+/// Kills a stdio server's whole process group when its child handle is
+/// dropped.
+///
+/// The server runs as the leader of its own process group, and
+/// [`ProcessGroup`] makes rmcp's kill reach the whole group. But after a
+/// graceful shutdown (stdin closed, leader exited on its own) nothing kills
+/// processes the server started, e.g. `node` under `npx`, so they would
+/// outlive `servers disable` / `remove`. This guard sends `SIGKILL` to the
+/// group once the handle goes away, whichever way the server stopped.
+#[cfg(unix)]
+mod group_kill {
+    use std::future::Future;
+    use std::io;
+    use std::pin::Pin;
+    use std::process::ExitStatus;
+
+    use process_wrap::tokio::{ChildWrapper, CommandWrap, CommandWrapper};
+
+    /// Process groups of stdio servers that are still running, so a quitting
+    /// app can kill them even when destructors don't run.
+    static LIVE_GROUPS: std::sync::Mutex<std::collections::BTreeSet<i32>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+    fn live_groups() -> std::sync::MutexGuard<'static, std::collections::BTreeSet<i32>> {
+        LIVE_GROUPS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// SIGKILL every stdio server's process group still running.
+    pub fn kill_all() {
+        for pgid in std::mem::take(&mut *live_groups()) {
+            // SAFETY: plain signal delivery to groups our servers lead.
+            unsafe {
+                libc::killpg(pgid, libc::SIGKILL);
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct KillGroupOnDrop;
+
+    /// SIGKILLs process group `0` on drop. A group with no processes left
+    /// is a no-op (`ESRCH`).
+    #[derive(Debug)]
+    struct GroupGuard(Option<i32>);
+
+    impl Drop for GroupGuard {
+        fn drop(&mut self) {
+            if let Some(pgid) = self.0.filter(|pgid| *pgid > 1) {
+                live_groups().remove(&pgid);
+                // SAFETY: plain signal delivery; the group is the one the
+                // server leads (set up by `ProcessGroup::leader`).
+                unsafe {
+                    libc::killpg(pgid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct GroupChild {
+        inner: Box<dyn ChildWrapper>,
+        guard: GroupGuard,
+    }
+
+    impl ChildWrapper for GroupChild {
+        fn inner(&self) -> &dyn ChildWrapper {
+            self.inner.inner()
+        }
+
+        fn inner_mut(&mut self) -> &mut dyn ChildWrapper {
+            self.inner.inner_mut()
+        }
+
+        fn into_inner(self: Box<Self>) -> Box<dyn ChildWrapper> {
+            // Handing the child over must not kill it.
+            let mut this = *self;
+            if let Some(pgid) = this.guard.0.take() {
+                live_groups().remove(&pgid);
+            }
+            this.inner.into_inner()
+        }
+
+        // Go through the process-group wrapper below, not straight to the
+        // innermost child, so kills and waits cover the whole group.
+        fn start_kill(&mut self) -> io::Result<()> {
+            self.inner.start_kill()
+        }
+
+        fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            self.inner.try_wait()
+        }
+
+        fn wait(&mut self) -> Pin<Box<dyn Future<Output = io::Result<ExitStatus>> + Send + '_>> {
+            self.inner.wait()
+        }
+
+        fn signal(&self, sig: i32) -> io::Result<()> {
+            self.inner.signal(sig)
+        }
+    }
+
+    impl CommandWrapper for KillGroupOnDrop {
+        fn wrap_child(
+            &mut self,
+            inner: Box<dyn ChildWrapper>,
+            _core: &CommandWrap,
+        ) -> io::Result<Box<dyn ChildWrapper>> {
+            // The leader's pid is the group id.
+            let pgid = inner.id().and_then(|id| i32::try_from(id).ok());
+            if let Some(pgid) = pgid.filter(|pgid| *pgid > 1) {
+                live_groups().insert(pgid);
+            }
+            Ok(Box::new(GroupChild {
+                inner,
+                guard: GroupGuard(pgid),
+            }))
+        }
+    }
+}
+
+/// SIGKILL the process group of every stdio server still running. For app
+/// exit, where the pool's graceful close may not finish and destructors may
+/// not run. No-op on Windows, where the job object ends the tree.
+pub fn kill_all_stdio_groups() {
+    #[cfg(unix)]
+    group_kill::kill_all();
+}
 
 use super::shell_env;
 use super::TransportType;
@@ -207,6 +341,24 @@ fn stdio_child_command(
     command
 }
 
+/// The command for a stdio server on Unix: its own process group, killed as
+/// a whole (see [`group_kill`]).
+#[cfg(unix)]
+fn stdio_child_command(
+    command_path: &std::path::Path,
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> CommandWrap {
+    let mut command = CommandWrap::with_new(command_path, |cmd| {
+        cmd.args(args).envs(env);
+        configure_child_process_platform(cmd);
+    });
+    command.wrap(ProcessGroup::leader());
+    command.wrap(KillOnDrop);
+    command.wrap(group_kill::KillGroupOnDrop);
+    command
+}
+
 /// Returns a helpful hint for common runtime-dependent commands when they fail.
 fn command_hint(command: &str) -> &'static str {
     let cmd = command.rsplit(['/', '\\']).next().unwrap_or(command);
@@ -235,18 +387,21 @@ fn spawn_stderr_reader(
     let space_id_str = space_id.to_string();
 
     tokio::spawn(async move {
-        let reader = tokio::io::BufReader::new(stderr);
-        let mut lines = reader.lines();
-
+        let mut reader = tokio::io::BufReader::new(stderr);
         loop {
-            match lines.next_line().await {
-                Ok(Some(line)) if line.is_empty() => continue,
-                Ok(Some(line)) => {
-                    let level = classify_stderr_line(&line);
-                    let log = ServerLog::new(level, LogSource::Stderr, &line);
+            let message = match read_capped_line(&mut reader, MAX_STDERR_LINE).await {
+                Ok(StderrLine::Line(line)) if line.is_empty() => continue,
+                Ok(StderrLine::Line(line)) => line,
+                Ok(StderrLine::TooLong) => {
+                    let log = ServerLog::new(
+                        LogLevel::Warn,
+                        LogSource::Stderr,
+                        format!("[stderr line longer than {MAX_STDERR_LINE} bytes dropped]"),
+                    );
                     let _ = log_manager.append(&space_id_str, &server_id, log).await;
+                    continue;
                 }
-                Ok(None) => {
+                Ok(StderrLine::Eof) => {
                     // EOF - child process closed stderr
                     debug!(server_id = %server_id, "Stderr reader finished (stream closed)");
                     break;
@@ -259,9 +414,66 @@ fn spawn_stderr_reader(
                     );
                     break;
                 }
-            }
+            };
+            let level = classify_stderr_line(&message);
+            let log = ServerLog::new(level, LogSource::Stderr, &message);
+            let _ = log_manager.append(&space_id_str, &server_id, log).await;
         }
     });
+}
+
+/// One read from a server's stderr.
+#[derive(Debug, PartialEq, Eq)]
+enum StderrLine {
+    Line(String),
+    /// A line longer than the cap; its contents were skipped.
+    TooLong,
+    Eof,
+}
+
+/// Read the next line, holding at most `max` bytes of it. The rest of an
+/// over-long line is read and thrown away so the stream stays in sync and
+/// the pipe keeps draining (a reader that stopped would leave the server
+/// blocked on, or killed by, its next write).
+async fn read_capped_line<R>(reader: &mut R, max: usize) -> std::io::Result<StderrLine>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+
+    // Room for `max` bytes of text plus a `\r\n` terminator.
+    let mut buf = Vec::new();
+    let n = (&mut *reader)
+        .take(max as u64 + 2)
+        .read_until(b'\n', &mut buf)
+        .await?;
+    if n == 0 {
+        return Ok(StderrLine::Eof);
+    }
+    let ended = buf.ends_with(b"\n");
+    if ended {
+        buf.pop();
+        if buf.ends_with(b"\r") {
+            buf.pop();
+        }
+    }
+    if buf.len() > max {
+        if !ended {
+            let mut scratch = Vec::new();
+            loop {
+                scratch.clear();
+                let n = (&mut *reader)
+                    .take(64 * 1024)
+                    .read_until(b'\n', &mut scratch)
+                    .await?;
+                if n == 0 || scratch.ends_with(b"\n") {
+                    break;
+                }
+            }
+        }
+        return Ok(StderrLine::TooLong);
+    }
+    Ok(StderrLine::Line(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 /// Classify a stderr line into a log level based on content heuristics.
@@ -394,7 +606,12 @@ impl Transport for StdioTransport {
             .stderr(Stdio::piped())
             .spawn();
 
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        let child = TokioChildProcess::builder(stdio_child_command(&command_path, &args, &env))
+            .stderr(Stdio::piped())
+            .spawn();
+
+        #[cfg(not(any(unix, windows)))]
         let child = TokioChildProcess::builder(Command::new(&command_path).configure(move |cmd| {
             cmd.args(&args).envs(&env).kill_on_drop(true);
             configure_child_process_platform(cmd);
@@ -519,6 +736,55 @@ fn inject_shell_path(env: &mut HashMap<String, String>, shell_path: Option<&std:
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn a_line_of_exactly_the_cap_is_kept_whatever_its_line_ending() {
+        let input = format!(
+            "{}\r\n{}\n{}",
+            "a".repeat(10),
+            "b".repeat(10),
+            "c".repeat(11)
+        );
+        let mut reader = tokio::io::BufReader::new(input.as_bytes());
+        let mut got = Vec::new();
+        loop {
+            match read_capped_line(&mut reader, 10).await.unwrap() {
+                StderrLine::Eof => break,
+                other => got.push(other),
+            }
+        }
+        assert_eq!(
+            got,
+            vec![
+                StderrLine::Line("a".repeat(10)),
+                StderrLine::Line("b".repeat(10)),
+                StderrLine::TooLong,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn stderr_lines_are_capped_and_the_stream_continues() {
+        let input = format!("short\n{}\nnext\r\nlast", "x".repeat(50));
+        let mut reader = tokio::io::BufReader::new(input.as_bytes());
+        let mut got = Vec::new();
+        loop {
+            match read_capped_line(&mut reader, 10).await.unwrap() {
+                StderrLine::Eof => break,
+                other => got.push(other),
+            }
+        }
+        assert_eq!(
+            got,
+            vec![
+                StderrLine::Line("short".into()),
+                StderrLine::TooLong,
+                StderrLine::Line("next".into()),
+                StderrLine::Line("last".into()),
+            ]
+        );
+    }
+
     use super::*;
     use std::ffi::OsString;
 

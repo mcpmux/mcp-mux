@@ -202,6 +202,7 @@ async fn a_same_name_client_with_other_redirects_is_not_reused() {
     let register = |redirects: Vec<String>| DcrRequest {
         client_name: "Cursor".to_string(),
         redirect_uris: redirects,
+        token_endpoint_auth_method: Some("client_secret_post".to_string()),
         ..minimal_dcr_request()
     };
 
@@ -221,10 +222,12 @@ async fn a_same_name_client_with_other_redirects_is_not_reused() {
         .unwrap();
     assert_ne!(app.client_id, squatter.client_id);
     assert_eq!(app.redirect_uris, vec![app_redirect.clone()]);
+    assert_eq!(app.token_endpoint_auth_method, "none", "public client");
 
     // The app registering again gets its own client back.
     let again = process_dcr_request(&repo, register(vec![app_redirect]))
         .await
         .unwrap();
     assert_eq!(again.client_id, app.client_id);
+    assert_eq!(again.token_endpoint_auth_method, "none");
 }

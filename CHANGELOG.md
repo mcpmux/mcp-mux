@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.8.0](https://github.com/mcpmux/mcp-mux/compare/v0.7.0...v0.8.0) (2026-10-09)
+
+
+### Features
+
+* **daemon:** doctor reports data and log directories other users can read ([#282](https://github.com/mcpmux/mcp-mux/issues/282)) ([050791a](https://github.com/mcpmux/mcp-mux/commit/050791a3398f3a7639fee8951a7faf578a6d145b))
+* **daemon:** doctor reports where the master key lives ([#286](https://github.com/mcpmux/mcp-mux/issues/286)) ([9f102d8](https://github.com/mcpmux/mcp-mux/commit/9f102d8c1368bda6e5f583a2b8f8afebe7630673))
+* **oauth:** send McpMux's logo in client registration and keep the client secret ([#252](https://github.com/mcpmux/mcp-mux/issues/252)) ([371afc5](https://github.com/mcpmux/mcp-mux/commit/371afc54fe0580bd44c061b3018689cb85010650))
+* **registry:** verify the bundle signature once a registry key is pinned ([#290](https://github.com/mcpmux/mcp-mux/issues/290)) ([f738812](https://github.com/mcpmux/mcp-mux/commit/f7388120f81eff3afa98f30f0c29a7146ef0abc7))
+
+
+### Bug Fixes
+
+* **daemon,cli:** keep secrets off the control socket and confirm imports ([#274](https://github.com/mcpmux/mcp-mux/issues/274)) ([5134325](https://github.com/mcpmux/mcp-mux/commit/51343251bae7174f63a665da47300b700e9f13f1))
+* **daemon:** keep imported env and header values out of the Space file ([#289](https://github.com/mcpmux/mcp-mux/issues/289)) ([df8fb6f](https://github.com/mcpmux/mcp-mux/commit/df8fb6fddc44dbe135d1bf6d31112233335eb234))
+* **deps:** security updates within current major versions ([#258](https://github.com/mcpmux/mcp-mux/issues/258)) ([60369ac](https://github.com/mcpmux/mcp-mux/commit/60369acb1a7f097d58e564547f9c2d22b57e76e1))
+* **desktop:** don't follow symlinks when writing workspace app configs ([#271](https://github.com/mcpmux/mcp-mux/issues/271)) ([6920eb6](https://github.com/mcpmux/mcp-mux/commit/6920eb641c9f4371f17ce5f6d9d89058c85c458b))
+* **desktop:** lock down what the app window can load ([#263](https://github.com/mcpmux/mcp-mux/issues/263)) ([338994c](https://github.com/mcpmux/mcp-mux/commit/338994cad91727ae06710d425490ef77c4baf0f0))
+* **gateway:** cap what one MCP server can list and coalesce its change notifications ([#281](https://github.com/mcpmux/mcp-mux/issues/281)) ([319371c](https://github.com/mcpmux/mcp-mux/commit/319371ce251d86792beba9cac1967c5fc2f649ad))
+* **gateway:** keep each connection inside the Spaces it may use ([#266](https://github.com/mcpmux/mcp-mux/issues/266)) ([abac3d0](https://github.com/mcpmux/mcp-mux/commit/abac3d0caff4f058f4dc50f656154fa349dddbfc))
+* **gateway:** keep web pages off the HTTP API and limit metadata fetches ([#262](https://github.com/mcpmux/mcp-mux/issues/262)) ([42bb0bd](https://github.com/mcpmux/mcp-mux/commit/42bb0bdb78c28a05bc46389642e477cd306a147c))
+* **gateway:** scrub a stdio server's own secrets from its stderr log ([#280](https://github.com/mcpmux/mcp-mux/issues/280)) ([459304e](https://github.com/mcpmux/mcp-mux/commit/459304ec7a63d15a8908869cbd4ebbfab6a6dc60))
+* **gateway:** stop stdio servers' children with them and cap inputs ([#275](https://github.com/mcpmux/mcp-mux/issues/275)) ([c57bb1a](https://github.com/mcpmux/mcp-mux/commit/c57bb1a9ea1a90f0e841331ce7d4dd03a436947a))
+* **logs:** read server logs from the Space being viewed ([#251](https://github.com/mcpmux/mcp-mux/issues/251)) ([603b317](https://github.com/mcpmux/mcp-mux/commit/603b3174770798022dd31bb9059220b2a3eb5b2e))
+* **meta-tools:** show what an approval changes and apply only that ([#270](https://github.com/mcpmux/mcp-mux/issues/270)) ([4d49f51](https://github.com/mcpmux/mcp-mux/commit/4d49f51cfb89fe6fd718299f34efdfd8c97a9b66))
+* never leave inbound auth off on an exposed gateway ([#267](https://github.com/mcpmux/mcp-mux/issues/267)) ([3a320f8](https://github.com/mcpmux/mcp-mux/commit/3a320f847796b1ae7a9273cd2da62c88d3b30909))
+* **oauth:** keep consent redirects to app and web callbacks ([#264](https://github.com/mcpmux/mcp-mux/issues/264)) ([3e9c134](https://github.com/mcpmux/mcp-mux/commit/3e9c134b08b726aa1de8c6c2d1a065b4dc4ce4ac))
+* **oauth:** keep consent requests and authorization codes apart ([#259](https://github.com/mcpmux/mcp-mux/issues/259)) ([84abdf9](https://github.com/mcpmux/mcp-mux/commit/84abdf9e638a1bd081910d6b163cd99dd36da3a3))
+* **oauth:** only follow https endpoints from MCP server metadata ([#268](https://github.com/mcpmux/mcp-mux/issues/268)) ([b6a7cff](https://github.com/mcpmux/mcp-mux/commit/b6a7cffb20d9b2b666bcc153515fb28c46946c23))
+* **oauth:** rotate inbound refresh tokens and revoke a family on reuse ([#283](https://github.com/mcpmux/mcp-mux/issues/283)) ([081c1a1](https://github.com/mcpmux/mcp-mux/commit/081c1a115609cb1897cba84e45ed61b33a2a1ee7))
+* **oauth:** tighten tokens, registration and errors on the inbound server ([#261](https://github.com/mcpmux/mcp-mux/issues/261)) ([4f543ab](https://github.com/mcpmux/mcp-mux/commit/4f543abc2e8292a83ce75d42a5722692f0555374))
+* **registry:** show what a server runs and never auto-run the live registry ([#277](https://github.com/mcpmux/mcp-mux/issues/277)) ([b632141](https://github.com/mcpmux/mcp-mux/commit/b632141f87b2524c180b5037533c0c78989dff95))
+* **routing:** retry only real auth failures and refuse ambiguous names ([#269](https://github.com/mcpmux/mcp-mux/issues/269)) ([44f3632](https://github.com/mcpmux/mcp-mux/commit/44f36325bf3c5ec9195d8d49750a380711e7b812))
+* **runtime:** never replace the master key the data is encrypted with ([#273](https://github.com/mcpmux/mcp-mux/issues/273)) ([4fd5944](https://github.com/mcpmux/mcp-mux/commit/4fd5944e8d949de3bd33bf1c1ea020ec9eb57912))
+* **runtime:** owner-only data directory and quieter, redacted logs ([#272](https://github.com/mcpmux/mcp-mux/issues/272)) ([de3e490](https://github.com/mcpmux/mcp-mux/commit/de3e490b5c54f9853448ed1bb327690946f78f4e))
+* **storage:** bind stored ciphertexts to their row ([#285](https://github.com/mcpmux/mcp-mux/issues/285)) ([97724f0](https://github.com/mcpmux/mcp-mux/commit/97724f095222163707054ae876f02295f4b49697))
+* **storage:** encrypt server env, header and argument overrides at rest ([#276](https://github.com/mcpmux/mcp-mux/issues/276)) ([dfa19aa](https://github.com/mcpmux/mcp-mux/commit/dfa19aaf9a7dc46bd45da8092fb98c97cc7e5e46))
+* **storage:** encrypt the Secret Service session that carries the master key ([#288](https://github.com/mcpmux/mcp-mux/issues/288)) ([f84fe54](https://github.com/mcpmux/mcp-mux/commit/f84fe5413cdf1210462249f3c409fa513a3bc272))
+* **storage:** erase deleted credentials and describe the crypto as it is ([#278](https://github.com/mcpmux/mcp-mux/issues/278)) ([61f77fe](https://github.com/mcpmux/mcp-mux/commit/61f77fe14e8d84124c05320164282da7b96a0f29))
+
 ## [0.7.0](https://github.com/mcpmux/mcp-mux/compare/v0.6.0...v0.7.0) (2026-10-07)
 
 

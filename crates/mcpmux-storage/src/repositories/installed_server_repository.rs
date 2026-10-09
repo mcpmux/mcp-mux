@@ -235,6 +235,24 @@ impl SqliteInstalledServerRepository {
         })
     }
 
+    /// Build the servers a listing can read. A row whose settings can't be
+    /// decrypted is logged and left out, so one bad row doesn't hide (and
+    /// stop the gateway from connecting) every other server.
+    fn build_servers(&self, rows: Vec<RawServerRow>) -> Vec<InstalledServer> {
+        rows.into_iter()
+            .filter_map(|row| {
+                let id = row.id.clone();
+                match self.build_server(row) {
+                    Ok(server) => Some(server),
+                    Err(e) => {
+                        tracing::warn!(installed_server = %id, "skipping an unreadable server: {e}");
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// Build InstalledServer from extracted row data (needs &self for decryption).
     fn build_server(&self, row: RawServerRow) -> Result<InstalledServer> {
         let input_values = self
@@ -284,7 +302,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        rows.into_iter().map(|r| self.build_server(r)).collect()
+        Ok(self.build_servers(rows))
     }
 
     async fn list_for_space(&self, space_id: &str) -> Result<Vec<InstalledServer>> {
@@ -300,7 +318,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([space_id], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        rows.into_iter().map(|r| self.build_server(r)).collect()
+        Ok(self.build_servers(rows))
     }
 
     async fn list_by_source_file(
@@ -445,7 +463,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([space_id], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        rows.into_iter().map(|r| self.build_server(r)).collect()
+        Ok(self.build_servers(rows))
     }
 
     async fn list_enabled_all(&self) -> Result<Vec<InstalledServer>> {
@@ -461,7 +479,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             .query_map([], Self::extract_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
-        rows.into_iter().map(|r| self.build_server(r)).collect()
+        Ok(self.build_servers(rows))
     }
 
     async fn set_enabled(&self, id: &Uuid, enabled: bool) -> Result<()> {

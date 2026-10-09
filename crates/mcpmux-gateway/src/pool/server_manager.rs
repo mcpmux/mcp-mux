@@ -75,6 +75,10 @@ fn open_url_no_flash(url: &str) -> Result<(), String> {
 /// Browser debounce duration (prevent multiple browser opens on quick clicks)
 const BROWSER_DEBOUNCE: Duration = Duration::from_secs(2);
 
+/// Server error shown when [`ServerManager::open_browser`] refuses a URL.
+pub const REFUSED_AUTH_URL: &str =
+    "The server's sign-in page isn't an https URL, so McpMux didn't open it";
+
 /// OAuth timeout duration
 /// Future feature - not yet used
 #[allow(dead_code)]
@@ -597,7 +601,9 @@ impl ServerManager {
                 );
 
                 // Open browser
-                self.open_browser(&auth_url);
+                if !self.open_browser(&auth_url) {
+                    self.set_error(key, REFUSED_AUTH_URL.to_string()).await;
+                }
                 return Ok(());
             }
         }
@@ -1248,17 +1254,24 @@ impl ServerManager {
         self.connection_service.clone()
     }
 
-    /// Open browser with auth URL (without terminal flash on Windows)
-    pub fn open_browser(&self, url: &str) {
-        let logged_url = mcpmux_core::log_redact::url_for_log(url);
+    /// Open browser with auth URL (without terminal flash on Windows).
+    /// Returns `false`, opening nothing, when the URL isn't https (or
+    /// loopback http); the caller should then report the server as failed.
+    pub fn open_browser(&self, url: &str) -> bool {
+        // The authorization URL is built from server-supplied metadata: only
+        // ever hand an https (or loopback http) page to the OS, and open the
+        // parsed URL that was checked, not the raw string.
+        let Some(url) = crate::pool::oauth_utils::checked_oauth_url(url) else {
+            error!("[ServerManager] Refusing to open an authorization URL that isn't https");
+            return false;
+        };
+        let logged_url = mcpmux_core::log_redact::url_for_log(url.as_str());
         info!(url = %logged_url, "[ServerManager] Opening browser for OAuth");
 
-        // Log browser opening (if we have server context)
-        // Note: This is called from various places, so we log at the call site instead
-
-        if let Err(e) = open_url_no_flash(url) {
+        if let Err(e) = open_url_no_flash(url.as_str()) {
             error!(url = %logged_url, error = %e, "[ServerManager] Failed to open browser");
         }
+        true
     }
 
     // =========================================================================

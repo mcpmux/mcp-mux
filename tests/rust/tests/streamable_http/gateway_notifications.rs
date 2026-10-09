@@ -84,6 +84,7 @@ struct TestGateway {
     services: Arc<ServiceContainer>,
     feature_repo: Arc<MockServerFeatureRepository>,
     feature_set_repo: Arc<MockFeatureSetRepository>,
+    space_repo: Arc<dyn mcpmux_core::SpaceRepository>,
 }
 
 impl TestGateway {
@@ -189,7 +190,7 @@ impl TestGateway {
 
         // Override space_repo and inbound_client_repo in deps
         let deps = mcpmux_gateway::server::GatewayDependencies {
-            space_repo: space_repo as Arc<dyn mcpmux_core::SpaceRepository>,
+            space_repo: space_repo.clone() as Arc<dyn mcpmux_core::SpaceRepository>,
             inbound_client_repo,
             ..deps
         };
@@ -280,6 +281,7 @@ impl TestGateway {
             services,
             feature_repo,
             feature_set_repo,
+            space_repo,
         }
     }
 
@@ -450,6 +452,53 @@ async fn authless_anonymous_client_completes_real_initialize() {
         tools.is_ok(),
         "anonymous client must complete the handshake when auth is disabled"
     );
+
+    client.cancel().await.ok();
+    gw.shutdown();
+}
+
+/// Through the real middleware with auth off, a tokenless client only sees
+/// and targets the default Space.
+#[tokio::test(flavor = "multi_thread")]
+async fn authless_client_is_confined_to_the_default_space() {
+    let space_id = Uuid::new_v4();
+    let gw = TestGateway::start_authless(space_id).await;
+    let other = mcpmux_core::Space::new("Other Space");
+    gw.space_repo.create(&other).await.unwrap();
+
+    let client = connect_client(&gw.url, GatewayTestClient::new()).await;
+    let text = |result: CallToolResult| -> serde_json::Value {
+        let raw = serde_json::to_value(&result).unwrap();
+        raw["content"][0]["text"]
+            .as_str()
+            .and_then(|t| serde_json::from_str(t).ok())
+            .unwrap_or(raw)
+    };
+
+    let spaces = text(
+        client
+            .call_tool(CallToolRequestParams::new("mcpmux_list_spaces"))
+            .await
+            .unwrap(),
+    );
+    let ids: Vec<&str> = spaces["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(ids, [space_id.to_string()]);
+
+    let args = serde_json::json!({ "space_id": other.id.to_string() });
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("mcpmux_list_all_tools")
+                .with_arguments(args.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(text(result)["error"], "invalid_argument");
 
     client.cancel().await.ok();
     gw.shutdown();

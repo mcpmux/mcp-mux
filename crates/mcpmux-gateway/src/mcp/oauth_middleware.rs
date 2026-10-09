@@ -20,10 +20,9 @@ use crate::logging::TraceContext;
 use crate::server::ServiceContainer;
 
 /// Synthetic client identity used when system-wide inbound auth is disabled and
-/// a connection arrives without a (valid) Bearer token. Routing still prefers
-/// the `X-Mcpmux-Workspace` header → binding; this id only feeds the rootless
-/// `client_grants` fallback (which finds none) → Space default.
-const ANONYMOUS_CLIENT_ID: &str = "mcpmux-anonymous";
+/// a connection arrives without a (valid) Bearer token. The resolver confines it
+/// to the default Space.
+use crate::services::ANONYMOUS_CLIENT_ID;
 
 /// OAuth middleware for MCP endpoints using rmcp
 ///

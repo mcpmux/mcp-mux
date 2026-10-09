@@ -9,7 +9,7 @@ use mcpmux_core::{OutboundOAuthRegistration, StoredOAuthMetadata};
 use rmcp::transport::auth::{
     AuthError, AuthorizationManager, AuthorizationMetadata, OAuthClientConfig,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 
 use super::oauth_registration::RegisteredClient;
@@ -82,8 +82,111 @@ pub async fn discover_and_convert_metadata(
     server_url: &str,
 ) -> Result<(AuthorizationMetadata, StoredOAuthMetadata), AuthError> {
     let metadata = discover_metadata_with_fallback(manager, server_url).await?;
+    check_discovered_endpoints(&metadata)?;
     let stored = convert_to_stored_metadata(&metadata);
     Ok((metadata, stored))
+}
+
+/// Whether McpMux may send a browser or credentials to this OAuth endpoint:
+/// `https`, or `http` on a loopback host (local development servers).
+///
+/// The endpoints come from metadata the MCP server (or its authorization
+/// server) controls; anything else (`file:`, `smb:`, OS protocol handlers,
+/// plain http on the network) is refused before it reaches the browser or a
+/// token request.
+pub fn is_acceptable_oauth_endpoint(url: &str) -> bool {
+    checked_oauth_url(url).is_some()
+}
+
+/// The parsed URL when it passes [`is_acceptable_oauth_endpoint`]. Use the
+/// returned URL, not the original string: parsing normalizes it (drops tabs
+/// and newlines, rewrites `\`), so the string checked is the one used.
+pub fn checked_oauth_url(url: &str) -> Option<Url> {
+    let url = Url::parse(url).ok()?;
+    let acceptable = match url.scheme() {
+        "https" => url.host().is_some(),
+        "http" => match url.host() {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+            None => false,
+        },
+        _ => false,
+    };
+    acceptable.then_some(url)
+}
+
+fn check_discovered_endpoints(metadata: &AuthorizationMetadata) -> Result<(), AuthError> {
+    let endpoints = [
+        (
+            "authorization_endpoint",
+            Some(&metadata.authorization_endpoint),
+        ),
+        ("token_endpoint", Some(&metadata.token_endpoint)),
+        (
+            "registration_endpoint",
+            metadata.registration_endpoint.as_ref(),
+        ),
+    ];
+    for (name, url) in endpoints {
+        if let Some(url) = url {
+            if !is_acceptable_oauth_endpoint(url) {
+                warn!("[OAuth] Refusing server metadata: {name} is not an https URL");
+                return Err(AuthError::MetadataError(format!(
+                    "{name} must be an https URL (or http on localhost)"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// How [`pin_checked_metadata`] left the manager.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataPin {
+    /// Pinned the metadata saved at sign-in.
+    Stored,
+    /// No metadata was saved; pinned freshly discovered, checked metadata.
+    Discovered,
+    /// No metadata could be discovered (some servers don't publish it).
+    /// Nothing is pinned, so the manager must not be used to refresh.
+    Unavailable,
+    /// The metadata names an endpoint McpMux won't send credentials to.
+    /// Sign-in required.
+    Refused,
+}
+
+/// Pin the authorization server metadata on `manager` before it can refresh
+/// a token or send a client secret, so rmcp never re-discovers it unchecked:
+/// the metadata saved at sign-in when its endpoints are still acceptable,
+/// otherwise freshly discovered metadata that passes the same check.
+pub async fn pin_checked_metadata(
+    manager: &mut AuthorizationManager,
+    registration: Option<&OutboundOAuthRegistration>,
+    server_url: &str,
+) -> MetadataPin {
+    if let Some(stored) = registration.and_then(|r| r.metadata.as_ref()) {
+        let metadata = convert_from_stored_metadata(stored);
+        if let Err(e) = check_discovered_endpoints(&metadata) {
+            warn!("[OAuth] Stored OAuth metadata refused, sign-in required: {e}");
+            return MetadataPin::Refused;
+        }
+        manager.set_metadata(metadata);
+        return MetadataPin::Stored;
+    }
+    let metadata = match discover_metadata_with_fallback(manager, server_url).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            debug!("[OAuth] No OAuth metadata to pin: {e}");
+            return MetadataPin::Unavailable;
+        }
+    };
+    if let Err(e) = check_discovered_endpoints(&metadata) {
+        warn!("[OAuth] Discovered OAuth metadata refused, sign-in required: {e}");
+        return MetadataPin::Refused;
+    }
+    manager.set_metadata(metadata);
+    MetadataPin::Discovered
 }
 
 /// Convert RMCP's AuthorizationMetadata to our StoredOAuthMetadata format.
@@ -217,6 +320,17 @@ pub async fn initialize_from_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_checked_url_is_the_one_used() {
+        // Parsing drops tabs and newlines and rewrites `\`: the URL used is
+        // the parsed one, so what was checked is what opens.
+        let url = checked_oauth_url("ht\ttps://example.com\\auth?x=1").unwrap();
+        assert_eq!(url.as_str(), "https://example.com/auth?x=1");
+        assert!(checked_oauth_url("fi\nle:///etc/passwd").is_none());
+        assert!(checked_oauth_url("http://192.0.2.10/authorize").is_none());
+        assert!(checked_oauth_url("http://127.0.0.1:8080/authorize").is_some());
+    }
 
     #[test]
     fn test_extract_origin_with_path() {
@@ -360,5 +474,32 @@ mod tests {
         assert!(initialize_from_store(&mut manager, Some(&registration))
             .await
             .unwrap());
+    }
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::is_acceptable_oauth_endpoint;
+
+    #[test]
+    fn only_https_or_loopback_http_endpoints_are_acceptable() {
+        for url in [
+            "https://auth.example.com/authorize",
+            "http://localhost:8080/authorize",
+            "http://127.0.0.1:9000/token",
+            "http://[::1]:9000/token",
+        ] {
+            assert!(is_acceptable_oauth_endpoint(url), "{url}");
+        }
+        for url in [
+            "http://auth.example.com/authorize",
+            "file:///etc/passwd",
+            "search-ms:query=x",
+            "smb://host/share",
+            "javascript:alert(1)",
+            "not a url",
+        ] {
+            assert!(!is_acceptable_oauth_endpoint(url), "{url}");
+        }
     }
 }

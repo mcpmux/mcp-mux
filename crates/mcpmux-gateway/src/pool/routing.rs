@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use mcpmux_core::{FeatureType, LogLevel, LogSource, ServerLog, ServerLogManager};
-use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, Meta};
+use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, MetaObject};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -53,7 +53,7 @@ pub struct ToolCallResult {
     pub content: Vec<Value>,
     pub is_error: bool,
     pub structured_content: Option<Value>,
-    pub meta: Option<Meta>,
+    pub meta: Option<MetaObject>,
 }
 
 impl ToolCallResult {
@@ -754,13 +754,13 @@ impl RoutingService {
 #[cfg(test)]
 mod tests {
     use super::ToolCallResult;
-    use rmcp::model::{CallToolResult, ContentBlock, Meta};
+    use rmcp::model::{CallToolResult, ContentBlock, MetaObject};
     use serde_json::json;
 
     #[test]
     fn tool_result_round_trip_preserves_structured_content_and_meta() {
         let structured = json!({ "matches": [{ "message": "found" }] });
-        let mut meta = Meta::new();
+        let mut meta = MetaObject::new();
         meta.0.insert("traceId".to_string(), json!("trace-123"));
 
         let mut upstream = CallToolResult::structured(structured.clone());

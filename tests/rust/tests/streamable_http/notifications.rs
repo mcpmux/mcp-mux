@@ -51,7 +51,7 @@ impl TestNotificationHandler {
 }
 
 impl ServerHandler for TestNotificationHandler {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let capabilities = ServerCapabilities::builder()
             .enable_tools()
             .enable_tool_list_changed() // Key: advertise notification support
@@ -60,7 +60,7 @@ impl ServerHandler for TestNotificationHandler {
             .enable_resources()
             .enable_resources_list_changed()
             .build();
-        let mut info = ServerInfo::new(capabilities);
+        let mut info = ServerConfig::new(capabilities);
         info.server_info = Implementation::new("test-notification-server", "1.0.0");
         info
     }
@@ -100,11 +100,11 @@ impl ServerHandler for TestNotificationHandler {
         &self,
         params: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
-            "Called: {}",
-            params.name
-        ))]))
+    ) -> Result<CallToolResponse, McpError> {
+        Ok(
+            CallToolResult::success(vec![ContentBlock::text(format!("Called: {}", params.name))])
+                .into(),
+        )
     }
 }
 
@@ -113,7 +113,7 @@ async fn start_test_server(handler: TestNotificationHandler) -> (String, Cancell
     let ct = CancellationToken::new();
 
     let mut http_cfg = StreamableHttpServerConfig::default();
-    http_cfg.stateful_mode = true;
+    http_cfg.legacy_session_mode = true;
     http_cfg.json_response = false;
     http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(15));
     http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
@@ -153,7 +153,7 @@ async fn test_stateful_session_management() {
 
     // Connect client
     let transport = StreamableHttpClientTransport::from_uri(url.as_str());
-    let client = ClientInfo::new(
+    let client = ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new("test-client", "1.0.0"),
     )
@@ -287,8 +287,8 @@ impl NotificationTrackingClient {
 }
 
 impl rmcp::ClientHandler for NotificationTrackingClient {
-    fn get_info(&self) -> ClientInfo {
-        ClientInfo::new(
+    fn get_info(&self) -> ClientConfig {
+        ClientConfig::new(
             ClientCapabilities::default(),
             Implementation::new("notification-tracking-client", "1.0.0"),
         )
@@ -593,7 +593,7 @@ async fn test_session_persists_across_requests() {
     let (url, ct) = start_test_server(handler.clone()).await;
 
     let transport = StreamableHttpClientTransport::from_uri(url.as_str());
-    let client = ClientInfo::new(
+    let client = ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new("session-test-client", "1.0.0"),
     )
@@ -650,7 +650,7 @@ async fn test_protocol_version_negotiation() {
 
     // Connect with default (latest) protocol version
     let transport = StreamableHttpClientTransport::from_uri(url.as_str());
-    let client = ClientInfo::new(
+    let client = ClientConfig::new(
         ClientCapabilities::default(),
         Implementation::new("protocol-test-client", "1.0.0"),
     )

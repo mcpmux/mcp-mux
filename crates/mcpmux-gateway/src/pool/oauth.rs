@@ -26,7 +26,9 @@ use mcpmux_core::{
     branding, CredentialRepository, CredentialType, LogLevel, LogSource, OutboundOAuthRepository,
     ServerLog, ServerLogManager,
 };
-use rmcp::transport::auth::{AuthError, AuthorizationManager, AuthorizationSession, OAuthState};
+use rmcp::transport::auth::{
+    AuthError, AuthorizationManager, AuthorizationRequest, AuthorizationSession, OAuthState,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -1338,7 +1340,6 @@ impl OutboundOAuthManager {
                 .as_ref()
                 .map(Self::get_scopes_from_metadata)
                 .unwrap_or_default();
-            let scope_refs = Self::scopes_as_refs(&scopes);
 
             // Prefer a Client ID Metadata Document over DCR when the authorization server
             // supports it: the server verifies our identity by fetching the HTTPS document,
@@ -1380,12 +1381,13 @@ impl OutboundOAuthManager {
             let session_result = if uses_cimd {
                 AuthorizationSession::new(
                     manager,
-                    &scope_refs,
-                    &redirect_uri,
-                    Some(&client_name),
-                    Some(&client_metadata_url),
+                    AuthorizationRequest::new(&redirect_uri)
+                        .with_scopes(&scopes)
+                        .with_client_name(&client_name)
+                        .with_client_metadata_url(&client_metadata_url),
                 )
                 .await
+                .map_err(|(_, e)| e)
             } else {
                 // Register ourselves rather than via rmcp, so the request carries
                 // McpMux's logo_uri/client_uri and we learn the client secret

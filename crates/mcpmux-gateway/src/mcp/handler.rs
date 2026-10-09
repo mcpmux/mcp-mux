@@ -9,6 +9,7 @@ use rmcp::{
     service::{NotificationContext, RequestContext},
     ErrorData as McpError, RoleServer, ServerHandler,
 };
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -354,7 +355,28 @@ impl McpMuxGatewayHandler {
 }
 
 impl ServerHandler for McpMuxGatewayHandler {
-    fn get_info(&self) -> ServerInfo {
+    /// Stays on protocol revisions that open a session with `initialize`.
+    /// From 2026-07-28 requests are served statelessly, with no session for
+    /// `on_initialized`, the roots probe or list_changed over SSE, all of which
+    /// the gateway relies on.
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        Cow::Borrowed(ProtocolVersion::known_up_to(
+            &ProtocolVersion::LATEST_WITH_INITIALIZE,
+        ))
+    }
+
+    /// Answers `server/discover` as a server from before 2026-07-28 does, so
+    /// clients that probe with it fall back to `initialize` and a session.
+    /// Answering it would let a client pick an older version and still send
+    /// sessionless requests.
+    async fn discover(
+        &self,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<DiscoverResult, McpError> {
+        Err(McpError::method_not_found::<DiscoverRequestMethod>())
+    }
+
+    fn get_info(&self) -> ServerConfig {
         // Note: get_info is called frequently, no logging needed
 
         let capabilities = ServerCapabilities::builder()
@@ -367,7 +389,7 @@ impl ServerHandler for McpMuxGatewayHandler {
             .build();
         let mut server_info = Implementation::new("mcpmux-gateway", env!("CARGO_PKG_VERSION"));
         server_info.title = Some("McpMux".to_string());
-        let mut info = ServerInfo::new(capabilities);
+        let mut info = ServerConfig::new(capabilities);
         info.server_info = server_info;
         info.instructions = Some(
             "McpMux aggregates multiple MCP servers. Use tools/prompts/resources \
@@ -784,7 +806,7 @@ impl ServerHandler for McpMuxGatewayHandler {
         &self,
         params: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
@@ -841,8 +863,8 @@ impl ServerHandler for McpMuxGatewayHandler {
                 .call(&params.name, &oauth_ctx.client_id, session_id, args)
                 .await
             {
-                Ok(result) => Ok(result),
-                Err(e) => Ok(e.into_call_tool_result()),
+                Ok(result) => Ok(result.into()),
+                Err(e) => Ok(e.into_call_tool_result().into()),
             };
         }
 
@@ -910,7 +932,7 @@ impl ServerHandler for McpMuxGatewayHandler {
             "call_tool result"
         );
 
-        Ok(result)
+        Ok(result.into())
     }
 
     async fn list_prompts(
@@ -968,7 +990,7 @@ impl ServerHandler for McpMuxGatewayHandler {
         &self,
         params: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<GetPromptResult, McpError> {
+    ) -> Result<GetPromptResponse, McpError> {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
@@ -1025,7 +1047,7 @@ impl ServerHandler for McpMuxGatewayHandler {
             McpError::internal_error(format!("Failed to parse prompt result: {}", e), None)
         })?;
 
-        Ok(result)
+        Ok(result.into())
     }
 
     async fn list_resources(
@@ -1081,7 +1103,7 @@ impl ServerHandler for McpMuxGatewayHandler {
         &self,
         params: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, McpError> {
+    ) -> Result<ReadResourceResponse, McpError> {
         let oauth_ctx = self
             .get_oauth_context(&context.extensions)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
@@ -1138,7 +1160,7 @@ impl ServerHandler for McpMuxGatewayHandler {
             .filter_map(|v| serde_json::from_value(v).ok())
             .collect();
 
-        Ok(ReadResourceResult::new(contents))
+        Ok(ReadResourceResult::new(contents).into())
     }
 
     /// Override on_custom_request to handle "initialize" with flexible protocol negotiation

@@ -99,7 +99,7 @@ AI Clients -> McpMux Gateway (localhost:45818/mcp) -> MCP Servers (stdio/HTTP)
 
 ### Prerequisites
 
-Rust 1.75+, Node.js 20+, pnpm 9+. Linux: `gnome-keyring libsecret-1-dev librsvg2-dev pkg-config`.
+Rust 1.88+, Node.js 20+, pnpm 9+. Linux: `gnome-keyring libsecret-1-dev librsvg2-dev pkg-config`.
 
 ### Code Style
 

@@ -12,7 +12,7 @@ use mcpmux_core::{DomainEvent, LogLevel, LogSource, ServerLog, ServerLogManager}
 use parking_lot::RwLock;
 // Logging is deprecated by SEP-2577, but clients and servers still use it.
 #[allow(deprecated)]
-use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, LoggingLevel};
+use rmcp::model::{ClientCapabilities, ClientConfig, Implementation, LoggingLevel};
 use rmcp::service::{NotificationContext, RunningService};
 use rmcp::RoleClient;
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ const CLIENT_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(1500);
 /// Client handler for MCP connections
 #[derive(Clone)]
 pub struct McpClientHandler {
-    info: ClientInfo,
+    info: ClientConfig,
     server_id: String,
     space_id: Uuid,
     event_tx: Option<tokio::sync::broadcast::Sender<DomainEvent>>,
@@ -64,7 +64,7 @@ impl McpClientHandler {
             Implementation::new(format!("mcpmux-{}", server_id), env!("CARGO_PKG_VERSION"));
         client_info.title = Some("McpMux Gateway".to_string());
         Self {
-            info: ClientInfo::new(ClientCapabilities::default(), client_info),
+            info: ClientConfig::new(ClientCapabilities::default(), client_info),
             server_id: server_id.to_string(),
             space_id,
             event_tx,
@@ -89,7 +89,7 @@ impl McpClientHandler {
 }
 
 impl rmcp::ClientHandler for McpClientHandler {
-    fn get_info(&self) -> ClientInfo {
+    fn get_info(&self) -> ClientConfig {
         self.info.clone()
     }
 

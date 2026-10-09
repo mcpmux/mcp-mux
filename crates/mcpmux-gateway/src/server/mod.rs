@@ -388,7 +388,8 @@ impl GatewayServer {
             McpMuxGatewayHandler::new(Arc::new(self.services.clone()), notification_bridge.clone());
 
         // Create STATEFUL MCP service (full Streamable HTTP per spec 2025-11-25)
-        // stateful_mode: true means:
+        // legacy_session_mode: true means (the handler only offers protocol
+        // versions up to 2025-11-25, which all use sessions):
         // - Mcp-Session-Id header for session management
         // - GET endpoint for SSE streams (server-initiated notifications)
         // - DELETE endpoint for session termination
@@ -396,7 +397,7 @@ impl GatewayServer {
         // Build via default() + setters so new non-exhaustive fields (e.g. allowed_hosts,
         // which defaults to localhost/127.0.0.1/::1) don't require us to enumerate them.
         let mut http_cfg = StreamableHttpServerConfig::default();
-        http_cfg.stateful_mode = true;
+        http_cfg.legacy_session_mode = true;
         http_cfg.json_response = false;
         http_cfg.allowed_hosts = self.config.allowed_hosts();
         info!(

@@ -41,8 +41,13 @@ pub async fn discover_metadata_with_fallback(
     manager: &mut AuthorizationManager,
     server_url: &str,
 ) -> Result<AuthorizationMetadata, AuthError> {
+    // rmcp 3 rejects authorization server metadata without an `issuer` (RFC 8414
+    // requires it). Servers that leave it out could sign in before, so they
+    // still can; an issuer that doesn't match the discovery URL is still rejected.
+    manager.set_allow_missing_issuer(true);
+
     // First try the direct URL
-    match manager.discover_metadata().await {
+    match manager.resolve_metadata().await.map(|r| r.metadata) {
         Ok(metadata) => {
             info!("[OAuth] Metadata discovered at endpoint: {}", server_url);
             Ok(metadata)
@@ -56,11 +61,12 @@ pub async fn discover_metadata_with_fallback(
                 origin_url
             );
 
-            let origin_manager = AuthorizationManager::new(&origin_url)
+            let mut origin_manager = AuthorizationManager::new(&origin_url)
                 .await
                 .map_err(|_| AuthError::NoAuthorizationSupport)?;
+            origin_manager.set_allow_missing_issuer(true);
 
-            let metadata = origin_manager.discover_metadata().await?;
+            let metadata = origin_manager.resolve_metadata().await?.metadata;
 
             info!("[OAuth] Metadata discovered at origin: {}", origin_url);
 

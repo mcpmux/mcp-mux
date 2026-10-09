@@ -26,7 +26,7 @@ use rmcp::{
         },
         StreamableHttpClientTransport,
     },
-    RoleClient, ServiceExt,
+    ClientLifecycleMode, ClientServiceExt, RoleClient, ServiceExt,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -224,7 +224,7 @@ impl TestGateway {
 
         // Build MCP service
         let mut http_cfg = StreamableHttpServerConfig::default();
-        http_cfg.stateful_mode = true;
+        http_cfg.legacy_session_mode = true;
         http_cfg.json_response = false;
         http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(15));
         http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
@@ -342,13 +342,13 @@ impl GatewayTestClient {
 impl rmcp::ClientHandler for GatewayTestClient {
     // Roots is deprecated by SEP-2577, but clients and servers still use it.
     #[allow(deprecated)]
-    fn get_info(&self) -> ClientInfo {
+    fn get_info(&self) -> ClientConfig {
         let capabilities = if self.roots.is_empty() {
             ClientCapabilities::default()
         } else {
             ClientCapabilities::builder().enable_roots().build()
         };
-        ClientInfo::new(
+        ClientConfig::new(
             capabilities,
             Implementation::new("gateway-test-client", "1.0.0"),
         )
@@ -497,6 +497,67 @@ async fn test_gateway_forwards_tools_changed_to_client() {
     assert!(
         result.is_ok(),
         "Client should receive tools/list_changed through gateway"
+    );
+
+    client.cancel().await.ok();
+    gw.shutdown();
+}
+
+// ============================================================================
+// B2b: A client that prefers the 2026-07-28 protocol still gets a session
+// ============================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn client_preferring_sessionless_protocol_falls_back_to_a_session() {
+    // From 2026-07-28 the protocol has no sessions, so list_changed couldn't
+    // reach the client. The gateway doesn't offer that version: a client that
+    // probes with server/discover, and also speaks 2025-11-25, must fall back
+    // to initialize, open a session and get notifications as before.
+    let space_id = Uuid::new_v4();
+    let client_id = Uuid::new_v4().to_string();
+    let gw = TestGateway::start(&client_id, space_id).await;
+
+    let tool = tests::features::test_tool(&space_id.to_string(), "test-server", "read_file");
+    gw.feature_repo.upsert(&tool).await.unwrap();
+
+    let client_handler = GatewayTestClient::new();
+    let tools_changed = client_handler.tools_changed.clone();
+    let transport = StreamableHttpClientTransport::from_uri(gw.url.clone());
+    let client = client_handler
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Auto {
+                preferred_versions: vec![
+                    ProtocolVersion::V_2026_07_28,
+                    ProtocolVersion::V_2025_11_25,
+                ],
+                legacy_version: None,
+            },
+        )
+        .await
+        .expect("client should connect to gateway");
+
+    let negotiated = client
+        .peer_info()
+        .expect("handshake should record server info")
+        .protocol_version
+        .clone();
+    assert_eq!(negotiated, ProtocolVersion::LATEST_WITH_INITIALIZE);
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let new_tool = tests::features::test_tool(&space_id.to_string(), "test-server", "write_file");
+    gw.feature_repo.upsert(&new_tool).await.unwrap();
+    gw.emit(DomainEvent::ToolsChanged {
+        server_id: "test-server".to_string(),
+        space_id,
+    });
+
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(5), tools_changed.notified()).await;
+    assert!(
+        result.is_ok(),
+        "client should receive tools/list_changed over its session"
     );
 
     client.cancel().await.ok();

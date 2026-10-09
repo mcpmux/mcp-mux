@@ -93,6 +93,10 @@ impl SqliteInstalledServerRepository {
                 "Failed to decrypt {column} (wrong master key, or the value was moved or tampered with)"
             );
         }
+        // Plaintext settings are only read until everything was converted.
+        if self.encryptor.requires_bound() {
+            anyhow::bail!("{column} is not encrypted and bound; refusing it");
+        }
         serde_json::from_str(&data).map_err(|e| {
             anyhow::anyhow!(
                 "Failed to decrypt {column} and data is not valid plaintext JSON \

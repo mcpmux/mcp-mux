@@ -155,3 +155,58 @@ async fn runtime_drop_releases_lock_for_next_process() {
         .await
         .expect("third build should succeed after first runtime dropped");
 }
+
+/// With every stored secret bound, startup records it and switches the
+/// encryptor to refuse unbound values; a value that isn't bound keeps it off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn startup_refuses_unbound_values_once_everything_is_bound() {
+    let fx = Fixture::new();
+    {
+        let runtime = super::runtime_builder()
+            .with_data_dir(fx.data_dir())
+            .build()
+            .await
+            .expect("runtime build");
+        assert!(runtime.encryptor.requires_bound());
+        assert!(runtime.database.lock().await.ciphertexts_bound());
+    }
+
+    // A fresh data dir with a value that can't be bound: legacy reads stay on.
+    let fx = Fixture::new();
+    {
+        let runtime = super::runtime_builder()
+            .with_data_dir(fx.data_dir())
+            .build()
+            .await
+            .expect("runtime build");
+        runtime
+            .database
+            .lock()
+            .await
+            .connection()
+            .execute(
+                "INSERT INTO credentials (id, space_id, server_id, credential_type, credential_value, created_at, updated_at)
+                 VALUES ('c1', (SELECT id FROM spaces LIMIT 1), 'srv', 'api_key', 'garbage', 'now', 'now')",
+                [],
+            )
+            .unwrap();
+        // Undo the marker the first start recorded on this empty database.
+        runtime
+            .database
+            .lock()
+            .await
+            .connection()
+            .execute(
+                "DELETE FROM app_settings WHERE key = 'storage.ciphertexts_bound'",
+                [],
+            )
+            .unwrap();
+    }
+    let runtime = super::runtime_builder()
+        .with_data_dir(fx.data_dir())
+        .build()
+        .await
+        .expect("runtime build");
+    assert!(!runtime.encryptor.requires_bound());
+    assert!(!runtime.database.lock().await.ciphertexts_bound());
+}

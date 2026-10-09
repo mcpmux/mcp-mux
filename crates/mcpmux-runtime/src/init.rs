@@ -220,6 +220,36 @@ impl RuntimeBuilder {
             }
         }
 
+        // Once every stored secret is bound, refuse unbound ones for good: a
+        // legacy-looking value appearing later wasn't written by McpMux.
+        {
+            let db = database.lock().await;
+            let bound = db.ciphertexts_bound()
+                || match db.unbound_value_count() {
+                    Ok(0) => match db.mark_ciphertexts_bound() {
+                        Ok(()) => true,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "[runtime] could not record that all secrets are bound");
+                            false
+                        }
+                    },
+                    Ok(n) => {
+                        info!(
+                            values = n,
+                            "[runtime] stored values not yet bound; legacy reads stay on"
+                        );
+                        false
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "[runtime] could not count unbound values");
+                        false
+                    }
+                };
+            if bound {
+                encryptor.require_bound();
+            }
+        }
+
         let app_settings_service =
             Arc::new(AppSettingsService::new(repositories.app_settings.clone()));
         let gateway_port_service =

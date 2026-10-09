@@ -168,6 +168,9 @@ pub struct EncryptedSample {
     pub context: String,
 }
 
+/// `app_settings` key recording that every stored secret is bound.
+const CIPHERTEXTS_BOUND_KEY: &str = "storage.ciphertexts_bound";
+
 /// SQLite database wrapper.
 pub struct Database {
     conn: Connection,
@@ -413,7 +416,22 @@ impl Database {
              SELECT 'input_values', input_values, id, '', ''
                FROM installed_servers
               WHERE input_values IS NOT NULL AND input_values != ''
-                AND substr(input_values, 1, 1) != '{'
+                AND substr(input_values, 1, 1) NOT IN ('{', '[')
+             UNION ALL
+             SELECT 'env_overrides', env_overrides, id, '', ''
+               FROM installed_servers
+              WHERE env_overrides IS NOT NULL AND env_overrides != ''
+                AND substr(env_overrides, 1, 1) NOT IN ('{', '[')
+             UNION ALL
+             SELECT 'args_append', args_append, id, '', ''
+               FROM installed_servers
+              WHERE args_append IS NOT NULL AND args_append != ''
+                AND substr(args_append, 1, 1) NOT IN ('{', '[')
+             UNION ALL
+             SELECT 'extra_headers', extra_headers, id, '', ''
+               FROM installed_servers
+              WHERE extra_headers IS NOT NULL AND extra_headers != ''
+                AND substr(extra_headers, 1, 1) NOT IN ('{', '[')
              LIMIT ?1",
         )?;
         let rows = stmt.query_map([limit as i64], |row| {
@@ -422,7 +440,7 @@ impl Database {
             let context = match kind.as_str() {
                 "credential" => binding::credential(&a, &b, &c),
                 "client_secret" => binding::outbound_client_secret(&a, &b),
-                _ => binding::installed_server("input_values", &a),
+                column => binding::installed_server(column, &a),
             };
             Ok(EncryptedSample {
                 value: row.get(1)?,
@@ -430,6 +448,60 @@ impl Database {
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// How many stored secrets are not yet bound to their place: unbound
+    /// (legacy) ciphertexts, plaintext server settings, and values that
+    /// couldn't be converted. Zero means every value is bound.
+    pub fn unbound_value_count(&self) -> Result<usize> {
+        const UNBOUND: &str = "IS NOT NULL AND {col} != '' AND substr({col}, 1, 3) != 'v2:'";
+        let mut total = 0;
+        for (table, columns) in [
+            ("credentials", &["credential_value"][..]),
+            ("outbound_oauth_clients", &["client_secret_encrypted"][..]),
+            (
+                "installed_servers",
+                &[
+                    "input_values",
+                    "env_overrides",
+                    "args_append",
+                    "extra_headers",
+                ][..],
+            ),
+        ] {
+            for col in columns {
+                let condition = UNBOUND.replace("{col}", col);
+                let count: i64 = self.conn.query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE {col} {condition}"),
+                    [],
+                    |row| row.get(0),
+                )?;
+                total += count as usize;
+            }
+        }
+        Ok(total)
+    }
+
+    /// Whether every stored secret was found bound at some start (see
+    /// [`Self::mark_ciphertexts_bound`]). From then on, unbound values are
+    /// refused rather than read as legacy data.
+    pub fn ciphertexts_bound(&self) -> bool {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM app_settings WHERE key = ?1 AND value = 'true'",
+                [CIPHERTEXTS_BOUND_KEY],
+                |_| Ok(()),
+            )
+            .is_ok()
+    }
+
+    /// Record that every stored secret is bound.
+    pub fn mark_ciphertexts_bound(&self) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?1, 'true', ?2)",
+            rusqlite::params![CIPHERTEXTS_BOUND_KEY, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
     }
 
     /// Re-encrypt credentials and outbound client secrets written by earlier

@@ -3,6 +3,8 @@
 //! Uses AES-256-GCM for authenticated encryption of sensitive fields
 //! like credentials and tokens before storing in the database.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::{Context, Result};
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
 use ring::rand::{SecureRandom, SystemRandom};
@@ -29,6 +31,10 @@ const BOUND_PREFIX: &str = "v2:";
 
 /// The associated-data context of each encrypted column: what a stored
 /// ciphertext is bound to.
+///
+/// The ids are part of the binding: a migration that rewrites a Space,
+/// server or installed-server id must decrypt and re-encrypt the affected
+/// values under the new context, or they stop decrypting.
 pub mod binding {
     /// `credentials.credential_value` (unique per Space, server and type).
     pub fn credential(space_id: &str, server_id: &str, credential_type: &str) -> String {
@@ -51,6 +57,9 @@ pub mod binding {
 pub struct FieldEncryptor {
     key: LessSafeKey,
     rng: SystemRandom,
+    /// Once every stored value is bound, unbound ciphertexts are refused
+    /// (see [`Self::require_bound`]).
+    require_bound: AtomicBool,
 }
 
 impl FieldEncryptor {
@@ -63,7 +72,23 @@ impl FieldEncryptor {
         let key = LessSafeKey::new(unbound_key);
         let rng = SystemRandom::new();
 
-        Ok(Self { key, rng })
+        Ok(Self {
+            key,
+            rng,
+            require_bound: AtomicBool::new(false),
+        })
+    }
+
+    /// Refuse unbound (legacy) ciphertexts from now on. Set once every
+    /// stored value has been bound, so a value written elsewhere and copied
+    /// in without its binding is rejected instead of accepted as legacy.
+    pub fn require_bound(&self) {
+        self.require_bound.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether unbound ciphertexts (and plaintext settings) are refused.
+    pub fn requires_bound(&self) -> bool {
+        self.require_bound.load(Ordering::Relaxed)
     }
 
     /// Encrypt a plaintext string.
@@ -85,13 +110,14 @@ impl FieldEncryptor {
     }
 
     /// Decrypt a stored value: a bound (`v2:`) ciphertext with `context`,
-    /// or a legacy unbound one as before.
+    /// or a legacy unbound one until [`Self::require_bound`] is set.
     pub fn decrypt_bound(&self, stored: &str, context: &str) -> Result<String> {
         match stored.strip_prefix(BOUND_PREFIX) {
             Some(hex_ct) => {
                 let ciphertext = hex::decode(hex_ct).context("Invalid hex encoding")?;
                 self.open(&ciphertext, Aad::from(context.as_bytes()))
             }
+            None if self.requires_bound() => anyhow::bail!("unbound ciphertext rejected"),
             None => self.decrypt(stored),
         }
     }
@@ -109,10 +135,11 @@ impl FieldEncryptor {
 
         let nonce = Nonce::assume_unique_for_key(nonce_bytes);
 
-        // Encrypt in-place
-        let mut in_out = plaintext.as_bytes().to_vec();
+        // Encrypt in-place; wiped on drop, in case sealing fails and it
+        // still holds the plaintext.
+        let mut in_out = zeroize::Zeroizing::new(plaintext.as_bytes().to_vec());
         self.key
-            .seal_in_place_append_tag(nonce, aad, &mut in_out)
+            .seal_in_place_append_tag(nonce, aad, &mut *in_out)
             .map_err(|_| anyhow::anyhow!("Encryption failed"))?;
 
         // Prepend nonce to ciphertext
@@ -150,7 +177,11 @@ impl FieldEncryptor {
             .open_in_place(nonce, aad, &mut in_out)
             .map_err(|_| anyhow::anyhow!("Decryption failed - wrong key or corrupted data"))?;
 
-        String::from_utf8(plaintext.to_vec()).context("Decrypted data is not valid UTF-8")
+        // Check the bytes in place: a `String::from_utf8` error would carry an
+        // unwiped copy of the plaintext.
+        std::str::from_utf8(plaintext)
+            .map(str::to_owned)
+            .context("Decrypted data is not valid UTF-8")
     }
 }
 

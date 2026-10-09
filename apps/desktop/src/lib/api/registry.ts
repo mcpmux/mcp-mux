@@ -3,7 +3,14 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { RegistryCategory, ServerDefinition, InstalledServerState, UiConfig, HomeConfig } from '../../types/registry';
+import type {
+  RegistryCategory,
+  ServerDefinition,
+  InstalledServerState,
+  UiConfig,
+  HomeConfig,
+  TransportConfig,
+} from '../../types/registry';
 
 /** Discover all servers (definitions from all sources) */
 export async function discoverServers(): Promise<ServerDefinition[]> {
@@ -41,9 +48,17 @@ export async function listCategories(): Promise<RegistryCategory[]> {
   return invoke<RegistryCategory[]>('list_registry_categories');
 }
 
-/** Install a server (adds to DB) */
-export async function installServer(id: string, spaceId: string): Promise<void> {
-  return invoke<void>('install_server', { id, spaceId });
+/**
+ * Install a server (adds to DB). `expectedTransport` is the definition's
+ * transport as shown to the user: the install is refused if the registry's
+ * current definition differs, so what runs is what was reviewed.
+ */
+export async function installServer(
+  id: string,
+  spaceId: string,
+  expectedTransport?: TransportConfig
+): Promise<void> {
+  return invoke<void>('install_server', { id, spaceId, expectedTransport });
 }
 
 /** Uninstall a server (removes from DB) */

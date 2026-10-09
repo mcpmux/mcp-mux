@@ -14,6 +14,7 @@ pub async fn install_server(
     app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
     id: String,
     space_id: String,
+    expected_transport: Option<serde_json::Value>,
 ) -> Result<InstalledServer, String> {
     let service_lock = app_service.read().await;
     let service = service_lock
@@ -33,6 +34,10 @@ pub async fn install_server(
         .get(&id)
         .await
         .ok_or("Server definition not found")?;
+    // Install exactly what the user reviewed.
+    if !mcpmux_core::transport_matches_shown(&definition, expected_transport.as_ref()) {
+        return Err(mcpmux_core::DEFINITION_CHANGED.to_string());
+    }
 
     // Pass the full definition for caching (offline support)
     service

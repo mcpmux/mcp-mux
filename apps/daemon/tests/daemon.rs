@@ -890,6 +890,32 @@ async fn servers_add_configure_enable_and_feature_set_membership() {
         ),
     )
     .await;
+    if added.ok {
+        // Installing again with a definition that isn't the current one (the
+        // registry changed after it was shown) is refused.
+        let stale = call(
+            &socket,
+            &request_with(
+                "a0",
+                "servers.add",
+                serde_json::json!({"server_id": "community.memory-npx", "inputs": {},
+                    "expected_transport": {"type": "stdio", "command": "something-else",
+                        "args": [], "env": {}, "metadata": {"inputs": []}}}),
+            ),
+        )
+        .await;
+        assert!(!stale.ok);
+        assert!(
+            stale
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("changed since it was shown"),
+            "{:?}",
+            stale.error
+        );
+    }
     if !added.ok {
         eprintln!(
             "skipping server flow: registry unavailable ({:?})",

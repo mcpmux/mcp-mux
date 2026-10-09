@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useToast, ToastContainer } from '@mcpmux/ui';
 import { useRegistryStore } from '../../stores/registryStore';
+import type { ServerViewModel } from '../../types/registry';
 import { ServerCard } from './ServerCard';
 import { ServerDetailModal } from './ServerDetailModal';
 import { useViewSpace, useNavigateTo } from '@/stores';
@@ -115,11 +116,12 @@ export function RegistryPage() {
     return () => clearTimeout(timer);
   }, [localSearch, searchQuery, displayServers.length]);
 
-  const handleInstall = async (id: string) => {
-    const server = servers.find((s) => s.id === id);
-    const serverName = server?.name || 'Server';
+  /** Install the server the user reviewed in the details modal. */
+  const handleInstall = async (server: ServerViewModel) => {
+    const serverName = server.name || 'Server';
     try {
-      await installServer(id, viewSpace?.id);
+      await installServer(server.id, viewSpace?.id, server.transport);
+      selectServer(null);
       success('Server installed', `"${serverName}" has been installed`, {
         duration: 6000,
         action: {
@@ -127,8 +129,9 @@ export function RegistryPage() {
           onClick: () => navigateTo('servers'),
         },
       });
-    } catch {
-      showToastError('Install failed', `Failed to install "${serverName}"`);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      showToastError('Install failed', `Failed to install "${serverName}": ${reason}`);
     }
   };
 
@@ -285,7 +288,6 @@ export function RegistryPage() {
               <ServerCard
                 key={server.id}
                 server={server}
-                onInstall={handleInstall}
                 onUninstall={handleUninstall}
                 onViewDetails={selectServer}
                 isLoading={isLoading}

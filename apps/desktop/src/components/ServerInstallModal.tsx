@@ -134,7 +134,11 @@ export function ServerInstallModal() {
     setInstallError(null);
 
     try {
-      await installServer(modalState.server.id, selectedSpaceId);
+      await installServer(
+        modalState.server.id,
+        selectedSpaceId,
+        modalState.server.transport
+      );
       console.log('[Install] Server installed:', modalState.server.id);
       setModalState({ type: 'success', serverName: modalState.server.name });
 

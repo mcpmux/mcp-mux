@@ -468,6 +468,10 @@ pub struct ServersAddParams {
     /// Registry definition inputs, e.g. credentials required at install time.
     #[serde(default)]
     pub inputs: std::collections::HashMap<String, String>,
+    /// The definition's transport as shown to the user. When given, the
+    /// install is refused if the current definition differs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_transport: Option<serde_json::Value>,
 }
 
 /// `servers.configure` updates an installed server. Any omitted field is left

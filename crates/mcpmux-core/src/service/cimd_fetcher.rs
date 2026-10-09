@@ -66,6 +66,9 @@ impl CimdMetadataFetcher {
         reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .redirect(reqwest::redirect::Policy::none())
+            // Through a proxy (HTTP(S)_PROXY), the proxy would resolve the
+            // host, bypassing the public-address check below.
+            .no_proxy()
     }
 
     /// Fetch metadata from a CIMD URL
@@ -192,14 +195,23 @@ fn is_public_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_public_ipv6(ip: Ipv6Addr) -> bool {
-    let first = ip.segments()[0];
+    let segments = ip.segments();
+    let first = segments[0];
+    // NAT64 (64:ff9b::/96) reaches the IPv4 address in the last 32 bits.
+    if segments[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        let [.., a, b, c, d] = ip.octets();
+        return is_public_ipv4(Ipv4Addr::new(a, b, c, d));
+    }
     !(ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
         || (first & 0xfe00) == 0xfc00 // unique local
         || (first & 0xffc0) == 0xfe80 // link-local
-        || first == 0x2001 && ip.segments()[1] == 0x0db8 // documentation
-        || ip.segments()[..6] == [0, 0, 0, 0, 0, 0]) // IPv4-compatible / reserved
+        || (first & 0xffc0) == 0xfec0 // site-local (deprecated)
+        || first == 0x2001 && segments[1] == 0x0db8 // documentation
+        || first == 0x2001 && segments[1] == 0 // Teredo
+        || first == 0x2002 // 6to4
+        || segments[..6] == [0, 0, 0, 0, 0, 0]) // IPv4-compatible / reserved
 }
 
 /// DNS resolver that only returns public addresses, so a host name can't be
@@ -273,10 +285,22 @@ mod tests {
 
     #[test]
     fn public_address_classification() {
-        for ip in ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"] {
+        for ip in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "2606:4700:4700::1111",
+            // NAT64 of a public IPv4 address.
+            "64:ff9b::808:808",
+        ] {
             assert!(is_public_address(ip.parse().unwrap()), "{ip}");
         }
         for ip in [
+            // NAT64 of loopback / metadata.
+            "64:ff9b::7f00:1",
+            "64:ff9b::a9fe:a9fe",
+            "fec0::1",
+            "2002:7f00:1::1",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
             "127.0.0.1",
             "10.1.2.3",
             "172.16.0.1",

@@ -8,7 +8,113 @@ use tracing::{debug, info, warn};
 
 use super::{convert_to_feature, resource_to_feature, CachedFeatures};
 use crate::pool::instance::McpClient;
-use mcpmux_core::ServerFeatureRepository;
+use mcpmux_core::{ServerFeature, ServerFeatureRepository};
+use rmcp::model::PaginatedRequestParams;
+use rmcp::service::ServiceError;
+
+/// Most tools, prompts or resources (each) kept from one server. Real servers
+/// expose at most a few hundred; the cap keeps a misbehaving one from
+/// filling memory, the database and every client's tool list.
+pub const MAX_FEATURES_PER_KIND: usize = 2000;
+/// Most list pages requested per kind (a server that keeps returning a
+/// cursor would otherwise be paged until the timeout).
+const MAX_LIST_PAGES: usize = 100;
+/// Longest feature name kept; features with longer names are skipped.
+const MAX_NAME_LEN: usize = 512;
+/// Longest description kept; longer ones are truncated.
+const MAX_DESCRIPTION_LEN: usize = 16 * 1024;
+/// Largest serialized feature definition (input schema included) kept;
+/// larger ones are skipped.
+const MAX_DEFINITION_BYTES: usize = 256 * 1024;
+
+/// Page through a list endpoint, stopping at [`MAX_FEATURES_PER_KIND`]
+/// items or [`MAX_LIST_PAGES`] pages.
+async fn list_capped<T, F, Fut>(label: &str, mut page: F) -> Result<Vec<T>, ServiceError>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: Future<Output = Result<(Vec<T>, Option<String>), ServiceError>>,
+{
+    let mut items = Vec::new();
+    let mut cursor = None;
+    for _ in 0..MAX_LIST_PAGES {
+        let (batch, next) = page(cursor).await?;
+        items.extend(batch);
+        if items.len() >= MAX_FEATURES_PER_KIND {
+            warn!(
+                "[FeatureDiscovery] {} returned more than {} items; keeping the first {}",
+                label, MAX_FEATURES_PER_KIND, MAX_FEATURES_PER_KIND
+            );
+            items.truncate(MAX_FEATURES_PER_KIND);
+            return Ok(items);
+        }
+        match next {
+            Some(next) => cursor = Some(next),
+            None => return Ok(items),
+        }
+    }
+    warn!(
+        "[FeatureDiscovery] {} still had more pages after {}; stopping",
+        label, MAX_LIST_PAGES
+    );
+    Ok(items)
+}
+
+/// Cut a description longer than [`MAX_DESCRIPTION_LEN`] on a char boundary
+/// and mark it with "…".
+fn shorten_description(desc: &mut String) {
+    if desc.len() > MAX_DESCRIPTION_LEN {
+        let mut cut = MAX_DESCRIPTION_LEN;
+        while !desc.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        desc.truncate(cut);
+        desc.push('…');
+    }
+}
+
+/// Keep a discovered feature only within the size limits: names and whole
+/// definitions above their caps are dropped, long descriptions shortened.
+fn within_limits(mut feature: ServerFeature) -> Option<ServerFeature> {
+    if feature.feature_name.len() > MAX_NAME_LEN {
+        warn!(
+            "[FeatureDiscovery] Skipping {:?} with a {}-byte name",
+            feature.feature_type,
+            feature.feature_name.len()
+        );
+        return None;
+    }
+    if let Some(desc) = feature.description.as_mut() {
+        shorten_description(desc);
+    }
+    // Clients are served the stored definition, not the description field:
+    // shorten it there too.
+    if let Some(desc) = feature
+        .raw_json
+        .as_mut()
+        .and_then(|json| json.get_mut("description"))
+        .and_then(|d| match d {
+            serde_json::Value::String(s) => Some(s),
+            _ => None,
+        })
+    {
+        shorten_description(desc);
+    }
+    let definition_len = feature
+        .raw_json
+        .as_ref()
+        .and_then(|json| serde_json::to_vec(json).ok())
+        .map_or(0, |bytes| bytes.len());
+    if definition_len > MAX_DEFINITION_BYTES {
+        warn!(
+            "[FeatureDiscovery] Skipping {} {}: {}-byte definition",
+            feature.feature_type.as_str(),
+            feature.feature_name,
+            definition_len
+        );
+        return None;
+    }
+    Some(feature)
+}
 
 /// Handles feature discovery and caching from MCP clients
 pub struct FeatureDiscoveryService {
@@ -73,11 +179,18 @@ impl FeatureDiscoveryService {
         );
 
         if !capabilities_known || has_tools {
-            match Self::with_list_timeout("tools/list", client.list_all_tools()).await {
+            let list = list_capped("tools/list", |cursor| async move {
+                client
+                    .list_tools(Some(PaginatedRequestParams::default().with_cursor(cursor)))
+                    .await
+                    .map(|r| (r.tools, r.next_cursor))
+            });
+            match Self::with_list_timeout("tools/list", list).await {
                 Some(Ok(tools)) => {
                     discovered.tools = tools
                         .into_iter()
                         .map(|t| convert_to_feature(space_id, server_id, t))
+                        .filter_map(within_limits)
                         .collect();
                     debug!(
                         "[FeatureDiscovery] Discovered {} tools",
@@ -94,11 +207,18 @@ impl FeatureDiscoveryService {
         }
 
         if !capabilities_known || has_prompts {
-            match Self::with_list_timeout("prompts/list", client.list_all_prompts()).await {
+            let list = list_capped("prompts/list", |cursor| async move {
+                client
+                    .list_prompts(Some(PaginatedRequestParams::default().with_cursor(cursor)))
+                    .await
+                    .map(|r| (r.prompts, r.next_cursor))
+            });
+            match Self::with_list_timeout("prompts/list", list).await {
                 Some(Ok(prompts)) => {
                     discovered.prompts = prompts
                         .into_iter()
                         .map(|p| convert_to_feature(space_id, server_id, p))
+                        .filter_map(within_limits)
                         .collect();
                     debug!(
                         "[FeatureDiscovery] Discovered {} prompts",
@@ -113,11 +233,18 @@ impl FeatureDiscoveryService {
         }
 
         if !capabilities_known || has_resources {
-            match Self::with_list_timeout("resources/list", client.list_all_resources()).await {
+            let list = list_capped("resources/list", |cursor| async move {
+                client
+                    .list_resources(Some(PaginatedRequestParams::default().with_cursor(cursor)))
+                    .await
+                    .map(|r| (r.resources, r.next_cursor))
+            });
+            match Self::with_list_timeout("resources/list", list).await {
                 Some(Ok(resources)) => {
                     discovered.resources = resources
                         .into_iter()
                         .map(|r| resource_to_feature(space_id, server_id, r))
+                        .filter_map(within_limits)
                         .collect();
                     debug!(
                         "[FeatureDiscovery] Discovered {} resources",
@@ -166,6 +293,62 @@ impl FeatureDiscoveryService {
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn listing_stops_at_the_item_cap() {
+        // A server that always has another page of 500 items.
+        let items = super::list_capped("tools/list", |_cursor| async {
+            Ok::<_, rmcp::service::ServiceError>((vec![0u8; 500], Some("more".to_string())))
+        })
+        .await
+        .unwrap();
+        assert_eq!(items.len(), super::MAX_FEATURES_PER_KIND);
+    }
+
+    #[tokio::test]
+    async fn listing_stops_at_the_page_cap() {
+        let mut calls = 0;
+        let items = super::list_capped("tools/list", |_cursor| {
+            calls += 1;
+            async {
+                Ok::<_, rmcp::service::ServiceError>((Vec::<u8>::new(), Some("again".to_string())))
+            }
+        })
+        .await
+        .unwrap();
+        assert!(items.is_empty());
+        assert_eq!(calls, super::MAX_LIST_PAGES);
+    }
+
+    #[test]
+    fn oversized_features_are_skipped_or_shortened() {
+        use mcpmux_core::ServerFeature;
+        let ok = ServerFeature::tool("s", "srv", "fine");
+        assert!(super::within_limits(ok).is_some());
+
+        let long_name = ServerFeature::tool("s", "srv", &"n".repeat(super::MAX_NAME_LEN + 1));
+        assert!(super::within_limits(long_name).is_none());
+
+        let long = "é".repeat(super::MAX_DESCRIPTION_LEN);
+        let long_desc = ServerFeature::tool("s", "srv", "t")
+            .with_description(long.clone())
+            .with_raw_json(serde_json::json!({"name": "t", "description": long}));
+        let kept = super::within_limits(long_desc).unwrap();
+        assert!(kept.description.unwrap().len() <= super::MAX_DESCRIPTION_LEN + '…'.len_utf8());
+        // What tools/list serves is shortened too.
+        let served = kept.raw_json.unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(served.len() <= super::MAX_DESCRIPTION_LEN + '…'.len_utf8());
+        assert!(served.ends_with('…'));
+
+        let big_schema = ServerFeature::tool("s", "srv", "t").with_raw_json(serde_json::json!({
+            "inputSchema": {"description": "x".repeat(super::MAX_DEFINITION_BYTES)}
+        }));
+        assert!(super::within_limits(big_schema).is_none());
+    }
+
     use super::*;
     use std::future::pending;
 

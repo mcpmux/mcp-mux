@@ -8,7 +8,7 @@ description = "Integration tests for McpMux"
 [dependencies]
 # Internal crates
 mcpmux-core = { path = "../../crates/mcpmux-core" }
-mcpmux-gateway = { path = "../../crates/mcpmux-gateway", features = ["e2e"] }
+mcpmux-gateway = { path = "../../crates/mcpmux-gateway" }
 mcpmux-runtime = { path = "../../crates/mcpmux-runtime" }
 mcpmux-storage = { path = "../../crates/mcpmux-storage" }
 mcpmux-mcp = { path = "../../crates/mcpmux-mcp" }
@@ -101,3 +101,8 @@ path = "tests/streamable_http/mod.rs"
 [[test]]
 name = "runtime"
 path = "tests/runtime/mod.rs"
+
+[dev-dependencies]
+# The e2e routes only for test builds: as a normal dependency the feature
+# would be unified into release builds of the daemon and the app.
+mcpmux-gateway = { path = "../../crates/mcpmux-gateway", features = ["e2e"] }

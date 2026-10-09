@@ -15,13 +15,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Permissions needed for test reporting and PR comments
+# Read-only by default. The jobs that publish test results as check runs
+# add `checks: write` themselves.
 permissions:
   contents: read
   actions: read
-  checks: write
-  pull-requests: write
-  id-token: write
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -306,6 +305,16 @@ jobs:
           # Ad-hoc signing (no Apple Developer ID)
           APPLE_SIGNING_IDENTITY: '-'
 
+      # The e2e feature adds test-only routes (consent auto-approve). A
+      # release build must never include them, whatever another workspace
+      # member asks for.
+      - name: Release build has no test-only routes
+        run: |
+          if grep -q "/oauth/consent/approve" target/release/mcpmux; then
+            echo "::error::the release build contains the e2e consent route"
+            exit 1
+          fi
+
   # ─────────────────────────────────────────────────────────────
   # Test Results Report (separate checks per test type and OS)
   # Uses dorny/test-reporter for granular GitHub Check Runs
@@ -316,6 +325,10 @@ jobs:
     # there are no results to report.
     if: always() && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
 
@@ -426,6 +439,10 @@ jobs:
   e2e-web:
     needs: [ts-check]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -480,6 +497,10 @@ jobs:
   e2e-desktop:
     needs: changes
     if: needs.changes.outputs.full == 'true'
+    permissions:
+      contents: read
+      actions: read
+      checks: write
     uses: ./.github/workflows/e2e-desktop.yml
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}

@@ -146,6 +146,21 @@ describe('WorkspaceInstallPanel', () => {
     expect(navigateMock).toHaveBeenCalledWith('settings');
   });
 
+  it('warns that tokenless apps only reach the default Space', async () => {
+    const { unmount } = render(
+      <WorkspaceInstallPanel workspaceRoot="/work/repo" inDefaultSpace={false} />
+    );
+    expect(
+      await screen.findByTestId('workspace-install-tokenless-space-warning')
+    ).toHaveTextContent('only reach the default Space');
+    expect(screen.queryByText(/apps connect with just the URL/)).toBeNull();
+    unmount();
+
+    render(<WorkspaceInstallPanel workspaceRoot="/work/repo" />);
+    expect(await screen.findByText(/apps connect with just the URL/)).toBeInTheDocument();
+    expect(screen.queryByTestId('workspace-install-tokenless-space-warning')).toBeNull();
+  });
+
   it('copies a client snippet to the clipboard', async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);

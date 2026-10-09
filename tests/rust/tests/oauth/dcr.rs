@@ -182,3 +182,49 @@ fn test_dcr_request_with_full_fields() {
 }
 
 // Note: Full DCR integration tests with database are in tests/database/dcr.rs
+
+// =============================================================================
+// Repeat registrations (database-backed)
+// =============================================================================
+
+/// A client registered first under an app's name with a wider set of
+/// redirects (another app's callbacks included) is not handed to the app:
+/// it gets a client of its own, and keeps getting that one.
+#[tokio::test]
+async fn a_same_name_client_with_other_redirects_is_not_reused() {
+    use mcpmux_gateway::oauth::process_dcr_request;
+    use mcpmux_storage::{Database, InboundClientRepository};
+    use std::sync::Arc;
+
+    let db = Arc::new(tokio::sync::Mutex::new(Database::open_in_memory().unwrap()));
+    let repo = InboundClientRepository::new(db);
+    let app_redirect = "cursor://anysphere.cursor-retrieval/oauth/callback".to_string();
+    let register = |redirects: Vec<String>| DcrRequest {
+        client_name: "Cursor".to_string(),
+        redirect_uris: redirects,
+        ..minimal_dcr_request()
+    };
+
+    let squatter = process_dcr_request(
+        &repo,
+        register(vec![
+            app_redirect.clone(),
+            "http://127.0.0.1:9999/steal".to_string(),
+        ]),
+    )
+    .await
+    .unwrap();
+    repo.approve_client(&squatter.client_id).await.unwrap();
+
+    let app = process_dcr_request(&repo, register(vec![app_redirect.clone()]))
+        .await
+        .unwrap();
+    assert_ne!(app.client_id, squatter.client_id);
+    assert_eq!(app.redirect_uris, vec![app_redirect.clone()]);
+
+    // The app registering again gets its own client back.
+    let again = process_dcr_request(&repo, register(vec![app_redirect]))
+        .await
+        .unwrap();
+    assert_eq!(again.client_id, app.client_id);
+}

@@ -718,3 +718,62 @@ async fn test_installed_server_special_characters_persist() {
         Some(&"Bearer tok3n+/=".to_string())
     );
 }
+
+/// A server an older file watcher installed from `spaces/<B>.json` into
+/// another Space is moved to Space B by the next sync of that file.
+#[tokio::test]
+async fn sync_moves_servers_installed_into_the_wrong_space() {
+    use mcpmux_core::application::UserSpaceSyncService;
+
+    let test_db = TestDatabase::new();
+    let db = Arc::new(Mutex::new(test_db.db));
+    let server_repo = Arc::new(SqliteInstalledServerRepository::new(
+        Arc::clone(&db),
+        test_encryptor(),
+    ));
+    let space_repo = SqliteSpaceRepository::new(db);
+    let (space_a, space_b) = (
+        fixtures::test_space("Default"),
+        fixtures::test_space("Work"),
+    );
+    SpaceRepository::create(&space_repo, &space_a)
+        .await
+        .unwrap();
+    SpaceRepository::create(&space_repo, &space_b)
+        .await
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(format!("{}.json", space_b.id));
+    std::fs::write(&file, r#"{"mcpServers":{"work-tool":{"command":"echo"}}}"#).unwrap();
+
+    let sync = UserSpaceSyncService::new(server_repo.clone());
+    // What the old watcher did: sync Space B's file into Space A.
+    sync.sync_from_file(&space_a.id.to_string(), &file)
+        .await
+        .unwrap();
+    let wrong = InstalledServerRepository::get_by_server_id(
+        server_repo.as_ref(),
+        &space_a.id.to_string(),
+        "work-tool",
+    )
+    .await
+    .unwrap();
+    assert!(wrong.is_some());
+
+    let result = sync
+        .sync_from_file(&space_b.id.to_string(), &file)
+        .await
+        .unwrap();
+    assert_eq!(result.added, vec!["work-tool".to_string()]);
+    for (space, expected) in [(&space_a, false), (&space_b, true)] {
+        let found = InstalledServerRepository::get_by_server_id(
+            server_repo.as_ref(),
+            &space.id.to_string(),
+            "work-tool",
+        )
+        .await
+        .unwrap();
+        assert_eq!(found.is_some(), expected, "space {}", space.name);
+    }
+}

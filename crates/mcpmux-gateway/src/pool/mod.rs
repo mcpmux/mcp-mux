@@ -49,7 +49,9 @@ pub use token::TokenService;
 pub use transport::{ResolvedTransport, Transport, TransportConnectResult, TransportFactory};
 
 // Server Manager (Event-driven orchestrator)
-pub use server_manager::{ConnectResult, ConnectionStatus, ServerKey, ServerManager, ServerState};
+pub use server_manager::{
+    ConnectResult, ConnectionStatus, ServerKey, ServerManager, ServerState, REFUSED_AUTH_URL,
+};
 
 // Service Factory (DRY initialization)
 pub use service_factory::{PoolServices, ServiceFactory};

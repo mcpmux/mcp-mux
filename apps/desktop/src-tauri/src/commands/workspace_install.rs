@@ -104,7 +104,8 @@ fn refuse_symlink(path: &Path) -> Result<(), String> {
 
 /// Replace `path` with `contents` via a fresh temp file in the same
 /// directory and a rename, so the write never follows a link at `path` and
-/// readers never see a half-written file. Keeps `permissions` when given.
+/// readers never see a half-written file. Keeps `permissions` when given;
+/// a new file is private (0600 on Unix), since it can hold a bearer token.
 fn write_replacing(
     path: &Path,
     contents: &[u8],
@@ -122,15 +123,19 @@ fn write_replacing(
         .unwrap_or_default();
     let tmp = dir.join(format!(".{name}.{}-{nanos}.mcpmux-tmp", std::process::id()));
     let result = (|| {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // Private from the start: the contents are written before the
+        // original permissions could otherwise be applied.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&tmp)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
         file.write_all(contents)?;
         file.sync_all()?;
-        if let Some(permissions) = permissions {
-            std::fs::set_permissions(&tmp, permissions)?;
-        }
+        drop(file);
         std::fs::rename(&tmp, path)
     })();
     if result.is_err() {
@@ -520,6 +525,25 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().ends_with(".mcpmux-tmp"))
             .collect();
         assert!(leftovers.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_config_is_private_and_an_existing_one_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, ws, _outside) = scratch("new-perms");
+        let config = ws.join(".mcp.json");
+        let r = install_one(spec("claude-code"), &ws, "http://x/mcp", "/p", Some("tok"));
+        assert_eq!(r.action, "created", "{:?}", r.error);
+        let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "holds the bearer token");
+
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let r = install_one(spec("claude-code"), &ws, "http://y/mcp", "/p", Some("tok"));
+        assert_eq!(r.action, "updated", "{:?}", r.error);
+        let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "the user's choice is kept");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

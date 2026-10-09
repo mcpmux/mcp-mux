@@ -160,6 +160,10 @@ const MIGRATIONS: &[Migration] = &[
     },
 ];
 
+/// `app_settings` key recording that the one-time VACUUM after enabling
+/// `secure_delete` ran.
+const SECURE_DELETE_VACUUM_KEY: &str = "storage.secure_delete_vacuumed";
+
 /// SQLite database wrapper.
 pub struct Database {
     conn: Connection,
@@ -183,6 +187,10 @@ impl Database {
         // Enable foreign keys
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
+        // Overwrite deleted content instead of leaving it in free pages, so
+        // a removed credential's ciphertext doesn't stay in the file.
+        conn.pragma_update(None, "secure_delete", "ON")?;
+
         // Set journal mode to WAL for better concurrency
         conn.pragma_update(None, "journal_mode", "WAL")?;
 
@@ -190,8 +198,49 @@ impl Database {
 
         let db = Self { conn };
         db.run_migrations()?;
+        db.vacuum_once();
 
         Ok(db)
+    }
+
+    /// Rewrite the database file once, so pages freed before `secure_delete`
+    /// was turned on (which can still hold old ciphertext) are dropped.
+    /// Recorded in `app_settings`; a failure is retried at the next start.
+    fn vacuum_once(&self) {
+        let done = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM app_settings WHERE key = ?1",
+                [SECURE_DELETE_VACUUM_KEY],
+                |_| Ok(()),
+            )
+            .is_ok();
+        if done {
+            return;
+        }
+        if let Err(e) = self.conn.execute_batch("VACUUM") {
+            tracing::warn!("One-time database VACUUM failed (retried at next start): {e}");
+            return;
+        }
+        if let Err(e) = self.conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?1, 'true', ?2)",
+            rusqlite::params![SECURE_DELETE_VACUUM_KEY, chrono::Utc::now().to_rfc3339()],
+        ) {
+            tracing::warn!("Couldn't record the one-time VACUUM: {e}");
+        }
+        self.checkpoint_wal();
+        tracing::info!("Compacted the database once to drop previously freed pages");
+    }
+
+    /// Whether [`Self::vacuum_once`] has run on this database.
+    pub fn was_vacuumed_once(&self) -> bool {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM app_settings WHERE key = ?1",
+                [SECURE_DELETE_VACUUM_KEY],
+                |_| Ok(()),
+            )
+            .is_ok()
     }
 
     /// Open an in-memory database (for testing).
@@ -200,6 +249,10 @@ impl Database {
 
         // Enable foreign keys
         conn.pragma_update(None, "foreign_keys", "ON")?;
+
+        // Overwrite deleted content instead of leaving it in free pages, so
+        // a removed credential's ciphertext doesn't stay in the file.
+        conn.pragma_update(None, "secure_delete", "ON")?;
 
         debug!("Opened in-memory database");
 
@@ -369,6 +422,18 @@ impl Database {
             )?;
         }
         Ok(())
+    }
+
+    /// Copy the WAL back into the database file and truncate it, so pages
+    /// that held deleted rows don't linger in `-wal`. Best effort: a busy
+    /// checkpoint just leaves the WAL for the next one.
+    pub fn checkpoint_wal(&self) {
+        if let Err(e) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        {
+            tracing::debug!("WAL checkpoint skipped: {e}");
+        }
     }
 
     /// Get the current schema version (highest applied migration).

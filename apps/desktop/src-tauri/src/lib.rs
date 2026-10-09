@@ -69,9 +69,14 @@ fn get_logs_dir() -> std::path::PathBuf {
 /// - File: daily rotation in ~/.local/share/mcpmux/logs/ (Linux)
 ///   or %LOCALAPPDATA%/mcpmux/logs/ (Windows)
 fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    // Load .env file if present (for development)
-    dotenvy::dotenv().ok();
-    dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
+    // Load .env file if present (development builds only). A release build must
+    // not pick up settings from a .env in whatever directory it was launched
+    // from (dotenv also searches every parent directory).
+    #[cfg(debug_assertions)]
+    {
+        dotenvy::dotenv().ok();
+        dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
+    }
 
     let logs_dir = get_logs_dir();
     let sink = mcpmux_runtime::LogSink::DailyRolling {
@@ -511,6 +516,7 @@ pub fn run() {
                 let app_state: tauri::State<'_, AppState> = app.state();
                 let spaces_dir = app_state.spaces_dir().to_path_buf();
                 let installed_repo = app_state.installed_server_repository.clone();
+                let space_repo = app_state.runtime().repositories.space.clone();
                 let app_handle_for_watcher = app.handle().clone();
 
                 // Use the well-known default space UUID
@@ -524,6 +530,7 @@ pub fn run() {
                         spaces_dir.clone(),
                         Arc::new(mcpmux_core::application::UserSpaceSyncService::new(installed_repo)),
                         default_space_id,
+                        space_repo,
                         Some(move |space_id: &str, result: &mcpmux_core::application::SyncResult| {
                             // Emit event to refresh UI
                             if result.has_changes() {
@@ -889,8 +896,6 @@ pub fn run() {
             commands::set_builtin_server_enabled,
             commands::set_builtin_tool_enabled,
             // Config export commands
-            commands::preview_config_export,
-            commands::export_config_to_file,
             commands::get_config_paths,
             commands::check_config_exists,
             commands::backup_existing_config,

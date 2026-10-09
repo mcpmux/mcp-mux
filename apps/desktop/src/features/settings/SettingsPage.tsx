@@ -283,6 +283,7 @@ export function SettingsPage() {
       const activeAdvertised = publicUrlSettings?.activePublicBaseUrl ?? null;
       const desiredAdvertised = parsed.publicBaseUrl ?? publicUrlSettings?.localBaseUrl ?? null;
       await loadPublicUrlSettings();
+      await loadAuthDisabled();
       success(
         parsed.publicBaseUrl ? 'Public URL saved' : 'Public URL cleared',
         activeAdvertised && desiredAdvertised && activeAdvertised !== desiredAdvertised
@@ -305,6 +306,7 @@ export function SettingsPage() {
     try {
       await invoke('reset_gateway_public_base_url');
       await loadPublicUrlSettings();
+      await loadAuthDisabled();
       success('Public URL cleared', 'Restart the gateway to return OAuth metadata to localhost.');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -440,12 +442,16 @@ export function SettingsPage() {
     }
   };
 
-  // Load the system-wide inbound-auth toggle on mount.
-  useEffect(() => {
+  // Load the system-wide inbound-auth toggle on mount (and again whenever
+  // network access or the public URL changes, since either forces auth on).
+  const loadAuthDisabled = () =>
     invoke<boolean>('get_gateway_auth_disabled')
       .then(setAuthDisabled)
       .catch((err) => console.error('Failed to load auth setting:', err));
+  useEffect(() => {
+    loadAuthDisabled();
   }, []);
+  const exposureConfigured = networkAccess || Boolean(publicUrlSettings?.configuredPublicBaseUrl);
 
   // Load the network-access (0.0.0.0 bind) toggle on mount.
   useEffect(() => {
@@ -460,6 +466,7 @@ export function SettingsPage() {
     setSavingNetworkAccess(true);
     try {
       await invoke('set_gateway_network_access', { enabled });
+      await loadAuthDisabled();
       success(
         'Settings saved',
         enabled
@@ -939,8 +946,8 @@ export function SettingsPage() {
                                 Per-client OAuth approval happens on this machine, so a remote
                                 client that signs in via OAuth (e.g. ChatGPT) can't finish approval
                                 over the network yet — front the gateway with the public URL + a
-                                tunnel for that. For plain LAN sharing, pair this with
-                                authentication disabled.
+                                tunnel for that. For plain LAN sharing, register an API-key client
+                                under Clients and connect with its key.
                               </p>
                             </>
                           )}
@@ -1107,15 +1114,15 @@ export function SettingsPage() {
                     <p className="mt-1 text-xs text-[rgb(var(--muted))]">
                       Let apps on this computer connect with no access key — just the URL. This is
                       the default while the gateway is only reachable from this computer. Websites
-                      in your browser are blocked either way. Opening the gateway to your network or
-                      a public URL turns authentication back on, unless you switch it off here.
+                      in your browser are blocked either way. Authentication is always on while the
+                      gateway is open to your network or a public URL.
                     </p>
                   </div>
                 </div>
                 <Switch
-                  checked={authDisabled}
+                  checked={authDisabled && !exposureConfigured}
                   onCheckedChange={updateAuthDisabled}
-                  disabled={savingAuthDisabled}
+                  disabled={savingAuthDisabled || exposureConfigured}
                   data-testid="disable-auth-switch"
                 />
               </div>

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -139,20 +139,40 @@ impl GatewayState {
         self.network_bind = network_bind;
     }
 
+    /// Whether this gateway is reachable from other machines: bound to a
+    /// non-loopback address, or advertised under a public URL (a tunnel).
+    /// Fixed for the gateway's lifetime: both take effect only on restart.
+    pub fn exposed(&self) -> bool {
+        self.network_bind
+            || self
+                .public_base_url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty())
+    }
+
     /// Whether inbound MCP auth is disabled — connections may be accepted
-    /// without a Bearer token. See [`Self::auth_disabled`] field docs.
+    /// without a Bearer token. Never true on an exposed gateway, whatever the
+    /// setting says (e.g. exposure was turned off in settings but the running
+    /// gateway hasn't restarted yet). See [`Self::auth_disabled`] field docs.
     pub fn auth_disabled(&self) -> bool {
-        self.auth_disabled
+        self.auth_disabled && !self.exposed()
     }
 
     /// Enable/disable system-wide inbound auth. Called at startup (seed from
     /// settings) and live from the desktop toggle.
     pub fn set_auth_disabled(&mut self, disabled: bool) {
         if self.auth_disabled != disabled {
-            info!(
-                "[State] Inbound auth {}",
-                if disabled { "DISABLED" } else { "enabled" }
-            );
+            if disabled && self.exposed() {
+                warn!(
+                    "[State] Inbound auth stays required: this gateway is reachable \
+                     from the network until it restarts"
+                );
+            } else {
+                info!(
+                    "[State] Inbound auth {}",
+                    if disabled { "DISABLED" } else { "enabled" }
+                );
+            }
         }
         self.auth_disabled = disabled;
     }
@@ -528,6 +548,32 @@ mod tests {
         assert!(!state.pending_consents.contains_key("old"));
         assert!(!state.authorization_codes.contains_key("mc_old"));
         assert!(state.pending_consents.contains_key("new"));
+    }
+
+    #[test]
+    fn auth_stays_required_on_an_exposed_gateway() {
+        for expose in [
+            |s: &mut GatewayState| s.set_network_bind(true),
+            |s: &mut GatewayState| s.set_public_base_url(Some("https://mcp.example.com".into())),
+        ] {
+            let (tx, _) = broadcast::channel(4);
+            let mut state = GatewayState::new(tx);
+            expose(&mut state);
+            assert!(state.exposed());
+            state.set_auth_disabled(true);
+            assert!(
+                !state.auth_disabled(),
+                "exposed gateways always require auth"
+            );
+        }
+
+        // An empty public URL setting is not exposure.
+        let (tx, _) = broadcast::channel(4);
+        let mut state = GatewayState::new(tx);
+        state.set_public_base_url(Some("  ".into()));
+        assert!(!state.exposed());
+        state.set_auth_disabled(true);
+        assert!(state.auth_disabled());
     }
 
     #[test]

@@ -452,10 +452,8 @@ pub async fn process_dcr_request(
             request.response_types.clone()
         };
 
-        let token_endpoint_auth_method = request
-            .token_endpoint_auth_method
-            .clone()
-            .unwrap_or_else(|| "none".to_string());
+        // Public client: no secret is ever issued (see the new-client path).
+        let token_endpoint_auth_method = "none".to_string();
 
         // Use helper to build updated client (preserves user settings)
         let updated_client = build_inbound_client_from_request(
@@ -520,10 +518,9 @@ pub async fn process_dcr_request(
         request.response_types.clone()
     };
 
-    let token_endpoint_auth_method = request
-        .token_endpoint_auth_method
-        .clone()
-        .unwrap_or_else(|| "none".to_string());
+    // Registered clients are public: no secret is ever issued, so record
+    // (and answer) "none" whatever was asked for.
+    let token_endpoint_auth_method = "none".to_string();
 
     // Use helper to build new client (default settings)
     let client = build_inbound_client_from_request(

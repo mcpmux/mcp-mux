@@ -160,6 +160,8 @@ impl SpaceRepository for SqliteSpaceRepository {
         let conn = db.connection();
 
         conn.execute("DELETE FROM spaces WHERE id = ?", params![id.to_string()])?;
+        // The delete cascades to the Space's servers and credentials.
+        db.checkpoint_wal();
 
         Ok(())
     }

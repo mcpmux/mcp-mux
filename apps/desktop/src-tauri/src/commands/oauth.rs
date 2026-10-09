@@ -611,20 +611,27 @@ pub async fn approve_oauth_consent(
         });
     }
 
-    // User approved - issue a one-time authorization code and update the
-    // client alias if provided
+    // User approved - record the approval, then issue a one-time
+    // authorization code and update the client alias if provided. The
+    // approval comes first: tokens are only honored for approved clients, so
+    // a code issued without it would give the client tokens that don't work.
     let code = {
         let mut state = gw_state.write().await;
-        let code = state.issue_authorization_code(&pending);
 
-        // Mark client as approved and store any alias override.
         if let Some(repo) = state.inbound_client_repository() {
             if let Err(e) = repo.approve_client(&pending.client_id).await {
                 error!("[OAuth] Failed to approve client: {}", e);
-            } else {
-                info!("[OAuth] Client approved: {}", pending.client_id);
+                return Ok(ConsentApprovalResponse {
+                    success: false,
+                    redirect_url: String::new(),
+                    error: Some("Could not save the approval".to_string()),
+                });
             }
+            info!("[OAuth] Client approved: {}", pending.client_id);
+        }
+        let code = state.issue_authorization_code(&pending);
 
+        if let Some(repo) = state.inbound_client_repository() {
             if let Some(alias) = request
                 .client_alias
                 .as_deref()

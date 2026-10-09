@@ -937,7 +937,6 @@ impl OutboundOAuthManager {
         );
         manager.set_credential_store(store);
 
-        // Try to initialize from stored credentials, client secret included
         let registration = backend_oauth_repo
             .get(&space_id, server_id)
             .await
@@ -945,6 +944,23 @@ impl OutboundOAuthManager {
                 warn!("[OAuth] Failed to load client registration: {}", e);
                 None
             });
+
+        // Pin checked metadata, as the connect path does. Without it rmcp
+        // re-discovers on refresh and would send the stored refresh token (and
+        // client secret) to whatever token endpoint the server's metadata names
+        // at that moment, unchecked. With nothing safe to pin, don't load the
+        // stored credentials at all: the caller then asks for a sign-in.
+        let pin =
+            oauth_utils::pin_checked_metadata(&mut manager, registration.as_ref(), server_url)
+                .await;
+        if !matches!(
+            pin,
+            oauth_utils::MetadataPin::Stored | oauth_utils::MetadataPin::Discovered
+        ) {
+            return Ok(manager);
+        }
+
+        // Try to initialize from stored credentials, client secret included
         if oauth_utils::initialize_from_store(&mut manager, registration.as_ref())
             .await
             .unwrap_or(false)

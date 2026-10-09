@@ -104,6 +104,9 @@ jobs:
 
   publish:
     needs: [prepare, build]
+    # Signing and publishing secrets live in the `release` environment,
+    # which only runs from main.
+    environment: release
     runs-on: ubuntu-latest
     permissions:
       contents: write

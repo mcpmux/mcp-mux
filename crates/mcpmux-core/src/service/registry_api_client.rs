@@ -33,14 +33,6 @@ const OFFICIAL_BUNDLE_KEYS: &[&str] = &[];
 /// signature over the exact bytes of the response's `data` member.
 pub const BUNDLE_SIGNATURE_HEADER: &str = "x-mcpmux-bundle-signature";
 
-/// Response wrapper from Registry API
-#[derive(Debug, Deserialize)]
-struct ApiResponse<T> {
-    data: T,
-    #[allow(dead_code)]
-    meta: Option<serde_json::Value>,
-}
-
 // ============================================
 // Bundle Types
 // ============================================
@@ -59,11 +51,12 @@ pub struct RegistryBundle {
     /// Not serialized, so a disk-cached bundle reads back as 0.
     #[serde(skip)]
     pub skipped_servers: usize,
-    /// Whether this client checked the bundle's signature against a pinned
-    /// key when fetching it. Kept in the disk cache, so a cache saved before
-    /// bundles had to be signed is not trusted once they must be.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub signature_verified: bool,
+    /// The pinned key (base64) this client checked the bundle's signature
+    /// against when fetching it, if any. Kept in the disk cache, so a cache
+    /// saved before bundles had to be signed, or checked against a key that
+    /// is no longer trusted, is not used once bundles must be signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_by: Option<String>,
 }
 
 /// Wire form of [`RegistryBundle`], with each server left as raw JSON.
@@ -81,7 +74,7 @@ struct RawRegistryBundle {
     ui: UiConfig,
     home: Option<HomeConfig>,
     #[serde(default)]
-    signature_verified: bool,
+    signed_by: Option<String>,
 }
 
 impl From<RawRegistryBundle> for RegistryBundle {
@@ -114,7 +107,7 @@ impl From<RawRegistryBundle> for RegistryBundle {
             categories: raw.categories,
             ui: raw.ui,
             home: raw.home,
-            signature_verified: raw.signature_verified,
+            signed_by: raw.signed_by,
         }
     }
 }
@@ -223,7 +216,7 @@ impl RegistryApiClient {
             .build()
             .expect("Failed to build HTTP client");
 
-        let bundle_keys = if base_url.trim_end_matches('/') == OFFICIAL_REGISTRY_URL {
+        let bundle_keys = if is_official_registry(&base_url) {
             official_bundle_keys()
         } else {
             Vec::new()
@@ -244,6 +237,12 @@ impl RegistryApiClient {
     /// Whether fetched bundles must carry a valid signature.
     pub fn verifies_bundles(&self) -> bool {
         !self.bundle_keys.is_empty()
+    }
+
+    /// Whether `key` (base64, as in [`RegistryBundle::signed_by`]) is one of
+    /// the keys bundles must be signed with.
+    pub fn trusts_key(&self, key: &str) -> bool {
+        self.bundle_keys.iter().any(|k| encode_key(k) == key)
     }
 
     /// Get the base URL
@@ -304,12 +303,7 @@ impl RegistryApiClient {
         let body = read_capped(response, MAX_BUNDLE_BYTES)
             .await
             .context("Failed to read registry bundle response")?;
-        if self.verifies_bundles() {
-            verify_bundle_signature(&body, signature.as_deref(), &self.bundle_keys)?;
-        }
-        let mut bundle = parse_bundle(&body)?;
-        // Set here, never taken from the payload.
-        bundle.signature_verified = self.verifies_bundles();
+        let bundle = verify_and_parse(&body, signature.as_deref(), &self.bundle_keys)?;
 
         tracing::info!(
             "Fetched {} servers, {} filters, {} sort options (version: {}, updated: {}, etag: {:?})",
@@ -350,6 +344,23 @@ async fn read_capped(mut response: reqwest::Response, max: usize) -> Result<Vec<
     Ok(body)
 }
 
+/// Whether `base_url` points at the official registry (by host, so case, a
+/// port or the scheme don't change which keys apply).
+fn is_official_registry(base_url: &str) -> bool {
+    let official = reqwest::Url::parse(OFFICIAL_REGISTRY_URL)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string));
+    reqwest::Url::parse(base_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .is_some_and(|host| Some(host) == official)
+}
+
+/// A public key as stored in [`RegistryBundle::signed_by`].
+fn encode_key(key: &[u8; 32]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(key)
+}
+
 /// [`OFFICIAL_BUNDLE_KEYS`], decoded.
 fn official_bundle_keys() -> Vec<[u8; 32]> {
     OFFICIAL_BUNDLE_KEYS
@@ -364,38 +375,51 @@ fn official_bundle_keys() -> Vec<[u8; 32]> {
         .collect()
 }
 
-/// Check a bundle response's signature (the [`BUNDLE_SIGNATURE_HEADER`]
-/// value) over the exact bytes of its `data` member against `keys`.
-fn verify_bundle_signature(body: &[u8], signature: Option<&str>, keys: &[[u8; 32]]) -> Result<()> {
+/// Parse a `/v1/bundle` response body once, checking its signature (the
+/// [`BUNDLE_SIGNATURE_HEADER`] value) over the exact bytes of its `data`
+/// member against `keys` when there are any. The bundle records which key
+/// matched; that is set here, never taken from the payload.
+fn verify_and_parse(
+    body: &[u8],
+    signature: Option<&str>,
+    keys: &[[u8; 32]],
+) -> Result<RegistryBundle> {
     #[derive(Deserialize)]
     struct Envelope<'a> {
         #[serde(borrow)]
         data: &'a serde_json::value::RawValue,
     }
 
-    let signature = signature.context("registry bundle is not signed")?;
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(signature.trim())
-        .context("registry bundle signature is not valid base64")?;
     let envelope: Envelope =
         serde_json::from_slice(body).context("Failed to parse registry bundle JSON")?;
-    let signed = envelope.data.get().as_bytes();
-    if keys.iter().any(|key| {
-        UnparsedPublicKey::new(&ED25519, key)
-            .verify(signed, &signature)
-            .is_ok()
-    }) {
-        Ok(())
+    let signed_by = if keys.is_empty() {
+        None
     } else {
-        anyhow::bail!("registry bundle signature does not match a trusted key")
-    }
+        let signature = signature.context("registry bundle is not signed")?;
+        let signature = base64::engine::general_purpose::STANDARD
+            .decode(signature.trim())
+            .context("registry bundle signature is not valid base64")?;
+        let signed = envelope.data.get().as_bytes();
+        let key = keys
+            .iter()
+            .find(|key| {
+                UnparsedPublicKey::new(&ED25519, key)
+                    .verify(signed, &signature)
+                    .is_ok()
+            })
+            .context("registry bundle signature does not match a trusted key")?;
+        Some(encode_key(key))
+    };
+    let mut bundle: RegistryBundle = serde_json::from_str(envelope.data.get())
+        .context("Failed to parse registry bundle JSON")?;
+    bundle.signed_by = signed_by;
+    Ok(bundle)
 }
 
-/// Parse a `/v1/bundle` response body.
+/// Parse a `/v1/bundle` response body without checking a signature.
+#[cfg(test)]
 fn parse_bundle(body: &[u8]) -> Result<RegistryBundle> {
-    let api_response: ApiResponse<RegistryBundle> =
-        serde_json::from_slice(body).context("Failed to parse registry bundle JSON")?;
-    Ok(api_response.data)
+    verify_and_parse(body, None, &[])
 }
 
 /// A stand-in registry and signing helpers for tests.
@@ -537,7 +561,11 @@ mod tests {
         let Ok(FetchBundleResult::Updated { bundle, .. }) = client.fetch_bundle(None).await else {
             panic!("expected a bundle");
         };
-        assert!(bundle.signature_verified);
+        assert_eq!(
+            bundle.signed_by.as_deref(),
+            Some(encode_key(&public).as_str())
+        );
+        assert!(client.trusts_key(bundle.signed_by.as_deref().unwrap()));
         assert_eq!(bundle.servers[0].id, "signed");
     }
 
@@ -579,7 +607,7 @@ mod tests {
     async fn without_a_pinned_key_bundles_are_accepted_but_not_marked_verified() {
         let registry = MockRegistry::start().await;
         // The payload can't mark itself verified.
-        let data = bundle_data("plain").replacen('{', r#"{"signature_verified":true,"#, 1);
+        let data = bundle_data("plain").replacen('{', r#"{"signed_by":"AAAA","#, 1);
         registry.serve(|s| s.body = format!(r#"{{"data":{data}}}"#).into_bytes());
 
         let client = RegistryApiClient::new(registry.url.clone());
@@ -587,7 +615,7 @@ mod tests {
         let Ok(FetchBundleResult::Updated { bundle, .. }) = client.fetch_bundle(None).await else {
             panic!("expected a bundle");
         };
-        assert!(!bundle.signature_verified);
+        assert_eq!(bundle.signed_by, None);
     }
 
     #[test]
@@ -601,6 +629,23 @@ mod tests {
             assert_eq!(RegistryApiClient::new(url).verifies_bundles(), pinned);
         }
         assert!(!RegistryApiClient::new("http://127.0.0.1:9".to_string()).verifies_bundles());
+
+        // The official registry is recognized by host, however it's written.
+        for url in [
+            "https://api.mcpmux.com",
+            "https://API.mcpmux.com/",
+            "https://api.mcpmux.com:443",
+            "http://api.mcpmux.com",
+        ] {
+            assert!(is_official_registry(url), "{url}");
+        }
+        for url in [
+            "https://api.mcpmux.com.evil.example",
+            "http://127.0.0.1:9",
+            "not a url",
+        ] {
+            assert!(!is_official_registry(url), "{url}");
+        }
     }
 
     #[test]
@@ -611,7 +656,7 @@ mod tests {
 
         // Whitespace and members around `data` are not part of what is signed.
         let body = format!("{{ \"meta\": {{}},\n  \"data\":  {data} \n}}");
-        verify_bundle_signature(body.as_bytes(), Some(&signature), &[public]).unwrap();
+        verify_and_parse(body.as_bytes(), Some(&signature), &[public]).unwrap();
 
         // The same data serialized differently no longer matches.
         let value: serde_json::Value = serde_json::from_str(&data).unwrap();
@@ -619,7 +664,17 @@ mod tests {
             r#"{{"data":{}}}"#,
             serde_json::to_string_pretty(&value).unwrap()
         );
-        assert!(verify_bundle_signature(body.as_bytes(), Some(&signature), &[public]).is_err());
+        assert!(verify_and_parse(body.as_bytes(), Some(&signature), &[public]).is_err());
+
+        // A second `data` member (one signed, one not) is refused outright.
+        let (signed_body, _) = signed(&pair, &data);
+        let signed_body = String::from_utf8(signed_body).unwrap();
+        let doubled = signed_body.replacen(
+            r#"{"data":"#,
+            &format!(r#"{{"data":{},"data":"#, bundle_data("unsigned")),
+            1,
+        );
+        assert!(verify_and_parse(doubled.as_bytes(), Some(&signature), &[public]).is_err());
     }
 
     /// A body without Content-Length is still cut off once it passes the

@@ -369,47 +369,50 @@ pub async fn process_dcr_request(
     // unchanged. Anything else becomes a separate client, so registering under
     // another app's name can never change that app's record (redirects,
     // metadata, approval).
+    // The client's redirects must match the request's in both directions:
+    // a client registered first with a wider set (another app's callbacks
+    // included) is not handed to the app asking for a narrower one.
     let existing = repo
-        .find_client_by_name(&request.client_name)
+        .find_dcr_clients_by_name(&request.client_name)
         .await
         .map_err(|e| DcrError::invalid_client_metadata(format!("Database error: {}", e)))?
-        .filter(|c| c.registration_type == mcpmux_storage::RegistrationType::Dcr);
+        .into_iter()
+        .find(|c| {
+            let registered = filter_valid_redirect_uris(&c.redirect_uris);
+            valid_redirect_uris
+                .iter()
+                .all(|uri| is_redirect_uri_allowed(&registered, uri))
+                && registered
+                    .iter()
+                    .all(|uri| is_redirect_uri_allowed(&valid_redirect_uris, uri))
+        });
 
     if let Some(existing) = existing {
-        let already_registered = valid_redirect_uris
-            .iter()
-            .all(|uri| is_redirect_uri_allowed(&existing.redirect_uris, uri));
-        if already_registered {
-            info!(
-                "[DCR] Returning existing client for repeat registration: {} ({})",
-                existing.client_name, existing.client_id
-            );
-            let now_unix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            return Ok(DcrResponse {
-                client_id: existing.client_id,
-                client_name: existing.client_name,
-                redirect_uris: filter_valid_redirect_uris(&existing.redirect_uris),
-                grant_types: existing.grant_types,
-                response_types: existing.response_types,
-                token_endpoint_auth_method: existing.token_endpoint_auth_method,
-                scope: existing.scope,
-                client_id_issued_at: now_unix,
-                logo_uri: existing.logo_uri,
-                client_uri: existing.client_uri,
-                tos_uri: request.tos_uri,
-                policy_uri: request.policy_uri,
-                contacts: request.contacts,
-                software_id: existing.software_id,
-                software_version: existing.software_version,
-            });
-        }
         info!(
-            "[DCR] '{}' registered with new redirect URIs; creating a separate client",
-            request.client_name
+            "[DCR] Returning existing client for repeat registration: {} ({})",
+            existing.client_name, existing.client_id
         );
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        return Ok(DcrResponse {
+            client_id: existing.client_id,
+            client_name: existing.client_name,
+            redirect_uris: filter_valid_redirect_uris(&existing.redirect_uris),
+            grant_types: existing.grant_types,
+            response_types: existing.response_types,
+            token_endpoint_auth_method: existing.token_endpoint_auth_method,
+            scope: existing.scope,
+            client_id_issued_at: now_unix,
+            logo_uri: existing.logo_uri,
+            client_uri: existing.client_uri,
+            tos_uri: request.tos_uri,
+            policy_uri: request.policy_uri,
+            contacts: request.contacts,
+            software_id: existing.software_id,
+            software_version: existing.software_version,
+        });
     }
 
     // Generate a client_id that is not in use (ids are short, so check).

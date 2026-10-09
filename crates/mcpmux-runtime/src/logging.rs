@@ -95,12 +95,16 @@ pub fn init_tracing(config: &TracingConfig) -> Option<WorkerGuard> {
         }
         LogSink::DailyRolling { dir, prefix } => {
             if let Err(e) = crate::private_dir::ensure_private_dir(dir) {
+                // Don't write logs where they can't be kept private (or at
+                // all): log to stdout instead.
                 eprintln!(
-                    "{}: failed to create logs directory {}: {}",
+                    "{}: cannot use logs directory {} ({}); logging to stdout",
                     branding::DISPLAY_NAME,
                     dir.display(),
                     e
                 );
+                subscriber.init();
+                return None;
             }
 
             let appender = tracing_appender::rolling::RollingFileAppender::builder()

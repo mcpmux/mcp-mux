@@ -1357,7 +1357,9 @@ pub async fn open_url(url: String) -> Result<(), String> {
             }
             Err(e) => {
                 // Connection refused likely means the client's server closed
-                // This can happen if the user took too long to approve
+                // This can happen if the user took too long to approve.
+                // The error's URL carries the authorization code: drop it.
+                let e = e.without_url();
                 error!("[OAuth] Failed to deliver callback: {}", e);
                 Err(format!("Failed to deliver OAuth callback. The application may have timed out waiting. Please try again. Error: {}", e))
             }
@@ -1370,7 +1372,11 @@ pub async fn open_url(url: String) -> Result<(), String> {
             mcpmux_core::log_redact::url_for_log(&url)
         );
         open_url_no_flash(&url).map_err(|e| {
-            error!("[OAuth] Failed to open URL '{}': {}", url, e);
+            error!(
+                "[OAuth] Failed to open URL '{}': {}",
+                mcpmux_core::log_redact::url_for_log(&url),
+                e
+            );
             e
         })?;
 

@@ -226,8 +226,8 @@ impl GatewayState {
     /// Store a pending authorization (for code -> token exchange)
     pub fn store_pending_authorization(&mut self, code: &str, auth: PendingAuthorization) {
         debug!(
-            "[State] Storing pending authorization for code: {}...",
-            &code[..code.len().min(16)]
+            "[State] Storing pending authorization for code: {}",
+            mcpmux_core::log_redact::id_for_log(code)
         );
         self.pending_authorizations.insert(code.to_string(), auth);
     }
@@ -237,8 +237,8 @@ impl GatewayState {
         let result = self.pending_authorizations.remove(code);
         if result.is_some() {
             debug!(
-                "[State] Consumed pending authorization for code: {}...",
-                &code[..code.len().min(16)]
+                "[State] Consumed pending authorization for code: {}",
+                mcpmux_core::log_redact::id_for_log(code)
             );
         }
         result

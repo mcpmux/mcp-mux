@@ -37,7 +37,7 @@ pub enum RuntimeError {
     /// The data directory did not exist and could not be created. The
     /// parent path is included for the operator; the underlying
     /// `std::io::Error` explains why (permission denied, read-only fs, ...).
-    #[error("failed to create data directory {path}: {source}")]
+    #[error("cannot use data directory {path}: {source}")]
     DataDirCreate {
         path: PathBuf,
         #[source]

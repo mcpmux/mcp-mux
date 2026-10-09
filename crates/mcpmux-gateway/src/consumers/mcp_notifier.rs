@@ -182,7 +182,7 @@ impl MCPNotifier {
         let is_reconnect = sessions.contains_key(&session_id);
         sessions.insert(session_id.clone(), entry);
         info!(
-            %session_id,
+            session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
             %client_id,
             is_reconnect,
             total_sessions = sessions.len(),
@@ -204,13 +204,13 @@ impl MCPNotifier {
         if let Some(entry) = sessions.get_mut(session_id) {
             entry.has_active_stream = true;
             info!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 client_id = %entry.client_id,
                 "[MCPNotifier] ✅ Session stream is now active (notifications enabled)"
             );
         } else {
             warn!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 "[MCPNotifier] ⚠️ Attempted to mark stream active for unknown session"
             );
         }
@@ -261,14 +261,14 @@ impl MCPNotifier {
         let mut sessions = self.sessions.write();
         if let Some(removed) = sessions.remove(session_id) {
             info!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 client_id = %removed.client_id,
                 remaining_sessions = sessions.len(),
                 "[MCPNotifier] 📴 Unregistered session"
             );
         } else {
             warn!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 "[MCPNotifier] ⚠️ Attempted to unregister unknown session"
             );
         }
@@ -847,7 +847,7 @@ impl MCPNotifier {
                 Ok(_) => {
                     success_count += 1;
                     debug!(
-                        %session_id,
+                        session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                         %client_id,
                         %space_id,
                         "[MCPNotifier] ✅ Sent tools/list_changed to session"
@@ -856,7 +856,7 @@ impl MCPNotifier {
                 Err(e) => {
                     failure_count += 1;
                     warn!(
-                        %session_id,
+                        session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                         %client_id,
                         error = ?e,
                         "[MCPNotifier] Failed to send tools/list_changed to session"
@@ -920,7 +920,7 @@ impl MCPNotifier {
             {
                 Ok(resolved) if resolved.space_id == Some(space_id) => {
                     debug!(
-                        %session_id,
+                        session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                         %client_id,
                         %space_id,
                         "[MCPNotifier] Session in target space with active stream"
@@ -929,7 +929,7 @@ impl MCPNotifier {
                 }
                 Ok(resolved) => {
                     debug!(
-                        %session_id,
+                        session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                         %client_id,
                         resolved_space = ?resolved.space_id,
                         target_space = %space_id,
@@ -938,7 +938,7 @@ impl MCPNotifier {
                 }
                 Err(e) => {
                     warn!(
-                        %session_id,
+                        session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                         %client_id,
                         error = %e,
                         "[MCPNotifier] ⚠️ Failed to resolve space for session"
@@ -1009,13 +1009,13 @@ impl MCPNotifier {
         for (session_id, client_id, peer) in targets {
             match peer.notify_prompt_list_changed().await {
                 Ok(_) => debug!(
-                    %session_id,
+                    session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                     %client_id,
                     %space_id,
                     "[MCPNotifier] ✅ Sent prompts/list_changed to session"
                 ),
                 Err(e) => warn!(
-                    %session_id,
+                    session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                     %client_id,
                     error = ?e,
                     "[MCPNotifier] Failed to send prompts/list_changed to session"
@@ -1083,13 +1083,13 @@ impl MCPNotifier {
         for (session_id, client_id, peer) in targets {
             match peer.notify_resource_list_changed().await {
                 Ok(_) => debug!(
-                    %session_id,
+                    session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                     %client_id,
                     %space_id,
                     "[MCPNotifier] ✅ Sent resources/list_changed to session"
                 ),
                 Err(e) => warn!(
-                    %session_id,
+                    session_id = %mcpmux_core::log_redact::id_for_log(&session_id),
                     %client_id,
                     error = ?e,
                     "[MCPNotifier] Failed to send resources/list_changed to session"
@@ -1203,12 +1203,12 @@ impl MCPNotifier {
     async fn push_lists_to_session(session_id: &str, client_id: &str, peer: &Peer<RoleServer>) {
         match peer.notify_tool_list_changed().await {
             Ok(_) => debug!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 %client_id,
                 "[MCPNotifier] ✅ Sent tools/list_changed to session (per-peer)"
             ),
             Err(e) => warn!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 %client_id,
                 error = ?e,
                 "[MCPNotifier] failed tools/list_changed"
@@ -1216,12 +1216,12 @@ impl MCPNotifier {
         }
         match peer.notify_prompt_list_changed().await {
             Ok(_) => debug!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 %client_id,
                 "[MCPNotifier] ✅ Sent prompts/list_changed to session (per-peer)"
             ),
             Err(e) => warn!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 %client_id,
                 error = ?e,
                 "[MCPNotifier] failed prompts/list_changed"
@@ -1229,12 +1229,12 @@ impl MCPNotifier {
         }
         match peer.notify_resource_list_changed().await {
             Ok(_) => debug!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 %client_id,
                 "[MCPNotifier] ✅ Sent resources/list_changed to session (per-peer)"
             ),
             Err(e) => warn!(
-                %session_id,
+                session_id = %mcpmux_core::log_redact::id_for_log(session_id),
                 %client_id,
                 error = ?e,
                 "[MCPNotifier] failed resources/list_changed"

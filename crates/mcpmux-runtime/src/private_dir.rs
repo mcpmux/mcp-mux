@@ -2,11 +2,12 @@
 
 use std::path::Path;
 
-/// Create `dir` (with any missing parents) and make it private to the
-/// current user.
+/// Create `dir` (missing parents get the default mode; only `dir` itself is
+/// made private) and make it private to the current user.
 ///
 /// On Unix the directory must be owned by the effective user, and it is
-/// chmod'ed to `0700` when group or others have any access. Everything
+/// chmod'ed to `0700` when group or others have any access. A failed chmod
+/// (e.g. on a filesystem without Unix modes) is logged, not fatal. Everything
 /// kept inside (the database and its WAL, Space configs, logs, key files)
 /// is then out of other local users' reach whatever mode the files
 /// themselves were created with, so the process umask doesn't have to be
@@ -19,10 +20,14 @@ pub fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
     {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && dir.is_dir() => {}
+            Err(e) => return Err(e),
+        }
         let meta = std::fs::metadata(dir)?;
         // SAFETY: geteuid has no preconditions and cannot fail.
         let euid = unsafe { libc::geteuid() };
@@ -30,14 +35,20 @@ pub fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 format!(
-                    "{} is owned by another user (uid {}); refusing to keep data there",
+                    "{} is owned by another user (uid {}); refusing to use it",
                     dir.display(),
                     meta.uid()
                 ),
             ));
         }
         if meta.permissions().mode() & 0o077 != 0 {
-            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+            if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+                tracing::warn!(
+                    path = %dir.display(),
+                    error = %e,
+                    "could not make the directory owner-only; other users may read it"
+                );
+            }
         }
     }
     #[cfg(not(unix))]
@@ -80,6 +91,20 @@ mod tests {
         let dir = tmp.path().join("a/b/data");
         ensure_private_dir(&dir).unwrap();
         assert_eq!(mode(&dir), 0o700);
+        // Parents created on the way keep the default mode.
+        assert_ne!(mode(&tmp.path().join("a")), 0o700);
+        // Calling it again is fine.
+        ensure_private_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_directory_owned_by_someone_else() {
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root owns `/`
+        }
+        let err = ensure_private_dir(Path::new("/")).unwrap_err();
+        assert!(err.to_string().contains("another user"), "{err}");
     }
 
     #[test]

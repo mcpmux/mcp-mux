@@ -988,8 +988,9 @@ fn stored_as_inputs_lines(value: &Value, what: &str) -> Vec<String> {
     if stored.is_empty() {
         return Vec::new();
     }
-    let mut lines =
-        vec![format!("env/header values {what} as server inputs, not in the Space file:")];
+    let mut lines = vec![format!(
+        "env/header values {what} as server inputs, not in the Space file:"
+    )];
     for (key, ids) in stored {
         let ids: Vec<&str> = as_array(ids)
             .into_iter()

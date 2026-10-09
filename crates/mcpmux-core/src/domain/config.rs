@@ -305,6 +305,11 @@ pub struct MovedInputValues {
 /// values. Stored as the servers' inputs, they are kept encrypted in the
 /// database rather than in clear in the Space file. Empty values and values
 /// that already use a placeholder are left alone.
+///
+/// The gateway also passes every input to a stdio server as an env var
+/// named after its id, so an id that differs from its variable name (a
+/// lowercase key, or a suffixed `API_KEY_2`) shows up there under both
+/// names. Re-importing doesn't remove inputs a server no longer uses.
 pub fn move_literal_values_to_inputs(doc: &mut serde_json::Value) -> Vec<MovedInputValues> {
     let Some(servers) = doc.get_mut("mcpServers").and_then(|v| v.as_object_mut()) else {
         return Vec::new();

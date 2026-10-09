@@ -79,6 +79,36 @@ describe('MetaToolApprovalDialog', () => {
     expect(screen.queryByTestId('meta-tool-approval-space')).toBeNull();
   });
 
+  it('offers "Always" only when the gateway allows a standing grant', async () => {
+    const { unmount } = render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_manage_feature_set',
+      summary: 'Create FeatureSet',
+      diff: null,
+      raw_args: {},
+      affects_other_clients: false,
+      action: 'create',
+      allow_always: true,
+    });
+    expect(screen.getByTestId('meta-tool-approval-always')).toHaveTextContent(
+      'Always (until restart)'
+    );
+    unmount();
+    handlers.clear();
+
+    render(<MetaToolApprovalDialog />);
+    await emitRequest({
+      tool_name: 'mcpmux_bind_current_workspace',
+      summary: 'Move workspace',
+      diff: null,
+      raw_args: {},
+      affects_other_clients: true,
+      allow_always: false,
+    });
+    expect(screen.getByTestId('meta-tool-approval-dialog')).toBeInTheDocument();
+    expect(screen.queryByTestId('meta-tool-approval-always')).toBeNull();
+  });
+
   it('renders a freeform { added_tools } diff without crashing', async () => {
     render(<MetaToolApprovalDialog />);
     await emitRequest({

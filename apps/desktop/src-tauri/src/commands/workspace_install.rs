@@ -36,6 +36,114 @@ fn config_path(spec: &ClientSpec, workspace_dir: &Path) -> PathBuf {
     p
 }
 
+/// Make sure the directories leading to a client's config inside the
+/// workspace are real directories (creating missing ones) and that the
+/// config path itself is not a symlink. Returns the path to write.
+///
+/// The workspace may be an untrusted checkout: a symlinked `.cursor` /
+/// `.codex` directory or `mcp.json` would otherwise make the installer edit
+/// files elsewhere (e.g. the user's global `~/.cursor/mcp.json`). Symlinks
+/// (and Windows junctions) anywhere below the workspace root are refused;
+/// the root itself is whatever folder the user picked.
+fn prepare_config_path(spec: &ClientSpec, workspace_dir: &Path) -> Result<PathBuf, String> {
+    let root = workspace_dir
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve workspace folder: {e}"))?;
+    let (file_name, dirs) = spec
+        .rel_path
+        .split_last()
+        .ok_or_else(|| "client has no config path".to_string())?;
+
+    let mut dir = workspace_dir.to_path_buf();
+    for seg in dirs {
+        dir.push(seg);
+        match std::fs::symlink_metadata(&dir) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(format!(
+                    "{} is a symbolic link; refusing to write through it",
+                    dir.display()
+                ));
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => return Err(format!("{} is not a directory", dir.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&dir).map_err(|e| {
+                    format!("failed to create config directory {}: {e}", dir.display())
+                })?;
+            }
+            Err(e) => return Err(format!("cannot inspect {}: {e}", dir.display())),
+        }
+    }
+    // Belt and braces: whatever the checks above saw, the directory we write
+    // into must resolve to a place inside the workspace.
+    let resolved = dir
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve {}: {e}", dir.display()))?;
+    if !resolved.starts_with(&root) {
+        return Err(format!("{} resolves outside the workspace", dir.display()));
+    }
+
+    let path = dir.join(file_name);
+    refuse_symlink(&path)?;
+    Ok(path)
+}
+
+/// Error if `path` exists as a symlink or as anything but a regular file.
+fn refuse_symlink(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(format!(
+            "{} is a symbolic link; refusing to write through it",
+            path.display()
+        )),
+        Ok(meta) if !meta.is_file() => Err(format!("{} is not a regular file", path.display())),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("cannot inspect {}: {e}", path.display())),
+    }
+}
+
+/// Replace `path` with `contents` via a fresh temp file in the same
+/// directory and a rename, so the write never follows a link at `path` and
+/// readers never see a half-written file. Keeps `permissions` when given;
+/// a new file is private (0600 on Unix), since it can hold a bearer token.
+fn write_replacing(
+    path: &Path,
+    contents: &[u8],
+    permissions: Option<std::fs::Permissions>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.{}-{nanos}.mcpmux-tmp", std::process::id()));
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        // Private from the start: the contents are written before the
+        // original permissions could otherwise be applied.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&tmp)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(contents)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// Result of installing into one client's config.
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceInstallResult {
@@ -71,18 +179,24 @@ fn install_one(
     header_value: &str,
     bearer: Option<&str>,
 ) -> WorkspaceInstallResult {
-    let path = config_path(spec, workspace_dir);
-    let existed = path.exists();
+    let path = match prepare_config_path(spec, workspace_dir) {
+        Ok(p) => p,
+        Err(e) => return error_result(spec, &config_path(spec, workspace_dir), e),
+    };
+    let existed = path.is_file();
 
-    let existing = if existed {
+    let (existing, permissions) = if existed {
         match std::fs::read_to_string(&path) {
-            Ok(s) => Some(s),
+            Ok(s) => (
+                Some(s),
+                std::fs::metadata(&path).ok().map(|m| m.permissions()),
+            ),
             Err(e) => {
                 return error_result(spec, &path, format!("failed to read existing config: {e}"))
             }
         }
     } else {
-        None
+        (None, None)
     };
 
     let merged = match render_config(existing.as_deref(), spec, mcp_url, header_value, bearer) {
@@ -90,11 +204,15 @@ fn install_one(
         Err(e) => return error_result(spec, &path, e),
     };
 
-    // Back up an existing file before overwriting.
+    // Back up an existing file before overwriting. The backup is written the
+    // same link-safe way: a planted `mcp.json.mcpmux-bak` symlink is refused.
     let mut backed_up = None;
-    if existed {
+    if let Some(original) = existing.as_deref() {
         let bak = PathBuf::from(format!("{}.mcpmux-bak", path.display()));
-        if let Err(e) = std::fs::copy(&path, &bak) {
+        if let Err(e) = refuse_symlink(&bak) {
+            return error_result(spec, &path, format!("cannot back up existing config: {e}"));
+        }
+        if let Err(e) = write_replacing(&bak, original.as_bytes(), permissions.clone()) {
             return error_result(
                 spec,
                 &path,
@@ -104,16 +222,7 @@ fn install_one(
         backed_up = Some(bak.to_string_lossy().to_string());
     }
 
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return error_result(
-                spec,
-                &path,
-                format!("failed to create config directory: {e}"),
-            );
-        }
-    }
-    if let Err(e) = std::fs::write(&path, merged) {
+    if let Err(e) = write_replacing(&path, merged.as_bytes(), permissions) {
         return error_result(spec, &path, format!("failed to write config: {e}"));
     }
 
@@ -320,6 +429,151 @@ mod tests {
         assert_eq!(r.action, "error");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "model = ");
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A fresh scratch dir with a "workspace" and an "outside" folder.
+    #[cfg(unix)]
+    fn scratch(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let tmp =
+            std::env::temp_dir().join(format!("mcpmux-wsinstall-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let ws = tmp.join("ws");
+        let outside = tmp.join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        (tmp, ws, outside)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_config_directory_is_refused() {
+        let (tmp, ws, outside) = scratch("dirlink");
+        // A checkout whose `.cursor` points at the user's global config dir.
+        std::fs::write(outside.join("mcp.json"), "{\"mcpServers\":{}}").unwrap();
+        std::os::unix::fs::symlink(&outside, ws.join(".cursor")).unwrap();
+
+        let r = install_one(spec("cursor"), &ws, "http://x/mcp", "/p", None);
+        assert_eq!(r.action, "error");
+        assert!(r.error.unwrap().contains("symbolic link"));
+        assert_eq!(
+            std::fs::read_to_string(outside.join("mcp.json")).unwrap(),
+            "{\"mcpServers\":{}}",
+            "the file behind the link is untouched"
+        );
+        assert!(!outside.join("mcp.json.mcpmux-bak").exists());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_or_dangling_config_file_is_refused() {
+        let (tmp, ws, outside) = scratch("filelink");
+        std::fs::create_dir_all(ws.join(".vscode")).unwrap();
+        // Dangling: `exists()` is false for it, which used to mean "create".
+        let target = outside.join("created-by-installer.json");
+        std::os::unix::fs::symlink(&target, ws.join(".vscode/mcp.json")).unwrap();
+
+        let r = install_one(spec("vscode"), &ws, "http://x/mcp", "/p", None);
+        assert_eq!(r.action, "error");
+        assert!(
+            !target.exists(),
+            "nothing written through the dangling link"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn planted_backup_symlink_is_refused() {
+        let (tmp, ws, outside) = scratch("baklink");
+        let config = ws.join(".mcp.json");
+        std::fs::write(&config, "{\"mcpServers\":{}}").unwrap();
+        let victim = outside.join("victim");
+        std::fs::write(&victim, "original").unwrap();
+        std::os::unix::fs::symlink(&victim, ws.join(".mcp.json.mcpmux-bak")).unwrap();
+
+        let r = install_one(spec("claude-code"), &ws, "http://x/mcp", "/p", None);
+        assert_eq!(r.action, "error");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "original");
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            "{\"mcpServers\":{}}",
+            "config left as it was"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_keeps_file_permissions_and_leaves_no_temp_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, ws, _outside) = scratch("perms");
+        let config = ws.join(".mcp.json");
+        std::fs::write(&config, "{\"mcpServers\":{}}").unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let r = install_one(spec("claude-code"), &ws, "http://x/mcp", "/p", Some("tok"));
+        assert_eq!(r.action, "updated", "{:?}", r.error);
+        for file in [config.clone(), ws.join(".mcp.json.mcpmux-bak")] {
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", file.display());
+        }
+        let leftovers: Vec<_> = std::fs::read_dir(&ws)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".mcpmux-tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_new_config_is_private_and_an_existing_one_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, ws, _outside) = scratch("new-perms");
+        let config = ws.join(".mcp.json");
+        let r = install_one(spec("claude-code"), &ws, "http://x/mcp", "/p", Some("tok"));
+        assert_eq!(r.action, "created", "{:?}", r.error);
+        let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "holds the bearer token");
+
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let r = install_one(spec("claude-code"), &ws, "http://y/mcp", "/p", Some("tok"));
+        assert_eq!(r.action, "updated", "{:?}", r.error);
+        let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "the user's choice is kept");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A directory junction (no admin rights needed to create one) pointing
+    /// outside the workspace is refused like a symlink.
+    #[cfg(windows)]
+    #[test]
+    fn junctioned_config_directory_is_refused() {
+        let tmp =
+            std::env::temp_dir().join(format!("mcpmux-wsinstall-junction-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let ws = tmp.join("ws");
+        let outside = tmp.join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(ws.join(".cursor"))
+            .arg(&outside)
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success(), "mklink /J failed");
+
+        let r = install_one(spec("cursor"), &ws, "http://x/mcp", "/p", None);
+        assert_eq!(r.action, "error", "{:?}", r.error);
+        assert!(
+            !outside.join("mcp.json").exists(),
+            "nothing written through the junction"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

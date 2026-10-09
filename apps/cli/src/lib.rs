@@ -477,11 +477,17 @@ async fn run_config(client: &mut ControlClient, cli: &Cli, command: &ConfigComma
             format,
             server,
             space,
+            include_secrets,
         } => {
             let value = client
                 .call(
                     Method::ConfigExport,
-                    json!({"format": format, "server_id": server, "space_id": space}),
+                    json!({
+                        "format": format,
+                        "server_id": server,
+                        "space_id": space,
+                        "include_secrets": include_secrets,
+                    }),
                 )
                 .await?;
             emit(&cli.output, &value, render_config_export)
@@ -493,7 +499,7 @@ async fn run_config(client: &mut ControlClient, cli: &Cli, command: &ConfigComma
             match out {
                 Some(path) => {
                     let content = value.get("content").and_then(Value::as_str).unwrap_or("");
-                    std::fs::write(path, content)
+                    write_private_file(path, content.as_bytes())
                         .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
                     if cli.output == OutputMode::Human {
                         println!(
@@ -518,16 +524,28 @@ async fn run_config(client: &mut ControlClient, cli: &Cli, command: &ConfigComma
             dry_run,
         } => {
             let file = daemon_side_path(file)?;
-            let value = client
-                .call(
-                    Method::ConfigImport,
-                    json!({
-                        "file": file.to_string_lossy(),
-                        "space_id": space,
-                        "dry_run": dry_run,
-                    }),
-                )
-                .await?;
+            let call = |dry_run: bool| {
+                json!({
+                    "file": file.to_string_lossy(),
+                    "space_id": space,
+                    "dry_run": dry_run,
+                })
+            };
+            if !dry_run {
+                // Show what the import adds, changes and removes, and what
+                // each server runs, before anything is written. In JSON mode
+                // it goes to stderr, keeping stdout for the result.
+                let plan = client.call(Method::ConfigImport, call(true)).await?;
+                if !cli.yes {
+                    let lines = config_import_plan(&plan, "will import:");
+                    match cli.output {
+                        OutputMode::Human => lines.iter().for_each(|l| println!("{l}")),
+                        OutputMode::Json => lines.iter().for_each(|l| eprintln!("{l}")),
+                    }
+                }
+                confirm(cli, "import these servers (new ones start enabled)")?;
+            }
+            let value = client.call(Method::ConfigImport, call(*dry_run)).await?;
             emit(&cli.output, &value, render_config_import)
         }
         ConfigCommand::Validate { file } => {
@@ -608,12 +626,42 @@ fn emit(mode: &OutputMode, value: &Value, human: fn(&Value) -> Result<()>) -> Re
     }
 }
 
-fn confirm(cli: &Cli, action: &str) -> Result<()> {
-    if cli.yes {
-        return Ok(());
+/// Write a file only its owner can read: exports can hold server commands
+/// and URLs worth keeping private.
+fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    if !std::io::stdin().is_terminal() {
+    let mut file = options.open(path)?;
+    // `mode` only applies to a new file; tighten an existing one too.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(contents)
+}
+
+/// Whether a destructive command may go ahead without asking (`--yes`), must
+/// ask, or must be refused (no terminal to ask on).
+fn may_skip_prompt(yes: bool, interactive: bool, action: &str) -> Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    if !interactive {
         bail!("refusing to {action} without --yes (no interactive terminal)");
+    }
+    Ok(false)
+}
+
+fn confirm(cli: &Cli, action: &str) -> Result<()> {
+    if may_skip_prompt(cli.yes, std::io::stdin().is_terminal(), action)? {
+        return Ok(());
     }
     eprint!("About to {action}. Continue? [y/N] ");
     let mut input = String::new();
@@ -931,17 +979,56 @@ fn render_config_export_space(value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Lines listing the env and header values an import keeps out of the
+/// Space file (input ids per server, never values).
+fn stored_as_inputs_lines(value: &Value, what: &str) -> Vec<String> {
+    let Some(stored) = value.get("stored_as_inputs").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    if stored.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![format!(
+        "env/header values {what} as server inputs, not in the Space file:"
+    )];
+    for (key, ids) in stored {
+        let ids: Vec<&str> = as_array(ids)
+            .into_iter()
+            .filter_map(Value::as_str)
+            .collect();
+        lines.push(format!("  {key}: {}", ids.join(", ")));
+    }
+    lines
+}
+
+/// The lines describing an import plan (a dry-run response) under `heading`.
+fn config_import_plan(value: &Value, heading: &str) -> Vec<String> {
+    let mut lines = vec![heading.to_string()];
+    for (mark, key) in [("+", "added"), ("~", "updated"), ("-", "removed")] {
+        for id in as_array(value.get(key).unwrap_or(&Value::Null)) {
+            if let Some(id) = id.as_str() {
+                lines.push(format!("  {mark} {id}"));
+            }
+        }
+    }
+    if let Some(launches) = value.get("launches").and_then(Value::as_object) {
+        lines.push("servers in the file run:".to_string());
+        for (key, launch) in launches {
+            lines.push(format!("  {key}: {}", launch.as_str().unwrap_or_default()));
+        }
+    }
+    lines.extend(stored_as_inputs_lines(value, "will be stored encrypted"));
+    lines
+}
+
 fn render_config_import(value: &Value) -> Result<()> {
     let dry = value
         .get("dry_run")
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if dry {
-        println!("dry run - would import:");
-        for id in as_array(value.get("added").unwrap_or(&Value::Null)) {
-            if let Some(id) = id.as_str() {
-                println!("  + {id}");
-            }
+        for line in config_import_plan(value, "dry run - would import:") {
+            println!("{line}");
         }
         return Ok(());
     }
@@ -951,6 +1038,9 @@ fn render_config_import(value: &Value) -> Result<()> {
         as_array(value.get("updated").unwrap_or(&Value::Null)).len(),
         as_array(value.get("removed").unwrap_or(&Value::Null)).len(),
     );
+    for line in stored_as_inputs_lines(value, "stored encrypted") {
+        println!("{line}");
+    }
     let backup = str_at(value, "backup");
     if !backup.is_empty() {
         println!("backup: {backup}");
@@ -1038,6 +1128,17 @@ async fn daemon_restart(
     let pid: u32 = str_at(&status, "pid")
         .parse()
         .map_err(|_| anyhow::anyhow!("daemon status did not return a numeric pid"))?;
+    // Signal only the process actually serving the socket, and only when the
+    // OS says which one that is.
+    let Some(peer) = client.peer_pid() else {
+        bail!("cannot tell which process serves the control socket; refusing to signal it");
+    };
+    if u32::try_from(peer).ok() != Some(pid) {
+        bail!(
+            "the daemon reported pid {pid}, but the socket is served by pid {peer}; \
+             refusing to signal either"
+        );
+    }
     let data_dir = str_at(&status, "data_dir");
 
     let proc = std::path::PathBuf::from(format!("/proc/{pid}"));
@@ -1260,7 +1361,54 @@ fn join_keys(value: &Value, key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(unix)]
+    #[test]
+    fn export_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("mcpmux-cli-out-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let existing = dir.join("space.json");
+        std::fs::write(&existing, "old").unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let fresh = dir.join("fresh.json");
+        let _ = std::fs::remove_file(&fresh);
+        for file in [&existing, &fresh] {
+            write_private_file(file, b"{}").unwrap();
+            assert_eq!(std::fs::read_to_string(file).unwrap(), "{}");
+            let mode = std::fs::metadata(file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", file.display());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
+
+    #[test]
+    fn destructive_commands_without_a_terminal_need_yes() {
+        assert!(may_skip_prompt(true, false, "import").unwrap());
+        assert!(!may_skip_prompt(false, true, "import").unwrap());
+        let err = may_skip_prompt(false, false, "import").unwrap_err();
+        assert!(err.to_string().contains("without --yes"), "{err}");
+    }
+
+    #[test]
+    fn the_import_plan_names_what_runs() {
+        let plan = serde_json::json!({
+            "dry_run": true, "added": ["a"], "updated": [], "removed": ["b"],
+            "launches": {"a": "npx -y pkg  [env: NODE_OPTIONS]"}
+        });
+        assert_eq!(
+            config_import_plan(&plan, "will import:"),
+            [
+                "will import:",
+                "  + a",
+                "  - b",
+                "servers in the file run:",
+                "  a: npx -y pkg  [env: NODE_OPTIONS]",
+            ]
+        );
+    }
 
     #[test]
     fn daemon_side_path_resolves_relative_paths_against_the_cli_cwd() {

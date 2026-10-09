@@ -15,6 +15,7 @@ mod health;
 mod init;
 mod lock;
 mod logging;
+pub mod master_key;
 mod paths;
 mod private_dir;
 mod shutdown;

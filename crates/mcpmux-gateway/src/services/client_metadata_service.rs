@@ -6,6 +6,7 @@
 //! - Persistence (InboundClientRepository from mcpmux-storage)
 //! - Business logic (this service)
 
+use crate::oauth::filter_valid_redirect_uris;
 use anyhow::Result;
 use mcpmux_core::CimdMetadataFetcher;
 use mcpmux_storage::{InboundClient, InboundClientRepository, RegistrationType};
@@ -60,20 +61,38 @@ impl ClientMetadataService {
     /// Otherwise, fetches fresh metadata from the CIMD URL.
     async fn get_or_fetch_cimd_client(&self, client_id_url: &str) -> Result<InboundClient> {
         // Try to load from database
-        if let Some(existing) = self.repository.get_client(client_id_url).await? {
+        let existing = self.repository.get_client(client_id_url).await?;
+        if let Some(existing) = &existing {
             if existing.registration_type == RegistrationType::Cimd
-                && self.is_cimd_cache_valid(&existing)
+                && self.is_cimd_cache_valid(existing)
             {
                 debug!("[CIMD] Using cached metadata for: {}", client_id_url);
-                return Ok(existing);
+                return Ok(existing.clone());
             }
         }
 
         // Fetch fresh metadata
-        let metadata = self.cimd_fetcher.fetch(client_id_url).await?;
+        let mut metadata = self.cimd_fetcher.fetch(client_id_url).await?;
 
-        // Convert to InboundClient
-        let client = self.cimd_metadata_to_client(metadata);
+        // A metadata document is attacker-controllable input: apply the same
+        // redirect policy as Dynamic Client Registration before storing it.
+        metadata.redirect_uris = filter_valid_redirect_uris(&metadata.redirect_uris);
+        if metadata.redirect_uris.is_empty() {
+            anyhow::bail!(
+                "CIMD document for {} lists no acceptable redirect_uris",
+                client_id_url
+            );
+        }
+
+        // Convert to InboundClient. A refresh of a known CIMD client keeps the
+        // user's decisions (approval, alias) and its creation time: the
+        // client_id URL is the identity, the document only updates metadata.
+        let mut client = self.cimd_metadata_to_client(metadata);
+        if let Some(existing) = existing.filter(|c| c.registration_type == RegistrationType::Cimd) {
+            client.approved = existing.approved;
+            client.client_alias = existing.client_alias;
+            client.created_at = existing.created_at;
+        }
 
         // Save to database
         self.repository.save_client(&client).await?;

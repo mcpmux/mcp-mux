@@ -714,6 +714,42 @@ async fn doctor_reports_core_checks() {
     let _ = child.wait();
 }
 
+/// `doctor` reports a data directory other users can read.
+#[cfg(unix)]
+#[tokio::test]
+async fn doctor_flags_data_readable_by_other_users() {
+    use std::os::unix::fs::PermissionsExt;
+    let data_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let (mut child, _port) = spawn_daemon(data_dir.path(), runtime_dir.path()).await;
+    let socket = socket_path(runtime_dir.path(), data_dir.path());
+
+    let status_of = |report: &serde_json::Value| {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "file_permissions")
+            .map(|c| (c["status"].as_str().unwrap().to_string(), c.clone()))
+            .expect("doctor has a file_permissions check")
+    };
+
+    std::fs::set_permissions(data_dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let report = call(&socket, &request("d1", "doctor")).await.data.unwrap();
+    let (status, check) = status_of(&report);
+    assert_eq!(status, "warn", "{check}");
+    assert!(check["hint"].as_str().unwrap().contains("chmod 700"));
+
+    std::fs::set_permissions(data_dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let report = call(&socket, &request("d2", "doctor")).await.data.unwrap();
+    assert_eq!(status_of(&report).0, "ok");
+
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let _ = child.wait();
+}
+
 #[tokio::test]
 async fn registry_list_returns_cached_catalog() {
     let data_dir = tempfile::tempdir().unwrap();
@@ -890,6 +926,32 @@ async fn servers_add_configure_enable_and_feature_set_membership() {
         ),
     )
     .await;
+    if added.ok {
+        // Installing again with a definition that isn't the current one (the
+        // registry changed after it was shown) is refused.
+        let stale = call(
+            &socket,
+            &request_with(
+                "a0",
+                "servers.add",
+                serde_json::json!({"server_id": "community.memory-npx", "inputs": {},
+                    "expected_transport": {"type": "stdio", "command": "something-else",
+                        "args": [], "env": {}, "metadata": {"inputs": []}}}),
+            ),
+        )
+        .await;
+        assert!(!stale.ok);
+        assert!(
+            stale
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("changed since it was shown"),
+            "{:?}",
+            stale.error
+        );
+    }
     if !added.ok {
         eprintln!(
             "skipping server flow: registry unavailable ({:?})",
@@ -1002,6 +1064,258 @@ async fn servers_add_configure_enable_and_feature_set_membership() {
         uninstalled.error
     );
     assert_eq!(connected("st2").await, 0);
+
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let _ = child.wait();
+}
+
+/// Exports and `servers.inspect` don't hand out stored secrets unless asked;
+/// the import preview names what each server runs; port 0 is refused.
+#[tokio::test]
+async fn control_socket_keeps_stored_secrets_out_of_exports() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let (mut child, _port) = spawn_daemon(data_dir.path(), runtime_dir.path()).await;
+    let socket = socket_path(runtime_dir.path(), data_dir.path());
+
+    let file = data_dir.path().join("servers.json");
+    std::fs::write(
+        &file,
+        r#"{"mcpServers":{
+            "gamma":{"command":"echo","args":["--token=${input:TOKEN}"],
+                     "env":{"LITERAL_SECRET":"ghp_literal","REF":"${input:TOKEN}"}},
+            "web":{"url":"http://127.0.0.1:9/mcp","headers":{"Authorization":"Bearer literal-header"}}
+        }}"#,
+    )
+    .unwrap();
+
+    let preview = call(
+        &socket,
+        &request_with(
+            "i0",
+            "config.import",
+            serde_json::json!({"file": file.to_string_lossy(), "dry_run": true}),
+        ),
+    )
+    .await;
+    assert!(preview.ok, "dry run failed: {:?}", preview.error);
+    let launches = preview.data.unwrap()["launches"].clone();
+    // The env changes what runs, so its variables are named (never valued).
+    assert_eq!(
+        launches["gamma"],
+        "echo --token=${input:TOKEN}  [env: LITERAL_SECRET, REF]"
+    );
+    assert!(!launches.to_string().contains("ghp_literal"));
+    assert_eq!(launches["web"], "http://127.0.0.1:9/mcp");
+
+    let imported = call(
+        &socket,
+        &request_with(
+            "i1",
+            "config.import",
+            serde_json::json!({"file": file.to_string_lossy()}),
+        ),
+    )
+    .await;
+    assert!(imported.ok, "import failed: {:?}", imported.error);
+    let configured = call(
+        &socket,
+        &request_with(
+            "c1",
+            "servers.configure",
+            serde_json::json!({"server_id": "gamma", "inputs": {"TOKEN": "tok-123"},
+                "env": {"OVR": "override-secret"}, "args": ["--key=arg-secret"]}),
+        ),
+    )
+    .await;
+    assert!(configured.ok, "configure failed: {:?}", configured.error);
+
+    let inspect = call(
+        &socket,
+        &request_with(
+            "n1",
+            "servers.inspect",
+            serde_json::json!({"server_id": "gamma"}),
+        ),
+    )
+    .await;
+    let inspect = serde_json::to_string(&inspect.data.unwrap()).unwrap();
+    assert!(!inspect.contains("arg-secret"), "{inspect}");
+
+    let export = |id: &'static str, include_secrets: bool| {
+        let socket = socket.clone();
+        async move {
+            let r = call(
+                &socket,
+                &request_with(
+                    id,
+                    "config.export",
+                    serde_json::json!({"format": "cursor", "server_id": "gamma",
+                        "include_secrets": include_secrets}),
+                ),
+            )
+            .await;
+            assert!(r.ok, "export failed: {:?}", r.error);
+            r.data.unwrap()["content"].as_str().unwrap().to_string()
+        }
+    };
+    let redacted = export("e1", false).await;
+    for secret in ["tok-123", "override-secret", "arg-secret", "ghp_literal"] {
+        assert!(!redacted.contains(secret), "{secret} in {redacted}");
+    }
+    assert!(redacted.contains("${input:TOKEN}") && redacted.contains("<redacted>"));
+    let full = export("e2", true).await;
+    assert!(full.contains("tok-123") && full.contains("override-secret"));
+
+    let space = call(
+        &socket,
+        &request_with("e3", "config.export-space", serde_json::json!({})),
+    )
+    .await;
+    let space = space.data.unwrap()["content"].as_str().unwrap().to_string();
+    assert!(
+        !space.contains("ghp_literal") && !space.contains("literal-header"),
+        "{space}"
+    );
+    assert!(space.contains("${input:LITERAL_SECRET}") && space.contains("${input:AUTHORIZATION}"));
+
+    let port = call(
+        &socket,
+        &request_with("p1", "port.set", serde_json::json!({"port": 0})),
+    )
+    .await;
+    assert!(!port.ok, "port 0 must be refused");
+
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let _ = child.wait();
+}
+
+/// `config import` keeps literal env and header values out of the Space
+/// file and the database's plaintext columns: they are stored encrypted as
+/// the servers' inputs.
+#[tokio::test]
+async fn config_import_stores_literal_values_as_inputs() {
+    let data_dir = tempfile::tempdir().unwrap();
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let source_dir = tempfile::tempdir().unwrap();
+    let (mut child, _port) = spawn_daemon(data_dir.path(), runtime_dir.path()).await;
+    let socket = socket_path(runtime_dir.path(), data_dir.path());
+
+    let file = source_dir.path().join("servers.json");
+    std::fs::write(
+        &file,
+        r#"{"mcpServers":{
+            "gamma":{"command":"echo","env":{"API_KEY":"ghp_import_literal","MODE":"${input:MODE}"}},
+            "web":{"url":"http://127.0.0.1:9/mcp","headers":{"Authorization":"Bearer header-literal"}}
+        }}"#,
+    )
+    .unwrap();
+    let import = |id: &'static str, dry_run: bool| {
+        let socket = socket.clone();
+        let file = file.clone();
+        async move {
+            let r = call(
+                &socket,
+                &request_with(
+                    id,
+                    "config.import",
+                    serde_json::json!({"file": file.to_string_lossy(), "dry_run": dry_run}),
+                ),
+            )
+            .await;
+            assert!(r.ok, "import failed: {:?}", r.error);
+            r.data.unwrap()
+        }
+    };
+
+    let preview = import("i0", true).await;
+    assert_eq!(
+        preview["stored_as_inputs"],
+        serde_json::json!({"gamma": ["API_KEY"], "web": ["AUTHORIZATION"]})
+    );
+    let preview = preview.to_string();
+    assert!(
+        !preview.contains("ghp_import_literal") && !preview.contains("header-literal"),
+        "{preview}"
+    );
+
+    // Import twice, so the second import backs up the first one's file.
+    import("i1", false).await;
+    let second = import("i2", false).await;
+    let backup = second["backup"].as_str().expect("a backup").to_string();
+    let space_file = backup.trim_end_matches(".mcpmux-bak").to_string();
+    let content = std::fs::read_to_string(&space_file).unwrap();
+    assert!(
+        content.contains("${input:API_KEY}") && content.contains("${input:AUTHORIZATION}"),
+        "{content}"
+    );
+    assert!(content.contains("${input:MODE}"), "{content}");
+
+    // No file the daemon keeps holds the values in clear: not the Space
+    // file, its backup, the database or its WAL.
+    let mut pending = vec![data_dir.path().to_path_buf()];
+    let mut scanned = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let bytes = std::fs::read(&path).unwrap_or_default();
+            for literal in ["ghp_import_literal", "header-literal"] {
+                assert!(
+                    !bytes
+                        .windows(literal.len())
+                        .any(|w| w == literal.as_bytes()),
+                    "{literal} found in {}",
+                    path.display()
+                );
+            }
+            scanned += 1;
+        }
+    }
+    assert!(
+        scanned >= 3,
+        "expected the Space file, its backup and the database"
+    );
+
+    // The values are stored as the servers' inputs and resolve again.
+    for (server, input) in [("gamma", "API_KEY"), ("web", "AUTHORIZATION")] {
+        let inspect = call(
+            &socket,
+            &request_with(
+                "n1",
+                "servers.inspect",
+                serde_json::json!({"server_id": server}),
+            ),
+        )
+        .await;
+        let data = inspect.data.unwrap();
+        let configured = &data.as_array().unwrap()[0]["configured_inputs"];
+        assert!(
+            configured.as_array().unwrap().iter().any(|k| k == input),
+            "{server}: {configured}"
+        );
+    }
+    let export = call(
+        &socket,
+        &request_with(
+            "e1",
+            "config.export",
+            serde_json::json!({"format": "cursor", "server_id": "gamma", "include_secrets": true}),
+        ),
+    )
+    .await;
+    assert!(export.ok, "export failed: {:?}", export.error);
+    assert!(export.data.unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .contains("ghp_import_literal"));
 
     unsafe {
         libc::kill(child.id() as libc::pid_t, libc::SIGTERM);

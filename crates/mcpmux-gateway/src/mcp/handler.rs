@@ -14,7 +14,9 @@ use tracing::{debug, info, warn};
 
 use super::context::{extract_oauth_context, extract_session_id, OAuthContext};
 use crate::consumers::MCPNotifier;
+use crate::pool::match_feature;
 use crate::server::ServiceContainer;
+use mcpmux_core::FeatureType;
 
 /// McpMux Gateway Handler
 ///
@@ -999,10 +1001,9 @@ impl ServerHandler for McpMuxGatewayHandler {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)
             })?;
 
-        let (server_id, prompt_name) = match authorized_prompts
-            .iter()
-            .find(|p| p.is_available && p.qualified_name() == params.name)
-        {
+        let matched = match_feature(&authorized_prompts, FeatureType::Prompt, &params.name)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let (server_id, prompt_name) = match matched {
             Some(p) => (p.server_id.clone(), p.feature_name.clone()),
             None => {
                 return Err(McpError::invalid_params(
@@ -1111,10 +1112,9 @@ impl ServerHandler for McpMuxGatewayHandler {
                 McpError::internal_error(format!("Failed to verify authorization: {}", e), None)
             })?;
 
-        let server_id = match authorized_resources
-            .iter()
-            .find(|r| r.is_available && r.qualified_name() == params.uri)
-        {
+        let matched = match_feature(&authorized_resources, FeatureType::Resource, &params.uri)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let server_id = match matched {
             Some(r) => r.server_id.clone(),
             None => {
                 return Err(McpError::invalid_params(

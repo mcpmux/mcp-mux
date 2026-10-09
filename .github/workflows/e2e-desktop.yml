@@ -118,7 +118,7 @@ jobs:
       # updater artifacts are produced by the release flow on trusted refs.
       - name: Build app (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: pnpm --filter @mcpmux/desktop exec tauri build --bundles deb,rpm --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: pnpm --filter @mcpmux/desktop exec tauri build --features e2e --bundles deb,rpm --config '{"bundle":{"createUpdaterArtifacts":false}}'
         env:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 
@@ -127,7 +127,7 @@ jobs:
         # shell: bash so the inline --config JSON is passed verbatim; PowerShell's
         # native-argument handling would mangle the embedded double quotes.
         shell: bash
-        run: pnpm --filter @mcpmux/desktop exec tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: pnpm --filter @mcpmux/desktop exec tauri build --features e2e --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Run desktop E2E tests (Linux)
         if: matrix.os == 'ubuntu-latest'

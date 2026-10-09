@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use mcpmux_core::{DomainEvent, LogLevel, LogSource, ServerLog, ServerLogManager};
@@ -39,6 +40,22 @@ pub struct McpClientHandler {
     space_id: Uuid,
     event_tx: Option<tokio::sync::broadcast::Sender<DomainEvent>>,
     log_manager: Option<Arc<ServerLogManager>>,
+    /// Per list kind: a forward is already scheduled (see `forward_list_changed`).
+    pending_list_changed: [Arc<AtomicBool>; 3],
+    /// Secret values scrubbed from the server's log messages.
+    redact: Arc<Vec<String>>,
+}
+
+/// Upstream `*/list_changed` notifications arriving within this window are
+/// forwarded as one event, so a chatty server can't flood the shared domain
+/// event bus (whose lagging subscribers would then drop other events).
+pub const LIST_CHANGED_COALESCE: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Copy, Debug)]
+enum ListKind {
+    Tools = 0,
+    Prompts = 1,
+    Resources = 2,
 }
 
 impl std::fmt::Debug for McpClientHandler {
@@ -67,7 +84,57 @@ impl McpClientHandler {
             space_id,
             event_tx,
             log_manager,
+            pending_list_changed: Default::default(),
+            redact: Arc::new(Vec::new()),
         }
+    }
+
+    /// Scrub these secret values (longest first) from the server's log
+    /// messages.
+    pub fn with_redacted(mut self, redact: Arc<Vec<String>>) -> Self {
+        self.redact = redact;
+        self
+    }
+
+    /// Forward an upstream `list_changed` to the domain event bus, at most
+    /// once per [`LIST_CHANGED_COALESCE`] per kind. The first notification
+    /// schedules the event; any arriving before it is sent are folded into
+    /// it. The event is sent at the end of the window, so the last change in
+    /// a burst is never lost.
+    fn forward_list_changed(&self, kind: ListKind, event: DomainEvent) {
+        let Some(tx) = self.event_tx.clone() else {
+            warn!(
+                server_id = %self.server_id,
+                space_id = %self.space_id,
+                "[McpClientHandler] ⚠️ No event_tx available - cannot forward list_changed"
+            );
+            return;
+        };
+        let pending = Arc::clone(&self.pending_list_changed[kind as usize]);
+        if pending.swap(true, Ordering::AcqRel) {
+            debug!(
+                server_id = %self.server_id,
+                "[McpClientHandler] list_changed folded into the pending forward"
+            );
+            return;
+        }
+        let server_id = self.server_id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(LIST_CHANGED_COALESCE).await;
+            pending.store(false, Ordering::Release);
+            info!(
+                server_id = %server_id,
+                kind = ?kind,
+                "[McpClientHandler] Forwarding backend list_changed"
+            );
+            if let Err(e) = tx.send(event) {
+                warn!(
+                    server_id = %server_id,
+                    error = %e,
+                    "[McpClientHandler] ⚠️ Failed to forward list_changed (no subscribers)"
+                );
+            }
+        });
     }
 
     /// Convert MCP protocol LoggingLevel to our internal LogLevel
@@ -89,134 +156,63 @@ impl rmcp::ClientHandler for McpClientHandler {
         self.info.clone()
     }
 
-    // Handle notifications from backend MCP servers
+    // Handle notifications from backend MCP servers. Each is forwarded to
+    // the domain event bus, coalesced per kind (see `forward_list_changed`).
     fn on_tool_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        let server_id = self.server_id.clone();
-        let space_id = self.space_id;
-        let event_tx = self.event_tx.clone();
-        async move {
-            info!(
-                server_id = %server_id,
-                space_id = %space_id,
-                "[McpClientHandler] 🔔 Backend server sent tools/list_changed notification"
-            );
-
-            if let Some(tx) = &event_tx {
-                let event = DomainEvent::ToolsChanged {
-                    server_id: server_id.clone(),
-                    space_id,
-                };
-                if let Err(e) = tx.send(event) {
-                    warn!(
-                        server_id = %server_id,
-                        space_id = %space_id,
-                        error = %e,
-                        "[McpClientHandler] ⚠️ Failed to emit ToolsChanged event (no subscribers)"
-                    );
-                } else {
-                    debug!(
-                        server_id = %server_id,
-                        space_id = %space_id,
-                        "[McpClientHandler] ✅ Emitted ToolsChanged event to domain event bus"
-                    );
-                }
-            } else {
-                warn!(
-                    server_id = %server_id,
-                    space_id = %space_id,
-                    "[McpClientHandler] ⚠️ No event_tx available - cannot forward tools/list_changed"
-                );
-            }
-        }
+        debug!(
+            server_id = %self.server_id,
+            space_id = %self.space_id,
+            "[McpClientHandler] 🔔 Backend server sent tools/list_changed notification"
+        );
+        self.forward_list_changed(
+            ListKind::Tools,
+            DomainEvent::ToolsChanged {
+                server_id: self.server_id.clone(),
+                space_id: self.space_id,
+            },
+        );
+        std::future::ready(())
     }
 
     fn on_prompt_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        let server_id = self.server_id.clone();
-        let space_id = self.space_id;
-        let event_tx = self.event_tx.clone();
-        async move {
-            info!(
-                server_id = %server_id,
-                space_id = %space_id,
-                "[McpClientHandler] 🔔 Backend server sent prompts/list_changed notification"
-            );
-
-            if let Some(tx) = &event_tx {
-                let event = DomainEvent::PromptsChanged {
-                    server_id: server_id.clone(),
-                    space_id,
-                };
-                if let Err(e) = tx.send(event) {
-                    warn!(
-                        server_id = %server_id,
-                        space_id = %space_id,
-                        error = %e,
-                        "[McpClientHandler] ⚠️ Failed to emit PromptsChanged event (no subscribers)"
-                    );
-                } else {
-                    debug!(
-                        server_id = %server_id,
-                        space_id = %space_id,
-                        "[McpClientHandler] ✅ Emitted PromptsChanged event to domain event bus"
-                    );
-                }
-            } else {
-                warn!(
-                    server_id = %server_id,
-                    space_id = %space_id,
-                    "[McpClientHandler] ⚠️ No event_tx available - cannot forward prompts/list_changed"
-                );
-            }
-        }
+        debug!(
+            server_id = %self.server_id,
+            space_id = %self.space_id,
+            "[McpClientHandler] 🔔 Backend server sent prompts/list_changed notification"
+        );
+        self.forward_list_changed(
+            ListKind::Prompts,
+            DomainEvent::PromptsChanged {
+                server_id: self.server_id.clone(),
+                space_id: self.space_id,
+            },
+        );
+        std::future::ready(())
     }
 
     fn on_resource_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        let server_id = self.server_id.clone();
-        let space_id = self.space_id;
-        let event_tx = self.event_tx.clone();
-        async move {
-            info!(
-                server_id = %server_id,
-                space_id = %space_id,
-                "[McpClientHandler] 🔔 Backend server sent resources/list_changed notification"
-            );
-
-            if let Some(tx) = &event_tx {
-                let event = DomainEvent::ResourcesChanged {
-                    server_id: server_id.clone(),
-                    space_id,
-                };
-                if let Err(e) = tx.send(event) {
-                    warn!(
-                        server_id = %server_id,
-                        space_id = %space_id,
-                        error = %e,
-                        "[McpClientHandler] ⚠️ Failed to emit ResourcesChanged event (no subscribers)"
-                    );
-                } else {
-                    debug!(
-                        server_id = %server_id,
-                        space_id = %space_id,
-                        "[McpClientHandler] ✅ Emitted ResourcesChanged event to domain event bus"
-                    );
-                }
-            } else {
-                warn!(
-                    server_id = %server_id,
-                    space_id = %space_id,
-                    "[McpClientHandler] ⚠️ No event_tx available - cannot forward resources/list_changed"
-                );
-            }
-        }
+        debug!(
+            server_id = %self.server_id,
+            space_id = %self.space_id,
+            "[McpClientHandler] 🔔 Backend server sent resources/list_changed notification"
+        );
+        self.forward_list_changed(
+            ListKind::Resources,
+            DomainEvent::ResourcesChanged {
+                server_id: self.server_id.clone(),
+                space_id: self.space_id,
+            },
+        );
+        std::future::ready(())
     }
 
     fn on_logging_message(
@@ -227,12 +223,24 @@ impl rmcp::ClientHandler for McpClientHandler {
         let server_id = self.server_id.clone();
         let space_id = self.space_id;
         let log_manager = self.log_manager.clone();
+        let redact = Arc::clone(&self.redact);
         async move {
-            // Format the log message from the MCP data field
+            // Format the log message from the MCP data field, then scrub the
+            // server's own secrets and cap it like a stderr line.
             let message = match &params.data {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
             };
+            let mut message = crate::pool::transport::scrub_secrets(&message, &redact);
+            let max = crate::pool::transport::MAX_SERVER_LOG_LINE;
+            if message.len() > max {
+                let mut cut = max;
+                while !message.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                message.truncate(cut);
+                message.push('…');
+            }
 
             let level = Self::convert_logging_level(&params.level);
 
@@ -522,5 +530,58 @@ impl ServerInstance {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tools_changed() -> DomainEvent {
+        DomainEvent::ToolsChanged {
+            server_id: "srv".into(),
+            space_id: Uuid::nil(),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_list_changed_is_forwarded_once() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+        let handler = McpClientHandler::new("srv", Uuid::nil(), Some(tx), None);
+
+        for _ in 0..50 {
+            handler.forward_list_changed(ListKind::Tools, tools_changed());
+        }
+        // A different kind is tracked separately.
+        handler.forward_list_changed(
+            ListKind::Prompts,
+            DomainEvent::PromptsChanged {
+                server_id: "srv".into(),
+                space_id: Uuid::nil(),
+            },
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "nothing is sent before the window ends"
+        );
+
+        tokio::time::sleep(LIST_CHANGED_COALESCE * 2).await;
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        assert_eq!(
+            events.len(),
+            2,
+            "one tools and one prompts event: {events:?}"
+        );
+
+        // A later change is still forwarded.
+        handler.forward_list_changed(ListKind::Tools, tools_changed());
+        tokio::time::sleep(LIST_CHANGED_COALESCE * 2).await;
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(DomainEvent::ToolsChanged { .. })
+        ));
     }
 }

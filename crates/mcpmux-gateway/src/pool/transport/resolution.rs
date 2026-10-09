@@ -97,6 +97,7 @@ pub fn build_transport_config(
                 command: resolved_command,
                 args: resolved_args,
                 env: resolved_env,
+                redact: secret_values(registry_transport, &effective_values, installed),
             }
         }
         RegistryConfig::Http { url, headers, .. } => {
@@ -117,6 +118,90 @@ pub fn build_transport_config(
             }
         }
     }
+}
+
+/// Values a stdio server's log lines are scrubbed of, longest first:
+/// - inputs marked secret (from 4 bytes);
+/// - env overrides whose name looks like a secret (`*KEY*`, `*TOKEN*`,
+///   `*SECRET*`, `*PASS*`, `*AUTH*`, `*CRED*`, `*COOKIE*`, `*SESSION*`,
+///   `*PAT*`);
+/// - in appended args, the value of such a flag: `--api-key=VALUE`, or the
+///   argument after `--token`.
+///
+/// Each multi-line value (a PEM key) also contributes its lines. Plain
+/// settings (`NODE_ENV=production`, directories, `--verbose`) are left
+/// alone, so the log stays readable.
+fn secret_values(
+    registry_transport: &RegistryConfig,
+    effective_values: &HashMap<String, String>,
+    installed: &InstalledServer,
+) -> Vec<String> {
+    const MIN_LEN: usize = 8;
+    const MIN_SECRET_INPUT_LEN: usize = 4;
+
+    fn looks_secret(name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        let words = [
+            "key", "token", "secret", "pass", "auth", "cred", "cookie", "session",
+        ];
+        // "pat" (personal access token) only as a whole word: PATH and
+        // PATTERN aren't secrets.
+        words.iter().any(|word| name.contains(word))
+            || name
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|part| part == "pat")
+    }
+
+    fn add(values: &mut Vec<String>, value: &str, min: usize) {
+        if value.len() >= min {
+            values.push(value.to_string());
+        }
+        if value.contains('\n') {
+            values.extend(
+                value
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| line.len() >= MIN_LEN)
+                    .map(str::to_string),
+            );
+        }
+    }
+
+    let mut values = Vec::new();
+    for input in registry_transport
+        .metadata()
+        .inputs
+        .iter()
+        .filter(|input| input.secret)
+    {
+        if let Some(value) = effective_values.get(&input.id) {
+            add(&mut values, value, MIN_SECRET_INPUT_LEN);
+        }
+    }
+    for (name, value) in &installed.env_overrides {
+        if looks_secret(name) {
+            add(&mut values, value, MIN_LEN);
+        }
+    }
+    let mut after_secret_flag = false;
+    for arg in &installed.args_append {
+        if after_secret_flag {
+            add(&mut values, arg, MIN_LEN);
+            after_secret_flag = false;
+            continue;
+        }
+        if !arg.starts_with('-') {
+            continue;
+        }
+        match arg.split_once('=') {
+            Some((flag, value)) if looks_secret(flag) => add(&mut values, value, MIN_LEN),
+            Some(_) => {}
+            None => after_secret_flag = looks_secret(arg),
+        }
+    }
+    values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    values.dedup();
+    values
 }
 
 fn apply_state_dir_env(
@@ -174,6 +259,87 @@ mod tests {
             obtain_url: None,
             obtain_instructions: None,
         }
+    }
+
+    #[test]
+    fn secret_inputs_and_overrides_are_marked_for_redaction() {
+        let mut api_key = make_input("API_KEY", None);
+        api_key.secret = true;
+        let transport = RegistryConfig::Stdio {
+            command: "node".to_string(),
+            args: vec!["server.js".to_string()],
+            env: HashMap::new(),
+            metadata: TransportMetadata {
+                inputs: vec![api_key, make_input("REGION", None)],
+            },
+        };
+        let mut installed = make_installed(HashMap::from([
+            ("API_KEY".to_string(), "sk-live-0123456789".to_string()),
+            ("REGION".to_string(), "eu-central-1".to_string()),
+        ]));
+        installed
+            .env_overrides
+            .insert("TOKEN".to_string(), "override-token-value".to_string());
+        installed
+            .env_overrides
+            .insert("DEBUG".to_string(), "1".to_string());
+        installed
+            .env_overrides
+            .insert("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string());
+        installed.env_overrides.insert(
+            "GITHUB_PAT".to_string(),
+            "github_pat_0123456789".to_string(),
+        );
+        installed
+            .env_overrides
+            .insert("NODE_ENV".to_string(), "production".to_string());
+        installed.env_overrides.insert(
+            "TLS_KEY".to_string(),
+            "-----BEGIN KEY-----\nMIIEvQIBADANBgkqhkiG9w0B\n-----END KEY-----".to_string(),
+        );
+        installed.args_append.extend([
+            "--password=hunter2hunter2".to_string(),
+            "--token".to_string(),
+            "separate-token-value".to_string(),
+            "--verbose".to_string(),
+            "/home/me/projects".to_string(),
+        ]);
+
+        let ResolvedTransport::Stdio { redact, .. } =
+            build_transport_config(&transport, &installed, None)
+        else {
+            panic!("Expected Stdio transport");
+        };
+        for secret in [
+            "sk-live-0123456789",
+            "override-token-value",
+            // The value alone, so a server printing just the value is caught.
+            "hunter2hunter2",
+            "separate-token-value",
+            "github_pat_0123456789",
+            // Each line of a multi-line key.
+            "MIIEvQIBADANBgkqhkiG9w0B",
+        ] {
+            assert!(
+                redact.contains(&secret.to_string()),
+                "{secret} not redacted: {redact:?}"
+            );
+        }
+        // Not secret, or too short to scrub safely.
+        for kept in [
+            "eu-central-1",
+            "1",
+            "production",
+            "/usr/local/bin:/usr/bin",
+            "--verbose",
+            "/home/me/projects",
+        ] {
+            assert!(!redact.contains(&kept.to_string()), "{kept} redacted");
+        }
+        // Longest first, without duplicates.
+        assert!(redact
+            .windows(2)
+            .all(|w| w[0].len() >= w[1].len() && w[0] != w[1]));
     }
 
     #[test]

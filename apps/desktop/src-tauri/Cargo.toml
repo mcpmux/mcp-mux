@@ -10,6 +10,12 @@ authors = ["McpMux Team"]
 name = "mcpmux_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Test-only hooks for the desktop E2E suite: HTTP consent approval, the
+# approve_oauth_client command and MCPMUX_E2E_DATA_DIR. Release bundles never
+# enable it; e2e-desktop.yml builds with `--features e2e`.
+e2e = ["mcpmux-gateway/e2e"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 serde_json.workspace = true

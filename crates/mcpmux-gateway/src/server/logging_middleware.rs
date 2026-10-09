@@ -182,6 +182,9 @@ pub fn extract_mcp_method(bytes: &[u8]) -> Option<String> {
 
 /// Logging middleware for requests and responses
 ///
+/// Largest request body accepted on routes other than `/mcp`.
+pub const MAX_NON_MCP_REQUEST_BODY: usize = 1024 * 1024;
+
 /// Generates a trace_id and logs a single entry/exit line per request.
 pub async fn http_logging_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
     let method = request.method().to_string();
@@ -193,8 +196,9 @@ pub async fn http_logging_middleware(request: Request, next: Next) -> Result<Res
     // Create trace context
     let ctx = TraceContext::new(&method, &path);
 
-    // For MCP routes, capture response body for logging
-    if path == "/mcp" {
+    // For MCP routes, capture response body for logging. `/mcp/…` counts
+    // too: its body is capped by the MCP middleware, not here.
+    if path == "/mcp" || path.starts_with("/mcp/") {
         // Create span for this request
         let span = RequestSpan::enter(&ctx);
 
@@ -266,13 +270,21 @@ pub async fn http_logging_middleware(request: Request, next: Next) -> Result<Res
             // Log entry
             RequestSpan::log_entry(&ctx);
 
-            // Extract and log request body for non-MCP routes
+            // Extract and log request body for non-MCP routes. Read before
+            // any auth, so it is capped: these routes (OAuth, health) only
+            // ever take small bodies.
             let (parts, body) = request.into_parts();
-            let body_bytes = match body.collect().await {
-                Ok(collected) => collected.to_bytes(),
+            let body_bytes = match axum::body::to_bytes(body, MAX_NON_MCP_REQUEST_BODY).await {
+                Ok(bytes) => bytes,
                 Err(e) => {
+                    let too_large = std::error::Error::source(&e)
+                        .is_some_and(|s| s.is::<http_body_util::LengthLimitError>());
                     warn!(trace_id = %ctx.trace_id, "Failed to read request body: {}", e);
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                    return Err(if too_large {
+                        StatusCode::PAYLOAD_TOO_LARGE
+                    } else {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    });
                 }
             };
 

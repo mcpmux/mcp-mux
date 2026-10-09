@@ -78,6 +78,20 @@ impl HttpTransport {
         )
     }
 
+    /// Header values long enough to be secrets (API keys, tokens), longest
+    /// first, for scrubbing the server's own log messages.
+    fn header_secrets(&self) -> Arc<Vec<String>> {
+        let mut values: Vec<String> = self
+            .headers
+            .values()
+            .filter(|v| v.len() >= 8)
+            .cloned()
+            .collect();
+        values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        values.dedup();
+        Arc::new(values)
+    }
+
     /// Log a message
     async fn log(&self, level: LogLevel, source: LogSource, message: String) {
         if let Some(log_manager) = &self.log_manager {
@@ -271,6 +285,7 @@ impl HttpTransport {
             self.space_id,
             self.event_tx.clone(),
             self.log_manager.clone(),
+            self.header_secrets(),
         );
 
         let connect_future = client_handler.serve(transport);
@@ -397,6 +412,7 @@ impl HttpTransport {
             self.space_id,
             self.event_tx.clone(),
             self.log_manager.clone(),
+            self.header_secrets(),
         );
 
         let connect_future = client_handler.serve(transport);
@@ -522,6 +538,7 @@ impl HttpTransport {
             self.space_id,
             self.event_tx.clone(),
             self.log_manager.clone(),
+            self.header_secrets(),
         );
 
         let connect_future = client_handler.serve(transport);

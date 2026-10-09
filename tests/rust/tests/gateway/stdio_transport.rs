@@ -611,3 +611,401 @@ async fn test_stdio_transport_resolves_command_via_shell_path() {
         _ => {}
     }
 }
+
+/// A stdio server's own children (e.g. `node` under `npx`) must not outlive
+/// it: stopping the server — gracefully or by dropping it — kills its whole
+/// process group.
+#[cfg(unix)]
+mod process_group_cleanup {
+    use mcpmux_gateway::pool::transport::StdioTransport;
+    use mcpmux_gateway::pool::{Transport, TransportConnectResult};
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    /// Minimal MCP server that starts a long-running child first.
+    const SERVER: &str = r#"
+import json, subprocess, sys
+child = subprocess.Popen(["sleep", "300"])
+open(sys.argv[1], "w").write(str(child.pid))
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    if msg["method"] == "initialize":
+        result = {"protocolVersion": msg["params"]["protocolVersion"],
+                  "capabilities": {}, "serverInfo": {"name": "t", "version": "1"}}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+"#;
+
+    /// Writes a 100 KB stderr line, then a normal one, then serves MCP.
+    const STDERR_SERVER: &str = r#"
+import json, sys
+sys.stderr.write("x" * 100000 + "\n")
+sys.stderr.write("after the long line\n")
+sys.stderr.flush()
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    if msg["method"] == "initialize":
+        result = {"protocolVersion": msg["params"]["protocolVersion"],
+                  "capabilities": {}, "serverInfo": {"name": "t", "version": "1"}}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+"#;
+
+    /// Running (a zombie, still listed until reaped, counts as gone).
+    fn alive(pid: i32) -> bool {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        let stat = String::from_utf8_lossy(&out.stdout);
+        let stat = stat.trim();
+        !stat.is_empty() && !stat.starts_with('Z')
+    }
+
+    fn python3() -> Option<std::path::PathBuf> {
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|dir| dir.join("python3"))
+            .find(|p| p.is_file())
+    }
+
+    async fn start(dir: &Path) -> Option<(mcpmux_gateway::pool::McpClient, i32)> {
+        let python = python3()?;
+        let script = dir.join("server.py");
+        let pid_file = dir.join("child.pid");
+        std::fs::write(&script, SERVER).unwrap();
+        let transport = StdioTransport::new(
+            python.to_string_lossy().into_owned(),
+            vec![
+                "-I".into(),
+                script.to_string_lossy().into_owned(),
+                pid_file.to_string_lossy().into_owned(),
+            ],
+            HashMap::new(),
+            Uuid::new_v4(),
+            "group-test".to_string(),
+            None,
+            Duration::from_secs(20),
+            None,
+        );
+        let client = match transport.connect().await {
+            TransportConnectResult::Connected(client) => client,
+            TransportConnectResult::Failed(e) => panic!("server did not start: {e}"),
+            TransportConnectResult::OAuthRequired { .. } => panic!("unexpected OAuthRequired"),
+        };
+        let pid: i32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(alive(pid));
+        Some((client, pid))
+    }
+
+    async fn gone(pid: i32) -> bool {
+        for _ in 0..100 {
+            if !alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        false
+    }
+
+    /// On app exit the server handles may never be dropped; killing every
+    /// live group still stops the server and the processes it started.
+    /// (Process-wide: nextest runs each test in its own process.)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn kill_all_stops_servers_whose_handles_are_still_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((client, grandchild)) = start(dir.path()).await else {
+            eprintln!("python3 not found; skipping");
+            return;
+        };
+        mcpmux_gateway::pool::transport::kill_all_stdio_groups();
+        assert!(
+            gone(grandchild).await,
+            "the server's child outlived kill_all"
+        );
+        drop(client);
+    }
+
+    /// A server writing an enormous stderr line has it dropped (with a
+    /// note) instead of buffered whole; the lines after it still arrive.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn overlong_stderr_lines_are_dropped() {
+        use mcpmux_core::{LogConfig, ServerLogManager};
+        use std::sync::Arc;
+
+        let Some(python) = python3() else {
+            eprintln!("python3 not found; skipping");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("server.py");
+        std::fs::write(&script, STDERR_SERVER).unwrap();
+        let logs = Arc::new(ServerLogManager::new(LogConfig {
+            base_dir: dir.path().join("logs"),
+            ..Default::default()
+        }));
+        let space = Uuid::new_v4();
+        let transport = StdioTransport::new(
+            python.to_string_lossy().into_owned(),
+            vec!["-I".into(), script.to_string_lossy().into_owned()],
+            HashMap::new(),
+            space,
+            "stderr-test".to_string(),
+            Some(logs.clone()),
+            Duration::from_secs(20),
+            None,
+        );
+        let client = match transport.connect().await {
+            TransportConnectResult::Connected(client) => client,
+            TransportConnectResult::Failed(e) => panic!("server did not start: {e}"),
+            TransportConnectResult::OAuthRequired { .. } => panic!("unexpected OAuthRequired"),
+        };
+
+        let mut messages = Vec::new();
+        for _ in 0..50 {
+            messages = logs
+                .read_logs(&space.to_string(), "stderr-test", 100, None)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|l| l.message)
+                .collect::<Vec<_>>();
+            if messages.iter().any(|m| m.contains("after the long line")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let _ = client.cancel().await;
+        assert!(
+            messages.iter().any(|m| m.contains("after the long line")),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("dropped")),
+            "{messages:?}"
+        );
+        assert!(messages.iter().all(|m| m.len() < 20_000));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn graceful_disconnect_kills_the_servers_children() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((client, pid)) = start(dir.path()).await else {
+            eprintln!("python3 not found; skipping");
+            return;
+        };
+        let _ = client.cancel().await;
+        assert!(gone(pid).await, "grandchild {pid} outlived the server");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_the_client_kills_the_servers_children() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((client, pid)) = start(dir.path()).await else {
+            eprintln!("python3 not found; skipping");
+            return;
+        };
+        drop(client);
+        assert!(gone(pid).await, "grandchild {pid} outlived the server");
+    }
+}
+
+/// A server that prints its own key to stderr doesn't get it into the
+/// server log.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn server_secrets_are_scrubbed_from_its_stderr_log() {
+    use mcpmux_core::{LogConfig, ServerLogManager};
+    use mcpmux_gateway::pool::transport::StdioTransport;
+    use mcpmux_gateway::pool::{Transport, TransportConnectResult};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let Some(python) = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|d| d.join("python3"))
+        .find(|p| p.is_file())
+    else {
+        eprintln!("python3 not found; skipping");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("server.py");
+    std::fs::write(
+        &script,
+        r#"
+import json, os, sys
+sys.stderr.write("starting with key " + os.environ["API_KEY"] + "\n")
+sys.stderr.flush()
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    if msg["method"] == "initialize":
+        result = {"protocolVersion": msg["params"]["protocolVersion"],
+                  "capabilities": {}, "serverInfo": {"name": "t", "version": "1"}}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+"#,
+    )
+    .unwrap();
+    let logs = Arc::new(ServerLogManager::new(LogConfig {
+        base_dir: dir.path().join("logs"),
+        ..Default::default()
+    }));
+    let space = uuid::Uuid::new_v4();
+    let transport = StdioTransport::new(
+        python.to_string_lossy().into_owned(),
+        vec!["-I".into(), script.to_string_lossy().into_owned()],
+        HashMap::from([("API_KEY".to_string(), "sk-live-0123456789".to_string())]),
+        space,
+        "scrub-test".to_string(),
+        Some(logs.clone()),
+        Duration::from_secs(20),
+        None,
+    )
+    .with_redacted_values(vec!["sk-live-0123456789".to_string()]);
+    let client = match transport.connect().await {
+        TransportConnectResult::Connected(client) => client,
+        TransportConnectResult::Failed(e) => panic!("server did not start: {e}"),
+        TransportConnectResult::OAuthRequired { .. } => panic!("unexpected OAuthRequired"),
+    };
+
+    let mut messages = Vec::new();
+    for _ in 0..50 {
+        messages = logs
+            .read_logs(&space.to_string(), "scrub-test", 100, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| l.message)
+            .collect::<Vec<_>>();
+        if messages.iter().any(|m| m.contains("starting with key")) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let _ = client.cancel().await;
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("starting with key [redacted]")),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().all(|m| !m.contains("sk-live")),
+        "{messages:?}"
+    );
+}
+
+/// The server's own MCP log messages (`notifications/message`) are scrubbed
+/// of its secrets and capped like stderr lines.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn server_log_messages_are_scrubbed_and_capped() {
+    use mcpmux_core::{LogConfig, ServerLogManager};
+    use mcpmux_gateway::pool::transport::StdioTransport;
+    use mcpmux_gateway::pool::{Transport, TransportConnectResult};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let Some(python) = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|d| d.join("python3"))
+        .find(|p| p.is_file())
+    else {
+        eprintln!("python3 not found; skipping");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("server.py");
+    std::fs::write(
+        &script,
+        r#"
+import json, os, sys
+def notify(data):
+    print(json.dumps({"jsonrpc": "2.0", "method": "notifications/message",
+                      "params": {"level": "info", "data": data}}), flush=True)
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("method") == "notifications/initialized":
+        notify("using key " + os.environ["API_KEY"])
+        notify("y" * 100000)
+        continue
+    if "id" not in msg:
+        continue
+    if msg["method"] == "initialize":
+        result = {"protocolVersion": msg["params"]["protocolVersion"],
+                  "capabilities": {"logging": {}}, "serverInfo": {"name": "t", "version": "1"}}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}), flush=True)
+"#,
+    )
+    .unwrap();
+    let logs = Arc::new(ServerLogManager::new(LogConfig {
+        base_dir: dir.path().join("logs"),
+        ..Default::default()
+    }));
+    let space = uuid::Uuid::new_v4();
+    let transport = StdioTransport::new(
+        python.to_string_lossy().into_owned(),
+        vec!["-I".into(), script.to_string_lossy().into_owned()],
+        HashMap::from([("API_KEY".to_string(), "sk-live-0123456789".to_string())]),
+        space,
+        "log-message-test".to_string(),
+        Some(logs.clone()),
+        Duration::from_secs(20),
+        None,
+    )
+    .with_redacted_values(vec!["sk-live-0123456789".to_string()]);
+    let client = match transport.connect().await {
+        TransportConnectResult::Connected(client) => client,
+        TransportConnectResult::Failed(e) => panic!("server did not start: {e}"),
+        TransportConnectResult::OAuthRequired { .. } => panic!("unexpected OAuthRequired"),
+    };
+
+    let mut messages = Vec::new();
+    for _ in 0..50 {
+        messages = logs
+            .read_logs(&space.to_string(), "log-message-test", 100, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|l| l.message)
+            .collect::<Vec<_>>();
+        if messages.iter().any(|m| m.contains("using key"))
+            && messages.iter().any(|m| m.starts_with("yyy"))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let _ = client.cancel().await;
+    assert!(
+        messages.iter().any(|m| m.contains("using key [redacted]")),
+        "{messages:?}"
+    );
+    assert!(messages.iter().all(|m| !m.contains("sk-live")));
+    let long = messages
+        .iter()
+        .find(|m| m.starts_with("yyy"))
+        .expect("the long message is logged, shortened");
+    assert!(
+        long.len() <= 16 * 1024 + '…'.len_utf8(),
+        "{} bytes",
+        long.len()
+    );
+}

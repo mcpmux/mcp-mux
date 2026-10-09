@@ -101,3 +101,8 @@ path = "tests/streamable_http/mod.rs"
 [[test]]
 name = "runtime"
 path = "tests/runtime/mod.rs"
+
+[dev-dependencies]
+# The e2e routes only for test builds: as a normal dependency the feature
+# would be unified into release builds of the daemon and the app.
+mcpmux-gateway = { path = "../../crates/mcpmux-gateway", features = ["e2e"] }

@@ -7,7 +7,6 @@ import { ServerIcon } from '../../components/ServerIcon';
 
 interface ServerCardProps {
   server: ServerViewModel;
-  onInstall: (id: string) => void;
   onUninstall: (id: string) => void;
   onViewDetails: (server: ServerViewModel) => void;
   isLoading?: boolean;
@@ -15,7 +14,6 @@ interface ServerCardProps {
 
 export function ServerCard({
   server,
-  onInstall,
   onUninstall,
   onViewDetails,
   isLoading,
@@ -186,7 +184,8 @@ export function ServerCard({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onInstall(server.id);
+              // Install from the details, where what it runs is shown.
+              onViewDetails(server);
             }}
             disabled={isLoading}
             className="px-4 py-1.5 text-sm rounded-lg bg-[rgb(var(--primary))] text-[rgb(var(--primary-foreground))]

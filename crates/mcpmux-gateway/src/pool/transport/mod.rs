@@ -17,7 +17,7 @@ use mcpmux_core::{CredentialRepository, OutboundOAuthRepository, ServerLogManage
 use uuid::Uuid;
 
 pub use http::HttpTransport;
-pub use stdio::{configure_child_process_platform, StdioTransport};
+pub use stdio::{configure_child_process_platform, kill_all_stdio_groups, StdioTransport};
 
 // Re-export TransportType from mcpmux-core as the single source of truth
 pub use mcpmux_core::TransportType;
@@ -61,6 +61,10 @@ pub enum ResolvedTransport {
         command: String,
         args: Vec<String>,
         env: HashMap<String, String>,
+        /// Exact secret values (secret inputs, env overrides, appended
+        /// arguments) to scrub from the server's stderr before it is logged.
+        /// Not passed to the server.
+        redact: Vec<String>,
     },
     Http {
         url: String,
@@ -92,7 +96,9 @@ impl ResolvedTransport {
 
         let mut hasher = DefaultHasher::new();
         match self {
-            ResolvedTransport::Stdio { command, args, env } => {
+            ResolvedTransport::Stdio {
+                command, args, env, ..
+            } => {
                 "stdio".hash(&mut hasher);
                 command.hash(&mut hasher);
                 args.hash(&mut hasher);
@@ -141,16 +147,24 @@ impl TransportFactory {
         event_tx: Option<tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>>,
     ) -> Box<dyn Transport> {
         match config {
-            ResolvedTransport::Stdio { command, args, env } => Box::new(StdioTransport::new(
-                command.clone(),
-                args.clone(),
-                env.clone(),
-                space_id,
-                server_id,
-                log_manager,
-                connect_timeout,
-                event_tx,
-            )),
+            ResolvedTransport::Stdio {
+                command,
+                args,
+                env,
+                redact,
+            } => Box::new(
+                StdioTransport::new(
+                    command.clone(),
+                    args.clone(),
+                    env.clone(),
+                    space_id,
+                    server_id,
+                    log_manager,
+                    connect_timeout,
+                    event_tx,
+                )
+                .with_redacted_values(redact.clone()),
+            ),
             ResolvedTransport::Http { url, headers } => Box::new(HttpTransport::new(
                 url.clone(),
                 headers.clone(),
@@ -172,6 +186,26 @@ pub fn create_client_handler(
     space_id: uuid::Uuid,
     event_tx: Option<tokio::sync::broadcast::Sender<mcpmux_core::DomainEvent>>,
     log_manager: Option<Arc<ServerLogManager>>,
+    redact: Arc<Vec<String>>,
 ) -> McpClientHandler {
-    McpClientHandler::new(server_id, space_id, event_tx, log_manager)
+    McpClientHandler::new(server_id, space_id, event_tx, log_manager).with_redacted(redact)
 }
+
+/// Replace every occurrence of the given secret values with `[redacted]`.
+/// Servers commonly echo their configuration (an API key in an error, a
+/// token in a debug dump) to their logs. `secrets` should be longest first,
+/// so a value containing another is replaced whole. Encoded forms (base64,
+/// URL-encoded) of a secret are not caught.
+pub(crate) fn scrub_secrets(line: &str, secrets: &[String]) -> String {
+    let mut out = line.to_string();
+    for secret in secrets {
+        if !secret.is_empty() && out.contains(secret.as_str()) {
+            out = out.replace(secret.as_str(), "[redacted]");
+        }
+    }
+    out
+}
+
+/// Longest server log line kept (stderr lines and `notifications/message`
+/// alike); longer ones are cut on a character boundary.
+pub(crate) const MAX_SERVER_LOG_LINE: usize = 16 * 1024;

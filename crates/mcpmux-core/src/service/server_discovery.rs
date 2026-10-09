@@ -125,6 +125,40 @@ impl ServerDiscoveryService {
         Ok(())
     }
 
+    /// The disk cache, if it may be used: when bundles must be signed, only
+    /// one saved from a bundle whose signature was checked.
+    async fn load_usable_cache(&self, must_verify: bool) -> Option<RegistryBundle> {
+        let bundle = self.load_bundle_from_disk().await?;
+        if must_verify {
+            let trusted = bundle.signed_by.as_deref().is_some_and(|key| {
+                self.registry_client
+                    .as_ref()
+                    .is_some_and(|client| client.trusts_key(key))
+            });
+            if !trusted {
+                warn!(
+                    "Ignoring the cached registry bundle: its signature was never checked \
+                     against a key that is trusted now"
+                );
+                return None;
+            }
+        }
+        Some(bundle)
+    }
+
+    /// Whether `bundle` was published before the verified bundle in the disk
+    /// cache (by `updated_at`, RFC 3339). Unparseable dates don't count.
+    async fn is_older_than_cache(&self, bundle: &RegistryBundle) -> bool {
+        let Some(cached) = self.load_usable_cache(true).await else {
+            return false;
+        };
+        let parse = |s: &str| chrono::DateTime::parse_from_rfc3339(s).ok();
+        matches!(
+            (parse(&bundle.updated_at), parse(&cached.updated_at)),
+            (Some(new), Some(old)) if new < old
+        )
+    }
+
     /// Load bundle from disk cache
     async fn load_bundle_from_disk(&self) -> Option<RegistryBundle> {
         let path = self.bundle_cache_path();
@@ -198,9 +232,20 @@ impl ServerDiscoveryService {
         let mut merged_servers = HashMap::new();
         let mut offline_mode = false;
 
+        // Once bundles must be signed, only a cache saved from a verified
+        // bundle may be revalidated with its ETag or used offline.
+        let must_verify = self
+            .registry_client
+            .as_ref()
+            .is_some_and(|client| client.verifies_bundles());
+
         // Get current ETag (from memory, or load from settings on first run)
         // IMPORTANT: Only use ETag if cache file exists, otherwise force fresh fetch
-        let cache_file_exists = self.bundle_cache_path().exists();
+        let cache_file_exists = if must_verify {
+            self.load_usable_cache(true).await.is_some()
+        } else {
+            self.bundle_cache_path().exists()
+        };
         let current_etag = if cache_file_exists {
             let etag = self.cached_etag.read().await;
             if etag.is_some() {
@@ -237,7 +282,7 @@ impl ServerDiscoveryService {
                     if memory_empty {
                         // Load from disk cache to populate memory
                         info!("Memory empty, loading bundle from disk cache");
-                        if let Some(cached_bundle) = self.load_bundle_from_disk().await {
+                        if let Some(cached_bundle) = self.load_usable_cache(must_verify).await {
                             // Use the cached bundle (don't return early)
                             Some(cached_bundle)
                         } else {
@@ -254,6 +299,18 @@ impl ServerDiscoveryService {
 
                         return Ok(());
                     }
+                }
+                Ok(FetchBundleResult::Updated { bundle, .. })
+                    if must_verify && self.is_older_than_cache(&bundle).await =>
+                {
+                    // A signed bundle older than the verified one we have:
+                    // replaying it must not roll the catalog back.
+                    warn!(
+                        "Registry sent an older bundle (updated {}) than the verified cache; \
+                         keeping the cache",
+                        bundle.updated_at
+                    );
+                    self.load_usable_cache(true).await
                 }
                 Ok(FetchBundleResult::Updated { bundle, etag }) => {
                     let bundle = *bundle; // Unbox the bundle
@@ -296,7 +353,7 @@ impl ServerDiscoveryService {
                     );
 
                     // Try loading from disk cache
-                    if let Some(cached_bundle) = self.load_bundle_from_disk().await {
+                    if let Some(cached_bundle) = self.load_usable_cache(must_verify).await {
                         info!("Using cached bundle from disk (offline mode)");
                         offline_mode = true;
                         Some(cached_bundle)
@@ -537,5 +594,185 @@ impl ServerDiscoveryService {
     /// Get the home configuration from the bundle
     pub async fn home_config(&self) -> Option<HomeConfig> {
         self.home_config.read().await.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::registry_api_client::test_registry::{
+        bundle_data, key_pair, signed, MockRegistry,
+    };
+
+    async fn ids(service: &ServerDiscoveryService) -> Vec<String> {
+        service.list().await.into_iter().map(|s| s.id).collect()
+    }
+
+    /// Once bundles must be signed, a cache saved before that is neither
+    /// revalidated with its ETag nor used offline; a cache of a verified
+    /// bundle is.
+    #[tokio::test]
+    async fn only_a_verified_cache_is_trusted_once_bundles_must_be_signed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pair, public) = key_pair();
+        let registry = MockRegistry::start().await;
+        let service = || {
+            let mut service =
+                ServerDiscoveryService::new(dir.path().join("data"), dir.path().join("spaces"));
+            service.registry_client =
+                Some(RegistryApiClient::new(registry.url.clone()).with_bundle_keys(vec![public]));
+            service
+        };
+
+        // A cache and ETag saved before bundles were signed.
+        let first = service();
+        let legacy: RegistryBundle = serde_json::from_str(&bundle_data("legacy")).unwrap();
+        first.save_bundle_to_disk(&legacy).await.unwrap();
+        *first.cached_etag.write().await = Some("\"legacy\"".into());
+
+        // The registry is down: the unchecked cache is not used.
+        registry.serve(|s| s.down = true);
+        first.refresh().await.unwrap();
+        assert!(ids(&first).await.is_empty());
+        assert!(first.is_offline().await);
+
+        // Back up: the old ETag is not sent, and the signed bundle replaces
+        // the cache.
+        let (body, signature) = signed(&pair, &bundle_data("signed"));
+        registry.serve(|s| {
+            s.down = false;
+            s.body = body;
+            s.signature = Some(signature);
+            s.etag = Some("\"v2\"".into());
+        });
+        first.refresh().await.unwrap();
+        assert_eq!(ids(&first).await, ["signed"]);
+        assert!(first
+            .load_bundle_from_disk()
+            .await
+            .unwrap()
+            .signed_by
+            .is_some());
+
+        // The verified cache is revalidated with its ETag (304) after a
+        // restart...
+        let second = service();
+        *second.cached_etag.write().await = Some("\"v2\"".into());
+        second.refresh().await.unwrap();
+        assert_eq!(ids(&second).await, ["signed"]);
+
+        // ...and used when the registry is down.
+        registry.serve(|s| s.down = true);
+        let third = service();
+        third.refresh().await.unwrap();
+        assert_eq!(ids(&third).await, ["signed"]);
+        assert!(third.is_offline().await);
+
+        assert_eq!(
+            registry.if_none_match(),
+            [None, None, Some("\"v2\"".to_string()), None]
+        );
+    }
+
+    /// A service trusting `keys`, on the cache in `dir`.
+    fn service_with(
+        dir: &std::path::Path,
+        url: &str,
+        keys: Vec<[u8; 32]>,
+    ) -> ServerDiscoveryService {
+        let mut service = ServerDiscoveryService::new(dir.join("data"), dir.join("spaces"));
+        service.registry_client =
+            Some(RegistryApiClient::new(url.to_string()).with_bundle_keys(keys));
+        service
+    }
+
+    /// `bundle_data(id)` published at `updated_at`.
+    fn dated(id: &str, updated_at: &str) -> String {
+        bundle_data(id).replace("2026-10-01T00:00:00Z", updated_at)
+    }
+
+    /// An older bundle with a valid signature (a replay) doesn't replace a
+    /// newer verified one.
+    #[tokio::test]
+    async fn an_older_signed_bundle_does_not_roll_the_catalog_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pair, public) = key_pair();
+        let registry = MockRegistry::start().await;
+        let service = service_with(dir.path(), &registry.url, vec![public]);
+
+        let (body, signature) = signed(&pair, &dated("current", "2026-10-05T00:00:00Z"));
+        registry.serve(|s| {
+            s.body = body;
+            s.signature = Some(signature);
+        });
+        service.refresh().await.unwrap();
+        assert_eq!(ids(&service).await, ["current"]);
+
+        let (body, signature) = signed(&pair, &dated("replayed", "2026-09-01T00:00:00Z"));
+        registry.serve(|s| {
+            s.body = body;
+            s.signature = Some(signature);
+        });
+        service.refresh().await.unwrap();
+        assert_eq!(ids(&service).await, ["current"]);
+        assert_eq!(
+            service.load_bundle_from_disk().await.unwrap().servers[0].id,
+            "current"
+        );
+    }
+
+    /// A cache verified with a key that is no longer trusted isn't used.
+    #[tokio::test]
+    async fn a_cache_signed_with_a_retired_key_is_not_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let (old_pair, old_public) = key_pair();
+        let (_, new_public) = key_pair();
+        let registry = MockRegistry::start().await;
+
+        let (body, signature) = signed(&old_pair, &bundle_data("old-key"));
+        registry.serve(|s| {
+            s.body = body;
+            s.signature = Some(signature);
+        });
+        service_with(dir.path(), &registry.url, vec![old_public])
+            .refresh()
+            .await
+            .unwrap();
+
+        // The old key is retired and the registry is down.
+        registry.serve(|s| s.down = true);
+        let service = service_with(dir.path(), &registry.url, vec![new_public]);
+        service.refresh().await.unwrap();
+        assert!(ids(&service).await.is_empty());
+    }
+
+    /// With a verified cache, an unsigned or wrongly signed bundle from a
+    /// reachable registry is refused and the cache is used.
+    #[tokio::test]
+    async fn a_bad_bundle_from_a_reachable_registry_falls_back_to_the_verified_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pair, public) = key_pair();
+        let (other, _) = key_pair();
+        let registry = MockRegistry::start().await;
+        let service = service_with(dir.path(), &registry.url, vec![public]);
+
+        let (body, signature) = signed(&pair, &bundle_data("verified"));
+        registry.serve(|s| {
+            s.body = body;
+            s.signature = Some(signature);
+        });
+        service.refresh().await.unwrap();
+
+        let (unsigned_body, _) = signed(&pair, &bundle_data("unsigned"));
+        let (bad_body, bad_signature) = signed(&other, &bundle_data("wrong-key"));
+        for (body, signature) in [(unsigned_body, None), (bad_body, Some(bad_signature))] {
+            registry.serve(|s| {
+                s.body = body;
+                s.signature = signature;
+                s.etag = None;
+            });
+            service.refresh().await.unwrap();
+            assert_eq!(ids(&service).await, ["verified"]);
+        }
     }
 }

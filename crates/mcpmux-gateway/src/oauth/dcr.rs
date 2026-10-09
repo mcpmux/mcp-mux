@@ -206,9 +206,12 @@ fn redirect_uri_matches(registered: &str, requested: &str) -> bool {
         return false;
     }
 
+    // Only the port may differ (RFC 8252 §7.3); everything else must match.
     reg_url.scheme() == req_url.scheme()
         && reg_url.host() == req_url.host()
         && reg_url.path() == req_url.path()
+        && reg_url.query() == req_url.query()
+        && req_url.fragment().is_none()
 }
 
 fn is_loopback_redirect_uri(uri: &str) -> bool {
@@ -228,11 +231,54 @@ fn is_loopback_redirect_uri(uri: &str) -> bool {
     }
 }
 
-/// URI schemes that must never be accepted as a redirect target. They can
-/// execute script or load arbitrary content if a redirect is ever navigated to
-/// one (e.g. the consent flow's `window.location.href` fallback), so they are
-/// rejected even though they are technically non-http "custom" schemes.
-const DANGEROUS_REDIRECT_SCHEMES: &[&str] = &["javascript", "data", "vbscript", "file", "blob"];
+/// URI schemes that must never be accepted as a redirect target, even though
+/// they are technically non-http "custom" schemes. Approving a consent hands
+/// the redirect to the OS, so a redirect must not be able to run script, open
+/// local or network files, or reach an OS or browser handler that can open or
+/// run content (Windows Search, Office, Edge, Safari, ...).
+const DANGEROUS_REDIRECT_SCHEMES: &[&str] = &[
+    "javascript",
+    "data",
+    "vbscript",
+    "file",
+    "blob",
+    "about",
+    "view-source",
+    "jar",
+    "ftp",
+    "sftp",
+    "smb",
+    "cifs",
+    "nfs",
+    "afp",
+    "dav",
+    "webdav",
+    "ldap",
+    "ldaps",
+    "telnet",
+    "ssh",
+    "rdp",
+    "vnc",
+    "search",
+    "search-ms",
+    "shell",
+    "mk",
+    "its",
+    "mhtml",
+    "res",
+    "hcp",
+    "help",
+    "intent",
+    "itms-services",
+    "chrome",
+    "chrome-extension",
+    "edge",
+];
+
+/// Scheme prefixes reserved for OS and browser handlers (`ms-word:`,
+/// `microsoft-edge:`, `x-safari-https:`, ...).
+const DANGEROUS_REDIRECT_SCHEME_PREFIXES: &[&str] =
+    &["ms-", "microsoft-", "x-safari-", "x-apple-", "windows-"];
 
 fn is_custom_scheme_redirect_uri(uri: &str) -> bool {
     let Ok(url) = url::Url::parse(uri) else {
@@ -242,7 +288,14 @@ fn is_custom_scheme_redirect_uri(uri: &str) -> bool {
     // `url` normalizes the scheme to lowercase, so the denylist comparison is
     // case-insensitive (e.g. `JavaScript:` is parsed as `javascript`).
     let scheme = url.scheme();
-    scheme != "http" && scheme != "https" && !DANGEROUS_REDIRECT_SCHEMES.contains(&scheme)
+    scheme != "http"
+        && scheme != "https"
+        // McpMux's own deep links would run app actions with the code attached.
+        && !scheme.eq_ignore_ascii_case(mcpmux_core::branding::DEEP_LINK_SCHEME)
+        && !DANGEROUS_REDIRECT_SCHEMES.contains(&scheme)
+        && !DANGEROUS_REDIRECT_SCHEME_PREFIXES
+            .iter()
+            .any(|prefix| scheme.starts_with(prefix))
 }
 
 fn is_chatgpt_connector_redirect_uri(uri: &str) -> bool {
@@ -255,13 +308,23 @@ fn is_chatgpt_connector_redirect_uri(uri: &str) -> bool {
         && (url.path() == "/connector/oauth" || url.path().starts_with("/connector/oauth/"))
 }
 
-fn is_valid_registered_redirect_uri(uri: &str) -> bool {
+/// Whether `uri` is an acceptable OAuth redirect target for an inbound client
+/// (loopback http, a non-dangerous custom scheme, or the ChatGPT connector
+/// callback). Applies to DCR registrations, CIMD documents, and every
+/// redirect the gateway or desktop app is about to perform.
+pub fn is_valid_registered_redirect_uri(uri: &str) -> bool {
+    // RFC 6749 §3.1.2: a redirection endpoint URI must not include a fragment.
+    if url::Url::parse(uri).map_or(true, |u| u.fragment().is_some()) {
+        return false;
+    }
     is_loopback_redirect_uri(uri)
         || is_custom_scheme_redirect_uri(uri)
         || is_chatgpt_connector_redirect_uri(uri)
 }
 
-fn filter_valid_redirect_uris(uris: &[String]) -> Vec<String> {
+/// Keep only acceptable redirect URIs (see [`is_valid_registered_redirect_uri`]),
+/// de-duplicated, in their original order.
+pub fn filter_valid_redirect_uris(uris: &[String]) -> Vec<String> {
     let mut filtered = Vec::new();
     for uri in uris {
         if is_valid_registered_redirect_uri(uri) && !filtered.contains(uri) {
@@ -305,7 +368,7 @@ pub fn validate_redirect_uris(uris: &[String]) -> Result<(), DcrError> {
         let is_custom_scheme = is_custom_scheme_redirect_uri(uri);
         let is_chatgpt_connector = is_chatgpt_connector_redirect_uri(uri);
 
-        if !is_loopback && !is_custom_scheme && !is_chatgpt_connector {
+        if !is_valid_registered_redirect_uri(uri) {
             // Skip invalid URIs (e.g. https://www.cursor.com/agents/mcp/oauth/callback)
             // rather than rejecting the entire registration — clients like Cursor send a
             // mix of valid and invalid URIs and only ever use the valid ones in practice.
@@ -351,99 +414,69 @@ pub async fn process_dcr_request(
     validate_redirect_uris(&request.redirect_uris)?;
     let valid_redirect_uris = filter_valid_redirect_uris(&request.redirect_uris);
 
-    // Check for existing client with same name (idempotent registration by client_name)
+    // Idempotent registration: an app that registers again with the same name
+    // and only redirect URIs it already has gets its existing client back,
+    // unchanged. Anything else becomes a separate client, so registering under
+    // another app's name can never change that app's record (redirects,
+    // metadata, approval).
+    // The client's redirects must match the request's in both directions:
+    // a client registered first with a wider set (another app's callbacks
+    // included) is not handed to the app asking for a narrower one.
     let existing = repo
-        .find_client_by_name(&request.client_name)
+        .find_dcr_clients_by_name(&request.client_name)
         .await
-        .map_err(|e| DcrError::invalid_client_metadata(format!("Database error: {}", e)))?;
+        .map_err(|e| DcrError::invalid_client_metadata(format!("Database error: {}", e)))?
+        .into_iter()
+        .find(|c| {
+            let registered = filter_valid_redirect_uris(&c.redirect_uris);
+            valid_redirect_uris
+                .iter()
+                .all(|uri| is_redirect_uri_allowed(&registered, uri))
+                && registered
+                    .iter()
+                    .all(|uri| is_redirect_uri_allowed(&valid_redirect_uris, uri))
+        });
 
     if let Some(existing) = existing {
         info!(
-            "[DCR] Updating existing client: {} ({})",
-            request.client_name, existing.client_id
+            "[DCR] Returning existing client for repeat registration: {} ({})",
+            existing.client_name, existing.client_id
         );
-
-        let client_id = existing.client_id.clone();
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let now_unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-
-        // Merge redirect URIs (accumulate - keep old valid URIs)
-        let mut merged_uris = filter_valid_redirect_uris(&existing.redirect_uris);
-        for uri in &valid_redirect_uris {
-            if !merged_uris.contains(uri) {
-                merged_uris.push(uri.clone());
-                info!(
-                    "[DCR] Adding new redirect_uri: {} to client: {}",
-                    uri, client_id
-                );
-            }
-        }
-
-        // Default grant_types and response_types if not provided
-        let grant_types = if request.grant_types.is_empty() {
-            vec![
-                "authorization_code".to_string(),
-                "refresh_token".to_string(),
-            ]
-        } else {
-            request.grant_types.clone()
-        };
-
-        let response_types = if request.response_types.is_empty() {
-            vec!["code".to_string()]
-        } else {
-            request.response_types.clone()
-        };
-
-        let token_endpoint_auth_method = request
-            .token_endpoint_auth_method
-            .clone()
-            .unwrap_or_else(|| "none".to_string());
-
-        // Use helper to build updated client (preserves user settings)
-        let updated_client = build_inbound_client_from_request(
-            &request,
-            client_id.clone(),
-            merged_uris.clone(),
-            grant_types.clone(),
-            response_types.clone(),
-            token_endpoint_auth_method.clone(),
-            existing.client_alias, // Preserve user-set alias
-            existing.last_seen,
-            existing.created_at,
-            now,
-        );
-
-        // Save to database (single source of truth)
-        repo.save_client(&updated_client).await.map_err(|e| {
-            DcrError::invalid_client_metadata(format!("Failed to save client: {}", e))
-        })?;
-
         return Ok(DcrResponse {
-            client_id,
-            client_name: request.client_name,
-            redirect_uris: merged_uris,
-            grant_types,
-            response_types,
-            token_endpoint_auth_method,
-            scope: request.scope,
+            client_id: existing.client_id,
+            client_name: existing.client_name,
+            redirect_uris: filter_valid_redirect_uris(&existing.redirect_uris),
+            grant_types: existing.grant_types,
+            response_types: existing.response_types,
+            // Public client: no secret is ever issued, whatever an older
+            // registration stored.
+            token_endpoint_auth_method: "none".to_string(),
+            scope: existing.scope,
             client_id_issued_at: now_unix,
-            // RFC 7591 metadata
-            logo_uri: request.logo_uri,
-            client_uri: request.client_uri,
+            logo_uri: existing.logo_uri,
+            client_uri: existing.client_uri,
             tos_uri: request.tos_uri,
             policy_uri: request.policy_uri,
             contacts: request.contacts,
-            software_id: request.software_id,
-            software_version: request.software_version,
+            software_id: existing.software_id,
+            software_version: existing.software_version,
         });
     }
 
-    // Generate new client_id
-    let client_id = format!("mcp_{}", &Uuid::new_v4().to_string()[..8]);
+    // Generate a client_id that is not in use (ids are short, so check).
+    let mut client_id = format!("mcp_{}", &Uuid::new_v4().simple().to_string()[..8]);
+    while repo
+        .get_client(&client_id)
+        .await
+        .map_err(|e| DcrError::invalid_client_metadata(format!("Database error: {}", e)))?
+        .is_some()
+    {
+        client_id = format!("mcp_{}", &Uuid::new_v4().simple().to_string()[..8]);
+    }
     let now_str = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let now_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -466,10 +499,9 @@ pub async fn process_dcr_request(
         request.response_types.clone()
     };
 
-    let token_endpoint_auth_method = request
-        .token_endpoint_auth_method
-        .clone()
-        .unwrap_or_else(|| "none".to_string());
+    // Registered clients are public: no secret is ever issued, so record
+    // (and answer) "none" whatever was asked for.
+    let token_endpoint_auth_method = "none".to_string();
 
     // Use helper to build new client (default settings)
     let client = build_inbound_client_from_request(
@@ -518,6 +550,34 @@ pub async fn process_dcr_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redirect_uris_with_a_fragment_are_rejected() {
+        assert!(!is_valid_registered_redirect_uri(
+            "http://127.0.0.1:8080/callback#frag"
+        ));
+        assert!(!is_valid_registered_redirect_uri("cursor://callback#x"));
+        assert!(is_valid_registered_redirect_uri(
+            "http://127.0.0.1:8080/callback"
+        ));
+    }
+
+    #[test]
+    fn loopback_matching_ignores_only_the_port() {
+        let registered = vec!["http://127.0.0.1:8080/callback?app=a".to_string()];
+        assert!(is_redirect_uri_allowed(
+            &registered,
+            "http://127.0.0.1:9999/callback?app=a"
+        ));
+        assert!(!is_redirect_uri_allowed(
+            &registered,
+            "http://127.0.0.1:9999/callback?app=b"
+        ));
+        assert!(!is_redirect_uri_allowed(
+            &registered,
+            "http://127.0.0.1:9999/callback?app=a#x"
+        ));
+    }
 
     #[test]
     fn test_validate_loopback_uris() {
@@ -585,6 +645,16 @@ mod tests {
                 validate_redirect_uris(&[uri.to_string()]).is_err(),
                 "{uri} must be rejected when it is the only redirect_uri"
             );
+        }
+
+        // McpMux's own deep-link scheme, in any case.
+        let own = mcpmux_core::branding::DEEP_LINK_SCHEME;
+        for uri in [
+            format!("{own}://install?server=x"),
+            format!("{}://callback", own.to_ascii_uppercase()),
+        ] {
+            assert!(!is_custom_scheme_redirect_uri(&uri), "{uri}");
+            assert!(validate_redirect_uris(&[uri.clone()]).is_err(), "{uri}");
         }
 
         // Legitimate native-app schemes still pass, with or without an authority.
@@ -747,4 +817,35 @@ mod tests {
     // Note: Integration tests for idempotent registration are better handled
     // in tests that use an actual database, since process_dcr_request now
     // persists directly to the database.
+
+    #[test]
+    fn os_handler_schemes_are_not_redirect_targets() {
+        for uri in [
+            "search-ms:query=x&crumb=location:\\\\evil\\share",
+            "ms-officecmd:{}",
+            "ms-word:ofe|u|https://evil.example/doc",
+            "microsoft-edge:https://evil.example/cb",
+            "x-safari-https://evil.example/cb",
+            "smb://evil.example/share",
+            "file:///etc/passwd",
+            "itms-services://?action=download-manifest",
+            "MS-SETTINGS:privacy",
+        ] {
+            assert!(
+                !is_valid_registered_redirect_uri(uri),
+                "{uri} must be refused"
+            );
+        }
+        for uri in [
+            "cursor://anysphere.cursor-mcp/oauth/callback",
+            "vscode://vscode.github-authentication/did-authenticate",
+            "claude://claude.ai/oauth/callback",
+            "com.example.app:/oauth2redirect",
+        ] {
+            assert!(
+                is_valid_registered_redirect_uri(uri),
+                "{uri} must be accepted"
+            );
+        }
+    }
 }

@@ -297,7 +297,12 @@ pub async fn start_auth_v2(
         // Reopen browser with existing URL
         if let Some(auth_url) = manager.get_auth_url(&key).await {
             manager.update_browser_opened(&key).await;
-            manager.open_browser(&auth_url);
+            if !manager.open_browser(&auth_url) {
+                manager
+                    .set_error(&key, mcpmux_gateway::pool::REFUSED_AUTH_URL.to_string())
+                    .await;
+                return Err(mcpmux_gateway::pool::REFUSED_AUTH_URL.to_string());
+            }
             info!("[ServerManager] Reopened browser for existing OAuth flow");
         }
         return Ok(());
@@ -335,7 +340,12 @@ pub async fn start_auth_v2(
         }
         ConnectionResult::OAuthRequired { auth_url } => {
             manager.set_authenticating(&key, auth_url.clone()).await;
-            manager.open_browser(&auth_url);
+            if !manager.open_browser(&auth_url) {
+                manager
+                    .set_error(&key, mcpmux_gateway::pool::REFUSED_AUTH_URL.to_string())
+                    .await;
+                return Err(mcpmux_gateway::pool::REFUSED_AUTH_URL.to_string());
+            }
             Ok(())
         }
         ConnectionResult::Failed { error } => {

@@ -63,6 +63,19 @@ impl SpacePrefixCache {
     fn is_prefix_available(&self, prefix: &str) -> bool {
         !self.prefix_to_server.contains_key(prefix)
     }
+
+    /// `base` if free, otherwise `base-2`, `base-3`, ... Two servers must never
+    /// share a prefix, or their tools would share qualified names and a call
+    /// could reach the wrong server.
+    fn first_free_prefix(&self, base: &str) -> String {
+        if self.is_prefix_available(base) {
+            return base.to_string();
+        }
+        (2..)
+            .map(|n| format!("{base}-{n}"))
+            .find(|candidate| self.is_prefix_available(candidate))
+            .expect("an unbounded range always yields a free prefix")
+    }
 }
 
 /// Service for managing server prefix resolution and caching
@@ -178,6 +191,7 @@ impl PrefixCacheService {
                 // No alias defined, use server_id
                 self.normalize_server_id(&server.server_id)
             };
+            let prefix = cache.first_free_prefix(&prefix);
 
             cache.assign(server.server_id.clone(), prefix);
         }
@@ -276,6 +290,7 @@ impl PrefixCacheService {
             // No alias, use server_id
             self.normalize_server_id(server_id)
         };
+        let prefix = cache.first_free_prefix(&prefix);
 
         cache.assign(server_id.to_string(), prefix.clone());
         prefix
@@ -387,6 +402,42 @@ mod tests {
             .assign_prefix_runtime(space_id, "server-b", Some("api"))
             .await;
         assert_eq!(prefix2, "server-b"); // Uses normalized server_id
+    }
+
+    #[tokio::test]
+    async fn colliding_fallbacks_get_distinct_prefixes() {
+        let service = PrefixCacheService::new();
+        let space_id = "test-space";
+
+        // A registry server aliased `github`, then a user server keyed `github`
+        // (whose fallback prefix is also `github`).
+        let first = service
+            .assign_prefix_runtime(space_id, "io.github/github", Some("github"))
+            .await;
+        let second = service
+            .assign_prefix_runtime(space_id, "github", None)
+            .await;
+        let third = service
+            .assign_prefix_runtime(space_id, "other", Some("github"))
+            .await;
+
+        assert_eq!(first, "github");
+        assert_eq!(second, "github-2");
+        assert_eq!(third, "other");
+        assert_eq!(
+            service
+                .get_server_for_prefix(space_id, "github")
+                .await
+                .as_deref(),
+            Some("io.github/github")
+        );
+        assert_eq!(
+            service
+                .get_server_for_prefix(space_id, "github-2")
+                .await
+                .as_deref(),
+            Some("github")
+        );
     }
 
     #[tokio::test]

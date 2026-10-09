@@ -10,6 +10,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# Builds and uploads workflow artifacts; needs no write access to the repo.
+permissions:
+  contents: read
+
 jobs:
   authorize:
     uses: ./.github/workflows/require-release-manager.yml
@@ -29,6 +33,9 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: macos-latest
             target: aarch64-apple-darwin
+    # Signing and publishing secrets live in the `release` environment,
+    # which only runs from main.
+    environment: release
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

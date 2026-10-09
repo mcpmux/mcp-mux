@@ -1231,7 +1231,13 @@ function InspectorPanel({
             defaultOpen={!isMapped}
             testId="workspace-install-section"
           >
-            <WorkspaceInstallPanel workspaceRoot={entry.root} />
+            <WorkspaceInstallPanel
+              workspaceRoot={entry.root}
+              inDefaultSpace={
+                !entry.binding ||
+                spaces.find((s) => s.id === entry.binding!.space_id)?.is_default !== false
+              }
+            />
           </CollapsibleSection>
         )}
 

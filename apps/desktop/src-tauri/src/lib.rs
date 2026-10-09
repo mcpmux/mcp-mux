@@ -71,9 +71,14 @@ fn get_logs_dir() -> std::path::PathBuf {
 /// - File: daily rotation in ~/.local/share/mcpmux/logs/ (Linux)
 ///   or %LOCALAPPDATA%/mcpmux/logs/ (Windows)
 fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    // Load .env file if present (for development)
-    dotenvy::dotenv().ok();
-    dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
+    // Load .env file if present (development builds only). A release build must
+    // not pick up settings from a .env in whatever directory it was launched
+    // from (dotenv also searches every parent directory).
+    #[cfg(debug_assertions)]
+    {
+        dotenvy::dotenv().ok();
+        dotenvy::from_filename("../.env").ok(); // apps/desktop/.env when run from src-tauri
+    }
 
     let logs_dir = get_logs_dir();
     let sink = mcpmux_runtime::LogSink::DailyRolling {
@@ -86,6 +91,23 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
         console_ansi: std::io::stdout().is_terminal(),
     };
     mcpmux_runtime::init_tracing(&cfg)
+}
+
+/// Tell the user why McpMux can't start — a window that never appears
+/// explains nothing — and quit once they dismiss the message. Used when the
+/// runtime refuses to start, e.g. because the OS keychain holding the
+/// master key is locked.
+fn show_startup_error(app: &tauri::AppHandle, message: &str) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    let handle = app.clone();
+    app.dialog()
+        .message(format!("McpMux couldn't start.\n\n{message}"))
+        .title(branding::DISPLAY_NAME)
+        .kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
 }
 
 /// Get app version (compiled into the binary)
@@ -253,10 +275,14 @@ pub fn run() {
             // AppState::new delegates the environment-neutral bootstrap
             // (lock + key + DB + repos) to mcpmux_runtime, so the desktop
             // only retains Tauri-specific wiring on top.
-            let state = AppState::new(data_dir).map_err(|e| {
-                error!("Failed to initialize application state: {}", e);
-                e.to_string()
-            })?;
+            let state = match AppState::new(data_dir) {
+                Ok(state) => state,
+                Err(e) => {
+                    error!("Failed to initialize application state: {}", e);
+                    show_startup_error(app.handle(), &e.to_string());
+                    return Ok(());
+                }
+            };
 
             app.manage(state);
 
@@ -513,6 +539,7 @@ pub fn run() {
                 let app_state: tauri::State<'_, AppState> = app.state();
                 let spaces_dir = app_state.spaces_dir().to_path_buf();
                 let installed_repo = app_state.installed_server_repository.clone();
+                let space_repo = app_state.runtime().repositories.space.clone();
                 let app_handle_for_watcher = app.handle().clone();
 
                 // Use the well-known default space UUID
@@ -526,6 +553,7 @@ pub fn run() {
                         spaces_dir.clone(),
                         Arc::new(mcpmux_core::application::UserSpaceSyncService::new(installed_repo)),
                         default_space_id,
+                        space_repo,
                         Some(move |space_id: &str, result: &mcpmux_core::application::SyncResult| {
                             // Emit event to refresh UI
                             if result.has_changes() {
@@ -891,8 +919,6 @@ pub fn run() {
             commands::set_builtin_server_enabled,
             commands::set_builtin_tool_enabled,
             // Config export commands
-            commands::preview_config_export,
-            commands::export_config_to_file,
             commands::get_config_paths,
             commands::check_config_exists,
             commands::backup_existing_config,

@@ -65,6 +65,14 @@ The generated unit uses the exact executable that ran service install and
 preserves supplied options such as --data-dir, --port, --registry-url,
 --log-dir, --log-filter, and --public-base-url.
 
+The data directory's master-key.json records which key (OS keychain or key
+file) the stored credentials are encrypted with, as a one-way fingerprint. If
+that key can't be loaded, for example because the keyring is locked or the key
+file was deleted, McpMux refuses to start instead of creating a new key that
+would make the stored credentials unreadable. Unlock the keyring or restore the
+key file and start again; to start over on purpose, move the data directory
+aside.
+
 Use --key-provider file on a headless Linux host. It keeps master and JWT keys
 under the selected data directory with owner-only file permissions.
 
@@ -102,8 +110,15 @@ Confirm that the socket remains loopback-only:
 
     ss -ltnp '( sport = :45818 )'
 
-The listening address must be 127.0.0.1:45818. Do not use
---auth-disabled in a persistent deployment.
+The listening address must be 127.0.0.1:45818. `--auth-disabled` is for
+one-off local runs only: `mcpmuxd service install` refuses it, and the daemon
+refuses to start with both `--auth-disabled` and `--public-base-url`.
+
+A unit installed by an older version may still pass `--auth-disabled`. If it
+also passes `--public-base-url`, the daemon now exits at start and systemd
+restarts it in a loop. Re-run `mcpmuxd service install` (without
+`--auth-disabled`) to regenerate the unit, then
+`systemctl --user daemon-reload && systemctl --user restart mcpmux.service`.
 
 ## Remote operator access
 

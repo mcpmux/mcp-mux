@@ -355,6 +355,24 @@ impl InboundClientRepository {
         }
     }
 
+    /// Dynamically registered clients with this name, approved ones first,
+    /// then oldest first. Several apps (or a squatter) can register under one
+    /// name, so callers pick among them rather than taking any one row.
+    pub async fn find_dcr_clients_by_name(&self, name: &str) -> Result<Vec<InboundClient>> {
+        let db = self.db.lock().await;
+        let conn = db.connection();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM inbound_clients
+             WHERE client_name = ?1 AND registration_type = 'dcr'
+             ORDER BY approved DESC, created_at ASC",
+            Self::CLIENT_COLUMNS
+        ))?;
+        let clients = stmt
+            .query_map(params![name], Self::map_row_to_client)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(clients)
+    }
+
     /// Strict byte-equal membership check of a redirect URI in the client's
     /// registered list. This is a low-level DB lookup; for OAuth policy
     /// decisions (including RFC 8252 §7.3 loopback-port flexibility) use

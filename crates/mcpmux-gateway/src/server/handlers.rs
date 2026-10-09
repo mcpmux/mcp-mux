@@ -799,6 +799,13 @@ pub async fn oauth_token(
                 warn!("[OAuth] Missing code_verifier (PKCE required)");
                 return Err(token_error("invalid_request", "Missing code_verifier"));
             };
+            if !is_valid_code_verifier(code_verifier) {
+                warn!("[OAuth] Malformed code_verifier");
+                return Err(token_error(
+                    "invalid_request",
+                    "code_verifier must be 43-128 unreserved characters",
+                ));
+            }
 
             let Some(client_id) = request.client_id.as_ref() else {
                 warn!("[OAuth] Missing client_id in token request");
@@ -1077,6 +1084,15 @@ fn token_error(error: &str, description: &str) -> (StatusCode, Json<TokenErrorRe
             error_description: Some(description.to_string()),
         }),
     )
+}
+
+/// RFC 7636: a `code_verifier` is 43 to 128 characters from
+/// `[A-Za-z0-9-._~]`.
+fn is_valid_code_verifier(verifier: &str) -> bool {
+    (43..=128).contains(&verifier.len())
+        && verifier
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
 }
 
 /// Verify a PKCE `code_verifier` against an S256 `code_challenge`.
@@ -1615,6 +1631,26 @@ pub async fn oauth_register(
 
 #[cfg(test)]
 mod pkce_tests {
+
+    #[test]
+    fn code_verifiers_follow_rfc_7636() {
+        assert!(super::is_valid_code_verifier(&"a".repeat(43)));
+        assert!(super::is_valid_code_verifier(&format!(
+            "{}-._~",
+            "Z9".repeat(62)
+        )));
+        assert!(!super::is_valid_code_verifier(&"a".repeat(42)));
+        assert!(!super::is_valid_code_verifier(&"a".repeat(129)));
+        assert!(!super::is_valid_code_verifier(&format!(
+            "{} ",
+            "a".repeat(43)
+        )));
+        assert!(!super::is_valid_code_verifier(&format!(
+            "{}+",
+            "a".repeat(43)
+        )));
+    }
+
     use super::{is_s256_code_challenge, verify_pkce_s256};
 
     // Known-answer pair: base64url(SHA-256(VERIFIER)), computed independently.

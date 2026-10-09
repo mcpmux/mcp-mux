@@ -125,6 +125,17 @@ impl ServerDiscoveryService {
         Ok(())
     }
 
+    /// The disk cache, if it may be used: when bundles must be signed, only
+    /// one saved from a bundle whose signature was checked.
+    async fn load_usable_cache(&self, must_verify: bool) -> Option<RegistryBundle> {
+        let bundle = self.load_bundle_from_disk().await?;
+        if must_verify && !bundle.signature_verified {
+            warn!("Ignoring the cached registry bundle: its signature was never checked");
+            return None;
+        }
+        Some(bundle)
+    }
+
     /// Load bundle from disk cache
     async fn load_bundle_from_disk(&self) -> Option<RegistryBundle> {
         let path = self.bundle_cache_path();
@@ -198,9 +209,20 @@ impl ServerDiscoveryService {
         let mut merged_servers = HashMap::new();
         let mut offline_mode = false;
 
+        // Once bundles must be signed, only a cache saved from a verified
+        // bundle may be revalidated with its ETag or used offline.
+        let must_verify = self
+            .registry_client
+            .as_ref()
+            .is_some_and(|client| client.verifies_bundles());
+
         // Get current ETag (from memory, or load from settings on first run)
         // IMPORTANT: Only use ETag if cache file exists, otherwise force fresh fetch
-        let cache_file_exists = self.bundle_cache_path().exists();
+        let cache_file_exists = if must_verify {
+            self.load_usable_cache(true).await.is_some()
+        } else {
+            self.bundle_cache_path().exists()
+        };
         let current_etag = if cache_file_exists {
             let etag = self.cached_etag.read().await;
             if etag.is_some() {
@@ -237,7 +259,7 @@ impl ServerDiscoveryService {
                     if memory_empty {
                         // Load from disk cache to populate memory
                         info!("Memory empty, loading bundle from disk cache");
-                        if let Some(cached_bundle) = self.load_bundle_from_disk().await {
+                        if let Some(cached_bundle) = self.load_usable_cache(must_verify).await {
                             // Use the cached bundle (don't return early)
                             Some(cached_bundle)
                         } else {
@@ -296,7 +318,7 @@ impl ServerDiscoveryService {
                     );
 
                     // Try loading from disk cache
-                    if let Some(cached_bundle) = self.load_bundle_from_disk().await {
+                    if let Some(cached_bundle) = self.load_usable_cache(must_verify).await {
                         info!("Using cached bundle from disk (offline mode)");
                         offline_mode = true;
                         Some(cached_bundle)
@@ -537,5 +559,84 @@ impl ServerDiscoveryService {
     /// Get the home configuration from the bundle
     pub async fn home_config(&self) -> Option<HomeConfig> {
         self.home_config.read().await.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::registry_api_client::test_registry::{
+        bundle_data, key_pair, signed, MockRegistry,
+    };
+
+    async fn ids(service: &ServerDiscoveryService) -> Vec<String> {
+        service.list().await.into_iter().map(|s| s.id).collect()
+    }
+
+    /// Once bundles must be signed, a cache saved before that is neither
+    /// revalidated with its ETag nor used offline; a cache of a verified
+    /// bundle is.
+    #[tokio::test]
+    async fn only_a_verified_cache_is_trusted_once_bundles_must_be_signed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pair, public) = key_pair();
+        let registry = MockRegistry::start().await;
+        let service = || {
+            let mut service =
+                ServerDiscoveryService::new(dir.path().join("data"), dir.path().join("spaces"));
+            service.registry_client =
+                Some(RegistryApiClient::new(registry.url.clone()).with_bundle_keys(vec![public]));
+            service
+        };
+
+        // A cache and ETag saved before bundles were signed.
+        let first = service();
+        let legacy: RegistryBundle = serde_json::from_str(&bundle_data("legacy")).unwrap();
+        first.save_bundle_to_disk(&legacy).await.unwrap();
+        *first.cached_etag.write().await = Some("\"legacy\"".into());
+
+        // The registry is down: the unchecked cache is not used.
+        registry.serve(|s| s.down = true);
+        first.refresh().await.unwrap();
+        assert!(ids(&first).await.is_empty());
+        assert!(first.is_offline().await);
+
+        // Back up: the old ETag is not sent, and the signed bundle replaces
+        // the cache.
+        let (body, signature) = signed(&pair, &bundle_data("signed"));
+        registry.serve(|s| {
+            s.down = false;
+            s.body = body;
+            s.signature = Some(signature);
+            s.etag = Some("\"v2\"".into());
+        });
+        first.refresh().await.unwrap();
+        assert_eq!(ids(&first).await, ["signed"]);
+        assert!(
+            first
+                .load_bundle_from_disk()
+                .await
+                .unwrap()
+                .signature_verified
+        );
+
+        // The verified cache is revalidated with its ETag (304) after a
+        // restart...
+        let second = service();
+        *second.cached_etag.write().await = Some("\"v2\"".into());
+        second.refresh().await.unwrap();
+        assert_eq!(ids(&second).await, ["signed"]);
+
+        // ...and used when the registry is down.
+        registry.serve(|s| s.down = true);
+        let third = service();
+        third.refresh().await.unwrap();
+        assert_eq!(ids(&third).await, ["signed"]);
+        assert!(third.is_offline().await);
+
+        assert_eq!(
+            registry.if_none_match(),
+            [None, None, Some("\"v2\"".to_string()), None]
+        );
     }
 }

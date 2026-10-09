@@ -34,7 +34,7 @@ use crate::paths::resolve_data_dir;
 
 /// Default registry API URL. Matches the desktop's hard-coded default and
 /// the env-var fallback in `mcpmux_core::service::registry_api_client`.
-pub const DEFAULT_REGISTRY_URL: &str = "https://api.mcpmux.com";
+pub const DEFAULT_REGISTRY_URL: &str = mcpmux_core::OFFICIAL_REGISTRY_URL;
 
 /// Per-file size cap for the server-log manager (10 MiB).
 pub const DEFAULT_SERVER_LOG_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;

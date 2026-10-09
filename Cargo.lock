@@ -2821,6 +2821,7 @@ dependencies = [
  "lazy_static",
  "regex",
  "reqwest 0.13.2",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

@@ -8,7 +8,7 @@ description = "McpMux core domain logic, entities, and business rules"
 
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 anyhow.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
@@ -23,6 +23,7 @@ reqwest = { workspace = true, features = ["json"] }
 regex = "1.11"
 lazy_static = "1.5"
 base64 = "0.22"
+ring.workspace = true
 urlencoding = "2.1"
 toml_edit = "0.23"
 

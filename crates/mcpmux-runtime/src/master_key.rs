@@ -285,7 +285,8 @@ pub fn read_key_record(data_dir: &Path) -> anyhow::Result<Option<KeyRecord>> {
     match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| {
             anyhow::anyhow!(
-                "{} is unreadable ({e}); fix or remove it to continue",
+                "{} is unreadable ({e}). Restore it from a backup; removing it makes \
+                 McpMux re-detect the key from the stored data",
                 path.display()
             )
         }),

@@ -43,6 +43,7 @@ pub use oauth::{
 // SOLID Services
 pub use connection::{ConnectionResult, ConnectionService};
 pub use features::{CachedFeatures, FeatureService};
+pub(crate) use routing::match_feature;
 pub use routing::{RoutedPrompt, RoutedResource, RoutedTool, RoutingService};
 pub use service::{InstalledServerInfo, PoolService, PoolStats, ReconnectResult};
 pub use token::TokenService;

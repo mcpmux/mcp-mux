@@ -191,6 +191,9 @@ impl CredentialRepository for SqliteCredentialRepository {
                 credential.updated_at.to_rfc3339(),
             ],
         )?;
+        // A save often replaces a value (a refreshed token): don't leave the
+        // old one in the WAL.
+        db.checkpoint_wal();
 
         Ok(())
     }
@@ -208,6 +211,7 @@ impl CredentialRepository for SqliteCredentialRepository {
             "DELETE FROM credentials WHERE space_id = ?1 AND server_id = ?2 AND credential_type = ?3",
             params![space_id.to_string(), server_id, credential_type.as_str()],
         )?;
+        db.checkpoint_wal();
 
         Ok(())
     }
@@ -220,6 +224,7 @@ impl CredentialRepository for SqliteCredentialRepository {
             "DELETE FROM credentials WHERE space_id = ?1 AND server_id = ?2",
             params![space_id.to_string(), server_id],
         )?;
+        db.checkpoint_wal();
 
         Ok(())
     }
@@ -233,6 +238,9 @@ impl CredentialRepository for SqliteCredentialRepository {
             "DELETE FROM credentials WHERE space_id = ?1 AND server_id = ?2 AND credential_type IN ('access_token', 'refresh_token')",
             params![space_id.to_string(), server_id],
         )?;
+        if deleted > 0 {
+            db.checkpoint_wal();
+        }
 
         Ok(deleted > 0)
     }

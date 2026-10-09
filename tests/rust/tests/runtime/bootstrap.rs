@@ -171,7 +171,10 @@ async fn startup_refuses_unbound_values_once_everything_is_bound() {
         assert!(runtime.database.lock().await.ciphertexts_bound());
     }
 
-    // A fresh data dir with a value that can't be bound: legacy reads stay on.
+    // A fresh data dir with a value from an earlier version (unbound, but
+    // readable: it gets bound) and one that can't be read, so can't be bound:
+    // legacy reads stay on. The readable one also shows the key is right
+    // (with a single key, as on Windows, nothing readable means a wrong key).
     let fx = Fixture::new();
     {
         let runtime = super::runtime_builder()
@@ -179,6 +182,7 @@ async fn startup_refuses_unbound_values_once_everything_is_bound() {
             .build()
             .await
             .expect("runtime build");
+        let legacy = runtime.encryptor.encrypt("token").unwrap();
         runtime
             .database
             .lock()
@@ -186,8 +190,9 @@ async fn startup_refuses_unbound_values_once_everything_is_bound() {
             .connection()
             .execute(
                 "INSERT INTO credentials (id, space_id, server_id, credential_type, credential_value, created_at, updated_at)
-                 VALUES ('c1', (SELECT id FROM spaces LIMIT 1), 'srv', 'api_key', 'garbage', 'now', 'now')",
-                [],
+                 VALUES ('c0', (SELECT id FROM spaces LIMIT 1), 'srv', 'access_token', ?1, 'now', 'now'),
+                        ('c1', (SELECT id FROM spaces LIMIT 1), 'srv', 'api_key', 'garbage', 'now', 'now')",
+                [legacy],
             )
             .unwrap();
         // Undo the marker the first start recorded on this empty database.
@@ -209,4 +214,19 @@ async fn startup_refuses_unbound_values_once_everything_is_bound() {
         .expect("runtime build");
     assert!(!runtime.encryptor.requires_bound());
     assert!(!runtime.database.lock().await.ciphertexts_bound());
+    let readable: String = runtime
+        .database
+        .lock()
+        .await
+        .connection()
+        .query_row(
+            "SELECT credential_value FROM credentials WHERE id = 'c0'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        mcpmux_storage::FieldEncryptor::is_bound(&readable),
+        "the readable value was bound at startup"
+    );
 }

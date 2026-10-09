@@ -31,6 +31,11 @@ export function initAnalytics(appVersion: string) {
     capture_pageleave: false,
     autocapture: false,
     persistence: 'localStorage',
+    // Events only: never load PostHog scripts (remote config, recorder,
+    // surveys) into the app window.
+    disable_external_dependency_loading: true,
+    disable_session_recording: true,
+    disable_surveys: true,
   });
 
   // Super properties sent with every event

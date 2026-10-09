@@ -719,6 +719,24 @@ for line in sys.stdin:
         false
     }
 
+    /// On app exit the server handles may never be dropped; killing every
+    /// live group still stops the server and the processes it started.
+    /// (Process-wide: nextest runs each test in its own process.)
+    #[tokio::test(flavor = "multi_thread")]
+    async fn kill_all_stops_servers_whose_handles_are_still_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((client, grandchild)) = start(dir.path()).await else {
+            eprintln!("python3 not found; skipping");
+            return;
+        };
+        mcpmux_gateway::pool::transport::kill_all_stdio_groups();
+        assert!(
+            gone(grandchild).await,
+            "the server's child outlived kill_all"
+        );
+        drop(client);
+    }
+
     /// A server writing an enormous stderr line has it dropped (with a
     /// note) instead of buffered whole; the lines after it still arrive.
     #[tokio::test(flavor = "multi_thread")]

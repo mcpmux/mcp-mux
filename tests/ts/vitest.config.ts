@@ -39,6 +39,7 @@ export default defineConfig({
       '@tauri-apps/plugin-updater': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-updater'),
       '@tauri-apps/plugin-process': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-process'),
       '@tauri-apps/plugin-opener': path.resolve(__dirname, '../../apps/desktop/node_modules/@tauri-apps/plugin-opener'),
+      'posthog-js': path.resolve(__dirname, '../../apps/desktop/node_modules/posthog-js'),
     },
   },
 });

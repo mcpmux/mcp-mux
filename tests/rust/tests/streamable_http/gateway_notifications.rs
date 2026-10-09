@@ -84,6 +84,7 @@ struct TestGateway {
     services: Arc<ServiceContainer>,
     feature_repo: Arc<MockServerFeatureRepository>,
     feature_set_repo: Arc<MockFeatureSetRepository>,
+    space_repo: Arc<dyn mcpmux_core::SpaceRepository>,
 }
 
 impl TestGateway {
@@ -189,7 +190,7 @@ impl TestGateway {
 
         // Override space_repo and inbound_client_repo in deps
         let deps = mcpmux_gateway::server::GatewayDependencies {
-            space_repo: space_repo as Arc<dyn mcpmux_core::SpaceRepository>,
+            space_repo: space_repo.clone() as Arc<dyn mcpmux_core::SpaceRepository>,
             inbound_client_repo,
             ..deps
         };
@@ -280,6 +281,7 @@ impl TestGateway {
             services,
             feature_repo,
             feature_set_repo,
+            space_repo,
         }
     }
 
@@ -452,6 +454,117 @@ async fn authless_anonymous_client_completes_real_initialize() {
     );
 
     client.cancel().await.ok();
+    gw.shutdown();
+}
+
+/// Through the real middleware with auth off, a tokenless client only sees
+/// and targets the default Space.
+#[tokio::test(flavor = "multi_thread")]
+async fn authless_client_is_confined_to_the_default_space() {
+    let space_id = Uuid::new_v4();
+    let gw = TestGateway::start_authless(space_id).await;
+    let other = mcpmux_core::Space::new("Other Space");
+    gw.space_repo.create(&other).await.unwrap();
+
+    let client = connect_client(&gw.url, GatewayTestClient::new()).await;
+    let text = |result: CallToolResult| -> serde_json::Value {
+        let raw = serde_json::to_value(&result).unwrap();
+        raw["content"][0]["text"]
+            .as_str()
+            .and_then(|t| serde_json::from_str(t).ok())
+            .unwrap_or(raw)
+    };
+
+    let spaces = text(
+        client
+            .call_tool(CallToolRequestParams::new("mcpmux_list_spaces"))
+            .await
+            .unwrap(),
+    );
+    let ids: Vec<&str> = spaces["spaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(ids, [space_id.to_string()]);
+
+    let args = serde_json::json!({ "space_id": other.id.to_string() });
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("mcpmux_list_all_tools")
+                .with_arguments(args.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(text(result)["error"], "invalid_argument");
+
+    client.cancel().await.ok();
+    gw.shutdown();
+}
+
+/// `X-Mcpmux-Workspace` pins only for real sessions: a request with a
+/// made-up session id is rejected by rmcp and its pin is taken back, so
+/// made-up ids can't fill the pin map; a real session is pinned.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_real_sessions_are_pinned() {
+    let gw = TestGateway::start_authless(Uuid::new_v4()).await;
+    let http = reqwest::Client::new();
+    let post = |session: Option<&str>, body: serde_json::Value| {
+        let mut req = http
+            .post(&gw.url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("x-mcpmux-workspace", "/work/repo")
+            .json(&body);
+        if let Some(session) = session {
+            req = req.header("mcp-session-id", session);
+        }
+        req.send()
+    };
+
+    for i in 0..5 {
+        let fake = format!("made-up-{i}");
+        let response = post(
+            Some(&fake),
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+        )
+        .await
+        .unwrap();
+        assert!(!response.status().is_success(), "{}", response.status());
+        assert_eq!(gw.services.session_roots.get_pinned(&fake), None);
+    }
+
+    // A real session: initialize, then a request carrying its id.
+    let init = post(
+        None,
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-06-18","capabilities":{},
+            "clientInfo":{"name":"pin-test","version":"1.0"}}}),
+    )
+    .await
+    .unwrap();
+    let session = init
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .expect("a session id")
+        .to_string();
+    let _ = init.bytes().await;
+    let initialized = post(
+        Some(&session),
+        serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        initialized.status().is_success(),
+        "{}",
+        initialized.status()
+    );
+    assert!(gw.services.session_roots.get_pinned(&session).is_some());
+
     gw.shutdown();
 }
 

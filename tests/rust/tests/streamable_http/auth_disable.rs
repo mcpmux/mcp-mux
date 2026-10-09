@@ -338,3 +338,72 @@ async fn oversized_mcp_bodies_are_refused() {
     // Ordinary requests are unaffected.
     assert_eq!(post_tools_list(&h, None).await, reqwest::StatusCode::OK);
 }
+
+/// The `/mcp` cap also holds for a chunked body (no Content-Length).
+#[tokio::test]
+async fn oversized_chunked_mcp_bodies_are_refused() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let h = Harness::start(true).await;
+    let addr = h.base.trim_start_matches("http://").to_string();
+    let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    stream
+        .write_all(
+            format!(
+                "POST /mcp HTTP/1.1\r\nhost: {addr}\r\ncontent-type: application/json\r\n\
+                 transfer-encoding: chunked\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let chunk = vec![b' '; 1024 * 1024];
+    let header = format!("{:x}\r\n", chunk.len());
+    for _ in 0..(mcpmux_gateway::mcp::MAX_MCP_REQUEST_BODY / chunk.len() + 1) {
+        if stream.write_all(header.as_bytes()).await.is_err()
+            || stream.write_all(&chunk).await.is_err()
+            || stream.write_all(b"\r\n").await.is_err()
+        {
+            break; // the server already answered and closed
+        }
+    }
+    let _ = stream.write_all(b"0\r\n\r\n").await;
+    let mut response = vec![0u8; 64];
+    let n = stream.read(&mut response).await.unwrap();
+    let status_line = String::from_utf8_lossy(&response[..n]);
+    assert!(status_line.starts_with("HTTP/1.1 413"), "{status_line}");
+}
+
+/// Routes other than `/mcp` read their bodies before any auth, so the logging
+/// middleware caps them.
+#[tokio::test]
+async fn oversized_bodies_on_other_routes_are_refused() {
+    use axum::routing::post;
+    let router = Router::new()
+        .route("/oauth/token", post(|| async { "ok" }))
+        .layer(axum::middleware::from_fn(
+            mcpmux_gateway::server::logging_middleware::http_logging_middleware,
+        ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/oauth/token", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    let big = vec![b'a'; mcpmux_gateway::server::logging_middleware::MAX_NON_MCP_REQUEST_BODY + 1];
+    let status = reqwest::Client::new()
+        .post(&url)
+        .body(big)
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    let status = reqwest::Client::new()
+        .post(&url)
+        .body("grant_type=x")
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, reqwest::StatusCode::OK);
+}

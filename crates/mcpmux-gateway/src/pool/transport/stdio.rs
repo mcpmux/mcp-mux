@@ -52,6 +52,25 @@ mod group_kill {
 
     use process_wrap::tokio::{ChildWrapper, CommandWrap, CommandWrapper};
 
+    /// Process groups of stdio servers that are still running, so a quitting
+    /// app can kill them even when destructors don't run.
+    static LIVE_GROUPS: std::sync::Mutex<std::collections::BTreeSet<i32>> =
+        std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+    fn live_groups() -> std::sync::MutexGuard<'static, std::collections::BTreeSet<i32>> {
+        LIVE_GROUPS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// SIGKILL every stdio server's process group still running.
+    pub fn kill_all() {
+        for pgid in std::mem::take(&mut *live_groups()) {
+            // SAFETY: plain signal delivery to groups our servers lead.
+            unsafe {
+                libc::killpg(pgid, libc::SIGKILL);
+            }
+        }
+    }
+
     #[derive(Debug)]
     pub struct KillGroupOnDrop;
 
@@ -63,6 +82,7 @@ mod group_kill {
     impl Drop for GroupGuard {
         fn drop(&mut self) {
             if let Some(pgid) = self.0.filter(|pgid| *pgid > 1) {
+                live_groups().remove(&pgid);
                 // SAFETY: plain signal delivery; the group is the one the
                 // server leads (set up by `ProcessGroup::leader`).
                 unsafe {
@@ -90,7 +110,9 @@ mod group_kill {
         fn into_inner(self: Box<Self>) -> Box<dyn ChildWrapper> {
             // Handing the child over must not kill it.
             let mut this = *self;
-            this.guard.0 = None;
+            if let Some(pgid) = this.guard.0.take() {
+                live_groups().remove(&pgid);
+            }
             this.inner.into_inner()
         }
 
@@ -107,6 +129,10 @@ mod group_kill {
         fn wait(&mut self) -> Pin<Box<dyn Future<Output = io::Result<ExitStatus>> + Send + '_>> {
             self.inner.wait()
         }
+
+        fn signal(&self, sig: i32) -> io::Result<()> {
+            self.inner.signal(sig)
+        }
     }
 
     impl CommandWrapper for KillGroupOnDrop {
@@ -117,12 +143,23 @@ mod group_kill {
         ) -> io::Result<Box<dyn ChildWrapper>> {
             // The leader's pid is the group id.
             let pgid = inner.id().and_then(|id| i32::try_from(id).ok());
+            if let Some(pgid) = pgid.filter(|pgid| *pgid > 1) {
+                live_groups().insert(pgid);
+            }
             Ok(Box::new(GroupChild {
                 inner,
                 guard: GroupGuard(pgid),
             }))
         }
     }
+}
+
+/// SIGKILL the process group of every stdio server still running. For app
+/// exit, where the pool's graceful close may not finish and destructors may
+/// not run. No-op on Windows, where the job object ends the tree.
+pub fn kill_all_stdio_groups() {
+    #[cfg(unix)]
+    group_kill::kill_all();
 }
 
 use super::shell_env;
@@ -406,32 +443,39 @@ where
 {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
+    // Room for `max` bytes of text plus a `\r\n` terminator.
     let mut buf = Vec::new();
     let n = (&mut *reader)
-        .take(max as u64 + 1)
+        .take(max as u64 + 2)
         .read_until(b'\n', &mut buf)
         .await?;
     if n == 0 {
         return Ok(StderrLine::Eof);
     }
-    if !buf.ends_with(b"\n") && buf.len() > max {
-        let mut scratch = Vec::new();
-        loop {
-            scratch.clear();
-            let n = (&mut *reader)
-                .take(64 * 1024)
-                .read_until(b'\n', &mut scratch)
-                .await?;
-            if n == 0 || scratch.ends_with(b"\n") {
-                break;
+    let ended = buf.ends_with(b"\n");
+    if ended {
+        buf.pop();
+        if buf.ends_with(b"\r") {
+            buf.pop();
+        }
+    }
+    if buf.len() > max {
+        if !ended {
+            let mut scratch = Vec::new();
+            loop {
+                scratch.clear();
+                let n = (&mut *reader)
+                    .take(64 * 1024)
+                    .read_until(b'\n', &mut scratch)
+                    .await?;
+                if n == 0 || scratch.ends_with(b"\n") {
+                    break;
+                }
             }
         }
         return Ok(StderrLine::TooLong);
     }
-    let line = String::from_utf8_lossy(&buf);
-    Ok(StderrLine::Line(
-        line.trim_end_matches(['\n', '\r']).to_string(),
-    ))
+    Ok(StderrLine::Line(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 /// Replace every occurrence of the given secret values with `[redacted]`.
@@ -718,6 +762,32 @@ fn inject_shell_path(env: &mut HashMap<String, String>, shell_path: Option<&std:
 
 #[cfg(test)]
 mod tests {
+
+    #[tokio::test]
+    async fn a_line_of_exactly_the_cap_is_kept_whatever_its_line_ending() {
+        let input = format!(
+            "{}\r\n{}\n{}",
+            "a".repeat(10),
+            "b".repeat(10),
+            "c".repeat(11)
+        );
+        let mut reader = tokio::io::BufReader::new(input.as_bytes());
+        let mut got = Vec::new();
+        loop {
+            match read_capped_line(&mut reader, 10).await.unwrap() {
+                StderrLine::Eof => break,
+                other => got.push(other),
+            }
+        }
+        assert_eq!(
+            got,
+            vec![
+                StderrLine::Line("a".repeat(10)),
+                StderrLine::Line("b".repeat(10)),
+                StderrLine::TooLong,
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn stderr_lines_are_capped_and_the_stream_continues() {

@@ -92,9 +92,8 @@ jobs:
 
       - name: Install tauri-driver
         if: steps.tauri-driver-cache.outputs.cache-hit != 'true'
-        # --force: the Rust cache can restore ~/.cargo/bin with an older
-        # tauri-driver even when this cache misses (its key hashes Cargo.lock),
-        # and cargo install refuses to overwrite an existing binary.
+        # --force: rust-cache restores ~/.cargo/bin, so the binary can already
+        # be there without cargo's install record, and cargo won't overwrite it.
         run: cargo install tauri-driver --locked --force
         env:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
@@ -228,7 +227,6 @@ jobs:
       contents: read
       actions: read
       checks: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 

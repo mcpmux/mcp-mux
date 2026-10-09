@@ -176,13 +176,14 @@ async fn startup_refuses_unbound_values_once_everything_is_bound() {
     // legacy reads stay on. The readable one also shows the key is right
     // (with a single key, as on Windows, nothing readable means a wrong key).
     let fx = Fixture::new();
+    let legacy;
     {
         let runtime = super::runtime_builder()
             .with_data_dir(fx.data_dir())
             .build()
             .await
             .expect("runtime build");
-        let legacy = runtime.encryptor.encrypt("token").unwrap();
+        legacy = runtime.encryptor.encrypt("token").unwrap();
         runtime
             .database
             .lock()
@@ -192,7 +193,7 @@ async fn startup_refuses_unbound_values_once_everything_is_bound() {
                 "INSERT INTO credentials (id, space_id, server_id, credential_type, credential_value, created_at, updated_at)
                  VALUES ('c0', (SELECT id FROM spaces LIMIT 1), 'srv', 'access_token', ?1, 'now', 'now'),
                         ('c1', (SELECT id FROM spaces LIMIT 1), 'srv', 'api_key', 'garbage', 'now', 'now')",
-                [legacy],
+                [&legacy],
             )
             .unwrap();
         // Undo the marker the first start recorded on this empty database.
@@ -229,4 +230,14 @@ async fn startup_refuses_unbound_values_once_everything_is_bound() {
         mcpmux_storage::FieldEncryptor::is_bound(&readable),
         "the readable value was bound at startup"
     );
+    // ...and its old form was checkpointed out of the WAL into the file.
+    let db_path = fx.data_dir().join(mcpmux_storage::DATABASE_FILE);
+    for path in [db_path.clone(), db_path.with_extension("db-wal")] {
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        assert!(
+            !bytes.windows(legacy.len()).any(|w| w == legacy.as_bytes()),
+            "old ciphertext left in {}",
+            path.display()
+        );
+    }
 }

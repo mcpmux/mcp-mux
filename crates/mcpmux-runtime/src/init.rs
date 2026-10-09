@@ -199,9 +199,13 @@ impl RuntimeBuilder {
 
         // Credentials and client secrets written before ciphertexts were bound
         // to where they are stored.
+        let mut rewritten = 0;
         match database.lock().await.bind_legacy_ciphertexts(&encryptor) {
             Ok(0) => {}
-            Ok(n) => info!(values = n, "[runtime] bound stored secrets to their rows"),
+            Ok(n) => {
+                rewritten += n;
+                info!(values = n, "[runtime] bound stored secrets to their rows")
+            }
             Err(e) => tracing::warn!(error = %e, "[runtime] could not bind stored secrets"),
         }
 
@@ -211,13 +215,22 @@ impl RuntimeBuilder {
             .await
         {
             Ok(0) => {}
-            Ok(n) => info!(
-                rows = n,
-                "[runtime] encrypted and bound server settings from an earlier version"
-            ),
+            Ok(n) => {
+                rewritten += n;
+                info!(
+                    rows = n,
+                    "[runtime] encrypted and bound server settings from an earlier version"
+                )
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "[runtime] could not encrypt plaintext server settings")
             }
+        }
+
+        // The old forms of rewritten values stay in the WAL until it's
+        // checkpointed.
+        if rewritten > 0 {
+            database.lock().await.checkpoint_wal();
         }
 
         // Once every stored secret is bound, refuse unbound ones for good: a

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use mcpmux_core::{
     normalize_workspace_root, DomainEvent, FeatureType, MemberMode, ServerFeature, WorkspaceBinding,
 };
-use rmcp::model::{CallToolResult, Content};
+use rmcp::model::{CallToolResult, ContentBlock};
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
 use tracing::info;
@@ -36,7 +36,7 @@ fn emit_tools_list_changed(event_tx: &broadcast::Sender<DomainEvent>, space_id: 
 // ---------------------------------------------------------------------------
 
 fn text_result(v: Value) -> CallToolResult {
-    CallToolResult::success(vec![Content::text(v.to_string())])
+    CallToolResult::success(vec![ContentBlock::text(v.to_string())])
 }
 
 /// Resolve the Space the caller is *actually* routed into — i.e. whichever

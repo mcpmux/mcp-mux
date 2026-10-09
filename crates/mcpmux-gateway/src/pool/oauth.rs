@@ -26,7 +26,9 @@ use mcpmux_core::{
     branding, CredentialRepository, CredentialType, LogLevel, LogSource, OutboundOAuthRepository,
     ServerLog, ServerLogManager,
 };
-use rmcp::transport::auth::{AuthError, AuthorizationManager, AuthorizationSession, OAuthState};
+use rmcp::transport::auth::{
+    AuthError, AuthorizationManager, AuthorizationRequest, AuthorizationSession, OAuthState,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -49,6 +51,11 @@ pub struct OAuthCallback {
     pub error: Option<String>,
     #[serde(default)]
     pub error_description: Option<String>,
+    /// Authorization server issuer (RFC 9207). rmcp checks it against the
+    /// discovered issuer, and requires it when the server advertises
+    /// `authorization_response_iss_parameter_supported`.
+    #[serde(default)]
+    pub iss: Option<String>,
 }
 
 /// Result of initiating OAuth flow
@@ -1333,7 +1340,6 @@ impl OutboundOAuthManager {
                 .as_ref()
                 .map(Self::get_scopes_from_metadata)
                 .unwrap_or_default();
-            let scope_refs = Self::scopes_as_refs(&scopes);
 
             // Prefer a Client ID Metadata Document over DCR when the authorization server
             // supports it: the server verifies our identity by fetching the HTTPS document,
@@ -1375,12 +1381,13 @@ impl OutboundOAuthManager {
             let session_result = if uses_cimd {
                 AuthorizationSession::new(
                     manager,
-                    &scope_refs,
-                    &redirect_uri,
-                    Some(&client_name),
-                    Some(&client_metadata_url),
+                    AuthorizationRequest::new(&redirect_uri)
+                        .with_scopes(&scopes)
+                        .with_client_name(&client_name)
+                        .with_client_metadata_url(&client_metadata_url),
                 )
                 .await
+                .map_err(|(_, e)| e)
             } else {
                 // Register ourselves rather than via rmcp, so the request carries
                 // McpMux's logo_uri/client_uri and we learn the client secret
@@ -1749,7 +1756,14 @@ impl OutboundOAuthManager {
                             .await;
                     }
 
-                    if let Err(e) = oauth_state.handle_callback(&code, &callback.state).await {
+                    if let Err(e) = oauth_state
+                        .handle_callback_with_issuer(
+                            &code,
+                            &callback.state,
+                            callback.iss.as_deref(),
+                        )
+                        .await
+                    {
                         error!(
                             "[OAuth] Callback handling failed for {}: {}",
                             server_id_clone, e

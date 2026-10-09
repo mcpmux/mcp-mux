@@ -143,7 +143,7 @@ impl Harness {
         let handler = McpMuxGatewayHandler::new(services.clone(), notifier.clone());
 
         let mut http_cfg = StreamableHttpServerConfig::default();
-        http_cfg.stateful_mode = true;
+        http_cfg.legacy_session_mode = true;
         http_cfg.json_response = false;
         http_cfg.sse_keep_alive = Some(Duration::from_secs(15));
         http_cfg.cancellation_token = ct.child_token();

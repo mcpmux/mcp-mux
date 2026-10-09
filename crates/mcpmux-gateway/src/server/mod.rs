@@ -44,7 +44,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
 
 use crate::consumers::MCPNotifier;
-use crate::mcp::{mcp_oauth_middleware, McpMuxGatewayHandler};
+use crate::mcp::{mcp_oauth_middleware, reject_server_discover, McpMuxGatewayHandler};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
@@ -388,7 +388,8 @@ impl GatewayServer {
             McpMuxGatewayHandler::new(Arc::new(self.services.clone()), notification_bridge.clone());
 
         // Create STATEFUL MCP service (full Streamable HTTP per spec 2025-11-25)
-        // stateful_mode: true means:
+        // legacy_session_mode: true means (the handler only offers protocol
+        // versions up to 2025-11-25, which all use sessions):
         // - Mcp-Session-Id header for session management
         // - GET endpoint for SSE streams (server-initiated notifications)
         // - DELETE endpoint for session termination
@@ -396,7 +397,7 @@ impl GatewayServer {
         // Build via default() + setters so new non-exhaustive fields (e.g. allowed_hosts,
         // which defaults to localhost/127.0.0.1/::1) don't require us to enumerate them.
         let mut http_cfg = StreamableHttpServerConfig::default();
-        http_cfg.stateful_mode = true;
+        http_cfg.legacy_session_mode = true;
         http_cfg.json_response = false;
         http_cfg.allowed_hosts = self.config.allowed_hosts();
         info!(
@@ -415,14 +416,15 @@ impl GatewayServer {
             http_cfg,
         );
 
-        // Wrap MCP service with OAuth middleware
-        let mcp_routes =
-            Router::new()
-                .nest_service("/mcp", mcp_service)
-                .layer(middleware::from_fn_with_state(
-                    Arc::new(self.services.clone()),
-                    mcp_oauth_middleware,
-                ));
+        // Wrap MCP service with OAuth middleware. server/discover is answered
+        // inside it, so unauthenticated requests still get the 401 first.
+        let mcp_routes = Router::new()
+            .nest_service("/mcp", mcp_service)
+            .layer(middleware::from_fn(reject_server_discover))
+            .layer(middleware::from_fn_with_state(
+                Arc::new(self.services.clone()),
+                mcp_oauth_middleware,
+            ));
 
         // Client features endpoint (needs services, public)
         // Supports both DCR (simple IDs) and CIMD (URL-encoded IDs)

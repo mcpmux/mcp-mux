@@ -84,7 +84,7 @@ pub enum MetaToolError {
 impl MetaToolError {
     /// Convert to an MCP error result (user-visible message).
     pub fn into_call_tool_result(self) -> CallToolResult {
-        use rmcp::model::Content;
+        use rmcp::model::ContentBlock;
         let payload = serde_json::json!({
             "error": match &self {
                 MetaToolError::InvalidArgument(_) => "invalid_argument",
@@ -96,7 +96,7 @@ impl MetaToolError {
             },
             "message": self.to_string(),
         });
-        CallToolResult::error(vec![Content::text(payload.to_string())])
+        CallToolResult::error(vec![ContentBlock::text(payload.to_string())])
     }
 }
 

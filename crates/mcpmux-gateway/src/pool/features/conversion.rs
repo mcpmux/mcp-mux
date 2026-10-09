@@ -72,16 +72,16 @@ pub fn convert_to_feature<T: ToServerFeature>(
     feature
 }
 
-/// Resource needs special handling (nested .raw structure + dual naming)
+/// Resource needs special handling (keyed by URI, with the name as display name)
 pub fn resource_to_feature(space_id: &str, server_id: &str, resource: Resource) -> ServerFeature {
-    let uri = resource.raw.uri.clone();
-    let raw_json = serde_json::to_value(&resource.raw).ok();
+    let uri = resource.uri.clone();
+    let raw_json = serde_json::to_value(&resource).ok();
 
     let mut feature = ServerFeature::resource(space_id, server_id, &uri);
-    if !resource.raw.name.is_empty() {
-        feature = feature.with_display_name(resource.raw.name.clone());
+    if !resource.name.is_empty() {
+        feature = feature.with_display_name(resource.name.clone());
     }
-    if let Some(desc) = &resource.raw.description {
+    if let Some(desc) = &resource.description {
         feature = feature.with_description(desc.clone());
     }
     if let Some(json) = raw_json {

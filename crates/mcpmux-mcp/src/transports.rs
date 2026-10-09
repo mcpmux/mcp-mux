@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use rmcp::{
     model::{
-        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo, Implementation,
+        CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, Implementation,
         ListToolsResult, Tool,
     },
     service::RunningService,
@@ -119,8 +119,8 @@ mod job_tree {
             let job = unsafe { create_kill_on_close_job()? };
 
             let handle = inner
-                .inner_child()
-                .raw_handle()
+                .try_inner_child()
+                .and_then(|child| child.raw_handle())
                 .ok_or_else(|| io::Error::other("spawned child has no process handle"))?;
 
             let process = HANDLE(handle);
@@ -230,7 +230,7 @@ fn stdio_child_command(
 /// Custom client handler for McpMux
 #[derive(Clone)]
 pub struct McpClientHandler {
-    info: ClientInfo,
+    info: ClientConfig,
 }
 
 impl McpClientHandler {
@@ -239,13 +239,13 @@ impl McpClientHandler {
             Implementation::new(format!("mcpmux-{}", server_id), env!("CARGO_PKG_VERSION"));
         client_info.title = Some("McpMux Gateway".to_string());
         Self {
-            info: ClientInfo::new(ClientCapabilities::default(), client_info),
+            info: ClientConfig::new(ClientCapabilities::default(), client_info),
         }
     }
 }
 
 impl ClientHandler for McpClientHandler {
-    fn get_info(&self) -> ClientInfo {
+    fn get_info(&self) -> ClientConfig {
         self.info.clone()
     }
 }

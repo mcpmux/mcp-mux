@@ -31,6 +31,16 @@ pub fn extract_origin(url: &str) -> Option<String> {
     Some(origin)
 }
 
+/// Accept authorization server metadata without an `issuer`, as rmcp 2 did.
+///
+/// rmcp 3 rejects it (RFC 8414 requires the field), which would lock out
+/// servers that could sign in before. An issuer that doesn't match the
+/// discovery URL is still rejected. Set on every manager that may discover
+/// metadata: sign-in, and restoring stored credentials without stored metadata.
+pub fn allow_missing_issuer(manager: &mut AuthorizationManager) {
+    manager.set_allow_missing_issuer(true);
+}
+
 /// Discover OAuth metadata with fallback to origin URL.
 ///
 /// This tries to discover metadata at the server URL first. If that fails with
@@ -41,8 +51,10 @@ pub async fn discover_metadata_with_fallback(
     manager: &mut AuthorizationManager,
     server_url: &str,
 ) -> Result<AuthorizationMetadata, AuthError> {
+    allow_missing_issuer(manager);
+
     // First try the direct URL
-    match manager.discover_metadata().await {
+    match manager.resolve_metadata().await.map(|r| r.metadata) {
         Ok(metadata) => {
             info!("[OAuth] Metadata discovered at endpoint: {}", server_url);
             Ok(metadata)
@@ -56,11 +68,12 @@ pub async fn discover_metadata_with_fallback(
                 origin_url
             );
 
-            let origin_manager = AuthorizationManager::new(&origin_url)
+            let mut origin_manager = AuthorizationManager::new(&origin_url)
                 .await
                 .map_err(|_| AuthError::NoAuthorizationSupport)?;
+            allow_missing_issuer(&mut origin_manager);
 
-            let metadata = origin_manager.discover_metadata().await?;
+            let metadata = origin_manager.resolve_metadata().await?.metadata;
 
             info!("[OAuth] Metadata discovered at origin: {}", origin_url);
 
@@ -175,6 +188,8 @@ pub async fn initialize_from_store(
     manager: &mut AuthorizationManager,
     registration: Option<&OutboundOAuthRegistration>,
 ) -> Result<bool, AuthError> {
+    // Without stored metadata, rmcp discovers it here
+    allow_missing_issuer(manager);
     if !manager.initialize_from_store().await? {
         return Ok(false);
     }

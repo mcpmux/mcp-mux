@@ -13,7 +13,7 @@ use axum::{body::Body, http::Request, middleware, middleware::Next, response::Re
 use mcpmux_core::{DomainEvent, ServerDiscoveryService, ServerFeatureRepository, ServerLogManager};
 use mcpmux_gateway::{
     consumers::MCPNotifier,
-    mcp::{mcp_oauth_middleware, McpMuxGatewayHandler},
+    mcp::{mcp_oauth_middleware, reject_server_discover, McpMuxGatewayHandler},
     server::{DependenciesBuilder, GatewayState, ServiceContainer},
 };
 use mcpmux_storage::{InboundClient, InboundClientRepository, RegistrationType};
@@ -26,7 +26,7 @@ use rmcp::{
         },
         StreamableHttpClientTransport,
     },
-    RoleClient, ServiceExt,
+    ClientLifecycleMode, ClientServiceExt, RoleClient, ServiceExt,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -224,7 +224,7 @@ impl TestGateway {
 
         // Build MCP service
         let mut http_cfg = StreamableHttpServerConfig::default();
-        http_cfg.stateful_mode = true;
+        http_cfg.legacy_session_mode = true;
         http_cfg.json_response = false;
         http_cfg.sse_keep_alive = Some(std::time::Duration::from_secs(15));
         http_cfg.sse_retry = Some(std::time::Duration::from_secs(3));
@@ -235,25 +235,32 @@ impl TestGateway {
             http_cfg,
         );
 
-        // Build the router. Normal tests bypass auth with a test middleware that
+        // Build the router as the gateway does. Normal tests bypass auth with a test middleware that
         // injects a fixed identity; the authless variant exercises the REAL
         // middleware with inbound auth disabled, so the gateway must mint an
         // anonymous identity itself and the handshake must still succeed.
-        let router =
-            if authless {
-                services.gateway_state.write().await.set_auth_disabled(true);
-                Router::new().nest_service("/mcp", mcp_service).layer(
-                    middleware::from_fn_with_state(services.clone(), mcp_oauth_middleware),
-                )
-            } else {
-                let test_ctx = Arc::new(TestOAuthContext {
-                    client_id: client_id.to_string(),
-                    space_id,
-                });
-                Router::new().nest_service("/mcp", mcp_service).layer(
-                    middleware::from_fn_with_state(test_ctx, test_oauth_middleware),
-                )
-            };
+        let router = if authless {
+            services.gateway_state.write().await.set_auth_disabled(true);
+            Router::new()
+                .nest_service("/mcp", mcp_service)
+                .layer(middleware::from_fn(reject_server_discover))
+                .layer(middleware::from_fn_with_state(
+                    services.clone(),
+                    mcp_oauth_middleware,
+                ))
+        } else {
+            let test_ctx = Arc::new(TestOAuthContext {
+                client_id: client_id.to_string(),
+                space_id,
+            });
+            Router::new()
+                .nest_service("/mcp", mcp_service)
+                .layer(middleware::from_fn(reject_server_discover))
+                .layer(middleware::from_fn_with_state(
+                    test_ctx,
+                    test_oauth_middleware,
+                ))
+        };
 
         // Bind to random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -340,18 +347,22 @@ impl GatewayTestClient {
 }
 
 impl rmcp::ClientHandler for GatewayTestClient {
-    fn get_info(&self) -> ClientInfo {
+    // Roots is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
+    fn get_info(&self) -> ClientConfig {
         let capabilities = if self.roots.is_empty() {
             ClientCapabilities::default()
         } else {
             ClientCapabilities::builder().enable_roots().build()
         };
-        ClientInfo::new(
+        ClientConfig::new(
             capabilities,
             Implementation::new("gateway-test-client", "1.0.0"),
         )
     }
 
+    // Roots is deprecated by SEP-2577, but clients and servers still use it.
+    #[allow(deprecated)]
     fn list_roots(
         &self,
         _context: rmcp::service::RequestContext<RoleClient>,
@@ -497,6 +508,77 @@ async fn test_gateway_forwards_tools_changed_to_client() {
 
     client.cancel().await.ok();
     gw.shutdown();
+}
+
+// ============================================================================
+// B2b: A client that prefers the 2026-07-28 protocol still gets a session
+// ============================================================================
+
+/// Connects with `lifecycle` and checks that the client ends up on 2025-11-25
+/// with a session that list_changed reaches.
+async fn assert_falls_back_to_a_session(lifecycle: ClientLifecycleMode) {
+    let space_id = Uuid::new_v4();
+    let client_id = Uuid::new_v4().to_string();
+    let gw = TestGateway::start(&client_id, space_id).await;
+
+    let tool = tests::features::test_tool(&space_id.to_string(), "test-server", "read_file");
+    gw.feature_repo.upsert(&tool).await.unwrap();
+
+    let client_handler = GatewayTestClient::new();
+    let tools_changed = client_handler.tools_changed.clone();
+    let transport = StreamableHttpClientTransport::from_uri(gw.url.clone());
+    let client = client_handler
+        .serve_with_lifecycle(transport, lifecycle)
+        .await
+        .expect("client should connect to gateway");
+
+    let negotiated = client
+        .peer_info()
+        .expect("handshake should record server info")
+        .protocol_version
+        .clone();
+    assert_eq!(negotiated, ProtocolVersion::LATEST_WITH_INITIALIZE);
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let new_tool = tests::features::test_tool(&space_id.to_string(), "test-server", "write_file");
+    gw.feature_repo.upsert(&new_tool).await.unwrap();
+    gw.emit(DomainEvent::ToolsChanged {
+        server_id: "test-server".to_string(),
+        space_id,
+    });
+
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(5), tools_changed.notified()).await;
+    assert!(
+        result.is_ok(),
+        "client should receive tools/list_changed over its session"
+    );
+
+    client.cancel().await.ok();
+    gw.shutdown();
+}
+
+// From 2026-07-28 the protocol has no sessions, so list_changed couldn't reach
+// the client. The gateway doesn't offer that version: a client that probes with
+// server/discover must fall back to initialize and a session, as it did before.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn client_preferring_sessionless_protocol_falls_back_to_a_session() {
+    assert_falls_back_to_a_session(ClientLifecycleMode::Auto {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+        legacy_version: Some(ProtocolVersion::V_2025_11_25),
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn client_also_offering_an_older_version_falls_back_to_a_session() {
+    assert_falls_back_to_a_session(ClientLifecycleMode::Auto {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28, ProtocolVersion::V_2025_11_25],
+        legacy_version: None,
+    })
+    .await;
 }
 
 // ============================================================================

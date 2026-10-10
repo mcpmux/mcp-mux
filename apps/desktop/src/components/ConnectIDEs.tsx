@@ -9,6 +9,7 @@ import jetbrainsIcon from '@/assets/client-icons/jetbrains.svg';
 import androidStudioIcon from '@/assets/client-icons/android-studio.svg';
 import opencodeIcon from '@/assets/client-icons/opencode.svg';
 import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
+import antigravityIcon from '@/assets/client-icons/antigravity.svg';
 import { addToVscode, addToCursor } from '@/lib/api/clientInstall';
 import { ClientBrandIcon } from './ClientBrandIcon';
 import { connectFinishNote, useGatewayAuthRequired } from '@/hooks/useGatewayAuthRequired';
@@ -133,6 +134,17 @@ export function ConnectIDEsGrid({ gatewayUrl, gatewayRunning }: ConnectIDEsGridP
       nextStep:
         'Copies a JSON snippet. Paste into Android Studio’s AI Assistant MCP ' +
         'config, then restart the IDE.',
+    },
+    {
+      id: 'antigravity',
+      name: 'Google Antigravity',
+      label: 'Antigravity',
+      icon: antigravityIcon,
+      action: 'copy_config',
+      handler: `"mcpmux": {\n  "serverUrl": "${mcpUrl}"\n}`,
+      nextStep:
+        'Copies a JSON snippet. Paste into ~/.gemini/config/mcp_config.json ' +
+        'under "mcpServers", then close and reopen Antigravity.',
     },
     {
       id: 'copy-config',

@@ -588,6 +588,7 @@ mod tests {
             "opencode",
             "zed",
             "codex",
+            "antigravity",
         ] {
             assert!(ids.contains(&expected), "missing {expected}");
         }

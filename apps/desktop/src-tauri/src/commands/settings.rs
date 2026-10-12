@@ -1,6 +1,8 @@
 //! Settings commands for auto-start and system tray behavior
 
+use mcpmux_core::AppSettingsRepository;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::State;
 use tauri_plugin_autostart::AutoLaunchManager;
 use tracing::{debug, info};
@@ -213,6 +215,28 @@ fn mapping_prompt_enabled_from(stored: Option<&str>) -> bool {
     stored.map(|v| v != "false").unwrap_or(true)
 }
 
+/// Read the mapping-prompt toggle from the settings store.
+async fn load_workspace_mapping_prompt_enabled(
+    settings_repository: &Arc<dyn AppSettingsRepository>,
+) -> Result<bool, String> {
+    let stored = settings_repository
+        .get(WORKSPACE_MAPPING_PROMPT_KEY)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(mapping_prompt_enabled_from(stored.as_deref()))
+}
+
+/// Mapping-prompt toggle for the domain-event bridge, which decides whether a
+/// `WorkspaceNeedsBinding` event may raise the main window. A read error counts
+/// as enabled, the same fallback the sheet uses, so the two never disagree.
+pub(crate) async fn workspace_mapping_prompt_enabled(
+    settings_repository: &Arc<dyn AppSettingsRepository>,
+) -> bool {
+    load_workspace_mapping_prompt_enabled(settings_repository)
+        .await
+        .unwrap_or(true)
+}
+
 /// Whether McpMux pops the "map this folder?" sheet when a connected client
 /// opens a folder that has no explicit binding (it's on the default Starter
 /// set). Default **true**. Users who find the prompt noisy can turn it off
@@ -221,12 +245,7 @@ fn mapping_prompt_enabled_from(stored: Option<&str>) -> bool {
 pub async fn get_workspace_mapping_prompt_enabled(
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    let stored = app_state
-        .settings_repository
-        .get(WORKSPACE_MAPPING_PROMPT_KEY)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(mapping_prompt_enabled_from(stored.as_deref()))
+    load_workspace_mapping_prompt_enabled(&app_state.settings_repository).await
 }
 
 /// Enable/disable the "map this folder?" prompt. Persisted; returns the value
@@ -385,5 +404,31 @@ mod tests {
         // Any unexpected value is treated as enabled (fail-open to the default).
         assert!(mapping_prompt_enabled_from(Some("")));
         assert!(mapping_prompt_enabled_from(Some("garbage")));
+    }
+
+    fn settings_repo() -> Arc<dyn AppSettingsRepository> {
+        use mcpmux_storage::{Database, SqliteAppSettingsRepository};
+        let database = Database::open_in_memory().expect("create in-memory database");
+        Arc::new(SqliteAppSettingsRepository::new(Arc::new(
+            tokio::sync::Mutex::new(database),
+        )))
+    }
+
+    #[tokio::test]
+    async fn mapping_prompt_follows_the_stored_toggle() {
+        let repository = settings_repo();
+        assert!(workspace_mapping_prompt_enabled(&repository).await);
+
+        repository
+            .set(WORKSPACE_MAPPING_PROMPT_KEY, "false")
+            .await
+            .unwrap();
+        assert!(!workspace_mapping_prompt_enabled(&repository).await);
+
+        repository
+            .set(WORKSPACE_MAPPING_PROMPT_KEY, "true")
+            .await
+            .unwrap();
+        assert!(workspace_mapping_prompt_enabled(&repository).await);
     }
 }

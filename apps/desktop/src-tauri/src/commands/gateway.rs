@@ -84,13 +84,6 @@ pub struct GatewayAppState {
     pub session_roots: Option<Arc<mcpmux_gateway::services::SessionRootsRegistry>>,
 }
 
-/// Bring the main webview window forward so the user sees a popup the
-/// gateway just emitted. Best-effort — silently no-ops when the window
-/// doesn't exist (rare, e.g. during teardown). Used by the approval
-/// publisher and the WorkspaceNeedsBinding bridge so an LLM tool call or
-/// a fresh client connection automatically draws the user's eye to the
-/// mcpmux app instead of the dialog rendering invisibly under another
-/// window.
 const GATEWAY_PUBLIC_BASE_URL_KEY: &str = "gateway.public_base_url";
 const GATEWAY_NETWORK_ACCESS_KEY: &str = "gateway.network_access_enabled";
 
@@ -246,6 +239,13 @@ pub(crate) fn advertised_base_url(public_base_url: Option<&str>, port: u16) -> S
         .unwrap_or_else(|| format!("http://localhost:{}", port))
 }
 
+/// Bring the main webview window forward so the user sees a popup the
+/// gateway just emitted. Best-effort — silently no-ops when the window
+/// doesn't exist (rare, e.g. during teardown). Used by the approval
+/// publisher and the WorkspaceNeedsBinding bridge so an LLM tool call or
+/// a fresh client connection automatically draws the user's eye to the
+/// mcpmux app instead of the dialog rendering invisibly under another
+/// window.
 pub(crate) fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
     let Some(window) = app.get_webview_window("main") else {
@@ -257,6 +257,19 @@ pub(crate) fn focus_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// Whether "Ask to map new folders" is on. Without app state (teardown)
+/// this reports the default, on.
+async fn workspace_prompt_enabled<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    use tauri::Manager;
+    let Some(settings_repository) = app
+        .try_state::<AppState>()
+        .map(|app_state| app_state.settings_repository.clone())
+    else {
+        return true;
+    };
+    crate::commands::settings::workspace_mapping_prompt_enabled(&settings_repository).await
 }
 
 /// Wire the meta-tool approval broker to the desktop event bus so write
@@ -450,7 +463,12 @@ pub fn start_domain_event_bridge(
             // root needs binding, a backend wants OAuth, etc.). Bring the
             // window forward BEFORE emitting so the popup animates into a
             // visible window instead of rendering behind another app.
-            if matches!(event, DomainEvent::WorkspaceNeedsBinding { .. }) {
+            // With "Ask to map new folders" off the sheet stays closed, so
+            // the window must stay put too. Read the toggle per event so a
+            // change in Settings applies without restarting the gateway.
+            if matches!(event, DomainEvent::WorkspaceNeedsBinding { .. })
+                && workspace_prompt_enabled(&app_handle_clone).await
+            {
                 focus_main_window(&app_handle_clone);
             }
 

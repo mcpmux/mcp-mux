@@ -18,6 +18,7 @@ import opencodeIconDark from '@/assets/client-icons/opencode-dark.svg';
 import zedIcon from '@/assets/client-icons/zed.svg';
 import codexIcon from '@/assets/client-icons/codex.svg';
 import codexIconDark from '@/assets/client-icons/codex-dark.svg';
+import antigravityIcon from '@/assets/client-icons/antigravity.svg';
 import { ClientBrandIcon } from '@/components/ClientBrandIcon';
 import { getGatewayStatus } from '@/lib/api/gateway';
 import { useNavigateTo, useSetPendingSettingsSection } from '@/stores';
@@ -31,6 +32,7 @@ const CLIENT_ICONS: Record<string, { light: string; dark?: string }> = {
   opencode: { light: opencodeIcon, dark: opencodeIconDark },
   zed: { light: zedIcon },
   codex: { light: codexIcon, dark: codexIconDark },
+  antigravity: { light: antigravityIcon },
 };
 import {
   generateWorkspaceConfigSnippet,
@@ -188,7 +190,7 @@ export function WorkspaceInstallPanel({
     <div className="space-y-4" data-testid="workspace-install-panel">
       <p className="text-sm text-[rgb(var(--muted))]">
         Add McpMux to this folder&apos;s MCP config for the apps you use. Each gets an{' '}
-        <code className="text-xs">X-Mcpmux-Workspace</code> header set to this path, so it routes
+        <code className="text-xs">X-Mcpmux-Workspace</code> header (or URL query parameter) set to this path, so it routes
         here automatically — even apps that don&apos;t report the folder.
       </p>
 

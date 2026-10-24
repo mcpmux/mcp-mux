@@ -120,6 +120,16 @@ pub const CLIENTS: &[ClientSpec] = &[
         headers_key: "http_headers",
         type_value: None,
     },
+    ClientSpec {
+        id: "antigravity",
+        label: "Antigravity",
+        rel_path: &[".agents", "mcp_config.json"],
+        format: ConfigFileFormat::Json,
+        servers_key: "mcpServers",
+        url_key: "serverUrl",
+        headers_key: "headers",
+        type_value: None,
+    },
 ];
 
 /// Look up a supported client by id.
@@ -340,6 +350,15 @@ mod tests {
         assert_eq!(v["servers"]["mcpmux"]["type"], "http");
         assert_eq!(v["servers"]["mcpmux"]["headers"][WORKSPACE_HEADER], "/p");
         assert!(v.get("mcpServers").is_none());
+    }
+
+    #[test]
+    fn antigravity_snippet_uses_server_url() {
+        let content = snippet(spec("antigravity"), "http://x/mcp", "/p").unwrap();
+        let v: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["mcpServers"]["mcpmux"]["serverUrl"], "http://x/mcp");
+        assert_eq!(v["mcpServers"]["mcpmux"]["headers"][WORKSPACE_HEADER], "/p");
+        assert!(v["mcpServers"]["mcpmux"].get("type").is_none());
     }
 
     #[test]

@@ -79,6 +79,11 @@ New files, all under `apps/desktop/src/features/featuresets/`:
 | `feature-set-features-toolbar.component.tsx` | Search box, All/Selected/Unselected control, Select All, match count |
 | `feature-set-server-group.component.tsx` | Group row: chevron, icon, name, count badge, tri-state checkbox, bar |
 | `feature-set-feature-row.component.tsx` | One feature row: checkbox, type icon, title, raw name, Surface button |
+| `feature-set-features-section.component.tsx` | Added during the split. Owns search, filter and expansion state, composes toolbar and groups |
+| `feature-set-catalog.hooks.ts` | Added. Loads features (with unavailable) and installed servers in parallel |
+| `feature-set-general-info.hooks.ts` | Added. Name, description and icon values with a saved baseline for the dirty check |
+| `feature-set-notices.component.tsx` | Added. Auto-include card and tool-count warning, moved out to keep the shell under 300 lines |
+| `feature-set-footer.component.tsx` | Added. Delete, auto-exit note and the single Save |
 
 Data flow: the panel loads `listServerFeatures(spaceId, true)` and `listInstalledServers(spaceId)` in parallel. The helpers join them into `ServerGroup { serverId, label, icon, features, availableCount }`. Search state lives in the shell and feeds `filterGroups`. The hook owns selection, so Select All and the per-server control receive the already-filtered visible ids.
 

@@ -1,36 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  X,
-  Loader2,
-  Search,
-  Server,
-  Wrench,
-  MessageSquare,
-  FileText,
-  Package,
-  ChevronDown,
-  ChevronRight,
-  ToggleLeft,
-  ToggleRight,
-  Settings,
-  Trash2,
-  Check,
-  Star,
-  Shield,
-  Save,
-  Monitor,
-} from 'lucide-react';
-import { Button, useToast, ToastContainer, useConfirm } from '@mcpmux/ui';
-import type { FeatureSet, AddMemberInput } from '@/lib/api/featureSets';
+import { ToastContainer, useConfirm, useToast } from '@mcpmux/ui';
+import type { AddMemberInput, FeatureSet } from '@/lib/api/featureSets';
 import {
   isStarterFeatureSet,
+  setFeatureSetAutoInclude,
   setFeatureSetMembers,
   updateFeatureSet,
 } from '@/lib/api/featureSets';
-import type { ServerFeature } from '@/lib/api/serverFeatures';
-import { listServerFeatures } from '@/lib/api/serverFeatures';
-import { EmojiPickerButton } from '@/components/emoji-picker-button.component';
+import { useStarterToolSummary } from '@/hooks/useStarterToolSummary';
+import { FeatureSetFooter } from './feature-set-footer.component';
+import { FeatureSetFeaturesSection } from './feature-set-features-section.component';
+import { FeatureSetHeader } from './feature-set-header.component';
+import {
+  FeatureSetAutoIncludeCard,
+  FeatureSetToolCountWarning,
+} from './feature-set-notices.component';
+import { useFeatureSetCatalog } from './feature-set-catalog.hooks';
+import { useFeatureSetGeneralInfo } from './feature-set-general-info.hooks';
+import { useFeatureSetSelection } from './feature-set-selection.hooks';
+import { getAvailableIds } from './feature-set-features.helpers';
 
 interface FeatureSetPanelProps {
   featureSet: FeatureSet;
@@ -40,767 +29,262 @@ interface FeatureSetPanelProps {
   onUpdate?: () => void;
 }
 
-interface ServerGroup {
-  serverId: string;
-  features: ServerFeature[];
-  isExpanded: boolean;
-}
-
-export function FeatureSetPanel({ featureSet, spaceId, onClose, onDelete, onUpdate }: FeatureSetPanelProps) {
+/**
+ * Slide-out editor for one FeatureSet: inline name, description, and icon, an auto-mode card,
+ * and a searchable member picker, all saved together from the footer. Owns its overlay and
+ * Escape handling so it can ask before discarding unsaved edits.
+ */
+export function FeatureSetPanel({
+  featureSet,
+  spaceId,
+  onClose,
+  onDelete,
+  onUpdate,
+}: FeatureSetPanelProps) {
   const { t } = useTranslation(['featuresets', 'common']);
-  const [allFeatures, setAllFeatures] = useState<ServerFeature[]>([]);
-  const [selectedFeatureIds, setSelectedFeatureIds] = useState<Set<string>>(new Set());
-  const [surfacedFeatureIds, setSurfacedFeatureIds] = useState<Set<string>>(new Set());
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSavingGeneral, setIsSavingGeneral] = useState(false);
-  const [displayName, setDisplayName] = useState(featureSet.name);
-  const [editName, setEditName] = useState(featureSet.name);
-  const [editDescription, setEditDescription] = useState(featureSet.description ?? '');
-  const [editIcon, setEditIcon] = useState(featureSet.icon ?? '');
-  const [error, setError] = useState<string | null>(null);
-  const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
+  const { features, installed, isLoading, loadError } = useFeatureSetCatalog(
+    spaceId,
+    featureSet.id
+  );
+  const selection = useFeatureSetSelection(featureSet, features);
+  const general = useFeatureSetGeneralInfo(featureSet);
+  const { summary: starterSummary } = useStarterToolSummary(spaceId);
   const { toasts, success, error: showError, dismiss } = useToast();
   const { confirm, ConfirmDialogElement } = useConfirm();
+  const [autoInclude, setAutoInclude] = useState(featureSet.auto_include);
+  const [isTogglingAuto, setIsTogglingAuto] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const error = actionError ?? loadError;
 
-  // Collapsible sections - only one expanded at a time, features by default
-  const [expandedSections, setExpandedSections] = useState({
-    settings: false,
-    features: true,
-  });
-
-  // Both FS types are member-driven now.
-  const isConfigurable = true;
-  // The auto-seeded "Starter" FS is treated identically to a Custom one
-  // — the type tag is a UI hint, not a routing flag.
   const isStarter = isStarterFeatureSet(featureSet);
   const isCustom = featureSet.feature_set_type === 'custom';
+  const isDirty = selection.isEdited || general.hasChanges;
+  const availableFeatures = features.filter((feature) => feature.is_available);
+  const selectedAvailableCount = availableFeatures.filter((feature) =>
+    selection.selectedIds.has(feature.id)
+  ).length;
+  const selectedToolCount = availableFeatures.filter(
+    (feature) => feature.feature_type === 'tool' && selection.selectedIds.has(feature.id)
+  ).length;
+  const toolThreshold = starterSummary?.threshold;
+  const isOverToolThreshold = toolThreshold !== undefined && selectedToolCount > toolThreshold;
+  const canSave = !isSaving && isDirty;
 
-  const getActualMemberCount = () => selectedFeatureIds.size;
-
-  const isFeatureSelected = (featureId: string, _feature: ServerFeature) =>
-    selectedFeatureIds.has(featureId);
+  /**
+   * Close, asking first when there are unsaved edits.
+   */
+  const requestClose = useCallback(async () => {
+    if (isDirty) {
+      const shouldDiscard = await confirm({
+        title: t('confirm.discardTitle'),
+        message: t('confirm.discardMessage'),
+        confirmLabel: t('confirm.discardLabel'),
+        cancelLabel: t('common:actions.cancel'),
+        variant: 'danger',
+      });
+      if (!shouldDiscard) {
+        return;
+      }
+    }
+    onClose();
+  }, [isDirty, confirm, onClose, t]);
 
   useEffect(() => {
-    setDisplayName(featureSet.name);
-    setEditName(featureSet.name);
-    setEditDescription(featureSet.description ?? '');
-    setEditIcon(featureSet.icon ?? '');
-  }, [featureSet]);
-
-  useEffect(() => {
-    const loadFeatures = async () => {
-      setIsLoading(true);
-      try {
-        const features = await listServerFeatures(spaceId);
-        setAllFeatures(features);
-        
-        // Seed from the set's include-mode feature members.
-        const currentIds = new Set<string>();
-        const surfacedIds = new Set<string>();
-        featureSet.members?.forEach((m) => {
-          if (m.member_type === 'feature' && m.mode === 'include') {
-            currentIds.add(m.member_id);
-            if (m.surfaced) {
-              surfacedIds.add(m.member_id);
-            }
-          }
-        });
-
-        setSelectedFeatureIds(currentIds);
-        setSurfacedFeatureIds(surfacedIds);
-        
-        // Start with all servers collapsed
-        setExpandedServers(new Set());
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setIsLoading(false);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        void requestClose();
       }
     };
-    
-    loadFeatures();
-  }, [spaceId, featureSet]);
-
-  // Group features by server
-  const serverGroups: ServerGroup[] = allFeatures.reduce((acc, feature) => {
-    const group = acc.find((g) => g.serverId === feature.server_id);
-    if (group) {
-      group.features.push(feature);
-    } else {
-      acc.push({ 
-        serverId: feature.server_id, 
-        features: [feature],
-        isExpanded: expandedServers.has(feature.server_id)
-      });
-    }
-    return acc;
-  }, [] as ServerGroup[]);
-
-  // Filter by search
-  const filteredGroups = serverGroups
-    .map((group) => ({
-      ...group,
-      features: group.features.filter((f) =>
-        f.feature_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.description?.toLowerCase().includes(searchQuery.toLowerCase())
-      ),
-    }))
-    .filter((group) => group.features.length > 0);
-
-  const toggleFeature = (featureId: string) => {
-    if (!isConfigurable) return;
-    setSelectedFeatureIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(featureId)) {
-        next.delete(featureId);
-        setSurfacedFeatureIds((surfaced) => {
-          const nextSurfaced = new Set(surfaced);
-          nextSurfaced.delete(featureId);
-          return nextSurfaced;
-        });
-      } else {
-        next.add(featureId);
-      }
-      return next;
-    });
-  };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [requestClose]);
 
   /**
-   * Toggle whether an included tool is promoted into client tools/list.
+   * Switch auto mode. Turning it on replaces the selection, so it asks first; turning it
+   * off keeps what the set granted as an editable list.
    */
-  const toggleSurfaced = (featureId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    if (!isConfigurable || !selectedFeatureIds.has(featureId)) return;
-    setSurfacedFeatureIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(featureId)) {
-        next.delete(featureId);
-      } else {
-        next.add(featureId);
-      }
-      return next;
-    });
-  };
-
-  const toggleServer = (serverId: string) => {
-    setExpandedServers((prev) => {
-      const next = new Set(prev);
-      if (next.has(serverId)) {
-        next.delete(serverId);
-      } else {
-        next.add(serverId);
-      }
-      return next;
-    });
-  };
-
-  const toggleAllInServer = (serverId: string) => {
-    if (!isConfigurable) return;
-    const serverFeatures = allFeatures.filter((f) => f.server_id === serverId);
-    const allSelected = serverFeatures.every((f) => selectedFeatureIds.has(f.id));
-    
-    setSelectedFeatureIds((prev) => {
-      const next = new Set(prev);
-      serverFeatures.forEach((f) => {
-        if (allSelected) {
-          next.delete(f.id);
-        } else {
-          next.add(f.id);
-        }
-      });
-      return next;
-    });
-  };
-
-  /** Whether every feature in the space is currently selected. */
-  const areAllFeaturesSelected =
-    allFeatures.length > 0 && allFeatures.every((f) => selectedFeatureIds.has(f.id));
-
-  /**
-   * Select or deselect every feature in the space.
-   */
-  const toggleAllFeatures = () => {
-    if (!isConfigurable || allFeatures.length === 0) return;
-
-    if (areAllFeaturesSelected) {
-      setSelectedFeatureIds(new Set());
-      setSurfacedFeatureIds(new Set());
+  const handleAutoToggle = async (enabled: boolean) => {
+    if (
+      enabled &&
+      !(await confirm({
+        title: t('auto.confirmTitle'),
+        message: t('auto.confirmMessage', { name: featureSet.name }),
+        confirmLabel: t('auto.confirmLabel'),
+        cancelLabel: t('common:actions.cancel'),
+      }))
+    ) {
       return;
     }
-
-    setSelectedFeatureIds(new Set(allFeatures.map((f) => f.id)));
-  };
-
-  /**
-   * Save name, description, and icon from the General Information section.
-   */
-  const handleSaveGeneral = async () => {
-    const trimmedName = editName.trim();
-    if (!trimmedName) {
-      setError(t('panel.nameRequired'));
-      return;
-    }
-
-    setIsSavingGeneral(true);
-    setError(null);
+    setIsTogglingAuto(true);
+    setActionError(null);
     try {
-      const updated = await updateFeatureSet(featureSet.id, {
-        name: trimmedName,
-        description: editDescription.trim() || undefined,
-        icon: editIcon.trim() || undefined,
-      });
-      setDisplayName(updated.name);
-      setEditName(updated.name);
-      setEditDescription(updated.description ?? '');
-      setEditIcon(updated.icon ?? '');
-      success(t('toast.updated'), t('toast.updatedBody', { name: updated.name }));
-      onUpdate?.();
-    } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      setError(errorMsg);
-      showError(t('toast.saveFailed'), errorMsg);
-    } finally {
-      setIsSavingGeneral(false);
-    }
-  };
-
-  const hasGeneralChanges =
-    editName.trim() !== featureSet.name ||
-    editDescription.trim() !== (featureSet.description ?? '') ||
-    editIcon.trim() !== (featureSet.icon ?? '');
-
-  const handleSave = async () => {
-    setIsSaving(true);
-    setError(null);
-    try {
-      // Update members
-      const members: AddMemberInput[] = Array.from(selectedFeatureIds).map((id) => ({
-        member_type: 'feature' as const,
-        member_id: id,
-        mode: 'include' as const,
-        surfaced: surfacedFeatureIds.has(id),
-      }));
-      
-      await setFeatureSetMembers(featureSet.id, members);
-
+      await setFeatureSetAutoInclude(featureSet.id, enabled);
+      setAutoInclude(enabled);
+      if (enabled) {
+        selection.replaceSelection(getAvailableIds(features));
+      } else {
+        selection.markSaved();
+      }
       success(
-        t('toast.changesSaved'),
-        t('toast.changesSavedBody', { name: featureSet.name, count: members.length })
+        enabled ? t('auto.toastOnTitle') : t('auto.toastOffTitle'),
+        enabled
+          ? t('auto.toastOnBody', { name: featureSet.name })
+          : t('auto.toastOffBody', { name: featureSet.name })
       );
       onUpdate?.();
     } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      setError(errorMsg);
-      showError(t('toast.saveChangesFailed'), errorMsg);
+      const message = e instanceof Error ? e.message : String(e);
+      setActionError(message);
+      showError(t('auto.toastFailed'), message);
+    } finally {
+      setIsTogglingAuto(false);
+    }
+  };
+
+  /**
+   * Save general info and members together. Members keep unavailable features that were
+   * already in the set, since bulk actions never touch them.
+   */
+  const handleSave = async () => {
+    const trimmedName = general.values.name.trim();
+    if (!trimmedName) {
+      setActionError(t('panel.nameRequired'));
+      return;
+    }
+    setIsSaving(true);
+    setActionError(null);
+    try {
+      if (general.hasChanges) {
+        const updated = await updateFeatureSet(featureSet.id, {
+          name: trimmedName,
+          description: general.values.description.trim() || undefined,
+          icon: general.values.icon.trim() || undefined,
+        });
+        general.commit(updated);
+      }
+      if (selection.isEdited) {
+        const members: AddMemberInput[] = Array.from(selection.selectedIds).map((id) => ({
+          member_type: 'feature' as const,
+          member_id: id,
+          mode: 'include' as const,
+          surfaced: selection.surfacedIds.has(id),
+        }));
+        await setFeatureSetMembers(featureSet.id, members);
+        setAutoInclude(false);
+        selection.markSaved();
+      }
+      success(
+        t('toast.changesSaved'),
+        t('toast.changesSavedBody', { name: trimmedName, count: selection.selectedIds.size })
+      );
+      onUpdate?.();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setActionError(message);
+      showError(t('toast.saveChangesFailed'), message);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const getFeatureIcon = (type: string) => {
-    switch (type) {
-      case 'tool':
-        return <Wrench className="h-4 w-4 text-purple-500" />;
-      case 'prompt':
-        return <MessageSquare className="h-4 w-4 text-blue-500" />;
-      case 'resource':
-        return <FileText className="h-4 w-4 text-green-500" />;
-      default:
-        return <Package className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'tool':
-        return 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300';
-      case 'prompt':
-        return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300';
-      case 'resource':
-        return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
-      default:
-        return 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300';
-    }
-  };
-
-  const getFeatureSetIcon = () => {
-    if (featureSet.icon) return <span className="text-xl">{featureSet.icon}</span>;
-    switch (featureSet.feature_set_type) {
-      case 'default': return <Star className="h-6 w-6 text-yellow-500" />;
-      case 'custom':
-      default:
-        return <Package className="h-6 w-6 text-purple-500" />;
-    }
-  };
-
-  const toggleSection = (section: keyof typeof expandedSections) => {
-    setExpandedSections(prev => {
-      // Accordion behavior - close others when opening a section
-      if (!prev[section]) {
-        return { settings: false, features: false, [section]: true };
-      }
-      // Allow closing the current section
-      return { ...prev, [section]: false };
+  /**
+   * Confirm, then delete this set.
+   */
+  const handleDelete = async () => {
+    const shouldDelete = await confirm({
+      title: t('confirm.deleteTitle'),
+      message: t('confirm.deleteMessage', { name: featureSet.name }),
+      confirmLabel: t('confirm.deleteLabel'),
+      cancelLabel: t('common:actions.cancel'),
+      variant: 'danger',
     });
+    if (shouldDelete) {
+      onDelete?.(featureSet.id);
+    }
   };
 
   return (
-    <div className="fixed right-0 top-0 bottom-0 w-full max-w-[45%] min-w-[600px] bg-[rgb(var(--surface))] border-l border-[rgb(var(--border))] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 z-50">
-      <ToastContainer toasts={toasts} onClose={dismiss} />
-      {ConfirmDialogElement}
-      {/* Panel Header */}
-      <div className="flex-shrink-0 p-4 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))]">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-10 h-10 flex items-center justify-center bg-[rgb(var(--background))] rounded-lg flex-shrink-0 border border-[rgb(var(--border))]">
-              {getFeatureSetIcon()}
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold truncate flex items-center gap-2">
-                {displayName}
-              </h2>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span
-                  title={isStarter ? t('panel.starterTitle') : undefined}
-                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border ${
-                    isStarter
-                      ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800'
-                      : isCustom
-                        ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800'
-                        : 'bg-gray-50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400 border-gray-200 dark:border-gray-800'
-                  }`}
-                >
-                  {isStarter ? t('panel.starter') : featureSet.feature_set_type.toUpperCase()}
-                </span>
-                <span className="text-xs text-[rgb(var(--muted))] truncate">
-                  ID: {featureSet.id}
-                </span>
-              </div>
-            </div>
-          </div>
-          <button
-            data-testid="featureset-panel-close"
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[rgb(var(--surface-hover))] transition-colors flex-shrink-0"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
+    <>
+      <div
+        data-testid="featureset-panel-overlay"
+        className="animate-in fade-in fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px] duration-200"
+        onClick={() => void requestClose()}
+      />
+      <div className="animate-in slide-in-from-right fixed bottom-0 right-0 top-0 z-50 flex w-full min-w-[600px] max-w-[45%] flex-col border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-2xl duration-300">
+        <ToastContainer toasts={toasts} onClose={dismiss} />
+        {ConfirmDialogElement}
+        <FeatureSetHeader
+          featureSet={featureSet}
+          isStarter={isStarter}
+          values={general.values}
+          onFieldChange={general.setField}
+          onClose={() => void requestClose()}
+        />
 
-      {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-6 space-y-5">
-          {/* Error */}
-          {error && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400">
-              {error}
-            </div>
-          )}
-
-          {/* Info Section (Read-only for non-custom/default) */}
-          <div className="bg-[rgb(var(--background))] rounded-xl border-2 border-[rgb(var(--border))] overflow-hidden">
-            <button
-              onClick={() => toggleSection('settings')}
-              className={`w-full flex items-center justify-between p-4 transition-all ${
-                expandedSections.settings 
-                  ? 'bg-gradient-to-r from-primary-50 to-primary-100/50 dark:from-primary-900/10 dark:to-primary-800/10' 
-                  : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${
-                  expandedSections.settings
-                    ? 'bg-gray-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400'
-                }`}>
-                  <Settings className="h-5 w-5" />
-                </div>
-                <span className="font-semibold text-base">{t('panel.generalInfo')}</span>
-              </div>
-              {expandedSections.settings ? (
-                <ChevronDown className="h-5 w-5 text-[rgb(var(--muted))]" />
-              ) : (
-                <ChevronRight className="h-5 w-5 text-[rgb(var(--muted))]" />
-              )}
-            </button>
-            
-            {expandedSections.settings && (
-              <div className="p-4 space-y-4 border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))]">
-                <div>
-                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
-                    {t('panel.nameLabel')}
-                  </label>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    data-testid="featureset-panel-name"
-                  />
-                </div>
-
-                
-                <div>
-                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
-                    {t('panel.descriptionLabel')}
-                  </label>
-                  <input
-                    type="text"
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder={t('panel.descriptionPlaceholder')}
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    data-testid="featureset-panel-description"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium mb-1.5 text-[rgb(var(--muted))]">
-                    {t('panel.iconLabel')}
-                  </label>
-                  <EmojiPickerButton
-                    value={editIcon}
-                    onChange={setEditIcon}
-                    testId="featureset-panel-icon"
-                  />
-                </div>
-
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void handleSaveGeneral()}
-                  disabled={isSavingGeneral || !editName.trim() || !hasGeneralChanges}
-                  data-testid="featureset-panel-save-general"
-                >
-                  {isSavingGeneral ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  {t('common:actions.save')}
-                </Button>
-
-                {isStarter && (
-                  <div className="p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                    <div className="flex gap-2">
-                      <Star className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
-                      <div className="text-xs text-yellow-800 dark:text-yellow-200">
-                        <strong>{t('panel.starterNote')}</strong> {t('panel.starterNoteBody')}
-                      </div>
-                    </div>
-                  </div>
-                )}
+        <div className="flex-1 overflow-y-auto">
+          <div className="space-y-5 p-6">
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+                {error}
               </div>
             )}
-          </div>
 
-          {/* Feature Selection Section */}
-          <div className="bg-[rgb(var(--background))] rounded-xl border-2 border-[rgb(var(--border))] overflow-hidden">
-            <button
-              onClick={() => toggleSection('features')}
-              className={`w-full flex items-center justify-between p-4 transition-all ${
-                expandedSections.features
-                  ? 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20' 
-                  : 'bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-hover))]'
-              }`}
-            >
-              <div className="flex items-center gap-3 flex-1">
-                <div className={`p-2 rounded-lg ${
-                  expandedSections.features
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'
-                }`}>
-                  <Shield className="h-5 w-5" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-base">{t('panel.includedFeatures')}</span>
-                    {/* Show count badge only for configurable feature sets */}
-                    {isConfigurable && (
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
-                        getActualMemberCount() > 0
-                          ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700'
-                          : 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400 border border-gray-300 dark:border-gray-700'
-                      }`}>
-                        {t('panel.selectedCount', {
-                          selected: getActualMemberCount(),
-                          total: allFeatures.length,
-                        })}
-                      </span>
-                    )}
-                  </div>
-                  {/* Progress Bar */}
-                  <div className="h-1.5 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full transition-all duration-300 ${
-                        getActualMemberCount() === 0 
-                          ? 'bg-gray-400 dark:bg-gray-600' 
-                          : 'bg-gradient-to-r from-green-500 to-blue-500'
-                      }`}
-                      style={{ 
-                        width: `${allFeatures.length > 0 ? (getActualMemberCount() / allFeatures.length * 100) : 0}%` 
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-              {expandedSections.features ? (
-                <ChevronDown className="h-5 w-5 text-[rgb(var(--muted))]" />
-              ) : (
-                <ChevronRight className="h-5 w-5 text-[rgb(var(--muted))]" />
-              )}
-            </button>
-
-            {expandedSections.features && (
-              <div className="border-t-2 border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--background))] flex flex-col h-[500px]">
-                {/* Search Bar inside panel */}
-                <div className="p-3 border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))] space-y-2">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))]" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder={t('panel.searchPlaceholder')}
-                      className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    />
-                  </div>
-                  {isConfigurable && !isLoading && allFeatures.length > 0 && (
-                    <div className="flex justify-end">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={toggleAllFeatures}
-                        data-testid="featureset-select-all"
-                      >
-                        {areAllFeaturesSelected ? t('panel.deselectAll') : t('panel.selectAll')}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex-1 overflow-y-auto">
-                  {isLoading ? (
-                    <div className="flex items-center justify-center h-full">
-                      <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
-                    </div>
-                  ) : filteredGroups.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-[rgb(var(--muted))] p-4 text-center">
-                      <Package className="h-8 w-8 mb-2 opacity-50" />
-                      <p className="text-sm">{t('panel.noFeaturesMatch')}</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-[rgb(var(--border))]">
-                      {filteredGroups.map((group) => {
-                        // For special sets, use isFeatureSelected logic
-                        const selectedCount = group.features.filter((f) =>
-                          isFeatureSelected(f.id, f)
-                        ).length;
-                        const allSelected = selectedCount === group.features.length;
-                        const someSelected = selectedCount > 0 && selectedCount < group.features.length;
-                        const isExpanded = group.isExpanded;
-                        
-                        return (
-                          <div key={group.serverId} className="bg-[rgb(var(--surface))]">
-                            <div 
-                              className="flex items-center justify-between px-4 py-3 hover:bg-[rgb(var(--surface-hover))] cursor-pointer transition-colors"
-                              onClick={() => toggleServer(group.serverId)}
-                            >
-                              <div className="flex items-center gap-3 flex-1 min-w-0">
-                                {isExpanded ? (
-                                  <ChevronDown className="h-4 w-4 text-[rgb(var(--muted))] flex-shrink-0" />
-                                ) : (
-                                  <ChevronRight className="h-4 w-4 text-[rgb(var(--muted))] flex-shrink-0" />
-                                )}
-                                <Server className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="font-medium text-sm truncate">{group.serverId}</span>
-                                    {/* Show count badge only for configurable feature sets */}
-                                    {isConfigurable && (
-                                      <span className={`text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
-                                        selectedCount === 0
-                                          ? 'bg-gray-100 dark:bg-gray-900/30 text-gray-600 dark:text-gray-400'
-                                          : allSelected
-                                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700'
-                                            : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
-                                      }`}>
-                                        {selectedCount}/{group.features.length}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {/* Progress Bar for Server */}
-                                  <div className="h-1 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-                                    <div 
-                                      className={`h-full transition-all duration-300 ${
-                                        selectedCount === 0 
-                                          ? 'bg-gray-400 dark:bg-gray-600' 
-                                          : allSelected
-                                            ? 'bg-green-500'
-                                            : 'bg-gradient-to-r from-amber-500 to-green-500'
-                                      }`}
-                                      style={{ 
-                                        width: `${(selectedCount / group.features.length * 100)}%` 
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              {isConfigurable && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleAllInServer(group.serverId);
-                                  }}
-                                  className={`p-1.5 rounded-md transition-colors hover:bg-[rgb(var(--background))] flex-shrink-0`}
-                                  title={allSelected ? t('panel.disableAll') : t('panel.enableAll')}
-                                >
-                                  {allSelected ? (
-                                    <ToggleRight className="h-5 w-5 text-primary-500" />
-                                  ) : someSelected ? (
-                                    <ToggleLeft className="h-5 w-5 text-amber-500" />
-                                  ) : (
-                                    <ToggleLeft className="h-5 w-5 text-[rgb(var(--muted))]" />
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                            
-                            {isExpanded && (
-                              <div className="bg-[rgb(var(--background))] border-t border-[rgb(var(--border))]">
-                                {group.features.map((feature) => {
-                                  const isSelected = isFeatureSelected(feature.id, feature);
-                                      const isSurfaced = surfacedFeatureIds.has(feature.id);
-                                      const canSurface =
-                                        isConfigurable &&
-                                        isSelected &&
-                                        (feature.feature_type === 'tool' ||
-                                          feature.feature_type === 'resource' ||
-                                          feature.feature_type === 'prompt');
-
-                                      const surfaceTitle =
-                                        feature.feature_type === 'tool'
-                                          ? t('panel.surfaceToolTitle')
-                                          : feature.feature_type === 'resource'
-                                            ? t('panel.surfaceResourceTitle')
-                                            : t('panel.surfacePromptTitle');
-
-                                      return (
-                                    <div
-                                      key={feature.id}
-                                      className={`flex items-center gap-2 border-b border-[rgb(var(--border))] last:border-b-0 transition-colors
-                                        ${isSelected ? 'bg-primary-50 dark:bg-primary-900/10' : ''}`}
-                                    >
-                                      <button
-                                        onClick={() => toggleFeature(feature.id)}
-                                        disabled={!isConfigurable}
-                                        className={`flex-1 flex items-center gap-3 px-4 py-2.5 pl-12 text-left transition-colors
-                                          ${isConfigurable ? 'hover:bg-[rgb(var(--surface-hover))]' : 'cursor-default'}`}
-                                      >
-                                        <div className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                          isSelected
-                                            ? 'bg-primary-500 border-primary-500'
-                                            : 'border-[rgb(var(--border))] bg-white dark:bg-[rgb(var(--surface))]'
-                                        }`}>
-                                          {isSelected && <Check className="h-3 w-3 text-white" />}
-                                        </div>
-
-                                        {getFeatureIcon(feature.feature_type)}
-
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-medium text-sm truncate">
-                                              {feature.display_name || feature.feature_name}
-                                            </span>
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${getTypeColor(feature.feature_type)}`}>
-                                              {feature.feature_type}
-                                            </span>
-                                          </div>
-                                          {feature.description && (
-                                            <p className="text-xs text-[rgb(var(--muted))] mt-0.5 line-clamp-1">
-                                              {feature.description}
-                                            </p>
-                                          )}
-                                        </div>
-                                      </button>
-
-                                      {canSurface && (
-                                        <button
-                                          type="button"
-                                          onClick={(event) => toggleSurfaced(feature.id, event)}
-                                          className={`mr-3 flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors flex-shrink-0
-                                            ${isSurfaced
-                                              ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                                              : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface-hover))]'}`}
-                                          title={surfaceTitle}
-                                          data-testid={`surface-toggle-${feature.id}`}
-                                        >
-                                          <Monitor className="h-3.5 w-3.5" />
-                                          {t('panel.surface')}
-                                        </button>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
+            {(isStarter || autoInclude) && (
+              <FeatureSetAutoIncludeCard
+                isAutoInclude={autoInclude}
+                isDisabled={isTogglingAuto || isSaving}
+                onToggle={handleAutoToggle}
+              />
             )}
+
+            {isOverToolThreshold && (
+              <FeatureSetToolCountWarning toolCount={selectedToolCount} threshold={toolThreshold} />
+            )}
+
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-base font-semibold">{t('panel.includedFeatures')}</span>
+                <span className="text-xs font-bold text-[rgb(var(--muted))]">
+                  {t('panel.selectedCount', {
+                    selected: selectedAvailableCount,
+                    total: availableFeatures.length,
+                  })}
+                </span>
+              </div>
+              {selectedAvailableCount > 0 && (
+                <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
+                  <div
+                    className="h-full bg-gradient-to-r from-green-500 to-blue-500 transition-all duration-300"
+                    style={{
+                      width: `${(selectedAvailableCount / availableFeatures.length) * 100}%`,
+                    }}
+                  />
+                </div>
+              )}
+              <FeatureSetFeaturesSection
+                features={features}
+                installed={installed}
+                isLoading={isLoading}
+                selectedIds={selection.selectedIds}
+                surfacedIds={selection.surfacedIds}
+                onToggleFeature={selection.toggleFeature}
+                onToggleSurfaced={selection.toggleSurfaced}
+                onSetIdsSelected={selection.setIdsSelected}
+              />
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Footer Actions */}
-      <div className="flex-shrink-0 p-4 border-t border-[rgb(var(--border))] bg-[rgb(var(--surface-elevated))] flex items-center gap-3">
-        {isCustom && onDelete && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={async () => {
-              if (await confirm({
-                title: t('confirm.deleteTitle'),
-                message: t('confirm.deleteMessage', { name: featureSet.name }),
-                confirmLabel: t('confirm.deleteLabel'),
-                cancelLabel: t('common:actions.cancel'),
-                variant: 'danger',
-              })) {
-                onDelete(featureSet.id);
-              }
-            }}
-            className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 mr-auto"
-            data-testid="featureset-panel-delete"
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            {t('common:actions.delete')}
-          </Button>
-        )}
-        
-        {isConfigurable && (
-          <Button
-            onClick={handleSave}
-            disabled={isSaving}
-            className="w-full flex-1"
-            data-testid="featureset-panel-save-changes"
-          >
-            {isSaving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t('panel.saving')}</>
-            ) : (
-              <><Save className="h-4 w-4 mr-2" /> {t('panel.saveChanges')}</>
-            )}
-          </Button>
-        )}
+        <FeatureSetFooter
+          canDelete={isCustom && !!onDelete}
+          canSave={canSave}
+          isSaving={isSaving}
+          isLeavingAuto={autoInclude && selection.isEdited}
+          onDelete={() => void handleDelete()}
+          onSave={() => void handleSave()}
+        />
       </div>
-    </div>
+    </>
   );
 }

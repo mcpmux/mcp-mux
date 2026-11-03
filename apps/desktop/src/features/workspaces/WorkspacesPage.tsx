@@ -1691,7 +1691,6 @@ function ServerGroupRow({
   // tools are in this FS" rather than "3 of 3 mapped tools work".
   const denominator = group.server_total > 0 ? group.server_total : group.mapped;
   const allAvailable = group.mapped > 0 && availableCount === group.mapped;
-  const someAvailable = availableCount > 0 && availableCount < group.mapped;
   const noneAvailable = availableCount === 0;
 
   // Strip reverse-DNS prefix so display reads "cloudflare-bindings" not
@@ -1757,26 +1756,17 @@ function ServerGroupRow({
             </div>
             {/* Per-server progress bar — same treatment as FeatureSetPanel's
                 server rows so the visual language is consistent. */}
-            <div className="h-1 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
-              <div
-                className={[
-                  'h-full transition-all duration-300',
-                  noneAvailable
-                    ? 'bg-gray-400 dark:bg-gray-600'
-                    : allAvailable
-                      ? 'bg-green-500'
-                      : someAvailable
-                        ? 'bg-gradient-to-r from-amber-500 to-green-500'
-                        : 'bg-gray-400',
-                ].join(' ')}
-                style={{
-                  width:
-                    group.mapped > 0
-                      ? `${(availableCount / group.mapped) * 100}%`
-                      : '0%',
-                }}
-              />
-            </div>
+            {!noneAvailable && (
+              <div className="h-1 bg-gray-200 dark:bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className={[
+                    'h-full transition-all duration-300',
+                    allAvailable ? 'bg-green-500' : 'bg-gradient-to-r from-amber-500 to-green-500',
+                  ].join(' ')}
+                  style={{ width: `${(availableCount / group.mapped) * 100}%` }}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -23,9 +23,12 @@ export interface ServerFeature {
   is_available: boolean;
 }
 
-/** List all features for a space. */
-export async function listServerFeatures(spaceId: string): Promise<ServerFeature[]> {
-  return apiCall('list_server_features', { spaceId });
+/** List all features for a space. Pass `includeUnavailable` to also get features whose server is offline. */
+export async function listServerFeatures(
+  spaceId: string,
+  includeUnavailable?: boolean
+): Promise<ServerFeature[]> {
+  return apiCall('list_server_features', { spaceId, includeUnavailable });
 }
 
 /** List features for a specific server in a space. */

@@ -50,7 +50,10 @@ pub fn main_checkout_root(root: &str) -> Option<String> {
         return None;
     }
 
-    let back_pointer = PathBuf::from(read_small(&admin_dir.join("gitdir"))?.trim());
+    // Relative back-pointers (git 2.48+ with worktree.useRelativePaths) are
+    // relative to the admin dir, same rule as `.git` pointer targets in
+    // `admin_dir_of`. PathBuf::join leaves an absolute path unchanged.
+    let back_pointer = admin_dir.join(read_small(&admin_dir.join("gitdir"))?.trim());
     if fs::canonicalize(back_pointer).ok()? != fs::canonicalize(&dot_git).ok()? {
         return None;
     }
@@ -125,6 +128,19 @@ mod tests {
     fn relative_gitdir_is_resolved_against_the_worktree() {
         let (_temp, main, worktree) = linked_worktree();
         fs::write(worktree.join(".git"), "gitdir: ../../.git/worktrees/wt1\n").unwrap();
+        assert_eq!(
+            main_checkout_root(&root_str(&worktree)),
+            Some(normalize_workspace_root(&root_str(&main)))
+        );
+    }
+
+    #[test]
+    fn relative_back_pointer_is_resolved_against_the_admin_dir() {
+        let (_temp, main, worktree) = linked_worktree();
+        let admin = main.join(".git").join("worktrees").join("wt1");
+        // git 2.48+ with worktree.useRelativePaths writes a path relative to
+        // the admin dir's parent of the back-pointer file itself.
+        fs::write(admin.join("gitdir"), "../../../.worktrees/wt1/.git\n").unwrap();
         assert_eq!(
             main_checkout_root(&root_str(&worktree)),
             Some(normalize_workspace_root(&root_str(&main)))

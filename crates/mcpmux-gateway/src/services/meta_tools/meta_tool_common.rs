@@ -192,17 +192,41 @@ pub(crate) fn format_resolution_context(
         .ok()
         .and_then(|v| v.as_str().map(str::to_owned))
         .unwrap_or_else(|| format!("{resolved_source:?}"));
+    // Id-type bindings can match with no reported root — say the binding
+    // lacked the server, not that no binding matched.
+    if resolved_source == ResolutionSource::WorkspaceBinding {
+        if roots.is_empty() {
+            return format!(
+                "Resolved via a workspace binding with no workspace root (source: {source}); \
+                 that binding does not include this server."
+            );
+        }
+        let roots = roots.join(", ");
+        return format!(
+            "Resolved from workspace root {roots} (source: {source}); its binding does not include this server."
+        );
+    }
+    // PendingRoots means the caller still needs to pick/pin a root — binding
+    // advice is wrong here (multi-root ambiguity never consulted bindings).
+    if resolved_source == ResolutionSource::PendingRoots {
+        if roots.is_empty() {
+            return format!(
+                "Resolved with no workspace root yet (source: {source}). \
+                 Select a root with mcpmux_set_workspace_root."
+            );
+        }
+        let roots = roots.join(", ");
+        return format!(
+            "Resolved from workspace roots {roots} (source: {source}); which root to use is \
+             ambiguous. Select one with mcpmux_set_workspace_root."
+        );
+    }
     if roots.is_empty() {
         return format!(
             "Resolved with no workspace root (source: {source}), so no workspace binding could match."
         );
     }
     let roots = roots.join(", ");
-    if resolved_source == ResolutionSource::WorkspaceBinding {
-        return format!(
-            "Resolved from workspace root {roots} (source: {source}); its binding does not include this server."
-        );
-    }
     format!(
         "Resolved from workspace root {roots} (source: {source}); no binding matched it. \
          Bind that folder, or run from a folder that has a binding (a git worktree \
@@ -367,9 +391,31 @@ mod resolution_context_tests {
     }
 
     #[test]
-    fn no_roots_context_says_so() {
+    fn pending_roots_with_no_root_directs_set_workspace_root() {
         let text = format_resolution_context(&[], ResolutionSource::PendingRoots);
-        assert!(text.contains("no workspace root"));
+        assert!(text.contains("no workspace root yet"));
         assert!(text.contains("source: pending_roots"));
+        assert!(text.contains("mcpmux_set_workspace_root"));
+    }
+
+    #[test]
+    fn pending_roots_with_multiple_roots_directs_selection() {
+        let text = format_resolution_context(
+            &["/a".to_string(), "/b".to_string()],
+            ResolutionSource::PendingRoots,
+        );
+        assert!(text.contains("/a"));
+        assert!(text.contains("/b"));
+        assert!(text.contains("source: pending_roots"));
+        assert!(text.contains("mcpmux_set_workspace_root"));
+        assert!(!text.contains("no binding matched"));
+    }
+
+    #[test]
+    fn rootless_id_binding_says_binding_lacks_the_server() {
+        let text = format_resolution_context(&[], ResolutionSource::WorkspaceBinding);
+        assert!(text.contains("source: workspace_binding"));
+        assert!(text.contains("does not include this server"));
+        assert!(!text.contains("no workspace binding could match"));
     }
 }

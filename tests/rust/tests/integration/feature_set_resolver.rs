@@ -405,6 +405,116 @@ async fn no_inheritance_child_of_bound_parent_falls_back_to_default() {
 }
 
 // ---------------------------------------------------------------------------
+// WorkspaceBinding tier — git linked worktrees resolve to their main checkout
+// ---------------------------------------------------------------------------
+
+/// A main checkout with a linked worktree laid out as `git worktree add`
+/// leaves it. Returns (tempdir guard, main root, worktree root).
+fn linked_worktree() -> (tempfile::TempDir, String, String) {
+    let temp = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(temp.path()).unwrap();
+    let main = base.join("main");
+    let worktree = main.join(".worktrees").join("wt1");
+    let admin = main.join(".git").join("worktrees").join("wt1");
+    std::fs::create_dir_all(&admin).unwrap();
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", admin.display()),
+    )
+    .unwrap();
+    std::fs::write(
+        admin.join("gitdir"),
+        format!("{}\n", worktree.join(".git").display()),
+    )
+    .unwrap();
+    (
+        temp,
+        main.to_string_lossy().into_owned(),
+        worktree.to_string_lossy().into_owned(),
+    )
+}
+
+#[tokio::test]
+async fn linked_worktree_resolves_to_the_main_checkout_binding() {
+    let f = Fixture::new().await;
+    let (_temp, main, worktree) = linked_worktree();
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(&main),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    f.session_roots.set("wt", [worktree.as_str()]);
+    f.session_roots.set_roots_capable("wt", true);
+    let r = f.resolver.resolve(Some("wt"), None, None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_a_id.clone()]);
+
+    let explicit = f
+        .resolver
+        .resolve_for_workspace_root(&worktree, None, None)
+        .await
+        .unwrap();
+    assert_eq!(explicit.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(explicit.feature_set_ids, vec![f.fs_a_id]);
+}
+
+#[tokio::test]
+async fn linked_worktree_own_binding_wins_over_the_main_checkout() {
+    let f = Fixture::new().await;
+    let (_temp, main, worktree) = linked_worktree();
+    for (root, fs_id) in [(&main, &f.fs_a_id), (&worktree, &f.fs_b_id)] {
+        f.binding_repo
+            .create(&WorkspaceBinding::new(
+                normalize_workspace_root(root),
+                f.space_id,
+                fs_id.clone(),
+            ))
+            .await
+            .unwrap();
+    }
+
+    f.session_roots.set("wt", [worktree.as_str()]);
+    f.session_roots.set_roots_capable("wt", true);
+    let r = f.resolver.resolve(Some("wt"), None, None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::WorkspaceBinding);
+    assert_eq!(r.feature_set_ids, vec![f.fs_b_id]);
+}
+
+#[tokio::test]
+async fn forged_git_file_does_not_borrow_another_checkouts_binding() {
+    let f = Fixture::new().await;
+    let (temp, main, _worktree) = linked_worktree();
+    f.binding_repo
+        .create(&WorkspaceBinding::new(
+            normalize_workspace_root(&main),
+            f.space_id,
+            f.fs_a_id.clone(),
+        ))
+        .await
+        .unwrap();
+
+    let intruder = temp.path().join("intruder");
+    std::fs::create_dir_all(&intruder).unwrap();
+    std::fs::write(
+        intruder.join(".git"),
+        format!("gitdir: {main}/.git/worktrees/wt1\n"),
+    )
+    .unwrap();
+    let intruder = intruder.to_string_lossy().into_owned();
+
+    f.session_roots.set("evil", [intruder.as_str()]);
+    f.session_roots.set_roots_capable("evil", true);
+    let r = f.resolver.resolve(Some("evil"), None, None).await.unwrap();
+    assert_eq!(r.source, ResolutionSource::Unbound);
+    assert!(r.feature_set_ids.is_empty());
+}
+
+// ---------------------------------------------------------------------------
 // Unbound tier — base-directory scoping (space_id only, empty ids)
 // ---------------------------------------------------------------------------
 

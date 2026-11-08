@@ -14,7 +14,7 @@ use super::registry::{MetaToolCall, MetaToolError};
 use crate::pool::{
     format_server_bound_offline_error, format_server_inactive_error, ConnectionStatus,
 };
-use crate::services::ResolvedFeatureSet;
+use crate::services::{ResolutionSource, ResolvedFeatureSet};
 use mcpmux_core::DomainEvent;
 
 /// Fire a `FeatureSetMembersChanged` event so MCPNotifier pushes a
@@ -182,6 +182,45 @@ pub(crate) fn format_invoke_not_ready_action_with_name(
     }
 }
 
+/// Sentence naming the root a caller resolved from and how, appended to an
+/// `inactive` denial so the caller can see why nothing was bound.
+pub(crate) fn format_resolution_context(
+    roots: &[String],
+    resolved_source: ResolutionSource,
+) -> String {
+    let source = serde_json::to_value(resolved_source)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{resolved_source:?}"));
+    if roots.is_empty() {
+        return format!(
+            "Resolved with no workspace root (source: {source}), so no workspace binding could match."
+        );
+    }
+    let roots = roots.join(", ");
+    if resolved_source == ResolutionSource::WorkspaceBinding {
+        return format!(
+            "Resolved from workspace root {roots} (source: {source}); its binding does not include this server."
+        );
+    }
+    format!(
+        "Resolved from workspace root {roots} (source: {source}); no binding matched it. \
+         Bind that folder, or run from a folder that has a binding (a git worktree \
+         uses its main checkout's binding)."
+    )
+}
+
+/// The workspace root(s) this call resolved from: the exact `_mcpmux_context`
+/// root when present, else the session's reported or pinned roots.
+pub(crate) fn caller_roots(call: &MetaToolCall<'_>) -> Vec<String> {
+    if let Some(root) = call.explicit_workspace_root.as_deref() {
+        return vec![root.to_string()];
+    }
+    call.session_id
+        .and_then(|sid| call.ctx.resolver.session_roots().get(sid))
+        .unwrap_or_default()
+}
+
 /// Search-hit enrichment built from one installed-server list + pool statuses.
 ///
 /// `binding_server_ids` should be the unique `server_id`s from the caller's
@@ -300,4 +339,37 @@ pub(crate) fn parse_uuid_arg(args: &Value, field: &str) -> Result<Uuid, MetaTool
         .ok_or_else(|| MetaToolError::InvalidArgument(format!("missing `{field}`")))?;
     Uuid::parse_str(s)
         .map_err(|_| MetaToolError::InvalidArgument(format!("`{field}` is not a UUID: {s}")))
+}
+
+#[cfg(test)]
+mod resolution_context_tests {
+    use super::*;
+
+    #[test]
+    fn unbound_context_names_the_root_and_source() {
+        let text = format_resolution_context(
+            &["/work/repo/.worktrees/dispatch-1".to_string()],
+            ResolutionSource::Unbound,
+        );
+        assert!(text.contains("/work/repo/.worktrees/dispatch-1"));
+        assert!(text.contains("source: unbound"));
+        assert!(text.contains("no binding matched"));
+    }
+
+    #[test]
+    fn bound_context_says_the_binding_lacks_the_server() {
+        let text = format_resolution_context(
+            &["/work/repo".to_string()],
+            ResolutionSource::WorkspaceBinding,
+        );
+        assert!(text.contains("source: workspace_binding"));
+        assert!(text.contains("does not include this server"));
+    }
+
+    #[test]
+    fn no_roots_context_says_so() {
+        let text = format_resolution_context(&[], ResolutionSource::PendingRoots);
+        assert!(text.contains("no workspace root"));
+        assert!(text.contains("source: pending_roots"));
+    }
 }

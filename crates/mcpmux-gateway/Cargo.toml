@@ -79,4 +79,5 @@ libc = "0.2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = "3.14"
 tracing-test = "0.2"

@@ -15,8 +15,8 @@ use tracing::debug;
 use super::diagnose_server::parse_missing_required_inputs;
 use super::invoke_result_filter::{apply_invoke_result_filter, parse_invoke_filter};
 use super::meta_tool_common::{
-    caller_resolution, caller_space_id, classify_invoke_denial,
-    format_invoke_not_ready_action_with_name,
+    caller_resolution, caller_roots, caller_space_id, classify_invoke_denial,
+    format_invoke_not_ready_action_with_name, format_resolution_context,
 };
 use super::registry::{MetaTool, MetaToolCall, MetaToolError};
 use crate::pool::{format_invoke_permission_denied, ConnectionStatus};
@@ -173,15 +173,16 @@ impl MetaTool for InvokeToolTool {
             let (reason, tool) =
                 classify_invoke_denial(false, ConnectionStatus::Disconnected, false)
                     .unwrap_or(("inactive", "mcpmux_bind_current_workspace"));
-            return Ok(invoke_not_ready(
-                reason,
+            let action = format!(
+                "{} {}",
                 format_invoke_not_ready_action_with_name(
                     reason,
                     &server_id,
                     server_display_name.as_deref(),
                 ),
-                tool,
-            ));
+                format_resolution_context(&caller_roots(&call), resolved.source),
+            );
+            return Ok(invoke_not_ready(reason, action, tool));
         }
 
         let pool_statuses = call.ctx.server_manager.get_all_statuses(space_id).await;

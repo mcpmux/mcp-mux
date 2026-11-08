@@ -205,6 +205,19 @@ which is why it never flakes. Note that it also writes the bearer token into a
 file inside the repo and does not add a `.gitignore` entry, so exclude it
 yourself before committing.
 
+## Git worktrees
+
+Bindings match a reported root by exact path, and a linked git worktree is a
+different path from its main checkout. When the exact lookup finds nothing and
+a reported root is a linked worktree (a `.git` file that points into
+`<main>/.git/worktrees/<name>`, whose `gitdir` file points back), the gateway
+retries with the main checkout's path. A binding on the worktree itself still
+wins. A `.git` file with no matching back-pointer is ignored, so a hostile repo
+cannot borrow another checkout's bindings.
+
+When `mcpmux_invoke_tool` refuses a server as `inactive`, the `action` text names
+the root the caller resolved from and the resolution source.
+
 ## How to re-measure
 
 The 21% / 29% / 4% figures above came from a 282-spawn `env-probe` wrap of

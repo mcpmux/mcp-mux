@@ -137,6 +137,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::git_worktree;
 use super::session_roots::SessionRootsRegistry;
 
 /// How long a session that's declared (or might declare) the `roots`
@@ -285,9 +286,40 @@ impl FeatureSetResolverService {
         Ok(*self.local_machine_id.read().await)
     }
 
-    /// Tier 1 exact binding lookup: request machine header, then client machine,
-    /// then local machine, then global.
+    /// Tier 1 binding lookup: an exact match on the reported roots, else an
+    /// exact match on the main checkout of any root that is a linked git
+    /// worktree. An exact binding on the worktree itself always wins.
     async fn find_binding_for_roots(
+        &self,
+        roots: &[String],
+        client_id: Option<&str>,
+        request_machine_id: Option<Uuid>,
+    ) -> Result<Option<mcpmux_core::WorkspaceBinding>> {
+        if let Some(binding) = self
+            .find_exact_binding_for_roots(roots, client_id, request_machine_id)
+            .await?
+        {
+            return Ok(Some(binding));
+        }
+        let main_checkouts: Vec<String> = roots
+            .iter()
+            .filter_map(|root| git_worktree::main_checkout_root(root))
+            .collect();
+        if main_checkouts.is_empty() {
+            return Ok(None);
+        }
+        debug!(
+            ?roots,
+            ?main_checkouts,
+            "[FeatureSetResolver] no binding on worktree root, trying its main checkout",
+        );
+        self.find_exact_binding_for_roots(&main_checkouts, client_id, request_machine_id)
+            .await
+    }
+
+    /// Exact binding lookup: request machine header, then client machine,
+    /// then local machine, then global.
+    async fn find_exact_binding_for_roots(
         &self,
         roots: &[String],
         client_id: Option<&str>,

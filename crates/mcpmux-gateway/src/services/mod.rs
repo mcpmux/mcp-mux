@@ -13,6 +13,7 @@ mod embedding_warmer;
 mod event_emitter;
 mod feature_set_resolver;
 pub mod git_remote;
+pub mod git_worktree;
 mod grant_service;
 pub mod meta_tools;
 mod notification_emitter;

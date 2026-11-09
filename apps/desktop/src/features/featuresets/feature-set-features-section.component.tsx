@@ -121,7 +121,7 @@ export function FeatureSetFeaturesSection({
       <FeatureSetFeaturesToolbar
         query={query}
         selectionFilter={selectionFilter}
-        matchCount={visibleFeatures.length}
+        matchCount={visibleAvailableIds.length}
         isFiltering={isNarrowed}
         areAllVisibleSelected={areAllVisibleSelected}
         hasVisibleAvailable={visibleAvailableIds.length > 0}

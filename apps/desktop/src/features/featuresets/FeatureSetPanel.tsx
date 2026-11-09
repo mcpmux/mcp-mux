@@ -50,7 +50,12 @@ export function FeatureSetPanel({
   const general = useFeatureSetGeneralInfo(featureSet);
   const { summary: starterSummary } = useStarterToolSummary(spaceId);
   const { toasts, success, error: showError, dismiss } = useToast();
-  const { confirm, ConfirmDialogElement } = useConfirm();
+  const {
+    confirm,
+    ConfirmDialogElement,
+    isOpen: isConfirmOpen,
+    cancel: cancelConfirm,
+  } = useConfirm();
   const [autoInclude, setAutoInclude] = useState(featureSet.auto_include);
   const [isTogglingAuto, setIsTogglingAuto] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -92,13 +97,18 @@ export function FeatureSetPanel({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        void requestClose();
+      if (event.key !== 'Escape') {
+        return;
       }
+      if (isConfirmOpen) {
+        cancelConfirm();
+        return;
+      }
+      void requestClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [requestClose]);
+  }, [requestClose, isConfirmOpen, cancelConfirm]);
 
   /**
    * Switch auto mode. Turning it on replaces the selection, so it asks first; turning it
@@ -156,9 +166,13 @@ export function FeatureSetPanel({
     setActionError(null);
     try {
       if (general.hasChanges) {
+        const trimmedDescription = general.values.description.trim();
         const updated = await updateFeatureSet(featureSet.id, {
           name: trimmedName,
-          description: general.values.description.trim() || undefined,
+          description:
+            trimmedDescription !== general.baseline.description
+              ? trimmedDescription
+              : undefined,
           icon: general.values.icon.trim() || undefined,
         });
         general.commit(updated);

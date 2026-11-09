@@ -67,7 +67,16 @@ export function FeatureSetServerGroup({
         onClick={() => onToggleExpanded(group.serverId)}
         data-testid={`featureset-server-group-${group.serverId}`}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          aria-label={group.label}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleExpanded(group.serverId);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
           {isExpanded ? (
             <ChevronDown className="h-4 w-4 flex-shrink-0 text-[rgb(var(--muted))]" />
           ) : (
@@ -103,7 +112,7 @@ export function FeatureSetServerGroup({
               </div>
             )}
           </div>
-        </div>
+        </button>
 
         <button
           type="button"

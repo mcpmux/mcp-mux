@@ -53,5 +53,5 @@ export function useFeatureSetGeneralInfo(featureSet: FeatureSet) {
     setBaseline(next);
   };
 
-  return { values, hasChanges, setField, commit };
+  return { values, baseline, hasChanges, setField, commit };
 }

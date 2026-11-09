@@ -865,6 +865,9 @@ pub fn run() {
             commands::set_server_enabled,
             commands::set_server_oauth_connected,
             commands::save_server_inputs,
+            // Credential reuse commands (Issue #227)
+            commands::find_prior_credential,
+            commands::get_prior_credential_values,
             // FeatureSet commands
             commands::list_feature_sets,
             commands::list_feature_sets_by_space,

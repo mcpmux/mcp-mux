@@ -66,6 +66,24 @@ impl fmt::Display for CredentialType {
     }
 }
 
+/// Summary of a prior credential configuration found in another Space (Issue #227).
+///
+/// Surfaces metadata about where the same server was previously configured
+/// without revealing secret values to the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PriorCredentialSummary {
+    /// Space ID where the server was previously configured
+    pub source_space_id: String,
+    /// Space name where the server was previously configured
+    pub source_space_name: String,
+    /// Server ID (e.g., "io.github.github/github-mcp-server")
+    pub server_id: String,
+    /// Available non-empty input/credential keys found in that Space
+    pub available_keys: Vec<String>,
+    /// When the prior configuration was last updated
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
 /// Individual credential entry — one per (space, server, type).
 ///
 /// The `value` field contains the secret (token, key, password) in plaintext

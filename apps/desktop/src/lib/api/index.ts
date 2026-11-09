@@ -10,3 +10,4 @@ export * from './gateway';
 export * from './serverManager';
 export * from './workspaceBindings';
 export * from './metaTools';
+export * from './credentials';

@@ -34,6 +34,11 @@ impl SpaceService {
         }
     }
 
+    /// Get reference to underlying SpaceRepository
+    pub fn repository(&self) -> &Arc<dyn SpaceRepository> {
+        &self.repository
+    }
+
     /// List all spaces
     pub async fn list(&self) -> anyhow::Result<Vec<Space>> {
         self.repository.list().await

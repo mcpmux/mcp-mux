@@ -6,22 +6,14 @@ interface FooterProps {
   canDelete: boolean;
   canSave: boolean;
   isSaving: boolean;
-  isLeavingAuto: boolean;
   onDelete: () => void;
   onSave: () => void;
 }
 
 /**
- * Panel footer: delete (custom sets only), the auto-mode exit note, and the single Save.
+ * Panel footer: delete (custom sets only) and the single Save.
  */
-export function FeatureSetFooter({
-  canDelete,
-  canSave,
-  isSaving,
-  isLeavingAuto,
-  onDelete,
-  onSave,
-}: FooterProps) {
+export function FeatureSetFooter({ canDelete, canSave, isSaving, onDelete, onSave }: FooterProps) {
   const { t } = useTranslation(['featuresets', 'common']);
 
   return (
@@ -37,15 +29,6 @@ export function FeatureSetFooter({
           <Trash2 className="mr-2 h-4 w-4" />
           {t('common:actions.delete')}
         </Button>
-      )}
-
-      {isLeavingAuto && (
-        <span
-          className="text-xs text-amber-700 dark:text-amber-300"
-          data-testid="featureset-save-leaves-auto"
-        >
-          {t('auto.saveLeavesAuto')}
-        </span>
       )}
 
       <Button

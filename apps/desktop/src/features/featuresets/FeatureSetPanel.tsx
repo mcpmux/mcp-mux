@@ -2,24 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ToastContainer, useConfirm, useToast } from '@mcpmux/ui';
 import type { AddMemberInput, FeatureSet } from '@/lib/api/featureSets';
-import {
-  isStarterFeatureSet,
-  setFeatureSetAutoInclude,
-  setFeatureSetMembers,
-  updateFeatureSet,
-} from '@/lib/api/featureSets';
-import { useStarterToolSummary } from '@/hooks/useStarterToolSummary';
+import { isStarterFeatureSet, setFeatureSetMembers, updateFeatureSet } from '@/lib/api/featureSets';
 import { FeatureSetFooter } from './feature-set-footer.component';
 import { FeatureSetFeaturesSection } from './feature-set-features-section.component';
 import { FeatureSetHeader } from './feature-set-header.component';
-import {
-  FeatureSetAutoIncludeCard,
-  FeatureSetToolCountWarning,
-} from './feature-set-notices.component';
 import { useFeatureSetCatalog } from './feature-set-catalog.hooks';
 import { useFeatureSetGeneralInfo } from './feature-set-general-info.hooks';
 import { useFeatureSetSelection } from './feature-set-selection.hooks';
-import { getAvailableIds } from './feature-set-features.helpers';
 
 interface FeatureSetPanelProps {
   featureSet: FeatureSet;
@@ -30,8 +19,7 @@ interface FeatureSetPanelProps {
 }
 
 /**
- * Slide-out editor for one FeatureSet: inline name, description, and icon, an auto-mode card,
- * and a searchable member picker, all saved together from the footer. Owns its overlay and
+ * Slide-out editor for one FeatureSet: inline name, description, and icon, and a searchable member picker, all saved together from the footer. Owns its overlay and
  * Escape handling so it can ask before discarding unsaved edits.
  */
 export function FeatureSetPanel({
@@ -48,7 +36,6 @@ export function FeatureSetPanel({
   );
   const selection = useFeatureSetSelection(featureSet, features);
   const general = useFeatureSetGeneralInfo(featureSet);
-  const { summary: starterSummary } = useStarterToolSummary(spaceId);
   const { toasts, success, error: showError, dismiss } = useToast();
   const {
     confirm,
@@ -56,8 +43,6 @@ export function FeatureSetPanel({
     isOpen: isConfirmOpen,
     cancel: cancelConfirm,
   } = useConfirm();
-  const [autoInclude, setAutoInclude] = useState(featureSet.auto_include);
-  const [isTogglingAuto, setIsTogglingAuto] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const error = actionError ?? loadError;
@@ -69,11 +54,6 @@ export function FeatureSetPanel({
   const selectedAvailableCount = availableFeatures.filter((feature) =>
     selection.selectedIds.has(feature.id)
   ).length;
-  const selectedToolCount = availableFeatures.filter(
-    (feature) => feature.feature_type === 'tool' && selection.selectedIds.has(feature.id)
-  ).length;
-  const toolThreshold = starterSummary?.threshold;
-  const isOverToolThreshold = toolThreshold !== undefined && selectedToolCount > toolThreshold;
   const canSave = !isSaving && isDirty;
 
   /**
@@ -111,48 +91,6 @@ export function FeatureSetPanel({
   }, [requestClose, isConfirmOpen, cancelConfirm]);
 
   /**
-   * Switch auto mode. Turning it on replaces the selection, so it asks first; turning it
-   * off keeps what the set granted as an editable list.
-   */
-  const handleAutoToggle = async (enabled: boolean) => {
-    if (
-      enabled &&
-      !(await confirm({
-        title: t('auto.confirmTitle'),
-        message: t('auto.confirmMessage', { name: featureSet.name }),
-        confirmLabel: t('auto.confirmLabel'),
-        cancelLabel: t('common:actions.cancel'),
-      }))
-    ) {
-      return;
-    }
-    setIsTogglingAuto(true);
-    setActionError(null);
-    try {
-      await setFeatureSetAutoInclude(featureSet.id, enabled);
-      setAutoInclude(enabled);
-      if (enabled) {
-        selection.replaceSelection(getAvailableIds(features));
-      } else {
-        selection.markSaved();
-      }
-      success(
-        enabled ? t('auto.toastOnTitle') : t('auto.toastOffTitle'),
-        enabled
-          ? t('auto.toastOnBody', { name: featureSet.name })
-          : t('auto.toastOffBody', { name: featureSet.name })
-      );
-      onUpdate?.();
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setActionError(message);
-      showError(t('auto.toastFailed'), message);
-    } finally {
-      setIsTogglingAuto(false);
-    }
-  };
-
-  /**
    * Save general info and members together. Members keep unavailable features that were
    * already in the set, since bulk actions never touch them.
    */
@@ -170,9 +108,7 @@ export function FeatureSetPanel({
         const updated = await updateFeatureSet(featureSet.id, {
           name: trimmedName,
           description:
-            trimmedDescription !== general.baseline.description
-              ? trimmedDescription
-              : undefined,
+            trimmedDescription !== general.baseline.description ? trimmedDescription : undefined,
           icon: general.values.icon.trim() || undefined,
         });
         general.commit(updated);
@@ -185,7 +121,6 @@ export function FeatureSetPanel({
           surfaced: selection.surfacedIds.has(id),
         }));
         await setFeatureSetMembers(featureSet.id, members);
-        setAutoInclude(false);
         selection.markSaved();
       }
       success(
@@ -244,18 +179,6 @@ export function FeatureSetPanel({
               </div>
             )}
 
-            {(isStarter || autoInclude) && (
-              <FeatureSetAutoIncludeCard
-                isAutoInclude={autoInclude}
-                isDisabled={isTogglingAuto || isSaving}
-                onToggle={handleAutoToggle}
-              />
-            )}
-
-            {isOverToolThreshold && (
-              <FeatureSetToolCountWarning toolCount={selectedToolCount} threshold={toolThreshold} />
-            )}
-
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-base font-semibold">{t('panel.includedFeatures')}</span>
@@ -294,7 +217,6 @@ export function FeatureSetPanel({
           canDelete={isCustom && !!onDelete}
           canSave={canSave}
           isSaving={isSaving}
-          isLeavingAuto={autoInclude && selection.isEdited}
           onDelete={() => void handleDelete()}
           onSave={() => void handleSave()}
         />

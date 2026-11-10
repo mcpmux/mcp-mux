@@ -8,16 +8,11 @@ interface SelectionSeed {
 }
 
 /**
- * Initial selection for a FeatureSet: its include-mode feature members, or in auto mode
- * every available feature (that is what the set grants).
+ * Initial selection for a FeatureSet: its include-mode feature members.
  */
 function seedSelection(featureSet: FeatureSet, features: ServerFeature[]): SelectionSeed {
   const selectedIds = new Set<string>();
   const surfacedIds = new Set<string>();
-  if (featureSet.auto_include) {
-    features.filter((f) => f.is_available).forEach((f) => selectedIds.add(f.id));
-    return { selectedIds, surfacedIds };
-  }
   featureSet.members?.forEach((member) => {
     if (member.member_type !== 'feature' || member.mode !== 'include') {
       return;
@@ -97,14 +92,6 @@ export function useFeatureSetSelection(featureSet: FeatureSet, features: ServerF
   }, []);
 
   /**
-   * Replace the selection without marking it edited (auto mode just granted it).
-   */
-  const replaceSelection = useCallback((ids: string[]) => {
-    setSelectedIds(new Set(ids));
-    setIsEdited(false);
-  }, []);
-
-  /**
    * Mark the current selection as persisted.
    */
   const markSaved = useCallback(() => setIsEdited(false), []);
@@ -116,7 +103,6 @@ export function useFeatureSetSelection(featureSet: FeatureSet, features: ServerF
     toggleFeature,
     toggleSurfaced,
     setIdsSelected,
-    replaceSelection,
     markSaved,
   };
 }

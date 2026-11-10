@@ -1,27 +1,26 @@
-//! Control-socket client for the CLI.
+//! Control-socket / Named Pipe client for the CLI.
 
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::Result;
-#[cfg(unix)]
-use anyhow::{bail, Context};
-#[cfg(unix)]
+use anyhow::{bail, Context, Result};
 use mcpmux_control::{
     read_frame, write_frame, EventEnvelope, Method, RequestEnvelope, ResponseEnvelope,
     PROTOCOL_VERSION,
 };
-#[cfg(unix)]
 use serde::Serialize;
-#[cfg(unix)]
 use tokio::io::BufReader;
+
 #[cfg(unix)]
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
-#[cfg(unix)]
+#[cfg(windows)]
+use tokio::io::{ReadHalf, WriteHalf};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Refuse a socket served by another user than `own_uid`.
@@ -37,19 +36,23 @@ fn check_peer_uid(path: &Path, peer_uid: u32, own_uid: u32) -> Result<()> {
     Ok(())
 }
 
-/// Connected control-socket client.
-#[cfg(unix)]
+/// Connected control-socket or Named Pipe client.
 pub struct ControlClient {
+    #[cfg(unix)]
     reader: BufReader<OwnedReadHalf>,
+    #[cfg(unix)]
     writer: OwnedWriteHalf,
-    /// Pid of the process serving the socket, when the OS reports it.
+    #[cfg(windows)]
+    reader: BufReader<ReadHalf<NamedPipeClient>>,
+    #[cfg(windows)]
+    writer: WriteHalf<NamedPipeClient>,
+    /// Pid of the process serving the endpoint, when the OS reports it.
     peer_pid: Option<i32>,
 }
 
-#[cfg(unix)]
 impl ControlClient {
-    /// Connect to the daemon socket. The path is derived exactly as the daemon
-    /// derives it, so both agree without extra configuration.
+    /// Connect to the daemon socket on Unix or Named Pipe on Windows.
+    #[cfg(unix)]
     pub async fn connect(data_dir: Option<&Path>, socket: Option<&Path>) -> Result<Self> {
         let path = resolve_socket_path(data_dir, socket)?;
         let stream = UnixStream::connect(&path).await.with_context(|| {
@@ -76,7 +79,34 @@ impl ControlClient {
         })
     }
 
-    /// Pid of the process serving the socket, when the OS reports it.
+    /// Connect to the daemon Named Pipe on Windows.
+    #[cfg(windows)]
+    pub async fn connect(data_dir: Option<&Path>, socket: Option<&Path>) -> Result<Self> {
+        let path = resolve_socket_path(data_dir, socket)?;
+        let path_str = path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("control pipe path is not valid utf-8: {}", path.display())
+        })?;
+        let client = ClientOptions::new().open(path_str).with_context(|| {
+            format!(
+                "cannot reach the McpMux daemon on {} — is mcpmuxd running?",
+                path.display()
+            )
+        })?;
+        let peer_pid = get_named_pipe_server_pid(&client);
+        let (read_half, write_half) = tokio::io::split(client);
+        Ok(Self {
+            reader: BufReader::new(read_half),
+            writer: write_half,
+            peer_pid,
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    pub async fn connect(_data_dir: Option<&Path>, _socket: Option<&Path>) -> Result<Self> {
+        anyhow::bail!("mcpmux-cli currently supports Unix domain sockets and Windows named pipes")
+    }
+
+    /// Pid of the process serving the endpoint, when the OS reports it.
     pub fn peer_pid(&self) -> Option<i32> {
         self.peer_pid
     }
@@ -157,39 +187,39 @@ impl ControlClient {
     }
 }
 
-/// Placeholder client for platforms whose secure local control transport has
-/// not been implemented yet.
-#[cfg(not(unix))]
-pub struct ControlClient;
-
-#[cfg(not(unix))]
-impl ControlClient {
-    pub async fn connect(_data_dir: Option<&Path>, _socket: Option<&Path>) -> Result<Self> {
-        anyhow::bail!(
-            "mcpmux-cli currently requires the Unix control socket; use the desktop app on Windows"
-        )
+#[cfg(windows)]
+fn get_named_pipe_server_pid(pipe: &NamedPipeClient) -> Option<i32> {
+    use std::os::windows::io::AsRawHandle;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetNamedPipeServerProcessId(
+            pipe: *mut std::ffi::c_void,
+            server_process_id: *mut u32,
+        ) -> i32;
     }
-
-    pub async fn call(
-        &mut self,
-        _method: mcpmux_control::Method,
-        _params: impl serde::Serialize,
-    ) -> Result<serde_json::Value> {
-        anyhow::bail!("mcpmux-cli currently requires the Unix control socket")
-    }
-
-    pub async fn subscribe<F>(&mut self, _on_event: F) -> Result<()>
-    where
-        F: FnMut(&mcpmux_control::EventEnvelope),
-    {
-        anyhow::bail!("mcpmux-cli currently requires the Unix control socket")
+    let mut pid: u32 = 0;
+    let handle = pipe.as_raw_handle();
+    // SAFETY: handle is a valid named pipe handle and pid is a valid stack pointer.
+    let success = unsafe { GetNamedPipeServerProcessId(handle, &mut pid) };
+    if success != 0 {
+        i32::try_from(pid).ok()
+    } else {
+        None
     }
 }
 
-/// Resolve the socket path the same way the daemon does.
-#[cfg(unix)]
+/// Resolve the socket or pipe path the same way the daemon does.
 pub fn resolve_socket_path(data_dir: Option<&Path>, socket: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = socket {
+        #[cfg(windows)]
+        {
+            let path_str = path.to_string_lossy();
+            if path_str.starts_with(r"\\.\pipe\") {
+                return Ok(path.to_path_buf());
+            }
+            return Ok(PathBuf::from(format!(r"\\.\pipe\{path_str}")));
+        }
+        #[cfg(not(windows))]
         return Ok(path.to_path_buf());
     }
     // Same resolution as the daemon's RuntimeBuilder, so the per-data-dir
@@ -199,12 +229,6 @@ pub fn resolve_socket_path(data_dir: Option<&Path>, socket: Option<&Path>) -> Re
     Ok(mcpmux_runtime::control_socket_path(&data_dir))
 }
 
-#[cfg(not(unix))]
-pub fn resolve_socket_path(_data_dir: Option<&Path>, _socket: Option<&Path>) -> Result<PathBuf> {
-    anyhow::bail!("mcpmux-cli currently requires the Unix control socket")
-}
-
-#[cfg(unix)]
 fn next_request_id() -> String {
     let n = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{}-{}", std::process::id(), n)

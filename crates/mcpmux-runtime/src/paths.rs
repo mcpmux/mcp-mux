@@ -119,9 +119,28 @@ pub fn control_dir_under(runtime_dir: Option<PathBuf>, data_dir: &Path) -> PathB
     }
 }
 
-/// Path to the daemon control socket: `<control_dir>/control.sock`.
+/// Path to the daemon control socket (Unix) or Named Pipe (Windows).
+///
+/// On Unix, returns `<control_dir>/control.sock`.
+/// On Windows, returns `\\.\pipe\mcpmux-<data-dir-id>`.
 pub fn control_socket_path(data_dir: &Path) -> PathBuf {
-    control_dir(data_dir).join("control.sock")
+    #[cfg(unix)]
+    {
+        control_dir(data_dir).join("control.sock")
+    }
+    #[cfg(windows)]
+    {
+        control_pipe_path(data_dir)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        control_dir(data_dir).join("control.sock")
+    }
+}
+
+/// Windows named pipe path for the daemon: `\\.\pipe\mcpmux-<data-dir-id>`.
+pub fn control_pipe_path(data_dir: &Path) -> PathBuf {
+    PathBuf::from(format!(r"\\.\pipe\mcpmux-{:016x}", data_dir_id(data_dir)))
 }
 
 /// Stable 64-bit FNV-1a hash of the data directory. Spelled out rather than
@@ -213,6 +232,7 @@ mod tests {
         assert_eq!(resolve_data_dir(Some(&missing)).unwrap(), missing);
     }
 
+    #[cfg(unix)]
     #[test]
     fn control_socket_prefers_xdg_runtime_dir() {
         let _environment = environment_lock();
@@ -242,6 +262,7 @@ mod tests {
         assert_eq!(a, PathBuf::from("/run/user/1000/mcpmux/39aff565700eaeb7"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn control_socket_falls_back_under_data_dir() {
         let _environment = environment_lock();
@@ -255,5 +276,22 @@ mod tests {
             PathBuf::from("/var/lib/mcpmux/run/control.sock")
         );
         restore_environment_variable("XDG_RUNTIME_DIR", previous);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn control_pipe_path_format_and_stability() {
+        let a = control_pipe_path(Path::new(r"C:\mcpmux\data"));
+        let b = control_pipe_path(Path::new(r"C:\mcpmux\data\"));
+        assert_eq!(
+            a, b,
+            "trailing slashes must normalize to the same pipe name"
+        );
+        let path_str = a.to_str().unwrap();
+        assert!(
+            path_str.starts_with(r"\\.\pipe\mcpmux-"),
+            "must be a valid named pipe path: {path_str}"
+        );
+        assert_eq!(control_socket_path(Path::new(r"C:\mcpmux\data")), a);
     }
 }

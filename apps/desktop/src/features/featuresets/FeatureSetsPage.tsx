@@ -382,15 +382,6 @@ export function FeatureSetsPage() {
         </div>
       </div>
 
-      {/* Overlay backdrop when panel is open */}
-      {selectedFeatureSet && (
-        <div 
-          data-testid="featureset-panel-overlay"
-          className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40 animate-in fade-in duration-200"
-          onClick={() => setSelectedFeatureSet(null)}
-        />
-      )}
-
       {/* Slide-out Panel */}
       {selectedFeatureSet && viewSpace && (
         <FeatureSetPanel

@@ -123,30 +123,23 @@ impl MetaTool for ListServersTool {
 
         // Seed every installed server first so servers with no discovered tool features
         // still appear (e.g. auth-pending or needs-setup servers with zero rows).
-        let mut by_server: HashMap<String, (Option<String>, usize)> = installed_by_server
+        let mut by_server: HashMap<String, usize> = installed_by_server
             .keys()
-            .map(|id| (id.clone(), (None, 0usize)))
+            .map(|id| (id.clone(), 0usize))
             .collect();
         for feature in &features {
             if feature.feature_type != FeatureType::Tool {
                 continue;
             }
-            let entry = by_server
-                .entry(feature.server_id.clone())
-                .or_insert((None, 0));
-            if entry.0.is_none() {
-                entry.0 = feature.display_name.clone();
-            }
-            entry.1 += 1;
+            *by_server.entry(feature.server_id.clone()).or_insert(0) += 1;
         }
 
         let mut servers: Vec<Value> = by_server
             .into_iter()
-            .map(|(id, (feature_display_name, tool_count))| {
+            .map(|(id, tool_count)| {
                 let installed = installed_by_server.get(&id);
                 let name = installed
                     .map(|s| s.display_name().to_string())
-                    .or(feature_display_name)
                     .unwrap_or_else(|| id.clone());
 
                 let in_binding = binding_servers.contains(&id);

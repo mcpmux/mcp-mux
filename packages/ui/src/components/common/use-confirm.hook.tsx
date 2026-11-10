@@ -5,9 +5,12 @@ import type { ConfirmDialogState } from './ConfirmDialog';
 /**
  * Hook that provides a promise-based confirm dialog.
  *
+ * Returns `isOpen` and `cancel` so callers (for example panel Escape handlers) can
+ * dismiss an open confirmation without opening another one.
+ *
  * Usage:
  * ```tsx
- * const { confirm, ConfirmDialogElement } = useConfirm();
+ * const { confirm, ConfirmDialogElement, isOpen, cancel } = useConfirm();
  *
  * const handleDelete = async () => {
  *   if (!await confirm({ title: 'Delete?', message: 'This cannot be undone.' })) return;
@@ -58,5 +61,10 @@ export function useConfirm() {
     />
   );
 
-  return { confirm, ConfirmDialogElement };
+  return {
+    confirm,
+    ConfirmDialogElement,
+    isOpen: state.open,
+    cancel: handleCancel,
+  };
 }

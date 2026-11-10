@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { AlertCircle } from 'lucide-react';
 
 export interface ConfirmDialogState {
@@ -16,7 +17,8 @@ export interface ConfirmDialogProps extends ConfirmDialogState {
 
 /**
  * Blocking confirm overlay. Stacks above page modals (`z-50` / `z-[1000]`) so
- * a confirm opened from an already-open dialog is clickable.
+ * a confirm opened from an already-open dialog is clickable. Escape cancels and
+ * stops other window Escape handlers from also acting.
  */
 export function ConfirmDialog({
   open,
@@ -28,6 +30,22 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onCancel();
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [open, onCancel]);
+
   if (!open) return null;
 
   const isDanger = variant === 'danger';
@@ -80,4 +98,3 @@ export function ConfirmDialog({
     </div>
   );
 }
-

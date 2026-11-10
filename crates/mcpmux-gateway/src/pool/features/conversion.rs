@@ -7,6 +7,8 @@ use rmcp::model::{Prompt, Resource, Tool};
 pub trait ToServerFeature {
     fn name(&self) -> String;
     fn description(&self) -> Option<String>;
+    /// Human-readable title advertised by the server, if any.
+    fn display_title(&self) -> Option<String>;
     fn to_raw_json(&self) -> Option<serde_json::Value>;
     fn feature_type() -> FeatureType;
 }
@@ -18,6 +20,13 @@ impl ToServerFeature for Tool {
 
     fn description(&self) -> Option<String> {
         self.description.as_ref().map(|d| d.to_string())
+    }
+
+    fn display_title(&self) -> Option<String> {
+        self.title
+            .clone()
+            .or_else(|| self.annotations.as_ref().and_then(|a| a.title.clone()))
+            .filter(|t| !t.trim().is_empty())
     }
 
     fn to_raw_json(&self) -> Option<serde_json::Value> {
@@ -36,6 +45,10 @@ impl ToServerFeature for Prompt {
 
     fn description(&self) -> Option<String> {
         self.description.as_ref().map(|d| d.to_string())
+    }
+
+    fn display_title(&self) -> Option<String> {
+        self.title.clone().filter(|t| !t.trim().is_empty())
     }
 
     fn to_raw_json(&self) -> Option<serde_json::Value> {
@@ -62,6 +75,9 @@ pub fn convert_to_feature<T: ToServerFeature>(
         FeatureType::Resource => ServerFeature::resource(space_id, server_id, &name),
     };
 
+    if let Some(title) = item.display_title() {
+        feature = feature.with_display_name(title);
+    }
     if let Some(desc) = item.description() {
         feature = feature.with_description(desc);
     }

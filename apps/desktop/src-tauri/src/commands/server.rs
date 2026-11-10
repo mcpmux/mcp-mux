@@ -132,6 +132,7 @@ pub async fn set_server_oauth_connected(
         .map_err(|e| e.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn save_server_inputs(
     app_service: State<'_, Arc<RwLock<Option<ServerAppService>>>>,
@@ -141,6 +142,7 @@ pub async fn save_server_inputs(
     env_overrides: Option<HashMap<String, String>>,
     args_append: Option<Vec<String>>,
     extra_headers: Option<HashMap<String, String>>,
+    credential_profile_id: Option<uuid::Uuid>,
 ) -> Result<InstalledServer, String> {
     let service_lock = app_service.read().await;
     let service = service_lock
@@ -157,6 +159,7 @@ pub async fn save_server_inputs(
             env_overrides,
             args_append,
             extra_headers,
+            Some(credential_profile_id),
         )
         .await
         .map_err(|e| e.to_string())

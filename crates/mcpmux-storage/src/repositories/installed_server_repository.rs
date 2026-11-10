@@ -32,6 +32,7 @@ struct RawServerRow {
     created_at: String,
     updated_at: String,
     source: Option<String>,
+    credential_profile_id: Option<String>,
 }
 
 /// SQLite-backed implementation of InstalledServerRepository.
@@ -210,7 +211,7 @@ impl SqliteInstalledServerRepository {
     /// Standard column list for SELECT queries
     const SELECT_COLUMNS: &'static str =
         "id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
-         args_append, extra_headers, oauth_connected, created_at, updated_at, source";
+         args_append, extra_headers, oauth_connected, created_at, updated_at, source, credential_profile_id";
 
     /// Extract raw row data (used in the closure passed to rusqlite).
     fn extract_row(row: &rusqlite::Row) -> rusqlite::Result<RawServerRow> {
@@ -229,6 +230,7 @@ impl SqliteInstalledServerRepository {
             created_at: row.get(11)?,
             updated_at: row.get(12)?,
             source: row.get(13)?,
+            credential_profile_id: row.get(14)?,
         })
     }
 
@@ -265,6 +267,11 @@ impl SqliteInstalledServerRepository {
         let extra_headers = self
             .decrypt_json("extra_headers", &row.id, row.extra_headers)
             .map_err(with_server)?;
+        let credential_profile_id = row
+            .credential_profile_id
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .and_then(|s| Uuid::parse_str(s).ok());
         Ok(InstalledServer {
             id: Uuid::parse_str(&row.id).unwrap_or_else(|_| Uuid::new_v4()),
             space_id: row.space_id,
@@ -272,6 +279,7 @@ impl SqliteInstalledServerRepository {
             server_name: row.server_name,
             cached_definition: row.cached_definition,
             input_values,
+            credential_profile_id,
             enabled: row.enabled,
             env_overrides,
             args_append,
@@ -387,8 +395,8 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
         conn.execute(
             "INSERT INTO installed_servers
              (id, space_id, server_id, server_name, cached_definition, input_values, enabled, env_overrides,
-              args_append, extra_headers, oauth_connected, created_at, updated_at, source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              args_append, extra_headers, oauth_connected, created_at, updated_at, source, credential_profile_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 server.id.to_string(),
                 server.space_id,
@@ -404,6 +412,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.created_at.to_rfc3339(),
                 server.updated_at.to_rfc3339(),
                 Self::serialize_source(&server.source),
+                server.credential_profile_id.map(|u| u.to_string()),
             ],
         )?;
         Ok(())
@@ -421,7 +430,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             "UPDATE installed_servers
              SET server_name = ?2, cached_definition = ?3, input_values = ?4, enabled = ?5,
                  env_overrides = ?6, args_append = ?7, extra_headers = ?8, oauth_connected = ?9,
-                 updated_at = ?10, source = ?11
+                 updated_at = ?10, source = ?11, credential_profile_id = ?12
              WHERE id = ?1",
             params![
                 server.id.to_string(),
@@ -435,6 +444,7 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
                 server.oauth_connected,
                 Utc::now().to_rfc3339(),
                 Self::serialize_source(&server.source),
+                server.credential_profile_id.map(|u| u.to_string()),
             ],
         )?;
         Ok(())
@@ -553,5 +563,17 @@ impl InstalledServerRepository for SqliteInstalledServerRepository {
             ],
         )?;
         Ok(())
+    }
+
+    async fn list_by_credential_profile(&self, profile_id: &Uuid) -> Result<Vec<InstalledServer>> {
+        let db = self.db.lock().await;
+        let mut stmt = db.connection().prepare(&format!(
+            "SELECT {} FROM installed_servers WHERE credential_profile_id = ?1 ORDER BY created_at ASC",
+            Self::SELECT_COLUMNS
+        ))?;
+        let rows = stmt
+            .query_map(params![profile_id.to_string()], Self::extract_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.build_servers(rows))
     }
 }

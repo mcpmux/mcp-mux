@@ -1326,7 +1326,7 @@ async fn servers_configure(
         .map(|changes| merge_settings(installed.extra_headers.clone(), Some(changes)));
     let updated = state
         .server_app_service()
-        .update_config(space, &p.server_id, inputs, env, p.args, headers)
+        .update_config(space, &p.server_id, inputs, env, p.args, headers, None)
         .await?;
 
     Ok(serde_json::to_value(InstalledServerRef {
@@ -2248,7 +2248,7 @@ async fn store_moved_inputs(
         inputs.extend(m.values.clone());
         state
             .server_app_service()
-            .update_config(space, &m.server_id, inputs, None, None, None)
+            .update_config(space, &m.server_id, inputs, None, None, None, None)
             .await?;
     }
     Ok(())

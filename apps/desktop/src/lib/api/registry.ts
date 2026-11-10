@@ -32,7 +32,7 @@ export async function isRegistryOffline(): Promise<boolean> {
   return invoke<boolean>('is_registry_offline');
 }
 
-/** Force refresh server discovery from all sources (ignores cache) 
+/** Force refresh server discovery from all sources (ignores cache)
  * Returns number of newly auto-installed user-configured servers */
 export async function refreshRegistry(): Promise<number> {
   return invoke<number>('refresh_registry');
@@ -102,7 +102,16 @@ export async function saveServerInputs(
   spaceId: string,
   envOverrides?: Record<string, string>,
   argsAppend?: string[],
-  extraHeaders?: Record<string, string>
+  extraHeaders?: Record<string, string>,
+  credentialProfileId?: string | null
 ): Promise<void> {
-  return invoke<void>('save_server_inputs', { id, inputValues, spaceId, envOverrides, argsAppend, extraHeaders });
+  return invoke<void>('save_server_inputs', {
+    id,
+    inputValues,
+    spaceId,
+    envOverrides,
+    argsAppend,
+    extraHeaders,
+    credentialProfileId,
+  });
 }

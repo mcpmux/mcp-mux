@@ -22,9 +22,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mcpmux_core::{
-    AppSettingsRepository, CredentialRepository, FeatureSetRepository, InboundMcpClientRepository,
-    InstalledServerRepository, ServerFeatureRepository, SpaceBaseDirRepository,
-    SpaceBuiltinConfigRepository, WorkspaceBindingRepository,
+    AppSettingsRepository, CredentialProfileRepository, CredentialRepository, FeatureSetRepository,
+    InboundMcpClientRepository, InstalledServerRepository, ServerFeatureRepository,
+    SpaceBaseDirRepository, SpaceBuiltinConfigRepository, WorkspaceBindingRepository,
 };
 use mcpmux_runtime::Runtime;
 use mcpmux_storage::{Database, SqliteServerFeatureRepository};
@@ -40,6 +40,7 @@ pub struct AppState {
     pub settings_repository: Arc<dyn AppSettingsRepository>,
     pub installed_server_repository: Arc<dyn InstalledServerRepository>,
     pub credential_repository: Arc<dyn CredentialRepository>,
+    pub credential_profile_repository: Arc<dyn CredentialProfileRepository>,
     pub feature_set_repository: Arc<dyn FeatureSetRepository>,
     pub client_repository: Arc<dyn InboundMcpClientRepository>,
     pub workspace_binding_repository: Arc<dyn WorkspaceBindingRepository>,
@@ -76,6 +77,7 @@ impl AppState {
             settings_repository: runtime.repositories.app_settings.clone(),
             installed_server_repository: runtime.repositories.installed_server.clone(),
             credential_repository: runtime.repositories.credential.clone(),
+            credential_profile_repository: runtime.repositories.credential_profile.clone(),
             feature_set_repository: runtime.repositories.feature_set.clone(),
             client_repository: runtime.repositories.client.clone(),
             workspace_binding_repository: runtime.repositories.workspace_binding.clone(),

@@ -865,6 +865,13 @@ pub fn run() {
             commands::set_server_enabled,
             commands::set_server_oauth_connected,
             commands::save_server_inputs,
+            // Credential Profile commands
+            commands::list_credential_profiles,
+            commands::get_credential_profiles_for_server,
+            commands::get_credential_profile,
+            commands::create_credential_profile,
+            commands::update_credential_profile,
+            commands::delete_credential_profile,
             // FeatureSet commands
             commands::list_feature_sets,
             commands::list_feature_sets_by_space,

@@ -44,6 +44,7 @@ import {
   useSetPendingSettingsSection,
 } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
+import { CredentialProfilesSection } from './CredentialProfilesSection';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
 import { CONTRIBUTE, openExternal } from '@/lib/contribute';
 import { getStarterAutoIncludeDefault, setStarterAutoIncludeDefault } from '@/lib/api/featureSets';
@@ -1128,6 +1129,23 @@ export function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Credential Profiles & Secrets Section */}
+        <div
+          ref={registerSection('credentials')}
+          id="settings-credentials"
+          className={sectionFlashClass('credentials')}
+        >
+          <CredentialProfilesSection
+            onNotify={(msg, type) => {
+              if (type === 'error') {
+                error('Credential Profiles', msg);
+              } else {
+                success('Credential Profiles', msg);
+              }
+            }}
+          />
         </div>
 
         {/* Appearance Section */}

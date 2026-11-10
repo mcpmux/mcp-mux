@@ -51,6 +51,11 @@ pub mod binding {
     pub fn outbound_client_secret(space_id: &str, server_id: &str) -> String {
         format!("outbound_oauth_clients|client_secret|{space_id}|{server_id}")
     }
+
+    /// `credential_profiles.values_encrypted` for row `id`.
+    pub fn credential_profile(column: &str, id: &str) -> String {
+        format!("credential_profiles|{column}|{id}")
+    }
 }
 
 /// Encryptor for sensitive field data.

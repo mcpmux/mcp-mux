@@ -35,7 +35,13 @@ export interface TransportMetadata {
 
 /** Transport configuration */
 export type TransportConfig =
-  | { type: 'stdio'; command: string; args: string[]; env: Record<string, string>; metadata: TransportMetadata }
+  | {
+      type: 'stdio';
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+      metadata: TransportMetadata;
+    }
   | { type: 'http'; url: string; headers: Record<string, string>; metadata: TransportMetadata };
 
 /** Server source */
@@ -98,6 +104,7 @@ export interface InstalledServerState {
   server_name: string | null; // Cached from definition at install time
   cached_definition: string | null; // JSON-serialized ServerDefinition
   input_values: Record<string, string>;
+  credential_profile_id?: string | null;
   enabled: boolean;
   env_overrides: Record<string, string>;
   args_append: string[];
@@ -114,6 +121,7 @@ export interface ServerViewModel extends ServerDefinition {
   enabled: boolean;
   oauth_connected: boolean;
   input_values: Record<string, string>;
+  credential_profile_id?: string | null;
   connection_status: 'disconnected' | 'connecting' | 'connected' | 'oauth_required' | 'error';
   missing_required_inputs: boolean;
   last_error: string | null;

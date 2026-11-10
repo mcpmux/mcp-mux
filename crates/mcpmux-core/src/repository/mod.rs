@@ -7,8 +7,9 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::domain::{
-    Client, Credential, CredentialType, FeatureSet, FeatureSetMember, InstalledServer, MemberMode,
-    OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir, WorkspaceBinding,
+    Client, Credential, CredentialProfile, CredentialType, FeatureSet, FeatureSetMember,
+    InstalledServer, MemberMode, OutboundOAuthRegistration, ServerFeature, Space, SpaceBaseDir,
+    WorkspaceBinding,
 };
 
 /// Result type for repository operations
@@ -125,6 +126,18 @@ pub trait InstalledServerRepository: Send + Sync {
         server_name: Option<String>,
         cached_definition: Option<String>,
     ) -> RepoResult<()>;
+
+    /// Get all installed servers referencing a credential profile
+    async fn list_by_credential_profile(
+        &self,
+        profile_id: &Uuid,
+    ) -> RepoResult<Vec<InstalledServer>> {
+        let all = self.list().await?;
+        Ok(all
+            .into_iter()
+            .filter(|s| s.credential_profile_id == Some(*profile_id))
+            .collect())
+    }
 }
 
 /// ServerFeature repository trait
@@ -356,6 +369,31 @@ pub trait CredentialRepository: Send + Sync {
 
     /// List all credentials for a space
     async fn list_for_space(&self, space_id: &Uuid) -> RepoResult<Vec<Credential>>;
+}
+
+/// Credential Profile repository trait (local-only, central secrets store)
+///
+/// Stores named credential profiles that can be reused across Spaces and
+/// survive server uninstalls.
+#[async_trait]
+pub trait CredentialProfileRepository: Send + Sync {
+    /// List all credential profiles
+    async fn list(&self) -> RepoResult<Vec<CredentialProfile>>;
+
+    /// List all credential profiles for a specific server_id
+    async fn list_for_server(&self, server_id: &str) -> RepoResult<Vec<CredentialProfile>>;
+
+    /// Get a specific credential profile by ID
+    async fn get(&self, id: &Uuid) -> RepoResult<Option<CredentialProfile>>;
+
+    /// Save a credential profile (upsert by ID)
+    async fn save(&self, profile: &CredentialProfile) -> RepoResult<()>;
+
+    /// Delete a credential profile by ID
+    async fn delete(&self, id: &Uuid) -> RepoResult<()>;
+
+    /// Count how many installed servers are currently referencing this profile
+    async fn count_usages(&self, id: &Uuid) -> RepoResult<usize>;
 }
 
 /// Outbound OAuth Client repository (OUTBOUND)

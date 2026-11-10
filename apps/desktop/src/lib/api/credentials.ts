@@ -41,3 +41,19 @@ export async function getPriorCredentialValues(
     serverId,
   });
 }
+
+/**
+ * Fill only blank configuration fields from a prior installation.
+ * Values the user has already entered always take precedence.
+ */
+export function fillEmptyCredentialValues(
+  currentValues: Record<string, string>,
+  priorValues: Record<string, string>
+): Record<string, string> {
+  return {
+    ...currentValues,
+    ...Object.fromEntries(
+      Object.entries(priorValues).filter(([key]) => !currentValues[key]?.trim())
+    ),
+  };
+}

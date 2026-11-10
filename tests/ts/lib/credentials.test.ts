@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import {
   findPriorCredential,
+  fillEmptyCredentialValues,
   getPriorCredentialValues,
   type PriorCredentialSummary,
 } from '../../../apps/desktop/src/lib/api/credentials';
@@ -68,6 +69,32 @@ describe('credentials API (Issue #227)', () => {
         serverId: 'io.github.github/github-mcp-server',
       });
       expect(result).toEqual(mockValues);
+    });
+  });
+
+  describe('fillEmptyCredentialValues', () => {
+    it('fills blank form fields without replacing values already entered by the user', () => {
+      expect(
+        fillEmptyCredentialValues(
+          {
+            GITHUB_PERSONAL_ACCESS_TOKEN: 'user-entered-token',
+            GITHUB_API_URL: '',
+          },
+          {
+            GITHUB_PERSONAL_ACCESS_TOKEN: 'prior-space-token',
+            GITHUB_API_URL: 'https://api.github.com',
+          }
+        )
+      ).toEqual({
+        GITHUB_PERSONAL_ACCESS_TOKEN: 'user-entered-token',
+        GITHUB_API_URL: 'https://api.github.com',
+      });
+    });
+
+    it('treats whitespace-only fields as blank', () => {
+      expect(fillEmptyCredentialValues({ TOKEN: '   ' }, { TOKEN: 'prior-space-token' })).toEqual({
+        TOKEN: 'prior-space-token',
+      });
     });
   });
 });

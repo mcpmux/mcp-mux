@@ -37,6 +37,7 @@ import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
 import {
   findPriorCredential,
+  fillEmptyCredentialValues,
   getPriorCredentialValues,
   type PriorCredentialSummary,
 } from '@/lib/api/credentials';
@@ -799,10 +800,7 @@ export function ServersPage() {
       );
       setConfigModal((prev) => ({
         ...prev,
-        inputValues: {
-          ...prev.inputValues,
-          ...priorValues,
-        },
+        inputValues: fillEmptyCredentialValues(prev.inputValues, priorValues),
       }));
       setPriorCredential(null);
       showToast(`Applied credentials from Space "${priorCredential.source_space_name}"`, 'success');

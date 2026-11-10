@@ -5,34 +5,24 @@
 //! cleanly on SIGTERM / SIGINT. See `docs/manual/headless-cli-roadmap.md`
 //! for the full plan.
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::Parser;
-#[cfg(unix)]
 use mcpmux_gateway::GatewayConfig;
-#[cfg(unix)]
 use mcpmux_runtime::{
     init_tracing, shutdown_gateway_runtime, wait_for_health, wait_for_shutdown, HealthCheckConfig,
     HealthStatus, KeyProviderPolicy, LogSink, RuntimeBuilder, TracingConfig,
 };
-#[cfg(unix)]
-use std::io::IsTerminal;
-#[cfg(unix)]
 use tokio::time::Duration;
 use tracing::error;
-#[cfg(unix)]
 use tracing::{info, warn};
-#[cfg(unix)]
 use tracing_appender::non_blocking::WorkerGuard;
 
 mod args;
-#[cfg(unix)]
 mod control;
-#[cfg(unix)]
 mod service;
-use args::Args;
-#[cfg(unix)]
-use args::{Command, KeyProviderArg, ServiceCommand};
+use args::{Args, Command, KeyProviderArg, ServiceCommand};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> ExitCode {
@@ -46,7 +36,6 @@ async fn main() -> ExitCode {
 }
 
 /// Flag combinations the daemon refuses to start with.
-#[cfg_attr(not(unix), allow(dead_code))]
 fn check_args(args: &Args) -> anyhow::Result<()> {
     if args.auth_disabled && args.public_base_url.is_some() {
         anyhow::bail!(
@@ -63,7 +52,6 @@ fn check_args(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 async fn run(args: Args) -> anyhow::Result<()> {
     let _log_guard = init_logging(&args);
     check_args(&args)?;
@@ -245,14 +233,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-async fn run(_args: Args) -> anyhow::Result<()> {
-    Err(anyhow::anyhow!(
-        "mcpmuxd is not available on Windows yet because its secure local control transport requires Unix sockets; use the McpMux desktop app"
-    ))
-}
-
-#[cfg(unix)]
 fn init_logging(args: &Args) -> Option<WorkerGuard> {
     let sink = match &args.log_dir {
         Some(dir) => LogSink::DailyRolling {
@@ -270,7 +250,6 @@ fn init_logging(args: &Args) -> Option<WorkerGuard> {
     init_tracing(&cfg)
 }
 
-#[cfg(unix)]
 fn map_key_policy(arg: KeyProviderArg) -> KeyProviderPolicy {
     match arg {
         KeyProviderArg::Auto => KeyProviderPolicy::Auto,

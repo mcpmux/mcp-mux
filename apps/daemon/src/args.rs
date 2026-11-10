@@ -74,7 +74,6 @@ pub enum KeyProviderArg {
     File,
 }
 
-#[cfg(unix)]
 impl KeyProviderArg {
     pub const fn as_str(self) -> &'static str {
         match self {

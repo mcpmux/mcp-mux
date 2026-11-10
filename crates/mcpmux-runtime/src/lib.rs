@@ -30,8 +30,8 @@ pub use init::{
 pub use lock::DataDirLock;
 pub use logging::{default_filter, init_tracing, LogSink, TracingConfig};
 pub use paths::{
-    control_dir, control_dir_under, control_socket_path, default_data_dir, resolve_data_dir,
-    DATA_DIR_NAME,
+    control_dir, control_dir_under, control_pipe_path, control_socket_path, default_data_dir,
+    resolve_data_dir, DATA_DIR_NAME,
 };
 pub use private_dir::{ensure_private_dir, restrict_file};
 pub use shutdown::{

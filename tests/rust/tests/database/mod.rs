@@ -19,3 +19,4 @@ mod repositories;
 mod space_base_dir;
 
 mod ciphertext_binding;
+mod prior_credential_reuse;

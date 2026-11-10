@@ -22,6 +22,7 @@ import {
   Compass,
   ArrowRight,
   ArrowDownAZ,
+  Key,
 } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ServerActionMenu } from './ServerActionMenu';
@@ -34,6 +35,14 @@ import type {
 } from '../../types/registry';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
+import { getGatewayStatus } from '@/lib/api/gateway';
+import { discoverServers, listInstalledServers } from '@/lib/api/registry';
+import {
+  findPriorCredential,
+  fillEmptyCredentialValues,
+  getPriorCredentialValues,
+  type PriorCredentialSummary,
+} from '@/lib/api/credentials';
 import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverManager';
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
 import { useViewSpace, useNavigateTo } from '@/stores';
@@ -187,6 +196,7 @@ export function ServersPage() {
     argsAppend: [],
     extraHeaders: {},
   });
+  const [priorCredential, setPriorCredential] = useState<PriorCredentialSummary | null>(null);
 
   // Features state
   const [serverFeatures, setServerFeatures] = useState<Record<string, ServerFeature[]>>({});
@@ -331,9 +341,9 @@ export function ServersPage() {
       // Use allSettled so we can show installed servers even if registry is offline
       const [installedResult, gatewayResult, definitionsResult, statusesResult] =
         await Promise.allSettled([
-          import('@/lib/api/registry').then((m) => m.listInstalledServers(viewSpace?.id)),
-          import('@/lib/api/gateway').then((m) => m.getGatewayStatus(viewSpace?.id)),
-          import('@/lib/api/registry').then((m) => m.discoverServers()),
+          listInstalledServers(viewSpace?.id),
+          getGatewayStatus(viewSpace?.id),
+          discoverServers(),
           viewSpace?.id
             ? fetchServerStatuses(viewSpace.id)
             : Promise.resolve({} as Record<string, ServerStatusResponse>),
@@ -690,6 +700,7 @@ export function ServersPage() {
         argsAppend: [],
         extraHeaders: {},
       });
+      setPriorCredential(null);
 
       // Only enable if requested (from Enable flow)
       if (shouldEnable && !server.enabled) {
@@ -737,6 +748,67 @@ export function ServersPage() {
       argsAppend: [],
       extraHeaders: {},
     });
+    setPriorCredential(null);
+  };
+
+  // Check for reusable credentials from other spaces when config modal opens (Issue #227)
+  useEffect(() => {
+    if (!configModal.open || !configModal.server || !viewSpace?.id) {
+      setPriorCredential(null);
+      return;
+    }
+
+    const server = configModal.server;
+    const serverInputs = server.transport.metadata?.inputs ?? [];
+    if (serverInputs.length === 0) {
+      setPriorCredential(null);
+      return;
+    }
+
+    // Only look for prior credentials if at least one input field is currently empty
+    const hasEmptyField = serverInputs.some(
+      (input: InputDefinition) => !configModal.inputValues[input.id]?.trim()
+    );
+
+    if (!hasEmptyField) {
+      setPriorCredential(null);
+      return;
+    }
+
+    let active = true;
+    findPriorCredential(viewSpace.id, server.id)
+      .then((summary) => {
+        if (active) {
+          setPriorCredential(summary);
+        }
+      })
+      .catch((err) => {
+        console.warn('[ServersPage] Failed to look for prior credentials:', err);
+      });
+
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configModal.open, configModal.server?.id, viewSpace?.id]);
+
+  // Handle clicking "Use" on prior credential nudge
+  const handleUsePriorCredential = async () => {
+    if (!priorCredential || !configModal.server) return;
+    try {
+      const priorValues = await getPriorCredentialValues(
+        priorCredential.source_space_id,
+        configModal.server.id
+      );
+      setConfigModal((prev) => ({
+        ...prev,
+        inputValues: fillEmptyCredentialValues(prev.inputValues, priorValues),
+      }));
+      setPriorCredential(null);
+      showToast(`Applied credentials from Space "${priorCredential.source_space_name}"`, 'success');
+    } catch (err) {
+      showToast(`Failed to reuse credential: ${err}`, 'error');
+    }
   };
 
   // Cancel OAuth flow - uses new ServerManager v2
@@ -1474,6 +1546,39 @@ export function ServersPage() {
 
             {/* Scrollable body — the footer below stays pinned (#163) */}
             <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-4">
+              {/* Prior Credential Reuse Nudge (Issue #227) */}
+              {priorCredential && (
+                <div
+                  className="flex items-center justify-between gap-3 rounded-lg border border-[rgb(var(--primary))]/30 bg-[rgb(var(--primary))]/10 p-3 text-sm text-[rgb(var(--foreground))]"
+                  data-testid="prior-credential-nudge"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <Key className="h-4 w-4 shrink-0 text-[rgb(var(--primary))]" />
+                    <span className="truncate">
+                      You have credentials in{' '}
+                      <strong>Space "{priorCredential.source_space_name}"</strong>. Use the same?
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleUsePriorCredential}
+                      className="btn btn-sm btn-primary"
+                      data-testid="prior-credential-use-btn"
+                    >
+                      Use
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPriorCredential(null)}
+                      className="btn btn-sm btn-ghost text-[rgb(var(--muted))]"
+                      data-testid="prior-credential-dismiss-btn"
+                    >
+                      Not now
+                    </button>
+                  </div>
+                </div>
+              )}
               {(configModal.server.transport.metadata?.inputs ?? []).map(
                 (input: InputDefinition) => {
                   const obtainUrl = input.obtain_url || input.obtain?.url;

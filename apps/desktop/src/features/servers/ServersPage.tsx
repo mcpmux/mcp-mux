@@ -35,6 +35,8 @@ import type {
 } from '../../types/registry';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
+import { getGatewayStatus } from '@/lib/api/gateway';
+import { discoverServers, listInstalledServers } from '@/lib/api/registry';
 import {
   findPriorCredential,
   fillEmptyCredentialValues,
@@ -339,9 +341,9 @@ export function ServersPage() {
       // Use allSettled so we can show installed servers even if registry is offline
       const [installedResult, gatewayResult, definitionsResult, statusesResult] =
         await Promise.allSettled([
-          import('@/lib/api/registry').then((m) => m.listInstalledServers(viewSpace?.id)),
-          import('@/lib/api/gateway').then((m) => m.getGatewayStatus(viewSpace?.id)),
-          import('@/lib/api/registry').then((m) => m.discoverServers()),
+          listInstalledServers(viewSpace?.id),
+          getGatewayStatus(viewSpace?.id),
+          discoverServers(),
           viewSpace?.id
             ? fetchServerStatuses(viewSpace.id)
             : Promise.resolve({} as Record<string, ServerStatusResponse>),

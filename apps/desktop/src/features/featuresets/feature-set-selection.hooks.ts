@@ -10,7 +10,7 @@ interface SelectionSeed {
 /**
  * Initial selection for a FeatureSet: its include-mode feature members.
  */
-function seedSelection(featureSet: FeatureSet, features: ServerFeature[]): SelectionSeed {
+function seedSelection(featureSet: FeatureSet): SelectionSeed {
   const selectedIds = new Set<string>();
   const surfacedIds = new Set<string>();
   featureSet.members?.forEach((member) => {
@@ -32,15 +32,15 @@ function seedSelection(featureSet: FeatureSet, features: ServerFeature[]): Selec
 export function useFeatureSetSelection(featureSet: FeatureSet, features: ServerFeature[]) {
   const [source, setSource] = useState({ featureSet, features });
   const [selectedIds, setSelectedIds] = useState(
-    () => seedSelection(featureSet, features).selectedIds
+    () => seedSelection(featureSet).selectedIds
   );
   const [surfacedIds, setSurfacedIds] = useState(
-    () => seedSelection(featureSet, features).surfacedIds
+    () => seedSelection(featureSet).surfacedIds
   );
   const [isEdited, setIsEdited] = useState(false);
 
   if (source.featureSet !== featureSet || source.features !== features) {
-    const seed = seedSelection(featureSet, features);
+    const seed = seedSelection(featureSet);
     setSource({ featureSet, features });
     setSelectedIds(seed.selectedIds);
     setSurfacedIds(seed.surfacedIds);

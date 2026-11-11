@@ -932,7 +932,9 @@ impl RoutingService {
     /// Matches after case/punctuation/camelCase normalize so rmcp Display
     /// variants (`Transport closed`, `connection closed: …`, `Transport channel
     /// closed`, `unexpected end of stream`) and MCP `-32000` all hit the same
-    /// path. Auth is classified first by [`reconnect_path_for_error`].
+    /// path. So does `no active client`: the instance is still listed as
+    /// connected but its client is gone, and only a fresh connect brings it back.
+    /// Auth is classified first by [`reconnect_path_for_error`].
     fn is_transport_closed_error(error_str: &str) -> bool {
         let lower = error_str.to_ascii_lowercase();
         if lower.contains("-32000") {
@@ -952,6 +954,7 @@ impl RoutingService {
             "keep alive timeout",
             "transport send error",
             "send message error",
+            "no active client",
         ];
         if PHRASES.iter().any(|p| tokens.contains(p)) {
             return true;
@@ -1119,6 +1122,7 @@ mod call_failure_classify_tests {
             "keep alive timeout after 30000ms",
             "connection reset by peer",
             "the transport has been closed",
+            "Server instance has no active client",
         ];
         for err in cases {
             assert_eq!(

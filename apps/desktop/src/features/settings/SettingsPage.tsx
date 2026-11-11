@@ -35,6 +35,8 @@ import {
   AlertCircle,
   ShieldOff,
   Zap,
+  KeyRound,
+  ArrowRight,
 } from 'lucide-react';
 import {
   useAppStore,
@@ -42,6 +44,7 @@ import {
   useAnalyticsEnabled,
   usePendingSettingsSection,
   useSetPendingSettingsSection,
+  useNavigateTo,
 } from '@/stores';
 import { UpdateChecker } from './UpdateChecker';
 import { useGatewayControl } from '@/features/gateway/useGatewayControl';
@@ -67,6 +70,7 @@ interface GatewayPublicUrlSettings {
 }
 
 export function SettingsPage() {
+  const navigateTo = useNavigateTo();
   const theme = useTheme();
   const setTheme = useAppStore((state) => state.setTheme);
   const analyticsEnabled = useAnalyticsEnabled();
@@ -1127,6 +1131,38 @@ export function SettingsPage() {
                 />
               </div>
             </CardContent>
+          </Card>
+        </div>
+
+        {/* Credential Profiles & Secrets Section */}
+        <div
+          ref={registerSection('credentials')}
+          id="settings-credentials"
+          className={sectionFlashClass('credentials')}
+        >
+          <Card data-testid="settings-credentials-card">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <KeyRound className="h-5 w-5 text-[rgb(var(--primary))]" />
+                  Credential Profiles &amp; Secrets
+                </CardTitle>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => navigateTo('credentials')}
+                  className="flex items-center gap-1.5"
+                  data-testid="go-to-credentials-btn"
+                >
+                  Manage Secrets
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </div>
+              <CardDescription>
+                Centrally managed secrets and API keys reused across your Spaces. Credential
+                profiles survive server uninstalls and propagate rotated keys in a single place.
+              </CardDescription>
+            </CardHeader>
           </Card>
         </div>
 

@@ -1,6 +1,7 @@
 //! Repository implementations using SQLite.
 
 mod app_settings_repository;
+mod credential_profile_repository;
 mod credential_repository;
 mod feature_set_repository;
 mod inbound_client_repository;
@@ -14,6 +15,7 @@ mod space_repository;
 mod workspace_binding_repository;
 
 pub use app_settings_repository::SqliteAppSettingsRepository;
+pub use credential_profile_repository::SqliteCredentialProfileRepository;
 pub use credential_repository::SqliteCredentialRepository;
 pub use feature_set_repository::SqliteFeatureSetRepository;
 pub use inbound_client_repository::{

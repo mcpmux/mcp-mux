@@ -1,6 +1,7 @@
 // API layer for communicating with Tauri backend
 
 export * from './spaces';
+export * from './credentials';
 export * from './registry';
 export * from './featureSets';
 export * from './serverFeatures';

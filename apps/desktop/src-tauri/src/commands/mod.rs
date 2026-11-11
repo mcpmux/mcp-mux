@@ -28,6 +28,7 @@ pub use builtin_servers::*;
 pub use client::*;
 pub use client_install::*;
 pub use config_export::*;
+pub use credential::*;
 pub use feature_members::*;
 pub use feature_set::*;
 pub use gateway::*;

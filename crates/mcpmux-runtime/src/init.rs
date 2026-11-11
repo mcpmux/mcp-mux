@@ -10,8 +10,8 @@ use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 use mcpmux_core::{
-    AppSettingsRepository, AppSettingsService, CredentialRepository, EventBus,
-    FeatureSetRepository, GatewayPortService, InboundMcpClientRepository,
+    AppSettingsRepository, AppSettingsService, CredentialProfileRepository, CredentialRepository,
+    EventBus, FeatureSetRepository, GatewayPortService, InboundMcpClientRepository,
     InstalledServerRepository, LogConfig as CoreLogConfig, OutboundOAuthRepository,
     ServerDiscoveryService, ServerFeatureRepository, ServerLogManager, SharedEventBus,
     SpaceBaseDirRepository, SpaceBuiltinConfigRepository, SpaceRepository, SpaceService,
@@ -21,10 +21,11 @@ use mcpmux_gateway::{DependenciesBuilder, GatewayConfig, GatewayDependencies, Ga
 use mcpmux_storage::{
     create_jwt_secret_provider, Database, FieldEncryptor, InboundClientRepository,
     JwtSecretProvider, KeychainJwtSecretProvider, SqliteAppSettingsRepository,
-    SqliteCredentialRepository, SqliteFeatureSetRepository, SqliteInboundMcpClientRepository,
-    SqliteInstalledServerRepository, SqliteOutboundOAuthRepository, SqliteServerFeatureRepository,
-    SqliteSpaceBaseDirRepository, SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository,
-    SqliteWorkspaceBindingRepository, DATABASE_FILE, JWT_SECRET_SIZE, KEY_SIZE,
+    SqliteCredentialProfileRepository, SqliteCredentialRepository, SqliteFeatureSetRepository,
+    SqliteInboundMcpClientRepository, SqliteInstalledServerRepository,
+    SqliteOutboundOAuthRepository, SqliteServerFeatureRepository, SqliteSpaceBaseDirRepository,
+    SqliteSpaceBuiltinConfigRepository, SqliteSpaceRepository, SqliteWorkspaceBindingRepository,
+    DATABASE_FILE, JWT_SECRET_SIZE, KEY_SIZE,
 };
 
 #[cfg(windows)]
@@ -371,6 +372,7 @@ pub struct Repositories {
     pub space: Arc<dyn SpaceRepository>,
     pub installed_server: Arc<dyn InstalledServerRepository>,
     pub credential: Arc<dyn CredentialRepository>,
+    pub credential_profile: Arc<dyn CredentialProfileRepository>,
     pub backend_oauth: Arc<dyn OutboundOAuthRepository>,
     pub feature_set: Arc<dyn FeatureSetRepository>,
     pub client: Arc<dyn InboundMcpClientRepository>,
@@ -392,6 +394,9 @@ impl Repositories {
             db.clone(),
             encryptor.clone(),
         ));
+        let credential_profile: Arc<dyn CredentialProfileRepository> = Arc::new(
+            SqliteCredentialProfileRepository::new(db.clone(), encryptor.clone()),
+        );
         let backend_oauth: Arc<dyn OutboundOAuthRepository> = Arc::new(
             SqliteOutboundOAuthRepository::new(db.clone(), encryptor.clone()),
         );
@@ -414,6 +419,7 @@ impl Repositories {
             space,
             installed_server,
             credential,
+            credential_profile,
             backend_oauth,
             feature_set,
             client,

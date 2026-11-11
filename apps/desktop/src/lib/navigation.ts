@@ -24,6 +24,7 @@ import {
   FolderOpen,
   Wrench,
   Globe,
+  KeyRound,
   Settings,
 } from 'lucide-react';
 import type { NavItem } from '@/stores/types';
@@ -111,6 +112,13 @@ export const NAV_ZONES: NavZone[] = [
         icon: Globe,
         testId: 'nav-spaces',
         hint: 'Isolated contexts — work, personal, per client',
+      },
+      {
+        key: 'credentials',
+        label: 'Secrets',
+        icon: KeyRound,
+        testId: 'nav-credentials',
+        hint: 'Central credential profiles & secrets for MCP servers',
       },
     ],
   },

@@ -59,6 +59,10 @@ pub struct InstalledServer {
     /// Keys are input IDs, values are user-provided credentials/config
     pub input_values: HashMap<String, String>,
 
+    /// Optional credential profile ID from the central secrets store
+    #[serde(default)]
+    pub credential_profile_id: Option<Uuid>,
+
     /// Whether this installation is enabled (will auto-connect on gateway start)
     pub enabled: bool,
 
@@ -102,6 +106,7 @@ impl std::fmt::Debug for InstalledServer {
             .field("space_id", &self.space_id)
             .field("server_id", &self.server_id)
             .field("server_name", &self.server_name)
+            .field("credential_profile_id", &self.credential_profile_id)
             .field("input_values", &keys(&self.input_values))
             .field("enabled", &self.enabled)
             .field("env_overrides", &keys(&self.env_overrides))
@@ -129,6 +134,7 @@ impl InstalledServer {
             server_name: None,
             cached_definition: None,
             input_values: HashMap::new(),
+            credential_profile_id: None,
             enabled: false, // Disabled by default - user must explicitly enable
             env_overrides: HashMap::new(),
             args_append: Vec::new(),
@@ -167,6 +173,12 @@ impl InstalledServer {
     /// Set input values
     pub fn with_inputs(mut self, inputs: HashMap<String, String>) -> Self {
         self.input_values = inputs;
+        self
+    }
+
+    /// Link this installation to a central credential profile
+    pub fn with_credential_profile(mut self, profile_id: Option<Uuid>) -> Self {
+        self.credential_profile_id = profile_id;
         self
     }
 

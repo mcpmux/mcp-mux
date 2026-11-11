@@ -234,6 +234,7 @@ impl ServerAppService {
     /// Update server configuration (inputs, env overrides, args, headers)
     ///
     /// Emits: `ServerConfigUpdated`
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_config(
         &self,
         space_id: Uuid,
@@ -242,6 +243,7 @@ impl ServerAppService {
         env_overrides: Option<HashMap<String, String>>,
         args_append: Option<Vec<String>>,
         extra_headers: Option<HashMap<String, String>>,
+        credential_profile_id: Option<Option<Uuid>>,
     ) -> Result<InstalledServer> {
         let space_id_str = space_id.to_string();
 
@@ -252,6 +254,9 @@ impl ServerAppService {
             .ok_or_else(|| anyhow!("Server not installed"))?;
 
         server.input_values = input_values;
+        if let Some(profile_ref) = credential_profile_id {
+            server.credential_profile_id = profile_ref;
+        }
         if let Some(env) = env_overrides {
             server.env_overrides = env;
         }

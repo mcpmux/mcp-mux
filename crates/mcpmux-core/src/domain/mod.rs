@@ -9,6 +9,7 @@ mod builtin;
 mod client;
 pub mod config;
 mod credential;
+mod credential_profile;
 mod event;
 mod feature_set;
 mod installed_server;
@@ -30,6 +31,7 @@ pub use builtin::{
 pub use client::*;
 pub use config::*;
 pub use credential::*;
+pub use credential_profile::*;
 pub use feature_set::*;
 pub use installed_server::{InstallationSource, InstalledServer};
 pub use outbound_oauth_registration::*;

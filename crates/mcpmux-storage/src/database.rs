@@ -163,6 +163,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "inbound_refresh_families",
         sql: include_str!("migrations/026_inbound_refresh_families.sql"),
     },
+    Migration {
+        version: 27,
+        name: "credential_profiles",
+        sql: include_str!("migrations/027_credential_profiles.sql"),
+    },
 ];
 
 /// A stored ciphertext with the context it is bound to (see
@@ -502,6 +507,11 @@ impl Database {
                FROM installed_servers
               WHERE extra_headers IS NOT NULL AND extra_headers != ''
                 AND substr(extra_headers, 1, 1) NOT IN ('{', '[')
+             UNION ALL
+             SELECT 'values_encrypted', values_encrypted, id, '', ''
+               FROM credential_profiles
+              WHERE values_encrypted IS NOT NULL AND values_encrypted != ''
+                AND substr(values_encrypted, 1, 1) NOT IN ('{', '[')
              LIMIT ?1",
         )?;
         let rows = stmt.query_map([limit as i64], |row| {
@@ -510,6 +520,7 @@ impl Database {
             let context = match kind.as_str() {
                 "credential" => binding::credential(&a, &b, &c),
                 "client_secret" => binding::outbound_client_secret(&a, &b),
+                "values_encrypted" => binding::credential_profile("values_encrypted", &a),
                 column => binding::installed_server(column, &a),
             };
             Ok(EncryptedSample {
@@ -538,6 +549,7 @@ impl Database {
                     "extra_headers",
                 ][..],
             ),
+            ("credential_profiles", &["values_encrypted"][..]),
         ] {
             for col in columns {
                 let condition = UNBOUND.replace("{col}", col);

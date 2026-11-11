@@ -22,6 +22,7 @@ import {
   Compass,
   ArrowRight,
   ArrowDownAZ,
+  Key,
 } from 'lucide-react';
 import { PageHeader } from '@mcpmux/ui';
 import { ServerActionMenu } from './ServerActionMenu';
@@ -34,6 +35,12 @@ import type {
 } from '../../types/registry';
 import type { ServerFeature } from '@/lib/api/serverFeatures';
 import { listServerFeaturesByServer } from '@/lib/api/serverFeatures';
+import {
+  getCredentialProfilesForServer,
+  getCredentialProfile,
+  createCredentialProfile,
+  type CredentialProfileSummary,
+} from '@/lib/api/credentials';
 import type { ConnectionStatus, ServerStatusResponse } from '@/lib/api/serverManager';
 import { getServerStatuses as fetchServerStatuses } from '@/lib/api/serverManager';
 import { useViewSpace, useNavigateTo } from '@/stores';
@@ -75,6 +82,7 @@ function mergeDefinitionsWithStates(
       enabled: state?.enabled ?? false,
       oauth_connected: state?.oauth_connected ?? false,
       input_values: inputValues,
+      credential_profile_id: state?.credential_profile_id,
       connection_status, // Initial status, will be overridden by runtime events
       missing_required_inputs,
       last_error: null, // Runtime-only, will be set by ServerManager events
@@ -105,6 +113,7 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
         enabled: state.enabled,
         oauth_connected: state.oauth_connected,
         input_values: inputValues,
+        credential_profile_id: state.credential_profile_id,
         connection_status,
         missing_required_inputs,
         last_error: null,
@@ -141,6 +150,7 @@ function createOfflineServerViewModel(state: InstalledServerState): ServerViewMo
     enabled: state.enabled,
     oauth_connected: state.oauth_connected,
     input_values: state.input_values,
+    credential_profile_id: state.credential_profile_id,
     connection_status: 'disconnected',
     missing_required_inputs: false,
     last_error: null,
@@ -164,6 +174,8 @@ interface ConfigModalState {
   argsAppend: string[];
   /** Extra HTTP headers (http only) */
   extraHeaders: Record<string, string>;
+  /** Linked central credential profile ID, if any */
+  credentialProfileId?: string | null;
 }
 
 export function ServersPage() {
@@ -186,7 +198,13 @@ export function ServersPage() {
     envOverrides: {},
     argsAppend: [],
     extraHeaders: {},
+    credentialProfileId: null,
   });
+
+  // Central credential profiles for the currently configured server
+  const [availableProfiles, setAvailableProfiles] = useState<CredentialProfileSummary[]>([]);
+  const [saveAsNewProfile, setSaveAsNewProfile] = useState(false);
+  const [newProfileName, setNewProfileName] = useState('');
 
   // Features state
   const [serverFeatures, setServerFeatures] = useState<Record<string, ServerFeature[]>>({});
@@ -291,6 +309,24 @@ export function ServersPage() {
     setLoadingFeatures(new Set());
     loadData();
   }, [viewSpace?.id]);
+
+  // Load credential profiles when modal opens for a server
+  useEffect(() => {
+    if (configModal.open && configModal.server?.id) {
+      getCredentialProfilesForServer(configModal.server.id)
+        .then((profiles) => {
+          setAvailableProfiles(profiles);
+        })
+        .catch((err) => {
+          console.error('Failed to load credential profiles for server:', err);
+          setAvailableProfiles([]);
+        });
+    } else {
+      setAvailableProfiles([]);
+      setSaveAsNewProfile(false);
+      setNewProfileName('');
+    }
+  }, [configModal.open, configModal.server?.id]);
 
   // Subscribe to gateway events for reactive updates (no polling!)
   useGatewayEvents((payload: GatewayChangedPayload) => {
@@ -584,6 +620,7 @@ export function ServersPage() {
         envOverrides: { ...(server.env_overrides ?? {}) },
         argsAppend: [...(server.args_append ?? [])],
         extraHeaders: { ...(server.extra_headers ?? {}) },
+        credentialProfileId: server.credential_profile_id ?? null,
       });
       return;
     }
@@ -655,6 +692,7 @@ export function ServersPage() {
       envOverrides: { ...(server.env_overrides ?? {}) },
       argsAppend: [...(server.args_append ?? [])],
       extraHeaders: { ...(server.extra_headers ?? {}) },
+      credentialProfileId: server.credential_profile_id ?? null,
     });
   };
 
@@ -669,7 +707,25 @@ export function ServersPage() {
     try {
       const { saveServerInputs } = await import('@/lib/api/registry');
 
-      // Save input values with env overrides, args, and headers.
+      let profileIdToSave = configModal.credentialProfileId ?? null;
+
+      // If user chose to save as a reusable credential profile
+      if (saveAsNewProfile && newProfileName.trim()) {
+        try {
+          const newProfile = await createCredentialProfile(
+            newProfileName.trim(),
+            serverId,
+            server.name,
+            configModal.inputValues
+          );
+          profileIdToSave = newProfile.id;
+        } catch (profileErr) {
+          console.error('Failed to save reusable credential profile:', profileErr);
+          showToast(`Warning: Failed to save credential profile (${profileErr})`, 'error');
+        }
+      }
+
+      // Save input values with env overrides, args, headers, and credential_profile_id.
       // Always send the values (even if empty) so that clearing them works.
       // Backend treats None as "keep existing", so we must send Some({}/[])
       // to actually clear fields the user removed.
@@ -679,7 +735,8 @@ export function ServersPage() {
         viewSpace?.id ?? '',
         configModal.envOverrides,
         configModal.argsAppend,
-        configModal.extraHeaders
+        configModal.extraHeaders,
+        profileIdToSave
       );
 
       setConfigModal({
@@ -689,7 +746,10 @@ export function ServersPage() {
         envOverrides: {},
         argsAppend: [],
         extraHeaders: {},
+        credentialProfileId: null,
       });
+      setSaveAsNewProfile(false);
+      setNewProfileName('');
 
       // Only enable if requested (from Enable flow)
       if (shouldEnable && !server.enabled) {
@@ -736,7 +796,10 @@ export function ServersPage() {
       envOverrides: {},
       argsAppend: [],
       extraHeaders: {},
+      credentialProfileId: null,
     });
+    setSaveAsNewProfile(false);
+    setNewProfileName('');
   };
 
   // Cancel OAuth flow - uses new ServerManager v2
@@ -1474,6 +1537,57 @@ export function ServersPage() {
 
             {/* Scrollable body — the footer below stays pinned (#163) */}
             <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-4">
+              {/* Central Credential Profile Selection */}
+              {availableProfiles.length > 0 && (
+                <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface-hover))] p-3">
+                  <div className="mb-1.5 flex items-center gap-2">
+                    <Key className="h-4 w-4 text-[rgb(var(--primary))]" />
+                    <label className="text-xs font-semibold uppercase tracking-wider text-[rgb(var(--foreground))]">
+                      Credential Profile
+                    </label>
+                  </div>
+                  <p className="mb-2 text-xs text-[rgb(var(--muted))]">
+                    Reuse saved secrets from your Central Credential Store or configure manually.
+                  </p>
+                  <select
+                    value={configModal.credentialProfileId || ''}
+                    onChange={async (e) => {
+                      const selectedId = e.target.value;
+                      if (!selectedId) {
+                        setConfigModal({
+                          ...configModal,
+                          credentialProfileId: null,
+                        });
+                        return;
+                      }
+                      try {
+                        const profile = await getCredentialProfile(selectedId);
+                        setConfigModal({
+                          ...configModal,
+                          credentialProfileId: selectedId,
+                          inputValues: {
+                            ...configModal.inputValues,
+                            ...profile.values,
+                          },
+                        });
+                      } catch (err) {
+                        showToast(`Failed to load profile: ${err}`, 'error');
+                      }
+                    }}
+                    className="input w-full text-sm"
+                    data-testid="config-credential-profile-select"
+                  >
+                    <option value="">Manual / Unlinked</option>
+                    {availableProfiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.input_keys.length} secret{p.input_keys.length !== 1 ? 's' : ''}
+                        )
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {(configModal.server.transport.metadata?.inputs ?? []).map(
                 (input: InputDefinition) => {
                   const obtainUrl = input.obtain_url || input.obtain?.url;
@@ -1629,6 +1743,38 @@ export function ServersPage() {
                     </div>
                   );
                 }
+              )}
+
+              {/* Option to save current inputs as a reusable Credential Profile */}
+              {(configModal.server.transport.metadata?.inputs ?? []).length > 0 && (
+                <div className="rounded-lg border border-dashed border-[rgb(var(--border))] p-3">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-[rgb(var(--foreground))]">
+                    <input
+                      type="checkbox"
+                      checked={saveAsNewProfile}
+                      onChange={(e) => setSaveAsNewProfile(e.target.checked)}
+                      className="h-4 w-4 rounded border-[rgb(var(--border))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))]"
+                      data-testid="config-save-as-profile-check"
+                    />
+                    <span>Save credentials as reusable profile across Spaces</span>
+                  </label>
+                  {saveAsNewProfile && (
+                    <div className="mt-2 pl-6">
+                      <input
+                        type="text"
+                        value={newProfileName}
+                        onChange={(e) => setNewProfileName(e.target.value)}
+                        placeholder="Profile name (e.g., Work Account, Personal)"
+                        className="input w-full text-sm"
+                        data-testid="config-new-profile-name"
+                      />
+                      <p className="mt-1 text-[11px] text-[rgb(var(--muted))]">
+                        Secrets are encrypted with AES-256-GCM and available when configuring this
+                        server in any Space.
+                      </p>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* Additional Arguments (stdio only) */}
@@ -1812,9 +1958,12 @@ export function ServersPage() {
               </button>
               <button
                 onClick={handleSaveConfig}
-                disabled={(configModal.server.transport.metadata?.inputs ?? []).some(
-                  (i: InputDefinition) => i.required && !configModal.inputValues[i.id]
-                )}
+                disabled={
+                  (configModal.server.transport.metadata?.inputs ?? []).some(
+                    (i: InputDefinition) => i.required && !configModal.inputValues[i.id]
+                  ) ||
+                  (saveAsNewProfile && !newProfileName.trim())
+                }
                 className="rounded-lg bg-[rgb(var(--primary))] px-4 py-2 text-sm text-[rgb(var(--primary-foreground))] transition-colors hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
                 data-testid="config-save-btn"
               >

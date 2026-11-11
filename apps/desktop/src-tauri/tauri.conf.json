@@ -8,10 +8,7 @@
     "beforeDevCommand": "pnpm dev:web",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build:web",
-    "frontendDist": "../dist",
-    "windows": {
-      "staticVCRuntime": false
-    }
+    "frontendDist": "../dist"
   },
   "plugins": {
     "deep-link": {

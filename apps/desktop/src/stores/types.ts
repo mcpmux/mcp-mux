@@ -9,6 +9,7 @@ export type NavItem =
   | 'workspaces'
   | 'clients'
   | 'builtin-servers'
+  | 'credentials'
   | 'settings';
 
 /** A mapping the Mapping tab should open on arrival (e.g. from a client's panel). */
